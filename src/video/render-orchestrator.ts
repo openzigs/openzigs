@@ -14,7 +14,13 @@ import os from "node:os";
 import { nanoid } from "nanoid";
 import { logger } from "../logging/logger.js";
 import { validateManifest } from "./manifest/manifest-validator.js";
-import type { RenderJob, RenderProgress, RenderRequest, RenderResult, WorkerMessage } from "./render-types.js";
+import type {
+  RenderJob,
+  RenderProgress,
+  RenderRequest,
+  RenderResult,
+  WorkerMessage,
+} from "./render-types.js";
 
 /** Resolve ~ to home directory. */
 function resolvePath(p: string): string {
@@ -75,7 +81,9 @@ export class RenderOrchestrator extends EventEmitter {
     this.jobs.set(jobId, job);
     this.queue.push(jobId);
 
-    logger.info(`[RenderOrchestrator] Job ${jobId} queued — "${request.manifest.projectTitle}"`);
+    logger.info(
+      `[RenderOrchestrator] Job ${jobId} queued — "${request.manifest.projectTitle}"`,
+    );
     this.emit("render:queued", { jobId, manifest: request.manifest });
 
     // Try to start immediately if under concurrency limit
@@ -238,7 +246,8 @@ export class RenderOrchestrator extends EventEmitter {
     // In dev mode (.ts source) Worker Threads can't load TypeScript directly,
     // so we use a thin .mjs bootstrap that registers tsx before importing the
     // real worker module.  In production (compiled .js) no loader is needed.
-    const baseDir = import.meta.dirname ?? path.dirname(new URL(import.meta.url).pathname);
+    const baseDir =
+      import.meta.dirname ?? path.dirname(new URL(import.meta.url).pathname);
     const isDevMode = import.meta.url.endsWith(".ts");
     const workerPath = path.join(
       baseDir,
@@ -270,7 +279,12 @@ export class RenderOrchestrator extends EventEmitter {
     worker.on("exit", (code) => {
       if (code !== 0) {
         const job = this.jobs.get(jobId);
-        if (job && job.status !== "complete" && job.status !== "aborted" && job.status !== "failed") {
+        if (
+          job &&
+          job.status !== "complete" &&
+          job.status !== "aborted" &&
+          job.status !== "failed"
+        ) {
           const stderr = stderrChunks.join("").trim();
           const errorMsg = stderr
             ? `Worker exited with code ${code}: ${stderr.slice(-500)}`
@@ -299,9 +313,9 @@ export class RenderOrchestrator extends EventEmitter {
       case "progress": {
         job.progress = msg.progress;
         // Map progress ranges to Remotion SSR phases
-        if (msg.progress < 0.20) {
+        if (msg.progress < 0.2) {
           job.status = "bundling";
-        } else if (msg.progress < 0.30) {
+        } else if (msg.progress < 0.3) {
           job.status = "rendering";
         } else if (msg.progress < 0.95) {
           job.status = "encoding";
@@ -341,7 +355,9 @@ export class RenderOrchestrator extends EventEmitter {
           fileSizeBytes: msg.fileSizeBytes,
         };
 
-        logger.info(`[RenderOrchestrator] Job ${msg.jobId} complete → ${msg.outputPath}`);
+        logger.info(
+          `[RenderOrchestrator] Job ${msg.jobId} complete → ${msg.outputPath}`,
+        );
         this.emit("render:complete", result);
         break;
       }

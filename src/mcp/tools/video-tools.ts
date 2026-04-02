@@ -14,30 +14,84 @@ export interface VideoToolsOptions {
 }
 
 const produceVideoSchema = z.object({
-  clips: z.array(z.string()).optional().describe("Paths to input video clips (required for highlight/script modes)"),
-  mode: z.enum(["highlight", "script", "presentation"]).describe("Production mode: 'highlight' for auto-edit, 'script' for narration-driven, 'presentation' for text-to-video"),
-  scriptPath: z.string().optional().describe("Path to script file (required for 'script' mode)"),
-  musicTrackPath: z.string().optional().describe("Path to background music track"),
-  template: z.string().optional().describe("Template ID: 'Minimalist', 'ContentCreator', 'Corporate', 'TechDemo'"),
-  voiceoverPath: z.string().optional().describe("Pre-generated voiceover path (skip TTS)"),
-  inputFile: z.string().optional().describe("Path to .md or .txt file (required for 'presentation' mode)"),
-  sourceType: z.enum(["text", "markdown"]).optional().describe("Type of input document for presentation mode"),
-  imageProvider: z.enum(["cloud", "local", "auto"]).optional().describe("Image generation provider: 'cloud' (Vertex AI), 'local' (sidecar), 'auto' (failover)"),
-  imageModel: z.enum(["flux", "flux-schnell", "sdxl-turbo"]).optional().describe("Local sidecar model to use: 'flux-schnell' (higher quality, slower) or 'sdxl-turbo' (faster, smaller). Only used when imageProvider is 'local' or 'auto'."),
+  clips: z
+    .array(z.string())
+    .optional()
+    .describe(
+      "Paths to input video clips (required for highlight/script modes)",
+    ),
+  mode: z
+    .enum(["highlight", "script", "presentation"])
+    .describe(
+      "Production mode: 'highlight' for auto-edit, 'script' for narration-driven, 'presentation' for text-to-video",
+    ),
+  scriptPath: z
+    .string()
+    .optional()
+    .describe("Path to script file (required for 'script' mode)"),
+  musicTrackPath: z
+    .string()
+    .optional()
+    .describe("Path to background music track"),
+  template: z
+    .string()
+    .optional()
+    .describe(
+      "Template ID: 'Minimalist', 'ContentCreator', 'Corporate', 'TechDemo'",
+    ),
+  voiceoverPath: z
+    .string()
+    .optional()
+    .describe("Pre-generated voiceover path (skip TTS)"),
+  inputFile: z
+    .string()
+    .optional()
+    .describe("Path to .md or .txt file (required for 'presentation' mode)"),
+  sourceType: z
+    .enum(["text", "markdown"])
+    .optional()
+    .describe("Type of input document for presentation mode"),
+  imageProvider: z
+    .enum(["cloud", "local", "auto"])
+    .optional()
+    .describe(
+      "Image generation provider: 'cloud' (Vertex AI), 'local' (sidecar), 'auto' (failover)",
+    ),
+  imageModel: z
+    .enum(["flux", "flux-schnell", "sdxl-turbo"])
+    .optional()
+    .describe(
+      "Local sidecar model to use: 'flux-schnell' (higher quality, slower) or 'sdxl-turbo' (faster, smaller). Only used when imageProvider is 'local' or 'auto'.",
+    ),
 });
 
 const listTemplatesSchema = z.object({
-  tag: z.string().optional().describe("Filter templates by tag (e.g. 'social', 'professional')"),
+  tag: z
+    .string()
+    .optional()
+    .describe("Filter templates by tag (e.g. 'social', 'professional')"),
 });
 
 const searchAssetsSchema = z.object({
   query: z.string().describe("Search query for music/sound effects"),
-  source: z.enum(["local", "pixabay", "jamendo", "pexels", "all"]).optional().describe("Asset source to search (default: 'all')"),
-  type: z.enum(["music", "sfx", "image", "video"]).optional().describe("Asset type filter"),
-  maxResults: z.number().optional().describe("Maximum results to return (default: 10)"),
+  source: z
+    .enum(["local", "pixabay", "jamendo", "pexels", "all"])
+    .optional()
+    .describe("Asset source to search (default: 'all')"),
+  type: z
+    .enum(["music", "sfx", "image", "video"])
+    .optional()
+    .describe("Asset type filter"),
+  maxResults: z
+    .number()
+    .optional()
+    .describe("Maximum results to return (default: 10)"),
 });
 
-export const createVideoTools = ({ copilot, voiceService }: VideoToolsOptions): ToolDefinition[] => {
+export const createVideoTools = ({
+  copilot,
+  voiceService,
+}: VideoToolsOptions): ToolDefinition[] => {
   const tools: ToolDefinition[] = [];
 
   // ── produce-video ──
@@ -51,16 +105,48 @@ export const createVideoTools = ({ copilot, voiceService }: VideoToolsOptions): 
     inputSchema: {
       type: "object",
       properties: {
-        clips: { type: "array", items: { type: "string" }, description: "Paths to input video clips (highlight/script modes)" },
-        mode: { type: "string", enum: ["highlight", "script", "presentation"], description: "Production mode" },
-        scriptPath: { type: "string", description: "Path to script file (script mode)" },
-        musicTrackPath: { type: "string", description: "Path to background music" },
+        clips: {
+          type: "array",
+          items: { type: "string" },
+          description: "Paths to input video clips (highlight/script modes)",
+        },
+        mode: {
+          type: "string",
+          enum: ["highlight", "script", "presentation"],
+          description: "Production mode",
+        },
+        scriptPath: {
+          type: "string",
+          description: "Path to script file (script mode)",
+        },
+        musicTrackPath: {
+          type: "string",
+          description: "Path to background music",
+        },
         template: { type: "string", description: "Template ID" },
-        voiceoverPath: { type: "string", description: "Pre-generated voiceover path" },
-        inputFile: { type: "string", description: "Path to .md or .txt file (presentation mode)" },
-        sourceType: { type: "string", enum: ["text", "markdown"], description: "Input document type" },
-        imageProvider: { type: "string", enum: ["cloud", "local", "auto"], description: "Image generation provider" },
-        imageModel: { type: "string", enum: ["flux", "sdxl-turbo"], description: "Local sidecar model (only for local/auto)" },
+        voiceoverPath: {
+          type: "string",
+          description: "Pre-generated voiceover path",
+        },
+        inputFile: {
+          type: "string",
+          description: "Path to .md or .txt file (presentation mode)",
+        },
+        sourceType: {
+          type: "string",
+          enum: ["text", "markdown"],
+          description: "Input document type",
+        },
+        imageProvider: {
+          type: "string",
+          enum: ["cloud", "local", "auto"],
+          description: "Image generation provider",
+        },
+        imageModel: {
+          type: "string",
+          enum: ["flux", "sdxl-turbo"],
+          description: "Local sidecar model (only for local/auto)",
+        },
       },
       required: ["mode"],
     },
@@ -68,28 +154,46 @@ export const createVideoTools = ({ copilot, voiceService }: VideoToolsOptions): 
     category: "productivity",
     riskLevel: "high",
     handler: async (args) => {
-      const { clips, mode, scriptPath, musicTrackPath, template, voiceoverPath, inputFile, sourceType, imageProvider, imageModel } =
-        args as z.infer<typeof produceVideoSchema>;
+      const {
+        clips,
+        mode,
+        scriptPath,
+        musicTrackPath,
+        template,
+        voiceoverPath,
+        inputFile,
+        sourceType,
+        imageProvider,
+        imageModel,
+      } = args as z.infer<typeof produceVideoSchema>;
 
       try {
         // Mode C: Presentation — text-to-video pipeline
         if (mode === "presentation") {
           if (!inputFile) {
-            return { text: "Error: 'inputFile' is required for presentation mode", isError: true };
+            return {
+              text: "Error: 'inputFile' is required for presentation mode",
+              isError: true,
+            };
           }
 
           const fs = await import("node:fs/promises");
           const path = await import("node:path");
           const os = await import("node:os");
-          const { StoryboardEngine } = await import("../../video/generators/storyboard-engine.js");
-          const { ImageGenService } = await import("../../video/generators/image-gen-service.js");
+          const { StoryboardEngine } =
+            await import("../../video/generators/storyboard-engine.js");
+          const { ImageGenService } =
+            await import("../../video/generators/image-gen-service.js");
           const { nanoid } = await import("nanoid");
 
           // Step A: Ingest the text document
           let rawText = await fs.readFile(inputFile, "utf-8");
           if (sourceType === "markdown" || inputFile.endsWith(".md")) {
             // Strip code blocks but keep headers for structure
-            rawText = rawText.replace(/```[\s\S]*?```/g, "[code block removed]");
+            rawText = rawText.replace(
+              /```[\s\S]*?```/g,
+              "[code block removed]",
+            );
           }
 
           // Step B: Generate storyboard via LLM
@@ -98,14 +202,28 @@ export const createVideoTools = ({ copilot, voiceService }: VideoToolsOptions): 
 
           // Step C: Generate images for each scene
           // Use persistent dir so macOS /tmp/ cleanup doesn't nuke images before render
-          const imageOutputDir = path.join(os.homedir(), ".openzigs", "director", "images");
+          const imageOutputDir = path.join(
+            os.homedir(),
+            ".openzigs",
+            "director",
+            "images",
+          );
           await fs.mkdir(imageOutputDir, { recursive: true });
-          const imageGenUserConfig = await ImageGenService.loadUserImageGenConfig();
-          const imageService = new ImageGenService({ outputDir: imageOutputDir, ...imageGenUserConfig });
+          const imageGenUserConfig =
+            await ImageGenService.loadUserImageGenConfig();
+          const imageService = new ImageGenService({
+            outputDir: imageOutputDir,
+            ...imageGenUserConfig,
+          });
           await imageService.initialize();
 
           const fps = 30;
-          const templateId = (template as "Minimalist" | "ContentCreator" | "Corporate" | "TechDemo") ?? "Minimalist";
+          const templateId =
+            (template as
+              | "Minimalist"
+              | "ContentCreator"
+              | "Corporate"
+              | "TechDemo") ?? "Minimalist";
 
           // Fixed 16:9 video frame resolution — do not query sidecar (its native training
           // resolution overrides this with e.g. 1024x1024 for Flux, costing 3-5x more time).
@@ -113,27 +231,41 @@ export const createVideoTools = ({ copilot, voiceService }: VideoToolsOptions): 
           const imageHeight = 432;
 
           // Build timeline entries for the DirectorManifest
-          const timeline: Array<import("../../video/manifest/manifest-types.js").ImageSceneEntry | import("../../video/manifest/manifest-types.js").TransitionEntry> = [];
+          const timeline: Array<
+            | import("../../video/manifest/manifest-types.js").ImageSceneEntry
+            | import("../../video/manifest/manifest-types.js").TransitionEntry
+          > = [];
           let currentFrame = 0;
 
           for (const scene of storyboard.scenes) {
-            const imageResult = await imageService.generateImage(scene.imagePrompt, {
-              provider: imageProvider ?? "local",
-              localModel: imageModel,
-              width: imageWidth,
-              height: imageHeight,
-            });
+            const imageResult = await imageService.generateImage(
+              scene.imagePrompt,
+              {
+                provider: imageProvider ?? "local",
+                localModel: imageModel,
+                width: imageWidth,
+                height: imageHeight,
+              },
+            );
 
             // Generate per-scene voiceover if VoiceService is available
             let sceneVoiceoverPath: string | undefined;
             if (voiceService && scene.voiceover) {
               try {
-                if (!voiceService.isReady() && process.env.GOOGLE_APPLICATION_CREDENTIALS) {
+                if (
+                  !voiceService.isReady() &&
+                  process.env.GOOGLE_APPLICATION_CREDENTIALS
+                ) {
                   await voiceService.initialize();
                 }
                 if (voiceService.isReady()) {
-                  const ttsResult = await voiceService.synthesize(scene.voiceover);
-                  const voPath = path.join(imageOutputDir, `openzigs-vo-${nanoid(8)}.mp3`);
+                  const ttsResult = await voiceService.synthesize(
+                    scene.voiceover,
+                  );
+                  const voPath = path.join(
+                    imageOutputDir,
+                    `openzigs-vo-${nanoid(8)}.mp3`,
+                  );
                   await fs.writeFile(voPath, ttsResult.audio);
                   sceneVoiceoverPath = voPath;
                 }
@@ -178,38 +310,48 @@ export const createVideoTools = ({ copilot, voiceService }: VideoToolsOptions): 
           }
 
           // Step D: Construct the DirectorManifest
-          const manifest: import("../../video/manifest/manifest-types.js").DirectorManifest = {
-            projectTitle: storyboard.title,
-            templateId,
-            composition: { width: 1920, height: 1080, fps },
-            audioLayer: {
-              music: musicTrackPath ? {
-                track: musicTrackPath,
-                volume: 0.12,
-                ducking: true,
-                fadeInFrames: 30,
-                fadeOutFrames: 30,
-                loop: true,
-              } : null,
-              voiceover: voiceoverPath ? {
-                source: voiceoverPath,
-                volume: 1.0,
-                startAtFrame: 0,
-              } : null,
-            },
-            timeline,
-            metadata: {
-              generatedAt: new Date().toISOString(),
-              llmModel: "copilot",
-              llmTokensUsed: storyboard.tokensUsed,
-              productionMode: "presentation",
-              sourceClips: [],
-              estimatedRenderTime: currentFrame / fps,
-            },
-          };
+          const manifest: import("../../video/manifest/manifest-types.js").DirectorManifest =
+            {
+              projectTitle: storyboard.title,
+              templateId,
+              composition: { width: 1920, height: 1080, fps },
+              audioLayer: {
+                music: musicTrackPath
+                  ? {
+                      track: musicTrackPath,
+                      volume: 0.12,
+                      ducking: true,
+                      fadeInFrames: 30,
+                      fadeOutFrames: 30,
+                      loop: true,
+                    }
+                  : null,
+                voiceover: voiceoverPath
+                  ? {
+                      source: voiceoverPath,
+                      volume: 1.0,
+                      startAtFrame: 0,
+                    }
+                  : null,
+              },
+              timeline,
+              metadata: {
+                generatedAt: new Date().toISOString(),
+                llmModel: "copilot",
+                llmTokensUsed: storyboard.tokensUsed,
+                productionMode: "presentation",
+                sourceClips: [],
+                estimatedRenderTime: currentFrame / fps,
+              },
+            };
 
           // Auto-save manifest to drafts directory
-          const DRAFTS_BASE = path.join(os.homedir(), ".openzigs", "files", "drafts");
+          const DRAFTS_BASE = path.join(
+            os.homedir(),
+            ".openzigs",
+            "files",
+            "drafts",
+          );
           const projectSlug = storyboard.title
             .toLowerCase()
             .replace(/[^a-z0-9]+/g, "-")
@@ -223,7 +365,8 @@ export const createVideoTools = ({ copilot, voiceService }: VideoToolsOptions): 
           await fs.writeFile(manifestPath, manifestJson, "utf-8");
 
           // Persist as a director draft in SQLite so it appears in the Studio UI
-          const { getDatabase } = await import("../../productivity/database.js");
+          const { getDatabase } =
+            await import("../../productivity/database.js");
           const db = getDatabase();
           const draftId = nanoid();
           const now = new Date().toISOString();
@@ -231,15 +374,27 @@ export const createVideoTools = ({ copilot, voiceService }: VideoToolsOptions): 
           db.prepare(
             `INSERT INTO director_drafts (id, title, manifest, thumbnail, production_mode, created_at, updated_at, status)
              VALUES (?, ?, ?, ?, ?, ?, ?, 'draft')`,
-          ).run(draftId, draftTitle, manifestJson, null, "presentation", now, now);
+          ).run(
+            draftId,
+            draftTitle,
+            manifestJson,
+            null,
+            "presentation",
+            now,
+            now,
+          );
 
           // Copy scene images into the drafts project directory
           const scenePaths: string[] = [];
           for (const entry of timeline) {
             if (entry.type === "image_scene") {
-              const imgEntry = entry as import("../../video/manifest/manifest-types.js").ImageSceneEntry;
+              const imgEntry =
+                entry as import("../../video/manifest/manifest-types.js").ImageSceneEntry;
               if (imgEntry.src) {
-                const destImg = path.join(projectDir, path.basename(imgEntry.src));
+                const destImg = path.join(
+                  projectDir,
+                  path.basename(imgEntry.src),
+                );
                 await fs.copyFile(imgEntry.src, destImg).catch(() => {});
                 scenePaths.push(destImg);
               }
@@ -247,49 +402,60 @@ export const createVideoTools = ({ copilot, voiceService }: VideoToolsOptions): 
           }
 
           return {
-            text: JSON.stringify({
-              mode: "presentation",
-              draftId,
-              manifestPath,
-              projectDir,
-              manifest,
-              storyboard: {
-                title: storyboard.title,
-                styleAnchor: storyboard.styleAnchor,
-                analysis: storyboard.analysis,
-                sceneCount: storyboard.scenes.length,
-              },
-              scenes: storyboard.scenes.map((scene, i) => ({
-                index: i,
-                voiceover: scene.voiceover,
-                imagePrompt: scene.imagePrompt,
-                durationEstimate: scene.durationEstimate,
-                imagePath: timeline
-                  .filter(
-                    (t): t is import("../../video/manifest/manifest-types.js").ImageSceneEntry =>
-                      t.type === "image_scene" &&
-                      (t as import("../../video/manifest/manifest-types.js").ImageSceneEntry).src !== undefined,
-                  )[i]?.src,
-              })),
-              tokensUsed: storyboard.tokensUsed,
-              totalDuration: currentFrame / fps,
-              savedToDrafts: {
+            text: JSON.stringify(
+              {
+                mode: "presentation",
+                draftId,
                 manifestPath,
                 projectDir,
-                sceneImages: scenePaths,
+                manifest,
+                storyboard: {
+                  title: storyboard.title,
+                  styleAnchor: storyboard.styleAnchor,
+                  analysis: storyboard.analysis,
+                  sceneCount: storyboard.scenes.length,
+                },
+                scenes: storyboard.scenes.map((scene, i) => ({
+                  index: i,
+                  voiceover: scene.voiceover,
+                  imagePrompt: scene.imagePrompt,
+                  durationEstimate: scene.durationEstimate,
+                  imagePath: timeline.filter(
+                    (
+                      t,
+                    ): t is import("../../video/manifest/manifest-types.js").ImageSceneEntry =>
+                      t.type === "image_scene" &&
+                      (
+                        t as import("../../video/manifest/manifest-types.js").ImageSceneEntry
+                      ).src !== undefined,
+                  )[i]?.src,
+                })),
+                tokensUsed: storyboard.tokensUsed,
+                totalDuration: currentFrame / fps,
+                savedToDrafts: {
+                  manifestPath,
+                  projectDir,
+                  sceneImages: scenePaths,
+                },
               },
-            }, null, 2),
+              null,
+              2,
+            ),
           };
         }
 
         // Mode A/B: Highlight / Script — existing pipeline
         if (!clips || clips.length === 0) {
-          return { text: "Error: 'clips' is required for highlight/script modes", isError: true };
+          return {
+            text: "Error: 'clips' is required for highlight/script modes",
+            isError: true,
+          };
         }
 
         // Lazy-load heavy modules
         const { ingest } = await import("../../video/ingestion/index.js");
-        const { ProducerService } = await import("../../video/producer/producer-service.js");
+        const { ProducerService } =
+          await import("../../video/producer/producer-service.js");
 
         // Ingest clips
         const ingestionResult = await ingest(
@@ -309,12 +475,19 @@ export const createVideoTools = ({ copilot, voiceService }: VideoToolsOptions): 
         });
 
         return {
-          text: JSON.stringify({
-            manifest: result.manifest,
-            tokensUsed: result.tokensUsed,
-            clipsProcessed: ingestionResult.clips.length,
-            totalDuration: ingestionResult.clips.reduce((sum, c) => sum + c.duration, 0),
-          }, null, 2),
+          text: JSON.stringify(
+            {
+              manifest: result.manifest,
+              tokensUsed: result.tokensUsed,
+              clipsProcessed: ingestionResult.clips.length,
+              totalDuration: ingestionResult.clips.reduce(
+                (sum, c) => sum + c.duration,
+                0,
+              ),
+            },
+            null,
+            2,
+          ),
         };
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -326,7 +499,8 @@ export const createVideoTools = ({ copilot, voiceService }: VideoToolsOptions): 
   // ── list-templates ──
   tools.push({
     name: "list-templates",
-    description: "List available video templates with their default configurations and supported features.",
+    description:
+      "List available video templates with their default configurations and supported features.",
     inputSchema: {
       type: "object",
       properties: {
@@ -339,7 +513,8 @@ export const createVideoTools = ({ copilot, voiceService }: VideoToolsOptions): 
     handler: async (args) => {
       const { tag } = args as z.infer<typeof listTemplatesSchema>;
 
-      const { createTemplateRegistry } = await import("../../video/templates/template-registry.js");
+      const { createTemplateRegistry } =
+        await import("../../video/templates/template-registry.js");
       const registry = createTemplateRegistry();
 
       const templates = tag ? registry.getByTag(tag) : registry.getAll();
@@ -368,8 +543,16 @@ export const createVideoTools = ({ copilot, voiceService }: VideoToolsOptions): 
       type: "object",
       properties: {
         query: { type: "string", description: "Search query" },
-        source: { type: "string", enum: ["local", "pixabay", "jamendo", "pexels", "all"], description: "Source" },
-        type: { type: "string", enum: ["music", "sfx", "image", "video"], description: "Asset type" },
+        source: {
+          type: "string",
+          enum: ["local", "pixabay", "jamendo", "pexels", "all"],
+          description: "Source",
+        },
+        type: {
+          type: "string",
+          enum: ["music", "sfx", "image", "video"],
+          description: "Asset type",
+        },
         maxResults: { type: "number", description: "Max results" },
       },
       required: ["query"],
@@ -378,10 +561,13 @@ export const createVideoTools = ({ copilot, voiceService }: VideoToolsOptions): 
     category: "productivity",
     riskLevel: "low",
     handler: async (args) => {
-      const { query, source, type, maxResults } = args as z.infer<typeof searchAssetsSchema>;
+      const { query, source, type, maxResults } = args as z.infer<
+        typeof searchAssetsSchema
+      >;
 
       try {
-        const { AssetManager } = await import("../../video/assets/asset-manager.js");
+        const { AssetManager } =
+          await import("../../video/assets/asset-manager.js");
         const manager = new AssetManager({
           localLibraryPath: "~/.openzigs/director/library",
           downloadCachePath: "~/.openzigs/director/cache",

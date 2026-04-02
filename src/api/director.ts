@@ -50,7 +50,9 @@ import { BrandKitRepository } from "../video/brand-kit.js";
 
 /** Late-bound Socket.IO reference for emitting activity events. */
 let _io: SocketIOServer | null = null;
-export function setDirectorIO(io: SocketIOServer): void { _io = io; }
+export function setDirectorIO(io: SocketIOServer): void {
+  _io = io;
+}
 
 export interface DirectorRouterOptions {
   copilot: CopilotWrapper;
@@ -82,7 +84,9 @@ export const createDirectorRouter = ({
 }: DirectorRouterOptions): Router => {
   const router = Router();
 
-  async function probeAudioDurationSeconds(filePath: string): Promise<number | null> {
+  async function probeAudioDurationSeconds(
+    filePath: string,
+  ): Promise<number | null> {
     return await new Promise<number | null>((resolve) => {
       const proc = spawn("ffprobe", [
         "-v",
@@ -215,7 +219,9 @@ export const createDirectorRouter = ({
   const thumbnailJobs = new Map<string, ThumbnailJob>();
 
   /** Lazy singleton asset manager (hoisted so config PUT can reset it). */
-  let assetManagerInstance: import("../video/assets/asset-manager.js").AssetManager | null = null;
+  let assetManagerInstance:
+    | import("../video/assets/asset-manager.js").AssetManager
+    | null = null;
 
   /** Ensure gallery collection/tag tables exist (idempotent). */
   let galleryTablesReady = false;
@@ -254,10 +260,15 @@ export const createDirectorRouter = ({
   router.get("/narration/directives", (_req, res) => {
     res.json({
       directives: NARRATION_DIRECTIVES,
-      voices: AVAILABLE_LOCAL_VOICES.map(v => {
+      voices: AVAILABLE_LOCAL_VOICES.map((v) => {
         // Infer language/gender from the voice id prefix (af=American Female, bm=British Male, etc.)
         const prefix = v.id.slice(0, 2);
-        const langMap: Record<string, string> = { a: "en-US", b: "en-GB", j: "ja-JP", z: "zh-CN" };
+        const langMap: Record<string, string> = {
+          a: "en-US",
+          b: "en-GB",
+          j: "ja-JP",
+          z: "zh-CN",
+        };
         const genderMap: Record<string, string> = { f: "female", m: "male" };
         return {
           id: v.id,
@@ -276,12 +287,24 @@ export const createDirectorRouter = ({
       outputDir: config.outputDir,
       defaultTemplate: config.defaultTemplate,
       defaultModel: runtimeConfig.defaultModel,
-      pixabayApiKey: runtimeConfig.pixabayApiKey ? "••••" + runtimeConfig.pixabayApiKey.slice(-4) : "",
-      jamendoClientId: runtimeConfig.jamendoClientId ? "••••" + runtimeConfig.jamendoClientId.slice(-4) : "",
-      pexelsApiKey: runtimeConfig.pexelsApiKey ? "••••" + runtimeConfig.pexelsApiKey.slice(-4) : "",
-      pixabayConfigured: !!runtimeConfig.pixabayApiKey && !runtimeConfig.pixabayApiKey.startsWith("${"),
-      jamendoConfigured: !!runtimeConfig.jamendoClientId && !runtimeConfig.jamendoClientId.startsWith("${"),
-      pexelsConfigured: !!runtimeConfig.pexelsApiKey && !runtimeConfig.pexelsApiKey.startsWith("${"),
+      pixabayApiKey: runtimeConfig.pixabayApiKey
+        ? "••••" + runtimeConfig.pixabayApiKey.slice(-4)
+        : "",
+      jamendoClientId: runtimeConfig.jamendoClientId
+        ? "••••" + runtimeConfig.jamendoClientId.slice(-4)
+        : "",
+      pexelsApiKey: runtimeConfig.pexelsApiKey
+        ? "••••" + runtimeConfig.pexelsApiKey.slice(-4)
+        : "",
+      pixabayConfigured:
+        !!runtimeConfig.pixabayApiKey &&
+        !runtimeConfig.pixabayApiKey.startsWith("${"),
+      jamendoConfigured:
+        !!runtimeConfig.jamendoClientId &&
+        !runtimeConfig.jamendoClientId.startsWith("${"),
+      pexelsConfigured:
+        !!runtimeConfig.pexelsApiKey &&
+        !runtimeConfig.pexelsApiKey.startsWith("${"),
     });
   });
 
@@ -290,12 +313,13 @@ export const createDirectorRouter = ({
    * Body: { pixabayApiKey?, jamendoClientId?, pexelsApiKey?, defaultModel? }
    */
   router.put("/config", (req, res) => {
-    const { pixabayApiKey, jamendoClientId, pexelsApiKey, defaultModel } = req.body as {
-      pixabayApiKey?: string;
-      jamendoClientId?: string;
-      pexelsApiKey?: string;
-      defaultModel?: string;
-    };
+    const { pixabayApiKey, jamendoClientId, pexelsApiKey, defaultModel } =
+      req.body as {
+        pixabayApiKey?: string;
+        jamendoClientId?: string;
+        pexelsApiKey?: string;
+        defaultModel?: string;
+      };
 
     if (pixabayApiKey !== undefined) {
       runtimeConfig.pixabayApiKey = pixabayApiKey;
@@ -328,7 +352,8 @@ export const createDirectorRouter = ({
    */
   router.get("/templates", async (_req, res) => {
     try {
-      const { createTemplateRegistry } = await import("../video/templates/template-registry.js");
+      const { createTemplateRegistry } =
+        await import("../video/templates/template-registry.js");
       const registry = createTemplateRegistry();
       const templates = registry.getAll().map((t) => ({
         id: t.id,
@@ -357,9 +382,13 @@ export const createDirectorRouter = ({
    */
   router.get("/templates/:id", async (req, res) => {
     try {
-      const { createTemplateRegistry } = await import("../video/templates/template-registry.js");
+      const { createTemplateRegistry } =
+        await import("../video/templates/template-registry.js");
       const registry = createTemplateRegistry();
-      const template = registry.get(req.params.id as import("../video/manifest/manifest-types.js").TemplateId);
+      const template = registry.get(
+        req.params
+          .id as import("../video/manifest/manifest-types.js").TemplateId,
+      );
       if (!template) {
         res.status(404).json({ error: `Template not found: ${req.params.id}` });
         return;
@@ -380,15 +409,21 @@ export const createDirectorRouter = ({
         localLibraryPath: config.assets.localLibraryPath,
         downloadCachePath: config.assets.downloadCachePath,
         pixabay: {
-          enabled: !!runtimeConfig.pixabayApiKey && !runtimeConfig.pixabayApiKey.startsWith("${"),
+          enabled:
+            !!runtimeConfig.pixabayApiKey &&
+            !runtimeConfig.pixabayApiKey.startsWith("${"),
           apiKey: runtimeConfig.pixabayApiKey,
         },
         jamendo: {
-          enabled: !!runtimeConfig.jamendoClientId && !runtimeConfig.jamendoClientId.startsWith("${"),
+          enabled:
+            !!runtimeConfig.jamendoClientId &&
+            !runtimeConfig.jamendoClientId.startsWith("${"),
           clientId: runtimeConfig.jamendoClientId,
         },
         pexels: {
-          enabled: !!runtimeConfig.pexelsApiKey && !runtimeConfig.pexelsApiKey.startsWith("${"),
+          enabled:
+            !!runtimeConfig.pexelsApiKey &&
+            !runtimeConfig.pexelsApiKey.startsWith("${"),
           apiKey: runtimeConfig.pexelsApiKey,
         },
       });
@@ -403,15 +438,16 @@ export const createDirectorRouter = ({
    */
   router.post("/assets/search", async (req, res) => {
     try {
-      const { query, source, type, minDuration, maxDuration, page, perPage } = req.body as {
-        query: string;
-        source?: "local" | "pixabay" | "jamendo" | "pexels" | "all";
-        type?: "music" | "sfx" | "image" | "video";
-        minDuration?: number;
-        maxDuration?: number;
-        page?: number;
-        perPage?: number;
-      };
+      const { query, source, type, minDuration, maxDuration, page, perPage } =
+        req.body as {
+          query: string;
+          source?: "local" | "pixabay" | "jamendo" | "pexels" | "all";
+          type?: "music" | "sfx" | "image" | "video";
+          minDuration?: number;
+          maxDuration?: number;
+          page?: number;
+          perPage?: number;
+        };
 
       if (!query || typeof query !== "string") {
         res.status(400).json({ error: "query is required" });
@@ -457,7 +493,8 @@ export const createDirectorRouter = ({
       }
 
       const manager = await getAssetManager();
-      const assetType = source === "pexels" ? "image" as const : "music" as const;
+      const assetType =
+        source === "pexels" ? ("image" as const) : ("music" as const);
       const result = await manager.download({
         id: id ?? name,
         name,
@@ -468,10 +505,19 @@ export const createDirectorRouter = ({
         filePath: "",
         duration: 0,
         tags: [],
-        license: source === "pixabay" ? "Pixabay License" : source === "pexels" ? "Pexels License" : "Creative Commons",
+        license:
+          source === "pixabay"
+            ? "Pixabay License"
+            : source === "pexels"
+              ? "Pexels License"
+              : "Creative Commons",
       });
 
-      res.json({ success: true, filePath: result.filePath, asset: result.asset });
+      res.json({
+        success: true,
+        filePath: result.filePath,
+        asset: result.asset,
+      });
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       logger.error(`[Director API] POST /assets/download failed: ${msg}`);
@@ -502,7 +548,11 @@ export const createDirectorRouter = ({
    */
   router.post("/assets/upload", async (req, res) => {
     try {
-      const { filePath: srcPath, name, type } = req.body as {
+      const {
+        filePath: srcPath,
+        name,
+        type,
+      } = req.body as {
         filePath: string;
         name?: string;
         type?: "music" | "sfx" | "voiceover";
@@ -530,8 +580,18 @@ export const createDirectorRouter = ({
       const homeDir = osMod.homedir();
       const allowedRoots = [homeDir, pathMod.resolve(config.outputDir)];
       const normalizedResolved = pathMod.resolve(resolved);
-      if (!allowedRoots.some((root) => normalizedResolved.startsWith(root + pathMod.sep) || normalizedResolved === root)) {
-        res.status(403).json({ error: "Access denied: file path is outside allowed directories" });
+      if (
+        !allowedRoots.some(
+          (root) =>
+            normalizedResolved.startsWith(root + pathMod.sep) ||
+            normalizedResolved === root,
+        )
+      ) {
+        res
+          .status(403)
+          .json({
+            error: "Access denied: file path is outside allowed directories",
+          });
         return;
       }
 
@@ -576,61 +636,80 @@ export const createDirectorRouter = ({
    * Body:
    *   raw binary bytes
    */
-  router.post("/files/upload", raw({ type: "*/*", limit: "2gb" }), async (req, res) => {
-    try {
-      const kind = String(req.query.kind ?? "video");
-      if (kind !== "video" && kind !== "audio" && kind !== "script") {
-        res.status(400).json({ error: "kind must be one of: video, audio, script" });
-        return;
-      }
-
-      const body = req.body;
-      if (!Buffer.isBuffer(body) || body.length === 0) {
-        res.status(400).json({ error: "request body must contain file bytes" });
-        return;
-      }
-
-      const fs = await import("node:fs/promises");
-      const pathMod = await import("node:path");
-
-      const rawNameHeader = String(req.header("x-file-name") || "upload.bin");
-      const decodedName = (() => {
-        try {
-          return decodeURIComponent(rawNameHeader);
-        } catch {
-          return rawNameHeader;
+  router.post(
+    "/files/upload",
+    raw({ type: "*/*", limit: "2gb" }),
+    async (req, res) => {
+      try {
+        const kind = String(req.query.kind ?? "video");
+        if (kind !== "video" && kind !== "audio" && kind !== "script") {
+          res
+            .status(400)
+            .json({ error: "kind must be one of: video, audio, script" });
+          return;
         }
-      })();
 
-      const safeName = pathMod.basename(decodedName).replace(/[^a-zA-Z0-9._-]/g, "_");
-      const fileName = safeName.length > 0 ? safeName : "upload.bin";
-      const targetDir = kind === "audio"
-        ? config.assets.localLibraryPath
-        : pathMod.join(config.outputDir, "uploads", kind === "video" ? "videos" : "scripts");
+        const body = req.body;
+        if (!Buffer.isBuffer(body) || body.length === 0) {
+          res
+            .status(400)
+            .json({ error: "request body must contain file bytes" });
+          return;
+        }
 
-      await fs.mkdir(targetDir, { recursive: true });
+        const fs = await import("node:fs/promises");
+        const pathMod = await import("node:path");
 
-      const uniqueName = `${Date.now()}-${fileName}`;
-      const filePath = pathMod.join(targetDir, uniqueName);
-      await fs.writeFile(filePath, body);
+        const rawNameHeader = String(req.header("x-file-name") || "upload.bin");
+        const decodedName = (() => {
+          try {
+            return decodeURIComponent(rawNameHeader);
+          } catch {
+            return rawNameHeader;
+          }
+        })();
 
-      const mimeType = String(req.header("x-file-type") || "application/octet-stream");
-      logger.info(`[Director API] Uploaded ${kind} file: ${filePath} (${body.length} bytes)`);
+        const safeName = pathMod
+          .basename(decodedName)
+          .replace(/[^a-zA-Z0-9._-]/g, "_");
+        const fileName = safeName.length > 0 ? safeName : "upload.bin";
+        const targetDir =
+          kind === "audio"
+            ? config.assets.localLibraryPath
+            : pathMod.join(
+                config.outputDir,
+                "uploads",
+                kind === "video" ? "videos" : "scripts",
+              );
 
-      res.json({
-        success: true,
-        kind,
-        filePath,
-        fileName: uniqueName,
-        size: body.length,
-        mimeType,
-      });
-    } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error);
-      logger.error(`[Director API] POST /files/upload failed: ${msg}`);
-      res.status(500).json({ error: msg });
-    }
-  });
+        await fs.mkdir(targetDir, { recursive: true });
+
+        const uniqueName = `${Date.now()}-${fileName}`;
+        const filePath = pathMod.join(targetDir, uniqueName);
+        await fs.writeFile(filePath, body);
+
+        const mimeType = String(
+          req.header("x-file-type") || "application/octet-stream",
+        );
+        logger.info(
+          `[Director API] Uploaded ${kind} file: ${filePath} (${body.length} bytes)`,
+        );
+
+        res.json({
+          success: true,
+          kind,
+          filePath,
+          fileName: uniqueName,
+          size: body.length,
+          mimeType,
+        });
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        logger.error(`[Director API] POST /files/upload failed: ${msg}`);
+        res.status(500).json({ error: msg });
+      }
+    },
+  );
 
   // ── Visual Injection (Issue #270 / SI-2) ──────────────────────────────────
 
@@ -643,51 +722,82 @@ export const createDirectorRouter = ({
    *
    * Stores the asset in ~/.openzigs/director/uploads/visual/ and returns the path.
    */
-  router.post("/files/upload-asset", raw({ type: "*/*", limit: "500mb" }), async (req, res) => {
-    try {
-      const kind = String(req.query.kind ?? "image");
-      if (kind !== "image" && kind !== "video") {
-        res.status(400).json({ error: "kind must be 'image' or 'video'" });
-        return;
+  router.post(
+    "/files/upload-asset",
+    raw({ type: "*/*", limit: "500mb" }),
+    async (req, res) => {
+      try {
+        const kind = String(req.query.kind ?? "image");
+        if (kind !== "image" && kind !== "video") {
+          res.status(400).json({ error: "kind must be 'image' or 'video'" });
+          return;
+        }
+
+        const body = req.body as Buffer;
+        if (!Buffer.isBuffer(body) || body.length === 0) {
+          res
+            .status(400)
+            .json({ error: "request body must contain file bytes" });
+          return;
+        }
+
+        const fs = await import("node:fs/promises");
+        const pathMod = await import("node:path");
+        const osMod = await import("node:os");
+
+        const rawName = String(req.header("x-file-name") || "asset.bin");
+        let decodedName: string;
+        try {
+          decodedName = decodeURIComponent(rawName);
+        } catch {
+          decodedName = rawName;
+        }
+        const safeName = pathMod
+          .basename(decodedName)
+          .replace(/[^a-zA-Z0-9._-]/g, "_");
+        const fileName = safeName || "asset.bin";
+        const uniqueName = `${Date.now()}-${fileName}`;
+
+        const targetDir = pathMod.join(
+          osMod.homedir(),
+          ".openzigs",
+          "director",
+          "uploads",
+          "visual",
+        );
+        await fs.mkdir(targetDir, { recursive: true });
+        const filePath = pathMod.join(targetDir, uniqueName);
+        await fs.writeFile(filePath, body);
+
+        logger.info(
+          `[Director API] Uploaded ${kind} overlay asset: ${filePath} (${body.length} bytes)`,
+        );
+
+        // For video uploads, probe for duration and dimensions
+        let videoInfo: {
+          durationSec: number;
+          width: number;
+          height: number;
+        } | null = null;
+        if (kind === "video") {
+          videoInfo = await probeVideoInfo(filePath);
+        }
+
+        res.json({
+          success: true,
+          kind,
+          filePath,
+          fileName: uniqueName,
+          size: body.length,
+          videoInfo,
+        });
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        logger.error(`[Director API] POST /files/upload-asset failed: ${msg}`);
+        res.status(500).json({ error: msg });
       }
-
-      const body = req.body as Buffer;
-      if (!Buffer.isBuffer(body) || body.length === 0) {
-        res.status(400).json({ error: "request body must contain file bytes" });
-        return;
-      }
-
-      const fs = await import("node:fs/promises");
-      const pathMod = await import("node:path");
-      const osMod = await import("node:os");
-
-      const rawName = String(req.header("x-file-name") || "asset.bin");
-      let decodedName: string;
-      try { decodedName = decodeURIComponent(rawName); } catch { decodedName = rawName; }
-      const safeName = pathMod.basename(decodedName).replace(/[^a-zA-Z0-9._-]/g, "_");
-      const fileName = safeName || "asset.bin";
-      const uniqueName = `${Date.now()}-${fileName}`;
-
-      const targetDir = pathMod.join(osMod.homedir(), ".openzigs", "director", "uploads", "visual");
-      await fs.mkdir(targetDir, { recursive: true });
-      const filePath = pathMod.join(targetDir, uniqueName);
-      await fs.writeFile(filePath, body);
-
-      logger.info(`[Director API] Uploaded ${kind} overlay asset: ${filePath} (${body.length} bytes)`);
-
-      // For video uploads, probe for duration and dimensions
-      let videoInfo: { durationSec: number; width: number; height: number } | null = null;
-      if (kind === "video") {
-        videoInfo = await probeVideoInfo(filePath);
-      }
-
-      res.json({ success: true, kind, filePath, fileName: uniqueName, size: body.length, videoInfo });
-    } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error);
-      logger.error(`[Director API] POST /files/upload-asset failed: ${msg}`);
-      res.status(500).json({ error: msg });
-    }
-  });
+    },
+  );
 
   /**
    * POST /assets/placement — use the LLM to determine optimal overlay timestamps
@@ -716,20 +826,29 @@ export const createDirectorRouter = ({
         return;
       }
       if (!assets || !Array.isArray(assets) || assets.length === 0) {
-        res.status(400).json({ error: "assets array is required and must not be empty" });
+        res
+          .status(400)
+          .json({ error: "assets array is required and must not be empty" });
         return;
       }
       if (typeof videoDurationSec !== "number" || videoDurationSec <= 0) {
-        res.status(400).json({ error: "videoDurationSec must be a positive number" });
+        res
+          .status(400)
+          .json({ error: "videoDurationSec must be a positive number" });
         return;
       }
       if (assets.length > 20) {
-        res.status(400).json({ error: "Maximum 20 assets per placement request" });
+        res
+          .status(400)
+          .json({ error: "Maximum 20 assets per placement request" });
         return;
       }
 
       const assetList = assets
-        .map((a, i) => `  ${i + 1}. ID: ${a.id} | Description: ${a.description ?? path.basename(a.path)}`)
+        .map(
+          (a, i) =>
+            `  ${i + 1}. ID: ${a.id} | Description: ${a.description ?? path.basename(a.path)}`,
+        )
         .join("\n");
 
       const placementPrompt = `You are a video editor's assistant. Given the narration script and list of visual assets below, determine the optimal timestamps at which each asset should appear as an overlay in the video.
@@ -764,17 +883,24 @@ Respond with ONLY a valid JSON array. No explanation. Example:
       let placements: unknown[];
       try {
         // Strip any markdown code fences from the LLM response
-        const rawJson = responseText.replace(/```(?:json)?\s*/gi, "").replace(/```\s*/g, "").trim();
+        const rawJson = responseText
+          .replace(/```(?:json)?\s*/gi, "")
+          .replace(/```\s*/g, "")
+          .trim();
         const parsed: unknown = JSON.parse(rawJson);
         if (!Array.isArray(parsed)) throw new Error("expected array");
         placements = parsed;
       } catch {
-        logger.warn("[Director API] LLM placement response was not valid JSON — returning raw");
+        logger.warn(
+          "[Director API] LLM placement response was not valid JSON — returning raw",
+        );
         res.json({ raw: responseText, placements: [] });
         return;
       }
 
-      logger.info(`[Director API] Generated ${placements.length} asset placements via LLM`);
+      logger.info(
+        `[Director API] Generated ${placements.length} asset placements via LLM`,
+      );
       res.json({ placements });
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
@@ -794,7 +920,11 @@ Respond with ONLY a valid JSON array. No explanation. Example:
    */
   router.post("/assets/overlay", async (req, res) => {
     try {
-      const { backgroundPath, outputPath: requestedOutput, placements } = req.body as {
+      const {
+        backgroundPath,
+        outputPath: requestedOutput,
+        placements,
+      } = req.body as {
         backgroundPath?: string;
         outputPath?: string;
         placements?: unknown[];
@@ -808,8 +938,16 @@ Respond with ONLY a valid JSON array. No explanation. Example:
         res.status(400).json({ error: "Invalid backgroundPath" });
         return;
       }
-      if (!placements || !Array.isArray(placements) || placements.length === 0) {
-        res.status(400).json({ error: "placements array is required and must not be empty" });
+      if (
+        !placements ||
+        !Array.isArray(placements) ||
+        placements.length === 0
+      ) {
+        res
+          .status(400)
+          .json({
+            error: "placements array is required and must not be empty",
+          });
         return;
       }
 
@@ -817,13 +955,22 @@ Respond with ONLY a valid JSON array. No explanation. Example:
       const osMod = await import("node:os");
 
       // Default output path if not specified
-      const outputPath = requestedOutput
-        || pathMod.join(osMod.homedir(), ".openzigs", "director", "uploads", "overlay", `${Date.now()}-overlay.mp4`);
+      const outputPath =
+        requestedOutput ||
+        pathMod.join(
+          osMod.homedir(),
+          ".openzigs",
+          "director",
+          "uploads",
+          "overlay",
+          `${Date.now()}-overlay.mp4`,
+        );
 
       const { overlayAssets } = await import("../video/asset-overlay.js");
       const result = await overlayAssets({
         backgroundPath,
-        placements: placements as import("../video/asset-overlay.js").AssetPlacement[],
+        placements:
+          placements as import("../video/asset-overlay.js").AssetPlacement[],
         outputPath,
       });
 
@@ -847,9 +994,27 @@ Respond with ONLY a valid JSON array. No explanation. Example:
 
       const fileName = pathMod.basename(req.params.fileName); // strip traversal
       const searchDirs = [
-        pathMod.join(osMod.homedir(), ".openzigs", "director", "uploads", "visual"),
-        pathMod.join(osMod.homedir(), ".openzigs", "director", "uploads", "videos"),
-        pathMod.join(osMod.homedir(), ".openzigs", "director", "uploads", "overlay"),
+        pathMod.join(
+          osMod.homedir(),
+          ".openzigs",
+          "director",
+          "uploads",
+          "visual",
+        ),
+        pathMod.join(
+          osMod.homedir(),
+          ".openzigs",
+          "director",
+          "uploads",
+          "videos",
+        ),
+        pathMod.join(
+          osMod.homedir(),
+          ".openzigs",
+          "director",
+          "uploads",
+          "overlay",
+        ),
         pathMod.join(osMod.homedir(), ".openzigs", "director", "ref-audio"),
         pathMod.join(osMod.homedir(), ".openzigs", "director", "images"),
         pathMod.join(osMod.homedir(), ".openzigs", "director", "blog"),
@@ -868,9 +1033,15 @@ Respond with ONLY a valid JSON array. No explanation. Example:
 
       // Search render job subdirectories (~/.openzigs/renders/<jobId>/)
       if (!found) {
-        const rendersBase = pathMod.join(osMod.homedir(), ".openzigs", "renders");
+        const rendersBase = pathMod.join(
+          osMod.homedir(),
+          ".openzigs",
+          "renders",
+        );
         if (fsMod.existsSync(rendersBase)) {
-          const jobDirs = fsMod.readdirSync(rendersBase, { withFileTypes: true });
+          const jobDirs = fsMod.readdirSync(rendersBase, {
+            withFileTypes: true,
+          });
           for (const d of jobDirs) {
             if (!d.isDirectory()) continue;
             const candidate = pathMod.join(rendersBase, d.name, fileName);
@@ -920,7 +1091,30 @@ Respond with ONLY a valid JSON array. No explanation. Example:
    */
   router.post("/produce", async (req, res) => {
     try {
-      const { clips, mode, scriptPath, musicTrackPath, template, model, enableVisionAnalysis, inputFile, sourceType, topic, imageProvider, imageModel, slideStyle, assetsOnlyMode, quizEnabled, visualAssets, brandVoiceId, imageClipDurationSeconds, heroReelOverview, defaultClipDuration, heroReelImages, inspirationContext } = req.body as {
+      const {
+        clips,
+        mode,
+        scriptPath,
+        musicTrackPath,
+        template,
+        model,
+        enableVisionAnalysis,
+        inputFile,
+        sourceType,
+        topic,
+        imageProvider,
+        imageModel,
+        slideStyle,
+        assetsOnlyMode,
+        quizEnabled,
+        visualAssets,
+        brandVoiceId,
+        imageClipDurationSeconds,
+        heroReelOverview,
+        defaultClipDuration,
+        heroReelImages,
+        inspirationContext,
+      } = req.body as {
         clips?: string[];
         mode: "highlight" | "script" | "presentation" | "hero-reel";
         scriptPath?: string;
@@ -955,34 +1149,57 @@ Respond with ONLY a valid JSON array. No explanation. Example:
         }>;
       };
 
-      if (!mode || !["highlight", "script", "presentation", "hero-reel"].includes(mode)) {
-        res.status(400).json({ error: "mode must be 'highlight', 'script', 'presentation', or 'hero-reel'" });
+      if (
+        !mode ||
+        !["highlight", "script", "presentation", "hero-reel"].includes(mode)
+      ) {
+        res
+          .status(400)
+          .json({
+            error:
+              "mode must be 'highlight', 'script', 'presentation', or 'hero-reel'",
+          });
         return;
       }
 
       // Validate mode-specific required fields before creating the job
       if (mode === "presentation" && !inputFile) {
-        res.status(400).json({ error: "'inputFile' is required for presentation mode" });
+        res
+          .status(400)
+          .json({ error: "'inputFile' is required for presentation mode" });
         return;
       }
       if (inputFile && (inputFile.includes("\0") || inputFile.includes(".."))) {
         res.status(400).json({ error: "Invalid inputFile path" });
         return;
       }
-      if (scriptPath && (scriptPath.includes("\0") || scriptPath.includes(".."))) {
+      if (
+        scriptPath &&
+        (scriptPath.includes("\0") || scriptPath.includes(".."))
+      ) {
         res.status(400).json({ error: "Invalid scriptPath" });
         return;
       }
-      if (musicTrackPath && (musicTrackPath.includes("\0") || musicTrackPath.includes(".."))) {
+      if (
+        musicTrackPath &&
+        (musicTrackPath.includes("\0") || musicTrackPath.includes(".."))
+      ) {
         res.status(400).json({ error: "Invalid musicTrackPath" });
         return;
       }
       if (mode === "hero-reel" && !heroReelOverview?.trim()) {
-        res.status(400).json({ error: "'heroReelOverview' is required for hero-reel mode" });
+        res
+          .status(400)
+          .json({ error: "'heroReelOverview' is required for hero-reel mode" });
         return;
       }
-      if ((mode === "highlight" || mode === "script") && (!clips || !Array.isArray(clips) || clips.length === 0)) {
-        res.status(400).json({ error: "clips array is required and must not be empty" });
+      if (
+        (mode === "highlight" || mode === "script") &&
+        (!clips || !Array.isArray(clips) || clips.length === 0)
+      ) {
+        res
+          .status(400)
+          .json({ error: "clips array is required and must not be empty" });
         return;
       }
 
@@ -990,24 +1207,44 @@ Respond with ONLY a valid JSON array. No explanation. Example:
       // This matches the gallery's async pattern: submit → poll for result.
       const produceJobId = nanoid();
       const produceAbort = new AbortController();
-      const job: ProduceJob = { id: produceJobId, status: "running", startedAt: Date.now(), abort: produceAbort };
+      const job: ProduceJob = {
+        id: produceJobId,
+        status: "running",
+        startedAt: Date.now(),
+        abort: produceAbort,
+      };
       produceJobs.set(produceJobId, job);
 
       // Evict old completed/failed jobs (keep last 20)
       const allJobs = [...produceJobs.values()];
-      const finished = allJobs.filter(j => j.status !== "running").sort((a, b) => (a.completedAt ?? 0) - (b.completedAt ?? 0));
+      const finished = allJobs
+        .filter((j) => j.status !== "running")
+        .sort((a, b) => (a.completedAt ?? 0) - (b.completedAt ?? 0));
       while (finished.length > 20) {
         const old = finished.shift()!;
         produceJobs.delete(old.id);
       }
 
       res.status(202).json({ produceJobId });
-      logger.info(`[Director API] Produce job ${produceJobId} accepted (mode=${mode}) — running in background`);
+      logger.info(
+        `[Director API] Produce job ${produceJobId} accepted (mode=${mode}) — running in background`,
+      );
 
       /** Emit a produce activity event via Socket.IO (if available). */
-      const emitActivity = (phase: string, detail?: string, extra?: Record<string, unknown>) => {
+      const emitActivity = (
+        phase: string,
+        detail?: string,
+        extra?: Record<string, unknown>,
+      ) => {
         if (!_io) return;
-        _io.emit("produce:progress", { id: produceJobId, mode, phase, detail, timestamp: Date.now(), ...extra });
+        _io.emit("produce:progress", {
+          id: produceJobId,
+          mode,
+          phase,
+          detail,
+          timestamp: Date.now(),
+          ...extra,
+        });
       };
 
       emitActivity("started", `${mode} pipeline initiated`);
@@ -1022,457 +1259,621 @@ Respond with ONLY a valid JSON array. No explanation. Example:
         };
 
         try {
+          // ── Presentation mode: document → storyboard → images → TTS → manifest ──
+          if (mode === "presentation") {
+            const startTime = Date.now();
 
-      // ── Presentation mode: document → storyboard → images → TTS → manifest ──
-      if (mode === "presentation") {
+            const fs = await import("node:fs/promises");
+            const path = await import("node:path");
+            const os = await import("node:os");
+            const { StoryboardEngine } =
+              await import("../video/generators/storyboard-engine.js");
+            const { ImageGenService } =
+              await import("../video/generators/image-gen-service.js");
+            const { nanoid } = await import("nanoid");
 
-        const startTime = Date.now();
+            // Step A: Ingest the text document
+            let rawText: string;
+            try {
+              rawText = await fs.readFile(inputFile!, "utf-8");
+            } catch (readErr) {
+              const readMsg =
+                readErr instanceof Error ? readErr.message : String(readErr);
+              throw new Error(`Failed to read input file: ${readMsg}`);
+            }
 
-        const fs = await import("node:fs/promises");
-        const path = await import("node:path");
-        const os = await import("node:os");
-        const { StoryboardEngine } = await import("../video/generators/storyboard-engine.js");
-        const { ImageGenService } = await import("../video/generators/image-gen-service.js");
-        const { nanoid } = await import("nanoid");
+            if (sourceType === "markdown" || inputFile!.endsWith(".md")) {
+              rawText = rawText.replace(
+                /```[\s\S]*?```/g,
+                "[code block removed]",
+              );
+            }
 
-        // Step A: Ingest the text document
-        let rawText: string;
-        try {
-          rawText = await fs.readFile(inputFile!, "utf-8");
-        } catch (readErr) {
-          const readMsg = readErr instanceof Error ? readErr.message : String(readErr);
-          throw new Error(`Failed to read input file: ${readMsg}`);
-        }
+            logger.info(
+              `[Director API] Presentation mode: read ${rawText.length} chars from ${inputFile}`,
+            );
 
-        if (sourceType === "markdown" || inputFile!.endsWith(".md")) {
-          rawText = rawText.replace(/```[\s\S]*?```/g, "[code block removed]");
-        }
+            // Step B: Generate storyboard via LLM
+            checkAborted();
+            emitActivity("storyboard", "Generating storyboard from document");
+            const storyboardEngine = new StoryboardEngine(copilot);
+            const storyboardOptions: import("../video/generators/storyboard-engine.js").StoryboardOptions =
+              {};
+            if (topic) {
+              storyboardOptions.styleHint = topic;
+            }
+            const resolvedModel =
+              model || runtimeConfig.defaultModel || undefined;
+            if (resolvedModel) {
+              storyboardOptions.model = resolvedModel;
+            }
+            // Pass visual asset descriptions so the LLM can weave them into narration
+            if (visualAssets && visualAssets.length > 0) {
+              storyboardOptions.visualAssets = visualAssets
+                .filter((a: { description?: string }) => a.description?.trim())
+                .map((a: { description: string; type?: string }) => ({
+                  description: a.description,
+                  type: (a.type === "video" ? "video" : "image") as
+                    | "image"
+                    | "video",
+                }));
+            }
+            if (slideStyle) {
+              storyboardOptions.slideStyle = true;
+            }
+            if (assetsOnlyMode && visualAssets && visualAssets.length > 0) {
+              storyboardOptions.assetsOnlyMode = true;
+            }
+            if (
+              imageClipDurationSeconds &&
+              imageClipDurationSeconds >= 1 &&
+              imageClipDurationSeconds <= 10
+            ) {
+              storyboardOptions.imageClipDurationSeconds =
+                imageClipDurationSeconds;
+            }
+            // Inject brand voice (specific ID or active default) if available
+            if (brandVoiceService) {
+              const voiceBlock =
+                brandVoiceService.getVoicePromptBlockById(brandVoiceId);
+              if (voiceBlock) storyboardOptions.brandVoiceBlock = voiceBlock;
+            }
+            const storyboard = await storyboardEngine.generate(
+              rawText,
+              storyboardOptions,
+            );
 
-        logger.info(`[Director API] Presentation mode: read ${rawText.length} chars from ${inputFile}`);
+            logger.info(
+              `[Director API] Storyboard generated: "${storyboard.title}" with ${storyboard.scenes.length} scenes`,
+            );
+            checkAborted();
+            emitActivity(
+              "images",
+              `Generating assets for ${storyboard.scenes.length} scenes`,
+            );
 
-        // Step B: Generate storyboard via LLM
-        checkAborted();
-        emitActivity("storyboard", "Generating storyboard from document");
-        const storyboardEngine = new StoryboardEngine(copilot);
-        const storyboardOptions: import("../video/generators/storyboard-engine.js").StoryboardOptions = {};
-        if (topic) {
-          storyboardOptions.styleHint = topic;
-        }
-        const resolvedModel = model || runtimeConfig.defaultModel || undefined;
-        if (resolvedModel) {
-          storyboardOptions.model = resolvedModel;
-        }
-        // Pass visual asset descriptions so the LLM can weave them into narration
-        if (visualAssets && visualAssets.length > 0) {
-          storyboardOptions.visualAssets = visualAssets
-            .filter((a: { description?: string }) => a.description?.trim())
-            .map((a: { description: string; type?: string }) => ({
-              description: a.description,
-              type: (a.type === "video" ? "video" : "image") as "image" | "video",
-            }));
-        }
-        if (slideStyle) {
-          storyboardOptions.slideStyle = true;
-        }
-        if (assetsOnlyMode && visualAssets && visualAssets.length > 0) {
-          storyboardOptions.assetsOnlyMode = true;
-        }
-        if (imageClipDurationSeconds && imageClipDurationSeconds >= 1 && imageClipDurationSeconds <= 10) {
-          storyboardOptions.imageClipDurationSeconds = imageClipDurationSeconds;
-        }
-        // Inject brand voice (specific ID or active default) if available
-        if (brandVoiceService) {
-          const voiceBlock = brandVoiceService.getVoicePromptBlockById(brandVoiceId);
-          if (voiceBlock) storyboardOptions.brandVoiceBlock = voiceBlock;
-        }
-        const storyboard = await storyboardEngine.generate(rawText, storyboardOptions);
+            // Step C: Generate images for each scene
+            // Generate at ~model-native resolution (NOT output resolution).
+            // Diffusion models (SDXL Turbo, Flux, etc.) are trained on specific
+            // resolutions; requesting 1920x1080 produces degenerate outputs where
+            // the model can't differentiate prompts. The Remotion KenBurns component
+            // uses object-fit:cover to scale any source image to fill the frame.
+            //
+            // Images are stored in ~/.openzigs/director/images/ (persistent) rather
+            // than /tmp/ — macOS aggressively purges /tmp/ which caused images to
+            // vanish between the produce and render steps.
+            const imageOutputDir = path.join(
+              os.homedir(),
+              ".openzigs",
+              "director",
+              "images",
+            );
+            const imageGenUserConfig =
+              await ImageGenService.loadUserImageGenConfig();
+            const imageService = new ImageGenService({
+              outputDir: imageOutputDir,
+              ...imageGenUserConfig,
+            });
+            await imageService.initialize();
 
-        logger.info(`[Director API] Storyboard generated: "${storyboard.title}" with ${storyboard.scenes.length} scenes`);
-        checkAborted();
-        emitActivity("images", `Generating assets for ${storyboard.scenes.length} scenes`);
+            const resolvedImageProvider = imageProvider ?? "auto";
+            logger.info(
+              `[Director API] Image provider: ${resolvedImageProvider}${imageModel ? `, model: ${imageModel}` : ""}`,
+            );
 
-        // Step C: Generate images for each scene
-        // Generate at ~model-native resolution (NOT output resolution).
-        // Diffusion models (SDXL Turbo, Flux, etc.) are trained on specific
-        // resolutions; requesting 1920x1080 produces degenerate outputs where
-        // the model can't differentiate prompts. The Remotion KenBurns component
-        // uses object-fit:cover to scale any source image to fill the frame.
-        //
-        // Images are stored in ~/.openzigs/director/images/ (persistent) rather
-        // than /tmp/ — macOS aggressively purges /tmp/ which caused images to
-        // vanish between the produce and render steps.
-        const imageOutputDir = path.join(os.homedir(), ".openzigs", "director", "images");
-        const imageGenUserConfig = await ImageGenService.loadUserImageGenConfig();
-        const imageService = new ImageGenService({ outputDir: imageOutputDir, ...imageGenUserConfig });
-        await imageService.initialize();
+            // Assets-only mode: middle scenes use uploaded assets; only intro (index 0) and
+            // outro (last scene) are AI-generated.
+            const isAssetsOnlyMode =
+              !!assetsOnlyMode && !!visualAssets && visualAssets.length > 0;
+            const lastSceneIndex = storyboard.scenes.length - 1;
 
-        const resolvedImageProvider = imageProvider ?? "auto";
-        logger.info(`[Director API] Image provider: ${resolvedImageProvider}${imageModel ? `, model: ${imageModel}` : ""}`);
+            // Fixed 16:9 video frame resolution — do not query sidecar (its native training
+            // resolution overrides this with e.g. 1024x1024 for Flux, costing 3-5x more time).
+            const imageWidth = 768;
+            const imageHeight = 432;
+            logger.info(
+              `[Director API] Image generation resolution: ${imageWidth}x${imageHeight}`,
+            );
 
-        // Assets-only mode: middle scenes use uploaded assets; only intro (index 0) and
-        // outro (last scene) are AI-generated.
-        const isAssetsOnlyMode = !!assetsOnlyMode && !!visualAssets && visualAssets.length > 0;
-        const lastSceneIndex = storyboard.scenes.length - 1;
+            const fps = 30;
+            const templateId =
+              (template as
+                | "Minimalist"
+                | "ContentCreator"
+                | "Corporate"
+                | "TechDemo") ?? "Minimalist";
 
-        // Fixed 16:9 video frame resolution — do not query sidecar (its native training
-        // resolution overrides this with e.g. 1024x1024 for Flux, costing 3-5x more time).
-        const imageWidth = 768;
-        const imageHeight = 432;
-        logger.info(`[Director API] Image generation resolution: ${imageWidth}x${imageHeight}`);
+            const timeline: Array<
+              | import("../video/manifest/manifest-types.js").ImageSceneEntry
+              | import("../video/manifest/manifest-types.js").TitleCardEntry
+              | import("../video/manifest/manifest-types.js").TransitionEntry
+              | import("../video/manifest/manifest-types.js").OverlayEntry
+            > = [];
+            const sceneTiming: Array<{
+              index: number;
+              startTimeSec: number;
+              endTimeSec: number;
+              voiceover: string;
+            }> = [];
+            let currentFrame = 0;
+            let skippedScenes = 0;
+            // Base seed for per-scene variation — ensures each scene produces a
+            // visually distinct image even when style anchors are shared.
+            const baseSeed = Date.now() % 100_000;
 
-        const fps = 30;
-        const templateId = (template as "Minimalist" | "ContentCreator" | "Corporate" | "TechDemo") ?? "Minimalist";
+            // Step C.1: Detect F5-TTS voice profile for presentation voiceover
+            // When the audio sidecar has F5-TTS active, we synthesize
+            // voiceover via the sidecar's /f5tts endpoint with the user's
+            // voice profile clips, bypassing VoiceService (which only knows Kokoro).
+            interface F5TTSClipRow {
+              emotion: string;
+              ref_audio_path: string;
+              ref_text: string;
+            }
+            let f5ttsClips: F5TTSClipRow[] = [];
+            let sidecarBaseUrl = "";
+            let useF5TTSVoice = false;
 
-        const timeline: Array<import("../video/manifest/manifest-types.js").ImageSceneEntry | import("../video/manifest/manifest-types.js").TitleCardEntry | import("../video/manifest/manifest-types.js").TransitionEntry | import("../video/manifest/manifest-types.js").OverlayEntry> = [];
-        const sceneTiming: Array<{ index: number; startTimeSec: number; endTimeSec: number; voiceover: string }> = [];
-        let currentFrame = 0;
-        let skippedScenes = 0;
-        // Base seed for per-scene variation — ensures each scene produces a
-        // visually distinct image even when style anchors are shared.
-        const baseSeed = Date.now() % 100_000;
-
-        // Step C.1: Detect F5-TTS voice profile for presentation voiceover
-        // When the audio sidecar has F5-TTS active, we synthesize
-        // voiceover via the sidecar's /f5tts endpoint with the user's
-        // voice profile clips, bypassing VoiceService (which only knows Kokoro).
-        interface F5TTSClipRow {
-          emotion: string;
-          ref_audio_path: string;
-          ref_text: string;
-        }
-        let f5ttsClips: F5TTSClipRow[] = [];
-        let sidecarBaseUrl = "";
-        let useF5TTSVoice = false;
-
-        if (voiceService) {
-          sidecarBaseUrl = voiceService.getSidecarUrl();
-          try {
-            const healthResp = await fetch(`${sidecarBaseUrl}/health`, { signal: AbortSignal.timeout(3000) });
-            if (healthResp.ok) {
-              const health = await healthResp.json() as { active_engine?: string };
-              if (health.active_engine === "f5tts") {
-                // Load F5-TTS clips from the most recently updated F5-TTS profile
-                const db = getDatabase();
-                const f5Profile = db.prepare(
-                  `SELECT id FROM voice_profiles WHERE engine_type = 'f5tts'
+            if (voiceService) {
+              sidecarBaseUrl = voiceService.getSidecarUrl();
+              try {
+                const healthResp = await fetch(`${sidecarBaseUrl}/health`, {
+                  signal: AbortSignal.timeout(3000),
+                });
+                if (healthResp.ok) {
+                  const health = (await healthResp.json()) as {
+                    active_engine?: string;
+                  };
+                  if (health.active_engine === "f5tts") {
+                    // Load F5-TTS clips from the most recently updated F5-TTS profile
+                    const db = getDatabase();
+                    const f5Profile = db
+                      .prepare(
+                        `SELECT id FROM voice_profiles WHERE engine_type = 'f5tts'
                    ORDER BY updated_at DESC LIMIT 1`,
-                ).get() as { id: string } | undefined;
-                if (f5Profile) {
-                  const clips = db.prepare(
-                    `SELECT emotion, ref_audio_path, ref_text FROM f5tts_clips
+                      )
+                      .get() as { id: string } | undefined;
+                    if (f5Profile) {
+                      const clips = db
+                        .prepare(
+                          `SELECT emotion, ref_audio_path, ref_text FROM f5tts_clips
                      WHERE profile_id = ? ORDER BY sort_order ASC`,
-                  ).all(f5Profile.id) as F5TTSClipRow[];
-                  if (clips.length > 0) {
-                    f5ttsClips = clips;
-                    useF5TTSVoice = true;
-                    logger.info(`[Director API] F5-TTS voice detected — ${clips.length} clip(s) from profile ${f5Profile.id}`);
+                        )
+                        .all(f5Profile.id) as F5TTSClipRow[];
+                      if (clips.length > 0) {
+                        f5ttsClips = clips;
+                        useF5TTSVoice = true;
+                        logger.info(
+                          `[Director API] F5-TTS voice detected — ${clips.length} clip(s) from profile ${f5Profile.id}`,
+                        );
+                      }
+                    }
                   }
                 }
+              } catch {
+                // Sidecar not reachable; fall back to VoiceService
               }
             }
-          } catch {
-            // Sidecar not reachable; fall back to VoiceService
-          }
-        }
 
-        // ── Parallel image + voiceover generation ──────────────────────────
-        // Images and voiceovers are independent — they typically run on
-        // different machines/sidecars. By launching both streams concurrently,
-        // total production time drops significantly compared to the old
-        // sequential approach (image → audio → next scene).
+            // ── Parallel image + voiceover generation ──────────────────────────
+            // Images and voiceovers are independent — they typically run on
+            // different machines/sidecars. By launching both streams concurrently,
+            // total production time drops significantly compared to the old
+            // sequential approach (image → audio → next scene).
 
-        type SceneImageResult = { index: number; filePath: string | null; skipped: boolean };
-        type SceneVoiceResult = { index: number; voiceoverPath: string | undefined };
+            type SceneImageResult = {
+              index: number;
+              filePath: string | null;
+              skipped: boolean;
+            };
+            type SceneVoiceResult = {
+              index: number;
+              voiceoverPath: string | undefined;
+            };
 
-        const generateSceneImage = async (scene: typeof storyboard.scenes[0]): Promise<SceneImageResult> => {
-          if (isAssetsOnlyMode && scene.index > 0 && scene.index < lastSceneIndex) {
-            const assetIndex = (scene.index - 1) % visualAssets!.length;
-            const fp = visualAssets![assetIndex].path;
-            logger.info(`[Director API] Assets-only: scene ${scene.index + 1}/${storyboard.scenes.length} → ${fp}`);
-            return { index: scene.index, filePath: fp, skipped: false };
-          }
-          logger.info(
-            `[Director API] Generating image ${scene.index + 1}/${storyboard.scenes.length}: ` +
-            `"${scene.rawImageDescription.substring(0, 60)}..."`,
-          );
-          try {
-            const result = await imageService.generateImage(scene.imagePrompt, {
-              provider: resolvedImageProvider,
-              localModel: imageModel,
-              width: imageWidth,
-              height: imageHeight,
-              seed: baseSeed + scene.index * 1000,
-            });
-            return { index: scene.index, filePath: result.filePath, skipped: false };
-          } catch (imgErr) {
-            const imgMsg = imgErr instanceof Error ? imgErr.message : String(imgErr);
-            logger.error(`[Director API] Image generation failed for scene ${scene.index}: ${imgMsg}`);
-            return { index: scene.index, filePath: null, skipped: true };
-          }
-        };
-
-        const generateSceneVoiceover = async (scene: typeof storyboard.scenes[0]): Promise<SceneVoiceResult> => {
-          if (!scene.voiceover) return { index: scene.index, voiceoverPath: undefined };
-          let voiceoverPath: string | undefined;
-
-          if (useF5TTSVoice && f5ttsClips.length > 0 && voiceService) {
-            try {
-              const f5Result = await voiceService.synthesizeF5TTS(
-                scene.voiceover,
-                f5ttsClips.map((c) => ({
-                  emotion: c.emotion,
-                  refAudioPath: c.ref_audio_path,
-                  refText: c.ref_text,
-                })),
+            const generateSceneImage = async (
+              scene: (typeof storyboard.scenes)[0],
+            ): Promise<SceneImageResult> => {
+              if (
+                isAssetsOnlyMode &&
+                scene.index > 0 &&
+                scene.index < lastSceneIndex
+              ) {
+                const assetIndex = (scene.index - 1) % visualAssets!.length;
+                const fp = visualAssets![assetIndex].path;
+                logger.info(
+                  `[Director API] Assets-only: scene ${scene.index + 1}/${storyboard.scenes.length} → ${fp}`,
+                );
+                return { index: scene.index, filePath: fp, skipped: false };
+              }
+              logger.info(
+                `[Director API] Generating image ${scene.index + 1}/${storyboard.scenes.length}: ` +
+                  `"${scene.rawImageDescription.substring(0, 60)}..."`,
               );
-              const voPath = path.join(imageOutputDir, `openzigs-vo-${nanoid(8)}.wav`);
-              await fs.writeFile(voPath, f5Result.audio);
-              voiceoverPath = voPath;
-              logger.info(`[Director API] F5-TTS voiceover for scene ${scene.index}: ${f5Result.audio.length} bytes`);
-            } catch (f5Err) {
-              const msg = f5Err instanceof Error ? f5Err.message : String(f5Err);
-              const cause = f5Err instanceof Error && f5Err.cause ? ` (cause: ${f5Err.cause instanceof Error ? f5Err.cause.message : String(f5Err.cause)})` : "";
-              logger.warn(`[Director API] F5-TTS voiceover failed for scene ${scene.index}: ${msg}${cause}`);
-            }
-          } else if (voiceService) {
-            try {
-              if (!voiceService.isReady()) {
-                logger.info(`[Director API] Initializing Kokoro TTS for scene ${scene.index}`);
-                await voiceService.initialize();
+              try {
+                const result = await imageService.generateImage(
+                  scene.imagePrompt,
+                  {
+                    provider: resolvedImageProvider,
+                    localModel: imageModel,
+                    width: imageWidth,
+                    height: imageHeight,
+                    seed: baseSeed + scene.index * 1000,
+                  },
+                );
+                return {
+                  index: scene.index,
+                  filePath: result.filePath,
+                  skipped: false,
+                };
+              } catch (imgErr) {
+                const imgMsg =
+                  imgErr instanceof Error ? imgErr.message : String(imgErr);
+                logger.error(
+                  `[Director API] Image generation failed for scene ${scene.index}: ${imgMsg}`,
+                );
+                return { index: scene.index, filePath: null, skipped: true };
               }
-              if (voiceService.isReady()) {
-                const ttsResult = await voiceService.synthesize(scene.voiceover);
-                const voPath = path.join(imageOutputDir, `openzigs-vo-${nanoid(8)}.mp3`);
-                await fs.writeFile(voPath, ttsResult.audio);
-                voiceoverPath = voPath;
-                logger.info(`[Director API] Kokoro voiceover for scene ${scene.index}: ${ttsResult.audio.length} bytes`);
+            };
+
+            const generateSceneVoiceover = async (
+              scene: (typeof storyboard.scenes)[0],
+            ): Promise<SceneVoiceResult> => {
+              if (!scene.voiceover)
+                return { index: scene.index, voiceoverPath: undefined };
+              let voiceoverPath: string | undefined;
+
+              if (useF5TTSVoice && f5ttsClips.length > 0 && voiceService) {
+                try {
+                  const f5Result = await voiceService.synthesizeF5TTS(
+                    scene.voiceover,
+                    f5ttsClips.map((c) => ({
+                      emotion: c.emotion,
+                      refAudioPath: c.ref_audio_path,
+                      refText: c.ref_text,
+                    })),
+                  );
+                  const voPath = path.join(
+                    imageOutputDir,
+                    `openzigs-vo-${nanoid(8)}.wav`,
+                  );
+                  await fs.writeFile(voPath, f5Result.audio);
+                  voiceoverPath = voPath;
+                  logger.info(
+                    `[Director API] F5-TTS voiceover for scene ${scene.index}: ${f5Result.audio.length} bytes`,
+                  );
+                } catch (f5Err) {
+                  const msg =
+                    f5Err instanceof Error ? f5Err.message : String(f5Err);
+                  const cause =
+                    f5Err instanceof Error && f5Err.cause
+                      ? ` (cause: ${f5Err.cause instanceof Error ? f5Err.cause.message : String(f5Err.cause)})`
+                      : "";
+                  logger.warn(
+                    `[Director API] F5-TTS voiceover failed for scene ${scene.index}: ${msg}${cause}`,
+                  );
+                }
+              } else if (voiceService) {
+                try {
+                  if (!voiceService.isReady()) {
+                    logger.info(
+                      `[Director API] Initializing Kokoro TTS for scene ${scene.index}`,
+                    );
+                    await voiceService.initialize();
+                  }
+                  if (voiceService.isReady()) {
+                    const ttsResult = await voiceService.synthesize(
+                      scene.voiceover,
+                    );
+                    const voPath = path.join(
+                      imageOutputDir,
+                      `openzigs-vo-${nanoid(8)}.mp3`,
+                    );
+                    await fs.writeFile(voPath, ttsResult.audio);
+                    voiceoverPath = voPath;
+                    logger.info(
+                      `[Director API] Kokoro voiceover for scene ${scene.index}: ${ttsResult.audio.length} bytes`,
+                    );
+                  } else {
+                    logger.warn(
+                      `[Director API] Kokoro TTS not ready for scene ${scene.index} — skipping voiceover`,
+                    );
+                  }
+                } catch (kokoroErr) {
+                  const msg =
+                    kokoroErr instanceof Error
+                      ? kokoroErr.message
+                      : String(kokoroErr);
+                  logger.warn(
+                    `[Director API] Kokoro voiceover failed for scene ${scene.index}: ${msg}`,
+                  );
+                }
               } else {
-                logger.warn(`[Director API] Kokoro TTS not ready for scene ${scene.index} — skipping voiceover`);
+                logger.warn(
+                  `[Director API] No TTS engine available for scene ${scene.index} — skipping voiceover`,
+                );
               }
-            } catch (kokoroErr) {
-              const msg = kokoroErr instanceof Error ? kokoroErr.message : String(kokoroErr);
-              logger.warn(`[Director API] Kokoro voiceover failed for scene ${scene.index}: ${msg}`);
-            }
-          } else {
-            logger.warn(`[Director API] No TTS engine available for scene ${scene.index} — skipping voiceover`);
-          }
 
-          return { index: scene.index, voiceoverPath };
-        };
+              return { index: scene.index, voiceoverPath };
+            };
 
-        // Launch image and voiceover generation concurrently.
-        // Images: sequential per scene (cloud has QPM limits, local sidecar
-        // processes one at a time) but runs IN PARALLEL with voiceover stream.
-        // Voiceovers: sequential — F5-TTS is a single-threaded ML model that
-        // crashes or drops connections under concurrent load. Serializing
-        // ensures each scene gets a clean generation pass.
-        checkAborted();
-        emitActivity("generating", `Generating images + voiceovers for ${storyboard.scenes.length} scenes in parallel`);
-
-        const imageGenStream = (async (): Promise<SceneImageResult[]> => {
-          const results: SceneImageResult[] = [];
-          for (const scene of storyboard.scenes) {
+            // Launch image and voiceover generation concurrently.
+            // Images: sequential per scene (cloud has QPM limits, local sidecar
+            // processes one at a time) but runs IN PARALLEL with voiceover stream.
+            // Voiceovers: sequential — F5-TTS is a single-threaded ML model that
+            // crashes or drops connections under concurrent load. Serializing
+            // ensures each scene gets a clean generation pass.
             checkAborted();
-            if (resolvedImageProvider !== "local" && scene.index > 0) {
-              await new Promise(r => setTimeout(r, 15_000));
-            }
-            results.push(await generateSceneImage(scene));
-            emitActivity("images", `Image ${results.length}/${storyboard.scenes.length} generated`);
-          }
-          return results;
-        })();
+            emitActivity(
+              "generating",
+              `Generating images + voiceovers for ${storyboard.scenes.length} scenes in parallel`,
+            );
 
-        const voiceGenStream = (async (): Promise<SceneVoiceResult[]> => {
-          // Pre-flight: re-verify sidecar is still alive before burning time on TTS
-          if (useF5TTSVoice && voiceService) {
-            try {
-              const ping = await fetch(`${sidecarBaseUrl}/health`, { signal: AbortSignal.timeout(5000) });
-              if (!ping.ok) {
-                logger.warn(`[Director API] Audio sidecar health check failed before voiceover generation (${ping.status}) — falling back to Kokoro`);
-                useF5TTSVoice = false;
+            const imageGenStream = (async (): Promise<SceneImageResult[]> => {
+              const results: SceneImageResult[] = [];
+              for (const scene of storyboard.scenes) {
+                checkAborted();
+                if (resolvedImageProvider !== "local" && scene.index > 0) {
+                  await new Promise((r) => setTimeout(r, 15_000));
+                }
+                results.push(await generateSceneImage(scene));
+                emitActivity(
+                  "images",
+                  `Image ${results.length}/${storyboard.scenes.length} generated`,
+                );
               }
-            } catch {
-              logger.warn("[Director API] Audio sidecar unreachable before voiceover generation — falling back to Kokoro");
-              useF5TTSVoice = false;
-            }
-          }
-          const engine = useF5TTSVoice ? "F5-TTS" : "Kokoro";
-          logger.info(`[Director API] Starting voiceover generation (engine=${engine}, scenes=${storyboard.scenes.length})`);
-          const results: SceneVoiceResult[] = [];
-          for (const scene of storyboard.scenes) {
+              return results;
+            })();
+
+            const voiceGenStream = (async (): Promise<SceneVoiceResult[]> => {
+              // Pre-flight: re-verify sidecar is still alive before burning time on TTS
+              if (useF5TTSVoice && voiceService) {
+                try {
+                  const ping = await fetch(`${sidecarBaseUrl}/health`, {
+                    signal: AbortSignal.timeout(5000),
+                  });
+                  if (!ping.ok) {
+                    logger.warn(
+                      `[Director API] Audio sidecar health check failed before voiceover generation (${ping.status}) — falling back to Kokoro`,
+                    );
+                    useF5TTSVoice = false;
+                  }
+                } catch {
+                  logger.warn(
+                    "[Director API] Audio sidecar unreachable before voiceover generation — falling back to Kokoro",
+                  );
+                  useF5TTSVoice = false;
+                }
+              }
+              const engine = useF5TTSVoice ? "F5-TTS" : "Kokoro";
+              logger.info(
+                `[Director API] Starting voiceover generation (engine=${engine}, scenes=${storyboard.scenes.length})`,
+              );
+              const results: SceneVoiceResult[] = [];
+              for (const scene of storyboard.scenes) {
+                checkAborted();
+                results.push(await generateSceneVoiceover(scene));
+                emitActivity(
+                  "voices",
+                  `Voiceover ${results.length}/${storyboard.scenes.length} generated`,
+                );
+                logger.info(
+                  `[Director API] Voiceover ${results.length}/${storyboard.scenes.length} complete (scene ${scene.index}, path=${results[results.length - 1].voiceoverPath ?? "none"})`,
+                );
+              }
+              return results;
+            })();
+
+            const [imageResults, voiceResults] = await Promise.all([
+              imageGenStream,
+              voiceGenStream,
+            ]);
+
+            const imageMap = new Map(imageResults.map((r) => [r.index, r]));
+            const voiceMap = new Map(voiceResults.map((r) => [r.index, r]));
+            skippedScenes = imageResults.filter((r) => r.skipped).length;
+
+            logger.info(
+              `[Director API] Parallel generation complete: ${imageResults.length - skippedScenes} images, ${voiceResults.filter((v) => v.voiceoverPath).length} voiceovers`,
+            );
             checkAborted();
-            results.push(await generateSceneVoiceover(scene));
-            emitActivity("voices", `Voiceover ${results.length}/${storyboard.scenes.length} generated`);
-            logger.info(`[Director API] Voiceover ${results.length}/${storyboard.scenes.length} complete (scene ${scene.index}, path=${results[results.length - 1].voiceoverPath ?? "none"})`);
-          }
-          return results;
-        })();
+            emitActivity("timeline", "Assembling timeline");
 
-        const [imageResults, voiceResults] = await Promise.all([imageGenStream, voiceGenStream]);
+            // ── Phase 2: Assemble timeline using pre-generated results ──────────
+            for (const scene of storyboard.scenes) {
+              const imgResult = imageMap.get(scene.index);
+              if (!imgResult || imgResult.skipped || !imgResult.filePath)
+                continue;
 
-        const imageMap = new Map(imageResults.map((r) => [r.index, r]));
-        const voiceMap = new Map(voiceResults.map((r) => [r.index, r]));
-        skippedScenes = imageResults.filter((r) => r.skipped).length;
+              const sceneImageFilePath = imgResult.filePath;
+              const sceneVoiceoverPath = voiceMap.get(
+                scene.index,
+              )?.voiceoverPath;
 
-        logger.info(`[Director API] Parallel generation complete: ${imageResults.length - skippedScenes} images, ${voiceResults.filter(v => v.voiceoverPath).length} voiceovers`);
-        checkAborted();
-        emitActivity("timeline", "Assembling timeline");
+              let sceneDurationSec = scene.durationEstimate;
+              if (sceneVoiceoverPath) {
+                const measuredDuration =
+                  await probeAudioDurationSeconds(sceneVoiceoverPath);
+                if (measuredDuration && measuredDuration > 0) {
+                  sceneDurationSec = Math.max(measuredDuration + 0.35, 2);
+                }
+              }
 
-        // ── Phase 2: Assemble timeline using pre-generated results ──────────
-        for (const scene of storyboard.scenes) {
-          const imgResult = imageMap.get(scene.index);
-          if (!imgResult || imgResult.skipped || !imgResult.filePath) continue;
+              const durationInFrames = Math.max(
+                Math.round(sceneDurationSec * fps),
+                fps,
+              );
 
-          const sceneImageFilePath = imgResult.filePath;
-          const sceneVoiceoverPath = voiceMap.get(scene.index)?.voiceoverPath;
+              // ── Chapter title card ──
+              if (scene.chapterTitle) {
+                const CHAPTER_CARD_DURATION = 90;
 
-          let sceneDurationSec = scene.durationEstimate;
-          if (sceneVoiceoverPath) {
-            const measuredDuration = await probeAudioDurationSeconds(sceneVoiceoverPath);
-            if (measuredDuration && measuredDuration > 0) {
-              sceneDurationSec = Math.max(measuredDuration + 0.35, 2);
-            }
-          }
+                if (timeline.length > 0) {
+                  timeline.push({
+                    type: "transition",
+                    style: "crossfade",
+                    duration: 15,
+                    startAtFrame: currentFrame,
+                  });
+                }
 
-          const durationInFrames = Math.max(Math.round(sceneDurationSec * fps), fps);
+                let separatorBackground: string | undefined;
+                try {
+                  const separatorPrompt =
+                    `${storyboard.styleAnchor}. Abstract background for chapter separator card, ` +
+                    `no text, atmospheric, thematic, high quality, cinematic`;
+                  const separatorResult = await imageService.generateImage(
+                    separatorPrompt,
+                    {
+                      provider: resolvedImageProvider,
+                      localModel: imageModel,
+                      width: imageWidth,
+                      height: imageHeight,
+                      seed: baseSeed + scene.index * 1000 + 500,
+                    },
+                  );
+                  separatorBackground = separatorResult.filePath;
+                } catch {
+                  // Fallback: solid dark background (rendered by TitleCard component)
+                }
 
-          // ── Chapter title card ──
-          if (scene.chapterTitle) {
-            const CHAPTER_CARD_DURATION = 90;
+                timeline.push({
+                  type: "title_card",
+                  title: scene.chapterTitle,
+                  background: separatorBackground,
+                  startAtFrame: currentFrame,
+                  duration: CHAPTER_CARD_DURATION,
+                  animation: "fade",
+                });
+                currentFrame += CHAPTER_CARD_DURATION;
+              }
 
-            if (timeline.length > 0) {
+              const sceneStartFrame = currentFrame;
+
+              if (timeline.length > 0) {
+                const transitionDuration = Math.min(15, durationInFrames);
+                timeline.push({
+                  type: "transition",
+                  style: "crossfade",
+                  duration: transitionDuration,
+                  startAtFrame: currentFrame,
+                });
+              }
+
               timeline.push({
-                type: "transition",
-                style: "crossfade",
-                duration: 15,
+                type: "image_scene",
+                src: sceneImageFilePath,
                 startAtFrame: currentFrame,
+                duration: durationInFrames,
+                voiceover: sceneVoiceoverPath,
+                voiceoverVolume: 1.0,
+                scriptText:
+                  typeof scene.voiceover === "string"
+                    ? scene.voiceover
+                    : undefined,
+                kenBurns: {
+                  scaleFrom: 1.0,
+                  scaleTo: 1.15,
+                  translateXFrom: 0,
+                  translateXTo: scene.index % 2 === 0 ? -10 : 10,
+                  translateYFrom: 0,
+                  translateYTo: -5,
+                },
+                textOverlays: scene.textOverlays,
+              });
+
+              currentFrame += durationInFrames;
+              sceneTiming.push({
+                index: scene.index,
+                startTimeSec: sceneStartFrame / fps,
+                endTimeSec: currentFrame / fps,
+                voiceover: scene.voiceover,
               });
             }
 
-            let separatorBackground: string | undefined;
-            try {
-              const separatorPrompt =
-                `${storyboard.styleAnchor}. Abstract background for chapter separator card, ` +
-                `no text, atmospheric, thematic, high quality, cinematic`;
-              const separatorResult = await imageService.generateImage(separatorPrompt, {
-                provider: resolvedImageProvider,
-                localModel: imageModel,
-                width: imageWidth,
-                height: imageHeight,
-                seed: baseSeed + scene.index * 1000 + 500,
-              });
-              separatorBackground = separatorResult.filePath;
-            } catch {
-              // Fallback: solid dark background (rendered by TitleCard component)
-            }
+            // Step D: Construct the DirectorManifest
+            const resolvedMusicPath = musicTrackPath?.trim() || undefined;
+            const manifest: import("../video/manifest/manifest-types.js").DirectorManifest =
+              {
+                projectTitle: storyboard.title,
+                templateId,
+                composition: { width: 1920, height: 1080, fps },
+                audioLayer: {
+                  music: resolvedMusicPath
+                    ? {
+                        track: resolvedMusicPath,
+                        volume: 0.08,
+                        ducking: true,
+                        fadeInFrames: 30,
+                        fadeOutFrames: 30,
+                        loop: true,
+                      }
+                    : null,
+                  voiceover: null,
+                },
+                timeline,
+                metadata: {
+                  generatedAt: new Date().toISOString(),
+                  llmModel: resolvedModel ?? "copilot",
+                  llmTokensUsed: storyboard.tokensUsed,
+                  productionMode: "presentation",
+                  presenterQuizEnabled: !!quizEnabled,
+                  sourceClips: [],
+                  estimatedRenderTime: currentFrame / fps,
+                },
+              };
 
-            timeline.push({
-              type: "title_card",
-              title: scene.chapterTitle,
-              background: separatorBackground,
-              startAtFrame: currentFrame,
-              duration: CHAPTER_CARD_DURATION,
-              animation: "fade",
-            });
-            currentFrame += CHAPTER_CARD_DURATION;
-          }
+            // Step E: Recompute visual asset placements from final narration + measured scene timing,
+            // then inject overlays into the timeline.
+            if (visualAssets && visualAssets.length > 0) {
+              const totalDurationSec = currentFrame / fps;
+              let computedPlacements: Array<{
+                id: string;
+                startTimeSec: number;
+                endTimeSec: number;
+                position: string;
+                scale: number;
+              }> = [];
 
-          const sceneStartFrame = currentFrame;
+              try {
+                const sceneTimelineText = sceneTiming
+                  .map((scene) => {
+                    const voice = scene.voiceover.replace(/\s+/g, " ").trim();
+                    return `- scene ${scene.index + 1}: ${scene.startTimeSec.toFixed(2)}s → ${scene.endTimeSec.toFixed(2)}s | ${voice}`;
+                  })
+                  .join("\n");
+                const assetListText = visualAssets
+                  .map((asset, index) => {
+                    const description = (
+                      asset.description || path.basename(asset.path)
+                    )
+                      .replace(/\s+/g, " ")
+                      .trim();
+                    return `- id:${index} type:${asset.type} description:${description}`;
+                  })
+                  .join("\n");
 
-          if (timeline.length > 0) {
-            const transitionDuration = Math.min(15, durationInFrames);
-            timeline.push({
-              type: "transition",
-              style: "crossfade",
-              duration: transitionDuration,
-              startAtFrame: currentFrame,
-            });
-          }
-
-          timeline.push({
-            type: "image_scene",
-            src: sceneImageFilePath,
-            startAtFrame: currentFrame,
-            duration: durationInFrames,
-            voiceover: sceneVoiceoverPath,
-            voiceoverVolume: 1.0,
-            scriptText: typeof scene.voiceover === "string" ? scene.voiceover : undefined,
-            kenBurns: {
-              scaleFrom: 1.0,
-              scaleTo: 1.15,
-              translateXFrom: 0,
-              translateXTo: scene.index % 2 === 0 ? -10 : 10,
-              translateYFrom: 0,
-              translateYTo: -5,
-            },
-            textOverlays: scene.textOverlays,
-          });
-
-          currentFrame += durationInFrames;
-          sceneTiming.push({
-            index: scene.index,
-            startTimeSec: sceneStartFrame / fps,
-            endTimeSec: currentFrame / fps,
-            voiceover: scene.voiceover,
-          });
-        }
-
-        // Step D: Construct the DirectorManifest
-        const resolvedMusicPath = musicTrackPath?.trim() || undefined;
-        const manifest: import("../video/manifest/manifest-types.js").DirectorManifest = {
-          projectTitle: storyboard.title,
-          templateId,
-          composition: { width: 1920, height: 1080, fps },
-          audioLayer: {
-            music: resolvedMusicPath ? {
-              track: resolvedMusicPath,
-              volume: 0.08,
-              ducking: true,
-              fadeInFrames: 30,
-              fadeOutFrames: 30,
-              loop: true,
-            } : null,
-            voiceover: null,
-          },
-          timeline,
-          metadata: {
-            generatedAt: new Date().toISOString(),
-            llmModel: resolvedModel ?? "copilot",
-            llmTokensUsed: storyboard.tokensUsed,
-            productionMode: "presentation",
-            presenterQuizEnabled: !!quizEnabled,
-            sourceClips: [],
-            estimatedRenderTime: currentFrame / fps,
-          },
-        };
-
-        // Step E: Recompute visual asset placements from final narration + measured scene timing,
-        // then inject overlays into the timeline.
-        if (visualAssets && visualAssets.length > 0) {
-          const totalDurationSec = currentFrame / fps;
-          let computedPlacements: Array<{
-            id: string;
-            startTimeSec: number;
-            endTimeSec: number;
-            position: string;
-            scale: number;
-          }> = [];
-
-          try {
-            const sceneTimelineText = sceneTiming
-              .map((scene) => {
-                const voice = scene.voiceover.replace(/\s+/g, " ").trim();
-                return `- scene ${scene.index + 1}: ${scene.startTimeSec.toFixed(2)}s → ${scene.endTimeSec.toFixed(2)}s | ${voice}`;
-              })
-              .join("\n");
-            const assetListText = visualAssets
-              .map((asset, index) => {
-                const description = (asset.description || path.basename(asset.path)).replace(/\s+/g, " ").trim();
-                return `- id:${index} type:${asset.type} description:${description}`;
-              })
-              .join("\n");
-
-            const placementPrompt = `You are placing visual overlays for a narrated video.
+                const placementPrompt = `You are placing visual overlays for a narrated video.
 
 FINAL VIDEO DURATION: ${totalDurationSec.toFixed(2)} seconds
 
@@ -1492,463 +1893,660 @@ For each asset, return:
 
 Respond with ONLY a valid JSON array. No markdown, no explanation.`;
 
-            const placementStream = copilot.chat(placementPrompt, {
-              tools: [],
-              ...(resolvedModel ? { model: resolvedModel } : {}),
-            });
-            const placementChunks: string[] = [];
-            for await (const chunk of placementStream) {
-              placementChunks.push(chunk);
-            }
+                const placementStream = copilot.chat(placementPrompt, {
+                  tools: [],
+                  ...(resolvedModel ? { model: resolvedModel } : {}),
+                });
+                const placementChunks: string[] = [];
+                for await (const chunk of placementStream) {
+                  placementChunks.push(chunk);
+                }
 
-            const rawPlacementText = placementChunks.join("");
-            const rawPlacementJson = rawPlacementText.replace(/```(?:json)?\s*/gi, "").replace(/```\s*/g, "").trim();
-            const parsed = JSON.parse(rawPlacementJson) as unknown;
-            if (Array.isArray(parsed)) {
-              computedPlacements = parsed
-                .map((entry) => {
-                  if (!entry || typeof entry !== "object") return null;
-                  const raw = entry as Record<string, unknown>;
-                  const id = String(raw.id ?? "");
-                  const startTimeSec = Number(raw.startTimeSec);
-                  const endTimeSec = Number(raw.endTimeSec);
-                  const position = String(raw.position ?? "bottom-right");
-                  const scale = Number(raw.scale);
-                  if (!id || !Number.isFinite(startTimeSec) || !Number.isFinite(endTimeSec) || endTimeSec <= startTimeSec) {
-                    return null;
-                  }
+                const rawPlacementText = placementChunks.join("");
+                const rawPlacementJson = rawPlacementText
+                  .replace(/```(?:json)?\s*/gi, "")
+                  .replace(/```\s*/g, "")
+                  .trim();
+                const parsed = JSON.parse(rawPlacementJson) as unknown;
+                if (Array.isArray(parsed)) {
+                  computedPlacements = parsed
+                    .map((entry) => {
+                      if (!entry || typeof entry !== "object") return null;
+                      const raw = entry as Record<string, unknown>;
+                      const id = String(raw.id ?? "");
+                      const startTimeSec = Number(raw.startTimeSec);
+                      const endTimeSec = Number(raw.endTimeSec);
+                      const position = String(raw.position ?? "bottom-right");
+                      const scale = Number(raw.scale);
+                      if (
+                        !id ||
+                        !Number.isFinite(startTimeSec) ||
+                        !Number.isFinite(endTimeSec) ||
+                        endTimeSec <= startTimeSec
+                      ) {
+                        return null;
+                      }
+                      return {
+                        id,
+                        startTimeSec,
+                        endTimeSec,
+                        position,
+                        scale: Number.isFinite(scale) ? scale : 0.3,
+                      };
+                    })
+                    .filter(
+                      (entry): entry is NonNullable<typeof entry> =>
+                        entry !== null,
+                    );
+                }
+              } catch (placementErr) {
+                const msg =
+                  placementErr instanceof Error
+                    ? placementErr.message
+                    : String(placementErr);
+                logger.warn(
+                  `[Director API] Speech-aligned placement generation failed: ${msg}`,
+                );
+              }
+
+              if (computedPlacements.length === 0) {
+                const sceneWindows =
+                  sceneTiming.length > 0
+                    ? sceneTiming
+                    : [
+                        {
+                          index: 0,
+                          startTimeSec: 0,
+                          endTimeSec: Math.max(totalDurationSec, 3),
+                          voiceover: "",
+                        },
+                      ];
+                const fallbackWindowSec = 4;
+
+                computedPlacements = visualAssets.map((asset, index) => {
+                  const scene =
+                    sceneWindows[Math.min(index, sceneWindows.length - 1)]!;
+                  const spanSec = Math.max(
+                    scene.endTimeSec - scene.startTimeSec,
+                    1,
+                  );
+                  const desiredDuration = Math.min(fallbackWindowSec, spanSec);
+                  const startTimeSec = scene.startTimeSec;
+                  const endTimeSec = Math.min(
+                    scene.endTimeSec,
+                    startTimeSec + desiredDuration,
+                  );
+
                   return {
-                    id,
+                    id: String(index),
                     startTimeSec,
                     endTimeSec,
-                    position,
-                    scale: Number.isFinite(scale) ? scale : 0.3,
+                    position: asset.placement?.position ?? "bottom-right",
+                    scale: asset.placement?.scale ?? 0.3,
                   };
-                })
-                .filter((entry): entry is NonNullable<typeof entry> => entry !== null);
+                });
+
+                logger.info(
+                  `[Director API] Using deterministic fallback placement for ${computedPlacements.length} visual asset(s)`,
+                );
+              }
+
+              const placementById = new Map(
+                computedPlacements.map((placement) => [
+                  placement.id,
+                  placement,
+                ]),
+              );
+              const validPositions = new Set([
+                "top-left",
+                "top-center",
+                "top-right",
+                "center",
+                "bottom-left",
+                "bottom-center",
+                "bottom-right",
+              ]);
+              const clamp = (value: number, min: number, max: number) =>
+                Math.min(max, Math.max(min, value));
+
+              let overlaysInjected = 0;
+              for (const [index, asset] of visualAssets.entries()) {
+                const computed = placementById.get(String(index));
+                const fallback = asset.placement ?? undefined;
+                const selectedPlacement = computed ?? fallback;
+                if (!selectedPlacement) continue;
+
+                const startSec = clamp(
+                  selectedPlacement.startTimeSec,
+                  0,
+                  Math.max(0, totalDurationSec - 0.5),
+                );
+                const endSec = clamp(
+                  selectedPlacement.endTimeSec,
+                  startSec + 0.5,
+                  totalDurationSec,
+                );
+                const normalizedPosition = validPositions.has(
+                  selectedPlacement.position,
+                )
+                  ? selectedPlacement.position
+                  : "bottom-right";
+                const normalizedScale = clamp(
+                  Number.isFinite(selectedPlacement.scale)
+                    ? selectedPlacement.scale
+                    : 0.3,
+                  0.1,
+                  1.0,
+                );
+
+                const startFrame = Math.round(startSec * fps);
+                const endFrame = Math.round(endSec * fps);
+                const durationFrames = Math.max(endFrame - startFrame, fps); // minimum 1 second
+                timeline.push({
+                  type: "overlay",
+                  component: "ImageOverlay",
+                  props: {
+                    src: asset.path,
+                    position: normalizedPosition,
+                    scale: normalizedScale,
+                    isVideo: asset.type === "video",
+                  },
+                  startAtFrame: startFrame,
+                  duration: durationFrames,
+                } as import("../video/manifest/manifest-types.js").OverlayEntry);
+                overlaysInjected++;
+              }
+              if (overlaysInjected > 0) {
+                logger.info(
+                  `[Director API] Injected ${overlaysInjected} speech-aligned visual asset overlay(s) into timeline`,
+                );
+              }
             }
-          } catch (placementErr) {
-            const msg = placementErr instanceof Error ? placementErr.message : String(placementErr);
-            logger.warn(`[Director API] Speech-aligned placement generation failed: ${msg}`);
-          }
 
-          if (computedPlacements.length === 0) {
-            const sceneWindows = sceneTiming.length > 0
-              ? sceneTiming
-              : [{ index: 0, startTimeSec: 0, endTimeSec: Math.max(totalDurationSec, 3), voiceover: "" }];
-            const fallbackWindowSec = 4;
+            const elapsedMs = Date.now() - startTime;
 
-            computedPlacements = visualAssets.map((asset, index) => {
-              const scene = sceneWindows[Math.min(index, sceneWindows.length - 1)]!;
-              const spanSec = Math.max(scene.endTimeSec - scene.startTimeSec, 1);
-              const desiredDuration = Math.min(fallbackWindowSec, spanSec);
-              const startTimeSec = scene.startTimeSec;
-              const endTimeSec = Math.min(scene.endTimeSec, startTimeSec + desiredDuration);
+            const imageSceneCount = timeline.filter(
+              (t) => t.type === "image_scene",
+            ).length;
+            logger.info(
+              `[Director API] Presentation manifest: ${storyboard.scenes.length} scenes ` +
+                `(${imageSceneCount} with images, ${skippedScenes} skipped), ` +
+                `${timeline.filter((t) => t.type === "transition").length} transitions, ` +
+                `${(currentFrame / fps).toFixed(1)}s total, ${elapsedMs}ms elapsed`,
+            );
 
-              return {
-                id: String(index),
-                startTimeSec,
-                endTimeSec,
-                position: asset.placement?.position ?? "bottom-right",
-                scale: asset.placement?.scale ?? 0.3,
-              };
-            });
+            if (skippedScenes > 0) {
+              logger.warn(
+                `[Director API] ${skippedScenes}/${storyboard.scenes.length} scenes skipped due to image generation failures. ` +
+                  `Check that the image sidecar is running (http://127.0.0.1:5005/health) or configure GCP_PROJECT_ID for cloud images.`,
+              );
+            }
 
-            logger.info(`[Director API] Using deterministic fallback placement for ${computedPlacements.length} visual asset(s)`);
-          }
+            if (imageSceneCount === 0) {
+              logger.error(
+                `[Director API] No images were generated — the presentation will be blank. Check image generation provider availability.`,
+              );
+            }
 
-          const placementById = new Map(computedPlacements.map((placement) => [placement.id, placement]));
-          const validPositions = new Set(["top-left", "top-center", "top-right", "center", "bottom-left", "bottom-center", "bottom-right"]);
-          const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
-
-          let overlaysInjected = 0;
-          for (const [index, asset] of visualAssets.entries()) {
-            const computed = placementById.get(String(index));
-            const fallback = asset.placement ?? undefined;
-            const selectedPlacement = computed ?? fallback;
-            if (!selectedPlacement) continue;
-
-            const startSec = clamp(selectedPlacement.startTimeSec, 0, Math.max(0, totalDurationSec - 0.5));
-            const endSec = clamp(selectedPlacement.endTimeSec, startSec + 0.5, totalDurationSec);
-            const normalizedPosition = validPositions.has(selectedPlacement.position)
-              ? selectedPlacement.position
-              : "bottom-right";
-            const normalizedScale = clamp(Number.isFinite(selectedPlacement.scale) ? selectedPlacement.scale : 0.3, 0.1, 1.0);
-
-            const startFrame = Math.round(startSec * fps);
-            const endFrame = Math.round(endSec * fps);
-            const durationFrames = Math.max(endFrame - startFrame, fps); // minimum 1 second
-            timeline.push({
-              type: "overlay",
-              component: "ImageOverlay",
-              props: {
-                src: asset.path,
-                position: normalizedPosition,
-                scale: normalizedScale,
-                isVideo: asset.type === "video",
+            job.status = "complete";
+            job.completedAt = Date.now();
+            job.result = {
+              manifest,
+              tokensUsed: storyboard.tokensUsed,
+              clipsProcessed: 0,
+              totalDuration: currentFrame / fps,
+              processingTimeMs: elapsedMs,
+              skippedScenes,
+              imageProvider: resolvedImageProvider,
+              imageModel: imageModel ?? "default",
+              storyboard: {
+                title: storyboard.title,
+                styleAnchor: storyboard.styleAnchor,
+                analysis: storyboard.analysis,
+                sceneCount: storyboard.scenes.length,
               },
-              startAtFrame: startFrame,
-              duration: durationFrames,
-            } as import("../video/manifest/manifest-types.js").OverlayEntry);
-            overlaysInjected++;
-          }
-          if (overlaysInjected > 0) {
-            logger.info(`[Director API] Injected ${overlaysInjected} speech-aligned visual asset overlay(s) into timeline`);
-          }
-        }
-
-        const elapsedMs = Date.now() - startTime;
-
-        const imageSceneCount = timeline.filter((t) => t.type === "image_scene").length;
-        logger.info(
-          `[Director API] Presentation manifest: ${storyboard.scenes.length} scenes ` +
-          `(${imageSceneCount} with images, ${skippedScenes} skipped), ` +
-          `${timeline.filter((t) => t.type === "transition").length} transitions, ` +
-          `${(currentFrame / fps).toFixed(1)}s total, ${elapsedMs}ms elapsed`,
-        );
-
-        if (skippedScenes > 0) {
-          logger.warn(
-            `[Director API] ${skippedScenes}/${storyboard.scenes.length} scenes skipped due to image generation failures. ` +
-            `Check that the image sidecar is running (http://127.0.0.1:5005/health) or configure GCP_PROJECT_ID for cloud images.`,
-          );
-        }
-
-        if (imageSceneCount === 0) {
-          logger.error(`[Director API] No images were generated — the presentation will be blank. Check image generation provider availability.`);
-        }
-
-        job.status = "complete";
-        job.completedAt = Date.now();
-        job.result = {
-          manifest,
-          tokensUsed: storyboard.tokensUsed,
-          clipsProcessed: 0,
-          totalDuration: currentFrame / fps,
-          processingTimeMs: elapsedMs,
-          skippedScenes,
-          imageProvider: resolvedImageProvider,
-          imageModel: imageModel ?? "default",
-          storyboard: {
-            title: storyboard.title,
-            styleAnchor: storyboard.styleAnchor,
-            analysis: storyboard.analysis,
-            sceneCount: storyboard.scenes.length,
-          },
-        };
-        // Auto-save as a draft so the result survives navigation
-        const db = getDatabase();
-        const draftId = nanoid();
-        const now = new Date().toISOString();
-        const draftTitle = storyboard.title || "Untitled Presentation";
-        db.prepare(
-          `INSERT INTO director_drafts (id, title, manifest, thumbnail, production_mode, created_at, updated_at, status)
+            };
+            // Auto-save as a draft so the result survives navigation
+            const db = getDatabase();
+            const draftId = nanoid();
+            const now = new Date().toISOString();
+            const draftTitle = storyboard.title || "Untitled Presentation";
+            db.prepare(
+              `INSERT INTO director_drafts (id, title, manifest, thumbnail, production_mode, created_at, updated_at, status)
            VALUES (?, ?, ?, ?, ?, ?, ?, 'draft')`,
-        ).run(draftId, draftTitle, JSON.stringify(manifest), null, "presentation", now, now);
-        job.result!.draftId = draftId;
+            ).run(
+              draftId,
+              draftTitle,
+              JSON.stringify(manifest),
+              null,
+              "presentation",
+              now,
+              now,
+            );
+            job.result!.draftId = draftId;
 
-        logger.info(`[Director API] Produce job ${produceJobId} complete (presentation, ${elapsedMs}ms) — draft ${draftId}`);
-        emitActivity("complete", `Presentation ready (${(elapsedMs / 1000).toFixed(0)}s)`, { draftId, title: draftTitle });
-        return;
-      }
+            logger.info(
+              `[Director API] Produce job ${produceJobId} complete (presentation, ${elapsedMs}ms) — draft ${draftId}`,
+            );
+            emitActivity(
+              "complete",
+              `Presentation ready (${(elapsedMs / 1000).toFixed(0)}s)`,
+              { draftId, title: draftTitle },
+            );
+            return;
+          }
 
-      // ── Hero Reel mode: overview → storyboard → images → manifest (no TTS) ──
-      if (mode === "hero-reel") {
-        const startTime = Date.now();
+          // ── Hero Reel mode: overview → storyboard → images → manifest (no TTS) ──
+          if (mode === "hero-reel") {
+            const startTime = Date.now();
 
-        const path = await import("node:path");
-        const os = await import("node:os");
-        const { StoryboardEngine } = await import("../video/generators/storyboard-engine.js");
-        const { ImageGenService } = await import("../video/generators/image-gen-service.js");
+            const path = await import("node:path");
+            const os = await import("node:os");
+            const { StoryboardEngine } =
+              await import("../video/generators/storyboard-engine.js");
+            const { ImageGenService } =
+              await import("../video/generators/image-gen-service.js");
 
-        checkAborted();
-        emitActivity("storyboard", "Generating hero reel storyboard");
-        const storyboardEngine = new StoryboardEngine(copilot);
-        const resolvedModel = model || runtimeConfig.defaultModel || undefined;
-        const clipDur = typeof defaultClipDuration === "number" && defaultClipDuration >= 1 && defaultClipDuration <= 10
-          ? defaultClipDuration : 2;
+            checkAborted();
+            emitActivity("storyboard", "Generating hero reel storyboard");
+            const storyboardEngine = new StoryboardEngine(copilot);
+            const resolvedModel =
+              model || runtimeConfig.defaultModel || undefined;
+            const clipDur =
+              typeof defaultClipDuration === "number" &&
+              defaultClipDuration >= 1 &&
+              defaultClipDuration <= 10
+                ? defaultClipDuration
+                : 2;
 
-        const storyboard = await storyboardEngine.generateHeroReel(heroReelOverview!, {
-          model: resolvedModel,
-          styleHint: topic,
-          imageClipDurationSeconds: clipDur,
-          userImages: heroReelImages?.map((img, i) => ({ index: i, description: img.description })),
-          inspirationContext,
-        });
+            const storyboard = await storyboardEngine.generateHeroReel(
+              heroReelOverview!,
+              {
+                model: resolvedModel,
+                styleHint: topic,
+                imageClipDurationSeconds: clipDur,
+                userImages: heroReelImages?.map((img, i) => ({
+                  index: i,
+                  description: img.description,
+                })),
+                inspirationContext,
+              },
+            );
 
-        logger.info(`[Director API] Hero reel storyboard: "${storyboard.title}" with ${storyboard.scenes.length} scenes`);
-        checkAborted();
-        emitActivity("images", `Generating images for ${storyboard.scenes.length} scenes`);
+            logger.info(
+              `[Director API] Hero reel storyboard: "${storyboard.title}" with ${storyboard.scenes.length} scenes`,
+            );
+            checkAborted();
+            emitActivity(
+              "images",
+              `Generating images for ${storyboard.scenes.length} scenes`,
+            );
 
-        // Generate images
-        const imageOutputDir = path.join(os.homedir(), ".openzigs", "director", "images");
-        const imageGenUserConfig = await ImageGenService.loadUserImageGenConfig();
-        const imageService = new ImageGenService({ outputDir: imageOutputDir, ...imageGenUserConfig });
-        await imageService.initialize();
+            // Generate images
+            const imageOutputDir = path.join(
+              os.homedir(),
+              ".openzigs",
+              "director",
+              "images",
+            );
+            const imageGenUserConfig =
+              await ImageGenService.loadUserImageGenConfig();
+            const imageService = new ImageGenService({
+              outputDir: imageOutputDir,
+              ...imageGenUserConfig,
+            });
+            await imageService.initialize();
 
-        const resolvedImageProvider = imageProvider ?? "auto";
-        const imageWidth = 768;
-        const imageHeight = 432;
-        const fps = 30;
-        const templateId = (template as "Minimalist" | "ContentCreator" | "Corporate" | "TechDemo") ?? "Minimalist";
-        const baseSeed = Date.now() % 100_000;
+            const resolvedImageProvider = imageProvider ?? "auto";
+            const imageWidth = 768;
+            const imageHeight = 432;
+            const fps = 30;
+            const templateId =
+              (template as
+                | "Minimalist"
+                | "ContentCreator"
+                | "Corporate"
+                | "TechDemo") ?? "Minimalist";
+            const baseSeed = Date.now() % 100_000;
 
-        const timeline: Array<import("../video/manifest/manifest-types.js").ImageSceneEntry | import("../video/manifest/manifest-types.js").TitleCardEntry | import("../video/manifest/manifest-types.js").TransitionEntry | import("../video/manifest/manifest-types.js").OverlayEntry> = [];
-        let currentFrame = 0;
-        let skippedScenes = 0;
+            const timeline: Array<
+              | import("../video/manifest/manifest-types.js").ImageSceneEntry
+              | import("../video/manifest/manifest-types.js").TitleCardEntry
+              | import("../video/manifest/manifest-types.js").TransitionEntry
+              | import("../video/manifest/manifest-types.js").OverlayEntry
+            > = [];
+            let currentFrame = 0;
+            let skippedScenes = 0;
 
-        for (const scene of storyboard.scenes) {
-          checkAborted();
-          const prompt = scene.imagePrompt || storyboard.styleAnchor;
-          let sceneImageFilePath: string | undefined;
+            for (const scene of storyboard.scenes) {
+              checkAborted();
+              const prompt = scene.imagePrompt || storyboard.styleAnchor;
+              let sceneImageFilePath: string | undefined;
 
-          // Use user-provided image if the LLM assigned one
-          const userImg = scene.userImageIndex !== undefined && heroReelImages?.[scene.userImageIndex];
-          if (userImg) {
-            const fs = await import("node:fs/promises");
-            try {
-              await fs.access(userImg.path);
-              // Enhance the user image with Kontext if there's a meaningful prompt
-              if (prompt && prompt.trim().length > 0) {
+              // Use user-provided image if the LLM assigned one
+              const userImg =
+                scene.userImageIndex !== undefined &&
+                heroReelImages?.[scene.userImageIndex];
+              if (userImg) {
+                const fs = await import("node:fs/promises");
                 try {
-                  const enhanced = await imageService.kontextEdit(userImg.path, `${storyboard.styleAnchor}. ${prompt}`, {
+                  await fs.access(userImg.path);
+                  // Enhance the user image with Kontext if there's a meaningful prompt
+                  if (prompt && prompt.trim().length > 0) {
+                    try {
+                      const enhanced = await imageService.kontextEdit(
+                        userImg.path,
+                        `${storyboard.styleAnchor}. ${prompt}`,
+                        {
+                          width: imageWidth,
+                          height: imageHeight,
+                        },
+                      );
+                      sceneImageFilePath = enhanced.filePath;
+                      logger.info(
+                        `[Director API] Hero reel scene ${scene.index}: user image enhanced via Kontext (${enhanced.generationTimeMs}ms)`,
+                      );
+                    } catch (enhanceErr) {
+                      logger.warn(
+                        `[Director API] Hero reel scene ${scene.index}: Kontext enhance failed, using original image: ${enhanceErr instanceof Error ? enhanceErr.message : String(enhanceErr)}`,
+                      );
+                      sceneImageFilePath = userImg.path;
+                    }
+                  } else {
+                    sceneImageFilePath = userImg.path;
+                  }
+                } catch {
+                  logger.warn(
+                    `[Director API] Hero reel scene ${scene.index}: user image not found at ${userImg.path}, falling back to AI generation`,
+                  );
+                }
+              }
+
+              // Fall back to AI image generation if no user image was used
+              if (!sceneImageFilePath) {
+                try {
+                  const result = await imageService.generateImage(prompt, {
+                    provider: resolvedImageProvider,
+                    localModel: imageModel,
                     width: imageWidth,
                     height: imageHeight,
+                    seed: baseSeed + scene.index * 1000,
                   });
-                  sceneImageFilePath = enhanced.filePath;
-                  logger.info(`[Director API] Hero reel scene ${scene.index}: user image enhanced via Kontext (${enhanced.generationTimeMs}ms)`);
-                } catch (enhanceErr) {
-                  logger.warn(`[Director API] Hero reel scene ${scene.index}: Kontext enhance failed, using original image: ${enhanceErr instanceof Error ? enhanceErr.message : String(enhanceErr)}`);
-                  sceneImageFilePath = userImg.path;
+                  sceneImageFilePath = result.filePath;
+                } catch (imgErr) {
+                  logger.warn(
+                    `[Director API] Hero reel scene ${scene.index} image failed: ${imgErr instanceof Error ? imgErr.message : String(imgErr)}`,
+                  );
+                  skippedScenes++;
+                  continue;
                 }
-              } else {
-                sceneImageFilePath = userImg.path;
               }
-            } catch {
-              logger.warn(`[Director API] Hero reel scene ${scene.index}: user image not found at ${userImg.path}, falling back to AI generation`);
-            }
-          }
 
-          // Fall back to AI image generation if no user image was used
-          if (!sceneImageFilePath) {
-            try {
-              const result = await imageService.generateImage(prompt, {
-                provider: resolvedImageProvider,
-                localModel: imageModel,
-                width: imageWidth,
-                height: imageHeight,
-                seed: baseSeed + scene.index * 1000,
+              emitActivity(
+                "images",
+                `Image ${scene.index + 1}/${storyboard.scenes.length} generated`,
+              );
+
+              const durationInFrames = Math.max(Math.round(clipDur * fps), fps);
+
+              if (timeline.length > 0) {
+                const transitionDuration = Math.min(10, durationInFrames);
+                timeline.push({
+                  type: "transition",
+                  style: "crossfade",
+                  duration: transitionDuration,
+                  startAtFrame: currentFrame,
+                });
+              }
+
+              timeline.push({
+                type: "image_scene",
+                src: sceneImageFilePath,
+                startAtFrame: currentFrame,
+                duration: durationInFrames,
+                voiceover: undefined,
+                voiceoverVolume: 0,
+                scriptText: scene.voiceover,
+                kenBurns: {
+                  scaleFrom: 1.0,
+                  scaleTo: 1.2,
+                  translateXFrom: 0,
+                  translateXTo: scene.index % 2 === 0 ? -12 : 12,
+                  translateYFrom: 0,
+                  translateYTo: -6,
+                },
               });
-              sceneImageFilePath = result.filePath;
-            } catch (imgErr) {
-              logger.warn(`[Director API] Hero reel scene ${scene.index} image failed: ${imgErr instanceof Error ? imgErr.message : String(imgErr)}`);
-              skippedScenes++;
-              continue;
+
+              currentFrame += durationInFrames;
             }
+
+            const resolvedMusicPath = musicTrackPath?.trim() || undefined;
+            const manifest: import("../video/manifest/manifest-types.js").DirectorManifest =
+              {
+                projectTitle: storyboard.title,
+                templateId,
+                composition: { width: 1920, height: 1080, fps },
+                audioLayer: {
+                  music: resolvedMusicPath
+                    ? {
+                        track: resolvedMusicPath,
+                        volume: 0.15,
+                        ducking: false,
+                        fadeInFrames: 30,
+                        fadeOutFrames: 30,
+                        loop: true,
+                      }
+                    : null,
+                  voiceover: null,
+                },
+                timeline,
+                metadata: {
+                  generatedAt: new Date().toISOString(),
+                  llmModel: resolvedModel ?? "copilot",
+                  llmTokensUsed: storyboard.tokensUsed,
+                  productionMode: "hero-reel",
+                  presenterQuizEnabled: false,
+                  sourceClips: [],
+                  estimatedRenderTime: currentFrame / fps,
+                },
+              };
+
+            const elapsedMs = Date.now() - startTime;
+            const imageSceneCount = timeline.filter(
+              (t) => t.type === "image_scene",
+            ).length;
+            logger.info(
+              `[Director API] Hero reel manifest: ${imageSceneCount} scenes, ` +
+                `${(currentFrame / fps).toFixed(1)}s total, ${elapsedMs}ms elapsed`,
+            );
+
+            job.status = "complete";
+            job.completedAt = Date.now();
+            job.result = {
+              manifest,
+              tokensUsed: storyboard.tokensUsed,
+              clipsProcessed: 0,
+              totalDuration: currentFrame / fps,
+              processingTimeMs: elapsedMs,
+              skippedScenes,
+              imageProvider: resolvedImageProvider,
+              imageModel: imageModel ?? "default",
+              storyboard: {
+                title: storyboard.title,
+                styleAnchor: storyboard.styleAnchor,
+                analysis: storyboard.analysis,
+                sceneCount: storyboard.scenes.length,
+              },
+            };
+            // Auto-save as a draft so the result survives navigation
+            const db = getDatabase();
+            const draftId = nanoid();
+            const now = new Date().toISOString();
+            const draftTitle = storyboard.title || "Untitled Hero Reel";
+            db.prepare(
+              `INSERT INTO director_drafts (id, title, manifest, thumbnail, production_mode, created_at, updated_at, status)
+           VALUES (?, ?, ?, ?, ?, ?, ?, 'draft')`,
+            ).run(
+              draftId,
+              draftTitle,
+              JSON.stringify(manifest),
+              null,
+              "hero-reel",
+              now,
+              now,
+            );
+            job.result!.draftId = draftId;
+
+            logger.info(
+              `[Director API] Produce job ${produceJobId} complete (hero-reel, ${elapsedMs}ms) — draft ${draftId}`,
+            );
+            emitActivity(
+              "complete",
+              `Hero reel ready (${(elapsedMs / 1000).toFixed(0)}s)`,
+              { draftId, title: draftTitle },
+            );
+            return;
           }
 
-          emitActivity("images", `Image ${scene.index + 1}/${storyboard.scenes.length} generated`);
+          // ── Highlight / Script modes ──────────────────────────────
+          emitActivity("ingestion", `${mode} mode — ingesting clips`);
 
-          const durationInFrames = Math.max(Math.round(clipDur * fps), fps);
+          const startTime = Date.now();
+          const progressLog: Array<{
+            phase: string;
+            message: string;
+            timestamp: number;
+          }> = [];
 
-          if (timeline.length > 0) {
-            const transitionDuration = Math.min(10, durationInFrames);
-            timeline.push({
-              type: "transition",
-              style: "crossfade",
-              duration: transitionDuration,
-              startAtFrame: currentFrame,
-            });
-          }
+          // Vision analysis is enabled by default
+          const useVision = enableVisionAnalysis !== false;
 
-          timeline.push({
-            type: "image_scene",
-            src: sceneImageFilePath,
-            startAtFrame: currentFrame,
-            duration: durationInFrames,
-            voiceover: undefined,
-            voiceoverVolume: 0,
-            scriptText: scene.voiceover,
-            kenBurns: {
-              scaleFrom: 1.0,
-              scaleTo: 1.2,
-              translateXFrom: 0,
-              translateXTo: scene.index % 2 === 0 ? -12 : 12,
-              translateYFrom: 0,
-              translateYTo: -6,
+          // Ingest clips (with optional vision analysis)
+          const { ingest } = await import("../video/ingestion/index.js");
+          const ingestionResult = await ingest(
+            { clips: clips!, mode },
+            {
+              copilot: useVision ? copilot : undefined,
+              visionAnalysis: useVision
+                ? {
+                    maxKeyframes: 30,
+                    delayMs: 2000,
+                    model: model || runtimeConfig.defaultModel || undefined,
+                  }
+                : undefined,
+              onProgress: (event) => {
+                progressLog.push({
+                  phase: event.phase,
+                  message: event.message,
+                  timestamp: Date.now() - startTime,
+                });
+                logger.info(`[Director API] ${event.phase}: ${event.message}`);
+              },
             },
+          );
+
+          // Produce manifest
+          const { ProducerService } =
+            await import("../video/producer/producer-service.js");
+          const producer = new ProducerService(copilot, voiceService);
+          const resolvedMusicPath = musicTrackPath?.trim() || undefined;
+          const result = await producer.produce({
+            mode,
+            contextPayload: ingestionResult.contextPayload,
+            scriptPath,
+            musicTrackPath: resolvedMusicPath,
+            preferredTemplate: template,
+            model: model || runtimeConfig.defaultModel || undefined,
+            sourceClips: clips,
           });
 
-          currentFrame += durationInFrames;
-        }
+          const elapsedMs = Date.now() - startTime;
 
-        const resolvedMusicPath = musicTrackPath?.trim() || undefined;
-        const manifest: import("../video/manifest/manifest-types.js").DirectorManifest = {
-          projectTitle: storyboard.title,
-          templateId,
-          composition: { width: 1920, height: 1080, fps },
-          audioLayer: {
-            music: resolvedMusicPath ? {
-              track: resolvedMusicPath,
-              volume: 0.15,
-              ducking: false,
-              fadeInFrames: 30,
-              fadeOutFrames: 30,
-              loop: true,
-            } : null,
-            voiceover: null,
-          },
-          timeline,
-          metadata: {
-            generatedAt: new Date().toISOString(),
-            llmModel: resolvedModel ?? "copilot",
-            llmTokensUsed: storyboard.tokensUsed,
-            productionMode: "hero-reel",
-            presenterQuizEnabled: false,
-            sourceClips: [],
-            estimatedRenderTime: currentFrame / fps,
-          },
-        };
+          // Count effects and transitions for diagnostics
+          const videoClipsInManifest = result.manifest.timeline.filter(
+            (e) => e.type === "video_clip",
+          );
+          const transitionsInManifest = result.manifest.timeline.filter(
+            (e) => e.type === "transition",
+          );
+          const clipsWithEffects = videoClipsInManifest.filter(
+            (e) =>
+              e.type === "video_clip" &&
+              "effects" in e &&
+              Array.isArray(e.effects) &&
+              e.effects.length > 0,
+          );
+          const uniqueSources = new Set(
+            videoClipsInManifest.map((e) =>
+              e.type === "video_clip" ? e.source : "",
+            ),
+          );
 
-        const elapsedMs = Date.now() - startTime;
-        const imageSceneCount = timeline.filter((t) => t.type === "image_scene").length;
-        logger.info(
-          `[Director API] Hero reel manifest: ${imageSceneCount} scenes, ` +
-          `${(currentFrame / fps).toFixed(1)}s total, ${elapsedMs}ms elapsed`,
-        );
+          logger.info(
+            `[Director API] Manifest stats: ${videoClipsInManifest.length} video clips from ${uniqueSources.size} source(s), ` +
+              `${transitionsInManifest.length} transitions, ${clipsWithEffects.length} clips with effects`,
+          );
 
-        job.status = "complete";
-        job.completedAt = Date.now();
-        job.result = {
-          manifest,
-          tokensUsed: storyboard.tokensUsed,
-          clipsProcessed: 0,
-          totalDuration: currentFrame / fps,
-          processingTimeMs: elapsedMs,
-          skippedScenes,
-          imageProvider: resolvedImageProvider,
-          imageModel: imageModel ?? "default",
-          storyboard: {
-            title: storyboard.title,
-            styleAnchor: storyboard.styleAnchor,
-            analysis: storyboard.analysis,
-            sceneCount: storyboard.scenes.length,
-          },
-        };
-        // Auto-save as a draft so the result survives navigation
-        const db = getDatabase();
-        const draftId = nanoid();
-        const now = new Date().toISOString();
-        const draftTitle = storyboard.title || "Untitled Hero Reel";
-        db.prepare(
-          `INSERT INTO director_drafts (id, title, manifest, thumbnail, production_mode, created_at, updated_at, status)
+          job.status = "complete";
+          job.completedAt = Date.now();
+          job.result = {
+            manifest: result.manifest,
+            tokensUsed: result.tokensUsed,
+            clipsProcessed: ingestionResult.clips.length,
+            totalDuration: ingestionResult.clips.reduce(
+              (sum, c) => sum + c.duration,
+              0,
+            ),
+            visionAnalysisEnabled: useVision,
+            processingTimeMs: elapsedMs,
+            progressLog,
+            diagnostics: {
+              videoClipCount: videoClipsInManifest.length,
+              transitionCount: transitionsInManifest.length,
+              clipsWithEffects: clipsWithEffects.length,
+              uniqueSourcesUsed: uniqueSources.size,
+              totalSourcesProvided: clips!.length,
+            },
+          };
+          // Auto-save as a draft so the result survives navigation
+          {
+            const db = getDatabase();
+            const draftId = nanoid();
+            const now = new Date().toISOString();
+            const draftTitle =
+              ((result.manifest as unknown as Record<string, unknown>)
+                .projectTitle as string) || `Untitled ${mode}`;
+            db.prepare(
+              `INSERT INTO director_drafts (id, title, manifest, thumbnail, production_mode, created_at, updated_at, status)
            VALUES (?, ?, ?, ?, ?, ?, ?, 'draft')`,
-        ).run(draftId, draftTitle, JSON.stringify(manifest), null, "hero-reel", now, now);
-        job.result!.draftId = draftId;
+            ).run(
+              draftId,
+              draftTitle,
+              JSON.stringify(result.manifest),
+              null,
+              mode,
+              now,
+              now,
+            );
+            job.result!.draftId = draftId;
 
-        logger.info(`[Director API] Produce job ${produceJobId} complete (hero-reel, ${elapsedMs}ms) — draft ${draftId}`);
-        emitActivity("complete", `Hero reel ready (${(elapsedMs / 1000).toFixed(0)}s)`, { draftId, title: draftTitle });
-        return;
-      }
-
-      // ── Highlight / Script modes ──────────────────────────────
-      emitActivity("ingestion", `${mode} mode — ingesting clips`);
-
-      const startTime = Date.now();
-      const progressLog: Array<{ phase: string; message: string; timestamp: number }> = [];
-
-      // Vision analysis is enabled by default
-      const useVision = enableVisionAnalysis !== false;
-
-      // Ingest clips (with optional vision analysis)
-      const { ingest } = await import("../video/ingestion/index.js");
-      const ingestionResult = await ingest({ clips: clips!, mode }, {
-        copilot: useVision ? copilot : undefined,
-        visionAnalysis: useVision ? {
-          maxKeyframes: 30,
-          delayMs: 2000,
-          model: model || runtimeConfig.defaultModel || undefined,
-        } : undefined,
-        onProgress: (event) => {
-          progressLog.push({
-            phase: event.phase,
-            message: event.message,
-            timestamp: Date.now() - startTime,
-          });
-          logger.info(`[Director API] ${event.phase}: ${event.message}`);
-        },
-      });
-
-      // Produce manifest
-      const { ProducerService } = await import("../video/producer/producer-service.js");
-      const producer = new ProducerService(copilot, voiceService);
-      const resolvedMusicPath = musicTrackPath?.trim() || undefined;
-      const result = await producer.produce({
-        mode,
-        contextPayload: ingestionResult.contextPayload,
-        scriptPath,
-        musicTrackPath: resolvedMusicPath,
-        preferredTemplate: template,
-        model: model || runtimeConfig.defaultModel || undefined,
-        sourceClips: clips,
-      });
-
-      const elapsedMs = Date.now() - startTime;
-
-      // Count effects and transitions for diagnostics
-      const videoClipsInManifest = result.manifest.timeline.filter((e) => e.type === "video_clip");
-      const transitionsInManifest = result.manifest.timeline.filter((e) => e.type === "transition");
-      const clipsWithEffects = videoClipsInManifest.filter(
-        (e) => e.type === "video_clip" && "effects" in e && Array.isArray(e.effects) && e.effects.length > 0,
-      );
-      const uniqueSources = new Set(
-        videoClipsInManifest.map((e) => e.type === "video_clip" ? e.source : ""),
-      );
-
-      logger.info(
-        `[Director API] Manifest stats: ${videoClipsInManifest.length} video clips from ${uniqueSources.size} source(s), ` +
-        `${transitionsInManifest.length} transitions, ${clipsWithEffects.length} clips with effects`,
-      );
-
-      job.status = "complete";
-      job.completedAt = Date.now();
-      job.result = {
-        manifest: result.manifest,
-        tokensUsed: result.tokensUsed,
-        clipsProcessed: ingestionResult.clips.length,
-        totalDuration: ingestionResult.clips.reduce((sum, c) => sum + c.duration, 0),
-        visionAnalysisEnabled: useVision,
-        processingTimeMs: elapsedMs,
-        progressLog,
-        diagnostics: {
-          videoClipCount: videoClipsInManifest.length,
-          transitionCount: transitionsInManifest.length,
-          clipsWithEffects: clipsWithEffects.length,
-          uniqueSourcesUsed: uniqueSources.size,
-          totalSourcesProvided: clips!.length,
-        },
-      };
-      // Auto-save as a draft so the result survives navigation
-      {
-        const db = getDatabase();
-        const draftId = nanoid();
-        const now = new Date().toISOString();
-        const draftTitle = (result.manifest as unknown as Record<string, unknown>).projectTitle as string || `Untitled ${mode}`;
-        db.prepare(
-          `INSERT INTO director_drafts (id, title, manifest, thumbnail, production_mode, created_at, updated_at, status)
-           VALUES (?, ?, ?, ?, ?, ?, ?, 'draft')`,
-        ).run(draftId, draftTitle, JSON.stringify(result.manifest), null, mode, now, now);
-        job.result!.draftId = draftId;
-
-        logger.info(`[Director API] Produce job ${produceJobId} complete (${mode}, ${elapsedMs}ms) — draft ${draftId}`);
-        emitActivity("complete", `${mode} pipeline finished (${(elapsedMs / 1000).toFixed(0)}s)`, { draftId, title: draftTitle });
-      }
-
+            logger.info(
+              `[Director API] Produce job ${produceJobId} complete (${mode}, ${elapsedMs}ms) — draft ${draftId}`,
+            );
+            emitActivity(
+              "complete",
+              `${mode} pipeline finished (${(elapsedMs / 1000).toFixed(0)}s)`,
+              { draftId, title: draftTitle },
+            );
+          }
         } catch (bgError) {
           // Don't overwrite status if already cancelled by user
           if (job.status === "cancelled") return;
-          const msg = bgError instanceof Error ? bgError.message : String(bgError);
-          logger.error(`[Director API] Produce job ${produceJobId} failed: ${msg}`);
+          const msg =
+            bgError instanceof Error ? bgError.message : String(bgError);
+          logger.error(
+            `[Director API] Produce job ${produceJobId} failed: ${msg}`,
+          );
           job.status = "failed";
           job.error = msg;
           job.completedAt = Date.now();
@@ -1973,7 +2571,10 @@ Respond with ONLY a valid JSON array. No markdown, no explanation.`;
       startedAt: j.startedAt,
       completedAt: j.completedAt,
       error: j.error,
-      elapsedMs: j.status === "running" ? Date.now() - j.startedAt : (j.completedAt ?? j.startedAt) - j.startedAt,
+      elapsedMs:
+        j.status === "running"
+          ? Date.now() - j.startedAt
+          : (j.completedAt ?? j.startedAt) - j.startedAt,
     }));
     res.json({ jobs });
   });
@@ -2024,7 +2625,13 @@ Respond with ONLY a valid JSON array. No markdown, no explanation.`;
     job.error = "Cancelled by user";
     job.completedAt = Date.now();
     if (_io) {
-      _io.emit("produce:progress", { id: job.id, mode: "produce", phase: "cancelled", detail: "Cancelled by user", timestamp: Date.now() });
+      _io.emit("produce:progress", {
+        id: job.id,
+        mode: "produce",
+        phase: "cancelled",
+        detail: "Cancelled by user",
+        timestamp: Date.now(),
+      });
     }
     logger.info(`[Director API] Produce job ${job.id} cancelled by user`);
     res.json({ success: true });
@@ -2064,8 +2671,18 @@ Respond with ONLY a valid JSON array. No markdown, no explanation.`;
       const normalizedImagePath = pathMod.resolve(imagePath);
       const homeDir = osMod.homedir();
       const allowedRoots = [homeDir, pathMod.resolve(config.outputDir)];
-      if (!allowedRoots.some((root) => normalizedImagePath.startsWith(root + pathMod.sep) || normalizedImagePath === root)) {
-        res.status(403).json({ error: "Access denied: imagePath is outside allowed directories" });
+      if (
+        !allowedRoots.some(
+          (root) =>
+            normalizedImagePath.startsWith(root + pathMod.sep) ||
+            normalizedImagePath === root,
+        )
+      ) {
+        res
+          .status(403)
+          .json({
+            error: "Access denied: imagePath is outside allowed directories",
+          });
         return;
       }
 
@@ -2073,16 +2690,29 @@ Respond with ONLY a valid JSON array. No markdown, no explanation.`;
         res.status(404).json({ error: `Image not found: ${imagePath}` });
         return;
       }
-      const imageOutputDir = pathMod.join(osMod.homedir(), ".openzigs", "director", "images");
-      const imageGenUserConfig = await (await import("../video/generators/image-gen-service.js")).ImageGenService.loadUserImageGenConfig();
-      const imageService = new (await import("../video/generators/image-gen-service.js")).ImageGenService({ outputDir: imageOutputDir, ...imageGenUserConfig });
+      const imageOutputDir = pathMod.join(
+        osMod.homedir(),
+        ".openzigs",
+        "director",
+        "images",
+      );
+      const imageGenUserConfig = await (
+        await import("../video/generators/image-gen-service.js")
+      ).ImageGenService.loadUserImageGenConfig();
+      const imageService = new (
+        await import("../video/generators/image-gen-service.js")
+      ).ImageGenService({ outputDir: imageOutputDir, ...imageGenUserConfig });
       await imageService.initialize();
 
-      const result = await imageService.enhanceImage(normalizedImagePath, prompt, {
-        strength,
-        model,
-        seed,
-      });
+      const result = await imageService.enhanceImage(
+        normalizedImagePath,
+        prompt,
+        {
+          strength,
+          model,
+          seed,
+        },
+      );
 
       res.json({
         enhancedImagePath: result.filePath,
@@ -2104,7 +2734,15 @@ Respond with ONLY a valid JSON array. No markdown, no explanation.`;
    */
   router.post("/enhance-instructions", async (req, res) => {
     try {
-      const { raw_instructions, mode, model: bodyModel } = req.body as { raw_instructions?: string; mode?: string; model?: string };
+      const {
+        raw_instructions,
+        mode,
+        model: bodyModel,
+      } = req.body as {
+        raw_instructions?: string;
+        mode?: string;
+        model?: string;
+      };
 
       if (!raw_instructions?.trim()) {
         res.status(400).json({ error: "raw_instructions is required" });
@@ -2135,7 +2773,7 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
 
       const userMessage = `Enhance these style and instructions for my video project:\n\n"${raw_instructions.trim()}"`;
 
-      const enhanceModel = bodyModel || await getUserSelectedModel();
+      const enhanceModel = bodyModel || (await getUserSelectedModel());
       let fullResponse = "";
       for await (const chunk of copilot.chat(userMessage, {
         conversationId,
@@ -2149,13 +2787,22 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
       await copilot.destroySession(conversationId);
 
       // Parse JSON response — strip any accidental markdown fences
-      const jsonStr = fullResponse.replace(/^```(?:json)?\n?/m, "").replace(/```\s*$/m, "").trim();
+      const jsonStr = fullResponse
+        .replace(/^```(?:json)?\n?/m, "")
+        .replace(/```\s*$/m, "")
+        .trim();
       let parsed: { thinking?: string; enhanced_instructions?: string };
       try {
-        parsed = JSON.parse(jsonStr) as { thinking?: string; enhanced_instructions?: string };
+        parsed = JSON.parse(jsonStr) as {
+          thinking?: string;
+          enhanced_instructions?: string;
+        };
       } catch {
         // Fallback: return the raw text as the enhancement
-        parsed = { thinking: "Instructions enhanced.", enhanced_instructions: fullResponse.trim() };
+        parsed = {
+          thinking: "Instructions enhanced.",
+          enhanced_instructions: fullResponse.trim(),
+        };
       }
 
       res.json({
@@ -2198,7 +2845,12 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
       const osMod = await import("node:os");
 
       // Path traversal guard: reject traversal sequences and only allow files under home directory
-      if (manifestPath.includes("..") || manifestPath.includes("\0") || outputDir.includes("..") || outputDir.includes("\0")) {
+      if (
+        manifestPath.includes("..") ||
+        manifestPath.includes("\0") ||
+        outputDir.includes("..") ||
+        outputDir.includes("\0")
+      ) {
         res.status(400).json({ error: "Invalid path" });
         return;
       }
@@ -2206,12 +2858,32 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
       const normalizedOutputDir = pathMod.resolve(outputDir);
       const homeDir = osMod.homedir();
       const allowedRoots = [homeDir, pathMod.resolve(config.outputDir)];
-      if (!allowedRoots.some((root) => normalizedManifestPath.startsWith(root + pathMod.sep) || normalizedManifestPath === root)) {
-        res.status(403).json({ error: "Access denied: manifestPath is outside allowed directories" });
+      if (
+        !allowedRoots.some(
+          (root) =>
+            normalizedManifestPath.startsWith(root + pathMod.sep) ||
+            normalizedManifestPath === root,
+        )
+      ) {
+        res
+          .status(403)
+          .json({
+            error: "Access denied: manifestPath is outside allowed directories",
+          });
         return;
       }
-      if (!allowedRoots.some((root) => normalizedOutputDir.startsWith(root + pathMod.sep) || normalizedOutputDir === root)) {
-        res.status(403).json({ error: "Access denied: outputDir is outside allowed directories" });
+      if (
+        !allowedRoots.some(
+          (root) =>
+            normalizedOutputDir.startsWith(root + pathMod.sep) ||
+            normalizedOutputDir === root,
+        )
+      ) {
+        res
+          .status(403)
+          .json({
+            error: "Access denied: outputDir is outside allowed directories",
+          });
         return;
       }
 
@@ -2220,49 +2892,81 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
         return;
       }
 
-      const manifestRaw = JSON.parse(fsMod.readFileSync(normalizedManifestPath, "utf-8"));
-      const { DirectorManifestSchema } = await import("../video/manifest/manifest-schema.js");
+      const manifestRaw = JSON.parse(
+        fsMod.readFileSync(normalizedManifestPath, "utf-8"),
+      );
+      const { DirectorManifestSchema } =
+        await import("../video/manifest/manifest-schema.js");
       const manifest = DirectorManifestSchema.parse(manifestRaw);
 
       // LLM frame selection
-      const { extractKeyframesFromManifest, selectThumbnailFrame } = await import("../video/thumbnails/frame-selector.js");
+      const { extractKeyframesFromManifest, selectThumbnailFrame } =
+        await import("../video/thumbnails/frame-selector.js");
       const keyframes = extractKeyframesFromManifest(manifest, outputDir);
 
       if (keyframes.length === 0) {
-        res.status(400).json({ error: "No scene images found in output directory" });
+        res
+          .status(400)
+          .json({ error: "No scene images found in output directory" });
         return;
       }
 
-      const frameResult = await selectThumbnailFrame(keyframes, manifest, copilot);
+      const frameResult = await selectThumbnailFrame(
+        keyframes,
+        manifest,
+        copilot,
+      );
 
       // Apply text override if provided
-      const textLines = Array.isArray(textOverride) && textOverride.length > 0
-        ? textOverride.filter((t): t is string => typeof t === "string").slice(0, 3)
-        : frameResult.suggestedText;
+      const textLines =
+        Array.isArray(textOverride) && textOverride.length > 0
+          ? textOverride
+              .filter((t): t is string => typeof t === "string")
+              .slice(0, 3)
+          : frameResult.suggestedText;
 
       // Stylize the selected frame via Flux img2img
       let stylizedPath = frameResult.framePath;
       try {
-        const imageOutputDir = pathMod.join(osMod.homedir(), ".openzigs", "director", "images");
-        const imageGenMod = await import("../video/generators/image-gen-service.js");
-        const imageGenUserConfig = await imageGenMod.ImageGenService.loadUserImageGenConfig();
-        const imageService = new imageGenMod.ImageGenService({ outputDir: imageOutputDir, ...imageGenUserConfig });
+        const imageOutputDir = pathMod.join(
+          osMod.homedir(),
+          ".openzigs",
+          "director",
+          "images",
+        );
+        const imageGenMod =
+          await import("../video/generators/image-gen-service.js");
+        const imageGenUserConfig =
+          await imageGenMod.ImageGenService.loadUserImageGenConfig();
+        const imageService = new imageGenMod.ImageGenService({
+          outputDir: imageOutputDir,
+          ...imageGenUserConfig,
+        });
         await imageService.initialize();
 
-        const stylePrompt = style ?? "YouTube thumbnail style, highly saturated, expressive, high contrast, vibrant colors, professional";
-        const enhanced = await imageService.enhanceImage(frameResult.framePath, stylePrompt, {
-          width: 1280,
-          height: 720,
-          steps: 20,
-          strength: 0.6,
-        });
+        const stylePrompt =
+          style ??
+          "YouTube thumbnail style, highly saturated, expressive, high contrast, vibrant colors, professional";
+        const enhanced = await imageService.enhanceImage(
+          frameResult.framePath,
+          stylePrompt,
+          {
+            width: 1280,
+            height: 720,
+            steps: 20,
+            strength: 0.6,
+          },
+        );
         stylizedPath = enhanced.filePath;
       } catch (enhanceErr) {
-        logger.warn(`[Director API] Thumbnail img2img enhancement failed, using raw frame: ${enhanceErr instanceof Error ? enhanceErr.message : String(enhanceErr)}`);
+        logger.warn(
+          `[Director API] Thumbnail img2img enhancement failed, using raw frame: ${enhanceErr instanceof Error ? enhanceErr.message : String(enhanceErr)}`,
+        );
       }
 
       // Composite text overlay
-      const { compositeThumbnail } = await import("../video/thumbnails/thumbnail-compositor.js");
+      const { compositeThumbnail } =
+        await import("../video/thumbnails/thumbnail-compositor.js");
       const thumbnailPath = pathMod.join(outputDir, "thumbnail.jpg");
       await compositeThumbnail({
         backgroundPath: stylizedPath,
@@ -2299,7 +3003,11 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
    */
   router.post("/assets/ingest", async (req, res) => {
     try {
-      const { filePath: srcPath, enableVision, model: visionModel } = req.body as {
+      const {
+        filePath: srcPath,
+        enableVision,
+        model: visionModel,
+      } = req.body as {
         filePath?: string;
         enableVision?: boolean;
         model?: string;
@@ -2321,7 +3029,8 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
       }
 
       const { ingest } = await import("../video/ingestion/index.js");
-      const resolvedModel = visionModel || runtimeConfig.defaultModel || undefined;
+      const resolvedModel =
+        visionModel || runtimeConfig.defaultModel || undefined;
       const useVision = enableVision !== false;
 
       const progressLog: Array<{ phase: string; message: string }> = [];
@@ -2334,7 +3043,9 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
             : undefined,
           onProgress: (event) => {
             progressLog.push({ phase: event.phase, message: event.message });
-            logger.info(`[Director API] Ingest: ${event.phase}: ${event.message}`);
+            logger.info(
+              `[Director API] Ingest: ${event.phase}: ${event.message}`,
+            );
           },
         },
       );
@@ -2401,15 +3112,31 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
       const id = nanoid();
       const now = new Date().toISOString();
       const manifestJson = JSON.stringify(manifest);
-      const resolvedTitle = (title && typeof title === "string" && title.trim()) || "Untitled Draft";
+      const resolvedTitle =
+        (title && typeof title === "string" && title.trim()) ||
+        "Untitled Draft";
 
       db.prepare(
         `INSERT INTO director_drafts (id, title, manifest, thumbnail, production_mode, created_at, updated_at, status)
          VALUES (?, ?, ?, ?, ?, ?, ?, 'draft')`,
-      ).run(id, resolvedTitle, manifestJson, thumbnail ?? null, productionMode, now, now);
+      ).run(
+        id,
+        resolvedTitle,
+        manifestJson,
+        thumbnail ?? null,
+        productionMode,
+        now,
+        now,
+      );
 
       logger.info(`[Director API] Draft created: ${id} "${resolvedTitle}"`);
-      res.json({ id, title: resolvedTitle, status: "draft", createdAt: now, updatedAt: now });
+      res.json({
+        id,
+        title: resolvedTitle,
+        status: "draft",
+        createdAt: now,
+        updatedAt: now,
+      });
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       logger.error(`[Director API] POST /drafts failed: ${msg}`);
@@ -2423,10 +3150,12 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
   router.get("/drafts", (_req, res) => {
     try {
       const db = getDatabase();
-      const rows = db.prepare(
-        `SELECT id, title, thumbnail, production_mode, created_at, updated_at, status
+      const rows = db
+        .prepare(
+          `SELECT id, title, thumbnail, production_mode, created_at, updated_at, status
          FROM director_drafts ORDER BY updated_at DESC`,
-      ).all() as Array<{
+        )
+        .all() as Array<{
         id: string;
         title: string;
         thumbnail: string | null;
@@ -2460,19 +3189,23 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
   router.get("/drafts/:id", (req, res) => {
     try {
       const db = getDatabase();
-      const row = db.prepare(
-        `SELECT id, title, manifest, thumbnail, production_mode, created_at, updated_at, status
+      const row = db
+        .prepare(
+          `SELECT id, title, manifest, thumbnail, production_mode, created_at, updated_at, status
          FROM director_drafts WHERE id = ?`,
-      ).get(req.params.id) as {
-        id: string;
-        title: string;
-        manifest: string;
-        thumbnail: string | null;
-        production_mode: string;
-        created_at: string;
-        updated_at: string;
-        status: string;
-      } | undefined;
+        )
+        .get(req.params.id) as
+        | {
+            id: string;
+            title: string;
+            manifest: string;
+            thumbnail: string | null;
+            production_mode: string;
+            created_at: string;
+            updated_at: string;
+            status: string;
+          }
+        | undefined;
 
       if (!row) {
         res.status(404).json({ error: `Draft not found: ${req.params.id}` });
@@ -2484,7 +3217,9 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
         manifest = JSON.parse(row.manifest);
       } catch (err) {
         manifest = null;
-        logger.warn(`[Director API] Draft ${row.id} has corrupt manifest JSON: ${err instanceof Error ? err.message : String(err)}`);
+        logger.warn(
+          `[Director API] Draft ${row.id} has corrupt manifest JSON: ${err instanceof Error ? err.message : String(err)}`,
+        );
       }
 
       res.json({
@@ -2517,10 +3252,14 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
       }
 
       const db = getDatabase();
-      const row = db.prepare(`SELECT title, manifest FROM director_drafts WHERE id = ?`).get(id) as {
-        title: string;
-        manifest: string;
-      } | undefined;
+      const row = db
+        .prepare(`SELECT title, manifest FROM director_drafts WHERE id = ?`)
+        .get(id) as
+        | {
+            title: string;
+            manifest: string;
+          }
+        | undefined;
 
       if (!row) {
         res.status(404).json({ error: `Draft not found: ${id}` });
@@ -2536,18 +3275,27 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
       }
 
       const { generateSubtitles } = await import("../video/subtitle-export.js");
-      const content = generateSubtitles(manifest as import("../video/subtitle-export.js").ManifestForSubtitles, format);
+      const content = generateSubtitles(
+        manifest as import("../video/subtitle-export.js").ManifestForSubtitles,
+        format,
+      );
 
       const safeTitle = row.title.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 50);
       const filename = `${safeTitle}.${format}`;
-      const contentType = format === "srt" ? "application/x-subrip" : "text/vtt";
+      const contentType =
+        format === "srt" ? "application/x-subrip" : "text/vtt";
 
       res.setHeader("Content-Type", contentType);
-      res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+      res.setHeader(
+        "Content-Disposition",
+        `attachment; filename="${filename}"`,
+      );
       res.send(content);
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
-      logger.error(`[Director API] GET /drafts/:id/subtitles/:format failed: ${msg}`);
+      logger.error(
+        `[Director API] GET /drafts/:id/subtitles/:format failed: ${msg}`,
+      );
       res.status(500).json({ error: msg });
     }
   });
@@ -2567,7 +3315,8 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
 
       const db = getDatabase();
 
-      const existing = db.prepare(`SELECT id FROM director_drafts WHERE id = ?`)
+      const existing = db
+        .prepare(`SELECT id FROM director_drafts WHERE id = ?`)
         .get(req.params.id) as { id: string } | undefined;
 
       if (!existing) {
@@ -2605,7 +3354,9 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
       values.push(now);
       values.push(req.params.id);
 
-      db.prepare(`UPDATE director_drafts SET ${updates.join(", ")} WHERE id = ?`).run(...values);
+      db.prepare(
+        `UPDATE director_drafts SET ${updates.join(", ")} WHERE id = ?`,
+      ).run(...values);
       logger.info(`[Director API] Draft updated: ${req.params.id}`);
       res.json({ success: true, updatedAt: now });
     } catch (error) {
@@ -2621,7 +3372,9 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
   router.delete("/drafts/:id", (req, res) => {
     try {
       const db = getDatabase();
-      const result = db.prepare(`DELETE FROM director_drafts WHERE id = ?`).run(req.params.id);
+      const result = db
+        .prepare(`DELETE FROM director_drafts WHERE id = ?`)
+        .run(req.params.id);
       if (result.changes === 0) {
         res.status(404).json({ error: `Draft not found: ${req.params.id}` });
         return;
@@ -2643,7 +3396,8 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
     try {
       const { randomUUID } = await import("node:crypto");
       const db = getDatabase();
-      const draft = db.prepare(`SELECT title, manifest FROM director_drafts WHERE id = ?`)
+      const draft = db
+        .prepare(`SELECT title, manifest FROM director_drafts WHERE id = ?`)
         .get(req.params.id) as { title: string; manifest: string } | undefined;
       if (!draft) {
         res.status(404).json({ error: `Draft not found: ${req.params.id}` });
@@ -2652,13 +3406,20 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
       const { label } = req.body as { label?: string };
       const id = randomUUID();
       const now = new Date().toISOString();
-      const resolvedLabel = (label?.trim()) || `v – ${new Date(now).toLocaleString(undefined, {
-        month: "short", day: "numeric", hour: "2-digit", minute: "2-digit",
-      })}`;
+      const resolvedLabel =
+        label?.trim() ||
+        `v – ${new Date(now).toLocaleString(undefined, {
+          month: "short",
+          day: "numeric",
+          hour: "2-digit",
+          minute: "2-digit",
+        })}`;
       db.prepare(
         `INSERT INTO director_draft_versions (id, draft_id, label, manifest, created_at) VALUES (?, ?, ?, ?, ?)`,
       ).run(id, req.params.id, resolvedLabel, draft.manifest, now);
-      logger.info(`[Director API] Draft version created: ${id} for draft ${req.params.id}`);
+      logger.info(
+        `[Director API] Draft version created: ${id} for draft ${req.params.id}`,
+      );
       res.status(201).json({ id, label: resolvedLabel, createdAt: now });
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
@@ -2673,11 +3434,23 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
   router.get("/drafts/:id/versions", (req, res) => {
     try {
       const db = getDatabase();
-      const rows = db.prepare(
-        `SELECT id, label, created_at FROM director_draft_versions
+      const rows = db
+        .prepare(
+          `SELECT id, label, created_at FROM director_draft_versions
          WHERE draft_id = ? ORDER BY created_at DESC`,
-      ).all(req.params.id) as Array<{ id: string; label: string; created_at: string }>;
-      res.json({ versions: rows.map((r) => ({ id: r.id, label: r.label, createdAt: r.created_at })) });
+        )
+        .all(req.params.id) as Array<{
+        id: string;
+        label: string;
+        created_at: string;
+      }>;
+      res.json({
+        versions: rows.map((r) => ({
+          id: r.id,
+          label: r.label,
+          createdAt: r.created_at,
+        })),
+      });
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       res.status(500).json({ error: msg });
@@ -2690,16 +3463,23 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
   router.post("/drafts/:id/versions/:versionId/restore", (req, res) => {
     try {
       const db = getDatabase();
-      const ver = db.prepare(
-        `SELECT manifest FROM director_draft_versions WHERE id = ? AND draft_id = ?`,
-      ).get(req.params.versionId, req.params.id) as { manifest: string } | undefined;
+      const ver = db
+        .prepare(
+          `SELECT manifest FROM director_draft_versions WHERE id = ? AND draft_id = ?`,
+        )
+        .get(req.params.versionId, req.params.id) as
+        | { manifest: string }
+        | undefined;
       if (!ver) {
         res.status(404).json({ error: "Version not found" });
         return;
       }
-      db.prepare(`UPDATE director_drafts SET manifest = ?, updated_at = ? WHERE id = ?`)
-        .run(ver.manifest, new Date().toISOString(), req.params.id);
-      logger.info(`[Director API] Draft ${req.params.id} restored from version ${req.params.versionId}`);
+      db.prepare(
+        `UPDATE director_drafts SET manifest = ?, updated_at = ? WHERE id = ?`,
+      ).run(ver.manifest, new Date().toISOString(), req.params.id);
+      logger.info(
+        `[Director API] Draft ${req.params.id} restored from version ${req.params.versionId}`,
+      );
       res.json({ success: true, manifest: JSON.parse(ver.manifest) });
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
@@ -2713,10 +3493,12 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
   router.get("/drafts/:id/renders", (req, res) => {
     try {
       const db = getDatabase();
-      const rows = db.prepare(
-        `SELECT id, job_id, quality, status, output_path, error, created_at, updated_at
+      const rows = db
+        .prepare(
+          `SELECT id, job_id, quality, status, output_path, error, created_at, updated_at
          FROM director_renders WHERE draft_id = ? ORDER BY created_at DESC`,
-      ).all(req.params.id) as Array<{
+        )
+        .all(req.params.id) as Array<{
         id: string;
         job_id: string;
         quality: string;
@@ -2776,23 +3558,42 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
       const fsMod = await import("node:fs");
 
       const db = getDatabase();
-      const draft = db.prepare(`SELECT title, manifest FROM director_drafts WHERE id = ?`)
+      const draft = db
+        .prepare(`SELECT title, manifest FROM director_drafts WHERE id = ?`)
         .get(req.params.id) as { title: string; manifest: string } | undefined;
       if (!draft) {
         res.status(404).json({ error: `Draft not found: ${req.params.id}` });
         return;
       }
 
-      const { DirectorManifestSchema } = await import("../video/manifest/manifest-schema.js");
+      const { DirectorManifestSchema } =
+        await import("../video/manifest/manifest-schema.js");
       const manifest = DirectorManifestSchema.parse(JSON.parse(draft.manifest));
 
-      const imageDir = pathMod.join(osMod.homedir(), ".openzigs", "director", "images");
-      const outputDir = pathMod.join(osMod.homedir(), ".openzigs", "director", "thumbnails");
+      const imageDir = pathMod.join(
+        osMod.homedir(),
+        ".openzigs",
+        "director",
+        "images",
+      );
+      const outputDir = pathMod.join(
+        osMod.homedir(),
+        ".openzigs",
+        "director",
+        "thumbnails",
+      );
       if (!fsMod.existsSync(outputDir)) {
         fsMod.mkdirSync(outputDir, { recursive: true });
       }
 
-      const { style, textOverride, mode, prompt, clickbaitOverlay, baseFrameUrl } = req.body as {
+      const {
+        style,
+        textOverride,
+        mode,
+        prompt,
+        clickbaitOverlay,
+        baseFrameUrl,
+      } = req.body as {
         style?: string;
         textOverride?: string[];
         mode?: "frame-select" | "flux-enhance" | "flux-generate";
@@ -2801,21 +3602,32 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
         baseFrameUrl?: string;
       };
 
-      const imageGenMod = await import("../video/generators/image-gen-service.js");
-      const imageGenUserConfig = await imageGenMod.ImageGenService.loadUserImageGenConfig();
-      const imageService = new imageGenMod.ImageGenService({ outputDir: imageDir, ...imageGenUserConfig });
+      const imageGenMod =
+        await import("../video/generators/image-gen-service.js");
+      const imageGenUserConfig =
+        await imageGenMod.ImageGenService.loadUserImageGenConfig();
+      const imageService = new imageGenMod.ImageGenService({
+        outputDir: imageDir,
+        ...imageGenUserConfig,
+      });
       await imageService.initialize();
 
       // -- Helper: select the best keyframe from the manifest --
       const pickBestFrame = async () => {
-        const { extractKeyframesFromManifest, selectThumbnailFrame } = await import("../video/thumbnails/frame-selector.js");
+        const { extractKeyframesFromManifest, selectThumbnailFrame } =
+          await import("../video/thumbnails/frame-selector.js");
         const keyframes = extractKeyframesFromManifest(manifest, imageDir);
         if (keyframes.length === 0) return null;
         return selectThumbnailFrame(keyframes, manifest, copilot);
       };
 
       // -- Helper: resolve a base frame path from URL or fresh selection --
-      const resolveBaseFrame = async (): Promise<{ path: string; timestamp: number; rationale: string; text: string[] } | null> => {
+      const resolveBaseFrame = async (): Promise<{
+        path: string;
+        timestamp: number;
+        rationale: string;
+        text: string[];
+      } | null> => {
         // If the client sent back a previously selected frame URL, resolve it
         if (baseFrameUrl) {
           const filename = baseFrameUrl.split("/").pop() ?? "";
@@ -2825,18 +3637,31 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
             resolved = pathMod.join(imageDir, filename);
           }
           if (fsMod.existsSync(resolved)) {
-            return { path: resolved, timestamp: 0, rationale: "Using previously selected frame", text: [manifest.projectTitle.toUpperCase()] };
+            return {
+              path: resolved,
+              timestamp: 0,
+              rationale: "Using previously selected frame",
+              text: [manifest.projectTitle.toUpperCase()],
+            };
           }
         }
         // Fall back to fresh LLM selection
         const frameResult = await pickBestFrame();
         if (!frameResult) return null;
-        return { path: frameResult.framePath, timestamp: frameResult.timestamp, rationale: frameResult.rationale, text: frameResult.suggestedText };
+        return {
+          path: frameResult.framePath,
+          timestamp: frameResult.timestamp,
+          rationale: frameResult.rationale,
+          text: frameResult.suggestedText,
+        };
       };
 
       let backgroundPath: string;
       let rawFrameUrl: string | undefined;
-      let frameInfo: { timestamp: number; rationale: string } = { timestamp: 0, rationale: "" };
+      let frameInfo: { timestamp: number; rationale: string } = {
+        timestamp: 0,
+        rationale: "",
+      };
       let suggestedText: string[];
       const effectiveMode = mode ?? "frame-select";
 
@@ -2844,7 +3669,12 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
         // Step 1 flow: just pick the best frame, no enhancement. Return fast.
         const frame = await resolveBaseFrame();
         if (!frame) {
-          res.status(400).json({ error: "No scene images found — ensure the draft has generated images" });
+          res
+            .status(400)
+            .json({
+              error:
+                "No scene images found — ensure the draft has generated images",
+            });
           return;
         }
         // Copy frame to thumbnails dir so it's serveable
@@ -2867,50 +3697,85 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
           );
           for await (const chunk of textStream) textChunks.push(chunk);
           let jsonText = textChunks.join("").trim();
-          if (jsonText.startsWith("```")) jsonText = jsonText.replace(/^```(?:json)?\n?/, "").replace(/\n?```$/, "");
+          if (jsonText.startsWith("```"))
+            jsonText = jsonText
+              .replace(/^```(?:json)?\n?/, "")
+              .replace(/\n?```$/, "");
           const parsed = JSON.parse(jsonText) as { suggestedText?: string[] };
           if (Array.isArray(parsed.suggestedText)) {
-            suggestedText = parsed.suggestedText.filter((t): t is string => typeof t === "string").slice(0, 3);
+            suggestedText = parsed.suggestedText
+              .filter((t): t is string => typeof t === "string")
+              .slice(0, 3);
           }
         } catch {
-          logger.warn("[Director API] Thumbnail text suggestion failed, using project title");
+          logger.warn(
+            "[Director API] Thumbnail text suggestion failed, using project title",
+          );
         }
-
       } else if (effectiveMode === "flux-enhance") {
         // Long-running Kontext edit — return 202, run in background, poll or Socket.IO for result
         const frame = await resolveBaseFrame();
         if (!frame) {
-          res.status(400).json({ error: "No scene images found — ensure the draft has generated images" });
+          res
+            .status(400)
+            .json({
+              error:
+                "No scene images found — ensure the draft has generated images",
+            });
           return;
         }
 
         const thumbnailJobId = nanoid();
-        const job: ThumbnailJob = { id: thumbnailJobId, draftId: req.params.id, status: "running", startedAt: Date.now() };
+        const job: ThumbnailJob = {
+          id: thumbnailJobId,
+          draftId: req.params.id,
+          status: "running",
+          startedAt: Date.now(),
+        };
         thumbnailJobs.set(thumbnailJobId, job);
         // Evict old completed jobs (keep last 20)
         const allThumbJobs = [...thumbnailJobs.values()];
-        const finishedThumb = allThumbJobs.filter(j => j.status !== "running").sort((a, b) => (a.completedAt ?? 0) - (b.completedAt ?? 0));
-        while (finishedThumb.length > 20) { thumbnailJobs.delete(finishedThumb.shift()!.id); }
+        const finishedThumb = allThumbJobs
+          .filter((j) => j.status !== "running")
+          .sort((a, b) => (a.completedAt ?? 0) - (b.completedAt ?? 0));
+        while (finishedThumb.length > 20) {
+          thumbnailJobs.delete(finishedThumb.shift()!.id);
+        }
 
         res.status(202).json({ thumbnailJobId, mode: effectiveMode });
-        logger.info(`[Director API] Thumbnail job ${thumbnailJobId} accepted (flux-enhance) — running in background`);
+        logger.info(
+          `[Director API] Thumbnail job ${thumbnailJobId} accepted (flux-enhance) — running in background`,
+        );
 
         (async () => {
           try {
-            const enhancePrompt = prompt ?? style ?? "YouTube thumbnail style, highly saturated, expressive, high contrast, vibrant colors, professional";
-            const enhanced = await imageService.kontextEdit(frame.path, enhancePrompt, {
-              width: 1280,
-              height: 720,
-              steps: 20,
-              guidance: 2.5,
-            });
-            logger.info(`[Director API] Thumbnail img2img enhanced: ${enhanced.filePath} (${enhanced.generationTimeMs}ms)`);
+            const enhancePrompt =
+              prompt ??
+              style ??
+              "YouTube thumbnail style, highly saturated, expressive, high contrast, vibrant colors, professional";
+            const enhanced = await imageService.kontextEdit(
+              frame.path,
+              enhancePrompt,
+              {
+                width: 1280,
+                height: 720,
+                steps: 20,
+                guidance: 2.5,
+              },
+            );
+            logger.info(
+              `[Director API] Thumbnail img2img enhanced: ${enhanced.filePath} (${enhanced.generationTimeMs}ms)`,
+            );
 
-            const textLines = Array.isArray(textOverride) && textOverride.length > 0
-              ? textOverride.filter((t): t is string => typeof t === "string").slice(0, 3)
-              : frame.text;
+            const textLines =
+              Array.isArray(textOverride) && textOverride.length > 0
+                ? textOverride
+                    .filter((t): t is string => typeof t === "string")
+                    .slice(0, 3)
+                : frame.text;
 
-            const { compositeThumbnail } = await import("../video/thumbnails/thumbnail-compositor.js");
+            const { compositeThumbnail } =
+              await import("../video/thumbnails/thumbnail-compositor.js");
             const thumbnailFilename = `thumb_${req.params.id}_${Date.now()}.jpg`;
             const thumbnailPath = pathMod.join(outputDir, thumbnailFilename);
             await compositeThumbnail({
@@ -2919,57 +3784,96 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
               textPlacement: "bottom",
               textColor: "#ffffff",
               outputPath: thumbnailPath,
-              clickbaitOverlay: clickbaitOverlay !== "none" ? clickbaitOverlay : undefined,
+              clickbaitOverlay:
+                clickbaitOverlay !== "none" ? clickbaitOverlay : undefined,
             });
 
-            db.prepare(`UPDATE director_drafts SET thumbnail = ?, updated_at = ? WHERE id = ?`)
-              .run(thumbnailFilename, new Date().toISOString(), req.params.id);
+            db.prepare(
+              `UPDATE director_drafts SET thumbnail = ?, updated_at = ? WHERE id = ?`,
+            ).run(thumbnailFilename, new Date().toISOString(), req.params.id);
 
             const resultPayload = {
               thumbnailUrl: `/api/admin/director/files/${thumbnailFilename}`,
               suggestedText: textLines,
-              selectedFrame: { timestamp: frame.timestamp, rationale: `Enhanced with: "${enhancePrompt.slice(0, 80)}"` },
+              selectedFrame: {
+                timestamp: frame.timestamp,
+                rationale: `Enhanced with: "${enhancePrompt.slice(0, 80)}"`,
+              },
               mode: effectiveMode,
             };
             job.status = "complete";
             job.result = resultPayload;
             job.completedAt = Date.now();
-            if (_io) _io.emit("thumbnail:complete", { thumbnailJobId, draftId: req.params.id, ...resultPayload });
-            logger.info(`[Director API] Thumbnail job ${thumbnailJobId} complete`);
+            if (_io)
+              _io.emit("thumbnail:complete", {
+                thumbnailJobId,
+                draftId: req.params.id,
+                ...resultPayload,
+              });
+            logger.info(
+              `[Director API] Thumbnail job ${thumbnailJobId} complete`,
+            );
           } catch (bgErr) {
-            const cause = bgErr instanceof Error && bgErr.cause ? ` (cause: ${bgErr.cause instanceof Error ? bgErr.cause.message : String(bgErr.cause)})` : "";
-            const bgMsg = (bgErr instanceof Error ? bgErr.message : String(bgErr)) + cause;
+            const cause =
+              bgErr instanceof Error && bgErr.cause
+                ? ` (cause: ${bgErr.cause instanceof Error ? bgErr.cause.message : String(bgErr.cause)})`
+                : "";
+            const bgMsg =
+              (bgErr instanceof Error ? bgErr.message : String(bgErr)) + cause;
             job.status = "failed";
             job.error = bgMsg;
             job.completedAt = Date.now();
-            logger.error(`[Director API] Thumbnail job ${thumbnailJobId} failed: ${bgMsg}`);
-            if (_io) _io.emit("thumbnail:failed", { thumbnailJobId, draftId: req.params.id, error: bgMsg });
+            logger.error(
+              `[Director API] Thumbnail job ${thumbnailJobId} failed: ${bgMsg}`,
+            );
+            if (_io)
+              _io.emit("thumbnail:failed", {
+                thumbnailJobId,
+                draftId: req.params.id,
+                error: bgMsg,
+              });
           }
         })();
         return;
-
       } else {
         // flux-generate: completely new image — also long-running, same async pattern
         const thumbnailJobId = nanoid();
-        const job: ThumbnailJob = { id: thumbnailJobId, draftId: req.params.id, status: "running", startedAt: Date.now() };
+        const job: ThumbnailJob = {
+          id: thumbnailJobId,
+          draftId: req.params.id,
+          status: "running",
+          startedAt: Date.now(),
+        };
         thumbnailJobs.set(thumbnailJobId, job);
         const allThumbJobs = [...thumbnailJobs.values()];
-        const finishedThumb = allThumbJobs.filter(j => j.status !== "running").sort((a, b) => (a.completedAt ?? 0) - (b.completedAt ?? 0));
-        while (finishedThumb.length > 20) { thumbnailJobs.delete(finishedThumb.shift()!.id); }
+        const finishedThumb = allThumbJobs
+          .filter((j) => j.status !== "running")
+          .sort((a, b) => (a.completedAt ?? 0) - (b.completedAt ?? 0));
+        while (finishedThumb.length > 20) {
+          thumbnailJobs.delete(finishedThumb.shift()!.id);
+        }
 
         res.status(202).json({ thumbnailJobId, mode: effectiveMode });
-        logger.info(`[Director API] Thumbnail job ${thumbnailJobId} accepted (flux-generate) — running in background`);
+        logger.info(
+          `[Director API] Thumbnail job ${thumbnailJobId} accepted (flux-generate) — running in background`,
+        );
 
         (async () => {
           try {
-            const thumbnailPrompt = prompt
-              ?? `YouTube thumbnail for "${manifest.projectTitle}", highly saturated, expressive, high contrast, vibrant colors, dramatic lighting, professional photography, 4K`;
+            const thumbnailPrompt =
+              prompt ??
+              `YouTube thumbnail for "${manifest.projectTitle}", highly saturated, expressive, high contrast, vibrant colors, dramatic lighting, professional photography, 4K`;
 
-            const genResult = await imageService.generateImage(thumbnailPrompt, {
-              width: 1280,
-              height: 720,
-            });
-            let genSuggestedText: string[] = [manifest.projectTitle.toUpperCase()];
+            const genResult = await imageService.generateImage(
+              thumbnailPrompt,
+              {
+                width: 1280,
+                height: 720,
+              },
+            );
+            let genSuggestedText: string[] = [
+              manifest.projectTitle.toUpperCase(),
+            ];
 
             try {
               const thumbModel2 = await getUserSelectedModel();
@@ -2980,20 +3884,33 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
               );
               for await (const chunk of textStream) textChunks.push(chunk);
               let jsonText = textChunks.join("").trim();
-              if (jsonText.startsWith("```")) jsonText = jsonText.replace(/^```(?:json)?\n?/, "").replace(/\n?```$/, "");
-              const parsed = JSON.parse(jsonText) as { suggestedText?: string[] };
+              if (jsonText.startsWith("```"))
+                jsonText = jsonText
+                  .replace(/^```(?:json)?\n?/, "")
+                  .replace(/\n?```$/, "");
+              const parsed = JSON.parse(jsonText) as {
+                suggestedText?: string[];
+              };
               if (Array.isArray(parsed.suggestedText)) {
-                genSuggestedText = parsed.suggestedText.filter((t): t is string => typeof t === "string").slice(0, 3);
+                genSuggestedText = parsed.suggestedText
+                  .filter((t): t is string => typeof t === "string")
+                  .slice(0, 3);
               }
             } catch {
-              logger.warn("[Director API] Thumbnail text suggestion failed, using project title");
+              logger.warn(
+                "[Director API] Thumbnail text suggestion failed, using project title",
+              );
             }
 
-            const textLines = Array.isArray(textOverride) && textOverride.length > 0
-              ? textOverride.filter((t): t is string => typeof t === "string").slice(0, 3)
-              : genSuggestedText;
+            const textLines =
+              Array.isArray(textOverride) && textOverride.length > 0
+                ? textOverride
+                    .filter((t): t is string => typeof t === "string")
+                    .slice(0, 3)
+                : genSuggestedText;
 
-            const { compositeThumbnail } = await import("../video/thumbnails/thumbnail-compositor.js");
+            const { compositeThumbnail } =
+              await import("../video/thumbnails/thumbnail-compositor.js");
             const thumbnailFilename = `thumb_${req.params.id}_${Date.now()}.jpg`;
             const thumbnailPath = pathMod.join(outputDir, thumbnailFilename);
             await compositeThumbnail({
@@ -3002,42 +3919,69 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
               textPlacement: "bottom",
               textColor: "#ffffff",
               outputPath: thumbnailPath,
-              clickbaitOverlay: clickbaitOverlay !== "none" ? clickbaitOverlay : undefined,
+              clickbaitOverlay:
+                clickbaitOverlay !== "none" ? clickbaitOverlay : undefined,
             });
 
-            db.prepare(`UPDATE director_drafts SET thumbnail = ?, updated_at = ? WHERE id = ?`)
-              .run(thumbnailFilename, new Date().toISOString(), req.params.id);
+            db.prepare(
+              `UPDATE director_drafts SET thumbnail = ?, updated_at = ? WHERE id = ?`,
+            ).run(thumbnailFilename, new Date().toISOString(), req.params.id);
 
             const resultPayload = {
               thumbnailUrl: `/api/admin/director/files/${thumbnailFilename}`,
               suggestedText: textLines,
-              selectedFrame: { timestamp: 0, rationale: `AI-generated from prompt: "${thumbnailPrompt.slice(0, 100)}"` },
+              selectedFrame: {
+                timestamp: 0,
+                rationale: `AI-generated from prompt: "${thumbnailPrompt.slice(0, 100)}"`,
+              },
               mode: effectiveMode,
             };
             job.status = "complete";
             job.result = resultPayload;
             job.completedAt = Date.now();
-            if (_io) _io.emit("thumbnail:complete", { thumbnailJobId, draftId: req.params.id, ...resultPayload });
-            logger.info(`[Director API] Thumbnail job ${thumbnailJobId} complete`);
+            if (_io)
+              _io.emit("thumbnail:complete", {
+                thumbnailJobId,
+                draftId: req.params.id,
+                ...resultPayload,
+              });
+            logger.info(
+              `[Director API] Thumbnail job ${thumbnailJobId} complete`,
+            );
           } catch (bgErr) {
-            const cause = bgErr instanceof Error && bgErr.cause ? ` (cause: ${bgErr.cause instanceof Error ? bgErr.cause.message : String(bgErr.cause)})` : "";
-            const bgMsg = (bgErr instanceof Error ? bgErr.message : String(bgErr)) + cause;
+            const cause =
+              bgErr instanceof Error && bgErr.cause
+                ? ` (cause: ${bgErr.cause instanceof Error ? bgErr.cause.message : String(bgErr.cause)})`
+                : "";
+            const bgMsg =
+              (bgErr instanceof Error ? bgErr.message : String(bgErr)) + cause;
             job.status = "failed";
             job.error = bgMsg;
             job.completedAt = Date.now();
-            logger.error(`[Director API] Thumbnail job ${thumbnailJobId} failed: ${bgMsg}`);
-            if (_io) _io.emit("thumbnail:failed", { thumbnailJobId, draftId: req.params.id, error: bgMsg });
+            logger.error(
+              `[Director API] Thumbnail job ${thumbnailJobId} failed: ${bgMsg}`,
+            );
+            if (_io)
+              _io.emit("thumbnail:failed", {
+                thumbnailJobId,
+                draftId: req.params.id,
+                error: bgMsg,
+              });
           }
         })();
         return;
       }
 
       // frame-select mode reaches here — composite and respond synchronously
-      const textLines = Array.isArray(textOverride) && textOverride.length > 0
-        ? textOverride.filter((t): t is string => typeof t === "string").slice(0, 3)
-        : suggestedText;
+      const textLines =
+        Array.isArray(textOverride) && textOverride.length > 0
+          ? textOverride
+              .filter((t): t is string => typeof t === "string")
+              .slice(0, 3)
+          : suggestedText;
 
-      const { compositeThumbnail } = await import("../video/thumbnails/thumbnail-compositor.js");
+      const { compositeThumbnail } =
+        await import("../video/thumbnails/thumbnail-compositor.js");
       const thumbnailFilename = `thumb_${req.params.id}_${Date.now()}.jpg`;
       const thumbnailPath = pathMod.join(outputDir, thumbnailFilename);
       await compositeThumbnail({
@@ -3046,11 +3990,13 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
         textPlacement: "bottom",
         textColor: "#ffffff",
         outputPath: thumbnailPath,
-        clickbaitOverlay: clickbaitOverlay !== "none" ? clickbaitOverlay : undefined,
+        clickbaitOverlay:
+          clickbaitOverlay !== "none" ? clickbaitOverlay : undefined,
       });
 
-      db.prepare(`UPDATE director_drafts SET thumbnail = ?, updated_at = ? WHERE id = ?`)
-        .run(thumbnailFilename, new Date().toISOString(), req.params.id);
+      db.prepare(
+        `UPDATE director_drafts SET thumbnail = ?, updated_at = ? WHERE id = ?`,
+      ).run(thumbnailFilename, new Date().toISOString(), req.params.id);
 
       res.json({
         thumbnailUrl: `/api/admin/director/files/${thumbnailFilename}`,
@@ -3105,7 +4051,12 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
         .prepare(
           `SELECT id, title, production_mode, updated_at FROM director_drafts ORDER BY updated_at DESC LIMIT 100`,
         )
-        .all() as Array<{ id: string; title: string; production_mode: string; updated_at: string }>;
+        .all() as Array<{
+        id: string;
+        title: string;
+        production_mode: string;
+        updated_at: string;
+      }>;
 
       // Fetch the latest render row per draft using a proper SQLite GROUP BY pattern.
       const renderRows = db
@@ -3135,13 +4086,16 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
         const liveJob = r ? renderOrchestrator?.getJob(r.job_id) : undefined;
 
         // Resolve output path: live job → DB row → filesystem probe for historical renders.
-        let resolvedPath: string | null = liveJob?.outputPath ?? r?.output_path ?? null;
+        let resolvedPath: string | null =
+          liveJob?.outputPath ?? r?.output_path ?? null;
         if (!resolvedPath && r?.job_id) {
           // Historical renders (pre-persistence hook) may have the file on disk but
           // null in the DB. Scan the job's output directory for any .mp4 file.
           const jobDir = pathMod.join(rendersDir, r.job_id);
           if (fsMod.existsSync(jobDir)) {
-            const files = fsMod.readdirSync(jobDir).filter((f) => f.endsWith(".mp4"));
+            const files = fsMod
+              .readdirSync(jobDir)
+              .filter((f) => f.endsWith(".mp4"));
             if (files.length > 0) {
               resolvedPath = pathMod.join(jobDir, files[0]);
               // Back-fill the DB so future requests are instant.
@@ -3152,7 +4106,8 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
           }
         }
 
-        const resolvedStatus = liveJob?.status ?? (resolvedPath ? "complete" : (r?.status ?? null));
+        const resolvedStatus =
+          liveJob?.status ?? (resolvedPath ? "complete" : (r?.status ?? null));
         return {
           draftId: d.id,
           draftTitle: d.title,
@@ -3160,7 +4115,10 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
           quality: r?.quality ?? null,
           status: resolvedStatus,
           outputPath: resolvedPath,
-          downloadUrl: resolvedPath && r?.job_id ? `/api/admin/director/renders/${r.job_id}/download` : null,
+          downloadUrl:
+            resolvedPath && r?.job_id
+              ? `/api/admin/director/renders/${r.job_id}/download`
+              : null,
           updatedAt: d.updated_at,
         };
       });
@@ -3181,12 +4139,16 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
       const fsMod = await import("node:fs");
 
       const db = getDatabase();
-      const row = db.prepare(
-        `SELECT r.output_path, d.title
+      const row = db
+        .prepare(
+          `SELECT r.output_path, d.title
          FROM director_renders r
          JOIN director_drafts d ON d.id = r.draft_id
          WHERE r.job_id = ?`,
-      ).get(req.params.jobId) as { output_path: string | null; title: string } | undefined;
+        )
+        .get(req.params.jobId) as
+        | { output_path: string | null; title: string }
+        | undefined;
 
       // Also check live job state in case DB hasn't been flushed yet
       const liveJob = renderOrchestrator?.getJob(req.params.jobId);
@@ -3202,18 +4164,24 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
         return;
       }
 
-      const safeTitle = (row?.title ?? "render")
-        .replace(/[^a-zA-Z0-9_\- ]/g, "")
-        .trim()
-        .replace(/\s+/g, "_") || "render";
+      const safeTitle =
+        (row?.title ?? "render")
+          .replace(/[^a-zA-Z0-9_\- ]/g, "")
+          .trim()
+          .replace(/\s+/g, "_") || "render";
       const fileName = `${safeTitle}_${req.params.jobId.slice(0, 8)}.mp4`;
 
       res.setHeader("Content-Type", "video/mp4");
-      res.setHeader("Content-Disposition", `attachment; filename="${fileName}"`);
+      res.setHeader(
+        "Content-Disposition",
+        `attachment; filename="${fileName}"`,
+      );
       fsMod.createReadStream(outputPath).pipe(res);
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
-      logger.error(`[Director API] GET /renders/:jobId/download failed: ${msg}`);
+      logger.error(
+        `[Director API] GET /renders/:jobId/download failed: ${msg}`,
+      );
       res.status(500).json({ error: msg });
     }
   });
@@ -3230,7 +4198,13 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
         return;
       }
 
-      const { draftId, prompt, provider, model: imageModel, seed } = req.body as {
+      const {
+        draftId,
+        prompt,
+        provider,
+        model: imageModel,
+        seed,
+      } = req.body as {
         draftId?: string;
         prompt?: string;
         provider?: "auto" | "local" | "cloud";
@@ -3245,10 +4219,19 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
 
       const osMod = await import("node:os");
       const pathMod = await import("node:path");
-      const imageOutputDir = pathMod.join(osMod.homedir(), ".openzigs", "director", "images");
-      const { ImageGenService } = await import("../video/generators/image-gen-service.js");
+      const imageOutputDir = pathMod.join(
+        osMod.homedir(),
+        ".openzigs",
+        "director",
+        "images",
+      );
+      const { ImageGenService } =
+        await import("../video/generators/image-gen-service.js");
       const imageGenUserConfig = await ImageGenService.loadUserImageGenConfig();
-      const imageService = new ImageGenService({ outputDir: imageOutputDir, ...imageGenUserConfig });
+      const imageService = new ImageGenService({
+        outputDir: imageOutputDir,
+        ...imageGenUserConfig,
+      });
       await imageService.initialize();
 
       const result = await imageService.generateImage(prompt, {
@@ -3260,7 +4243,8 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
       // If a draftId is provided, update the corresponding scene in the draft manifest
       if (draftId) {
         const db = getDatabase();
-        const row = db.prepare(`SELECT manifest FROM director_drafts WHERE id = ?`)
+        const row = db
+          .prepare(`SELECT manifest FROM director_drafts WHERE id = ?`)
           .get(draftId) as { manifest: string } | undefined;
 
         if (row) {
@@ -3268,18 +4252,22 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
             const manifest = JSON.parse(row.manifest);
             if (Array.isArray(manifest.timeline)) {
               const scenes = manifest.timeline.filter(
-                (e: { type: string }) => e.type === "image_scene" || e.type === "video_clip",
+                (e: { type: string }) =>
+                  e.type === "image_scene" || e.type === "video_clip",
               );
               if (scenes[sceneIndex]) {
                 scenes[sceneIndex].src = result.filePath;
                 const now = new Date().toISOString();
-                db.prepare(`UPDATE director_drafts SET manifest = ?, updated_at = ? WHERE id = ?`)
-                  .run(JSON.stringify(manifest), now, draftId);
+                db.prepare(
+                  `UPDATE director_drafts SET manifest = ?, updated_at = ? WHERE id = ?`,
+                ).run(JSON.stringify(manifest), now, draftId);
               }
             }
           } catch {
             // Non-fatal: scene image was generated, draft update failed
-            logger.warn(`[Director API] Failed to update draft ${draftId} scene ${sceneIndex}`);
+            logger.warn(
+              `[Director API] Failed to update draft ${draftId} scene ${sceneIndex}`,
+            );
           }
         }
       }
@@ -3291,7 +4279,9 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
       });
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
-      logger.error(`[Director API] POST /scenes/:sceneIndex/regenerate failed: ${msg}`);
+      logger.error(
+        `[Director API] POST /scenes/:sceneIndex/regenerate failed: ${msg}`,
+      );
       res.status(500).json({ error: msg });
     }
   });
@@ -3309,14 +4299,19 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
         return;
       }
 
-      const { draftId, assetId } = req.body as { draftId?: string; assetId?: string };
+      const { draftId, assetId } = req.body as {
+        draftId?: string;
+        assetId?: string;
+      };
       if (!assetId || typeof assetId !== "string") {
         res.status(400).json({ error: "assetId is required" });
         return;
       }
 
       const db = getDatabase();
-      const asset = db.prepare("SELECT * FROM media_assets WHERE id = ?").get(assetId) as { file_path: string } | undefined;
+      const asset = db
+        .prepare("SELECT * FROM media_assets WHERE id = ?")
+        .get(assetId) as { file_path: string } | undefined;
       if (!asset || !asset.file_path) {
         res.status(404).json({ error: "Asset not found" });
         return;
@@ -3333,7 +4328,12 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
       }
 
       // Copy into director images dir
-      const imageDir = pathMod.join(osMod.homedir(), ".openzigs", "director", "images");
+      const imageDir = pathMod.join(
+        osMod.homedir(),
+        ".openzigs",
+        "director",
+        "images",
+      );
       fsMod.mkdirSync(imageDir, { recursive: true });
       const ext = pathMod.extname(sourcePath) || ".png";
       const destFilename = `gallery-${Date.now()}${ext}`;
@@ -3343,7 +4343,8 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
       // Update draft if provided
       if (draftId) {
         const db = getDatabase();
-        const row = db.prepare("SELECT manifest FROM director_drafts WHERE id = ?")
+        const row = db
+          .prepare("SELECT manifest FROM director_drafts WHERE id = ?")
           .get(draftId) as { manifest: string } | undefined;
 
         if (row) {
@@ -3351,17 +4352,21 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
             const manifest = JSON.parse(row.manifest);
             if (Array.isArray(manifest.timeline)) {
               const scenes = manifest.timeline.filter(
-                (e: { type: string }) => e.type === "image_scene" || e.type === "video_clip",
+                (e: { type: string }) =>
+                  e.type === "image_scene" || e.type === "video_clip",
               );
               if (scenes[sceneIndex]) {
                 scenes[sceneIndex].src = destPath;
                 const now = new Date().toISOString();
-                db.prepare("UPDATE director_drafts SET manifest = ?, updated_at = ? WHERE id = ?")
-                  .run(JSON.stringify(manifest), now, draftId);
+                db.prepare(
+                  "UPDATE director_drafts SET manifest = ?, updated_at = ? WHERE id = ?",
+                ).run(JSON.stringify(manifest), now, draftId);
               }
             }
           } catch {
-            logger.warn(`[Director API] Failed to update draft ${draftId} scene ${sceneIndex}`);
+            logger.warn(
+              `[Director API] Failed to update draft ${draftId} scene ${sceneIndex}`,
+            );
           }
         }
       }
@@ -3369,7 +4374,9 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
       res.json({ filePath: destPath });
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
-      logger.error(`[Director API] POST /scenes/:sceneIndex/replace-from-gallery failed: ${msg}`);
+      logger.error(
+        `[Director API] POST /scenes/:sceneIndex/replace-from-gallery failed: ${msg}`,
+      );
       res.status(500).json({ error: msg });
     }
   });
@@ -3389,7 +4396,13 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
         return;
       }
 
-      const { draftId, videoDurationSec, currentScript, context, model: bodyModel } = req.body as {
+      const {
+        draftId,
+        videoDurationSec,
+        currentScript,
+        context,
+        model: bodyModel,
+      } = req.body as {
         draftId?: string;
         videoDurationSec?: number;
         currentScript?: string;
@@ -3404,7 +4417,8 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
 
       // Load the full manifest to get surrounding context
       const db = getDatabase();
-      const row = db.prepare(`SELECT manifest FROM director_drafts WHERE id = ?`)
+      const row = db
+        .prepare(`SELECT manifest FROM director_drafts WHERE id = ?`)
         .get(draftId) as { manifest: string } | undefined;
 
       if (!row) {
@@ -3414,17 +4428,23 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
 
       const manifest = JSON.parse(row.manifest);
       const scenes = (manifest.timeline ?? []).filter(
-        (e: { type: string }) => e.type === "image_scene" || e.type === "video_clip",
+        (e: { type: string }) =>
+          e.type === "image_scene" || e.type === "video_clip",
       );
 
       if (sceneIndex >= scenes.length) {
-        res.status(400).json({ error: `Scene index ${sceneIndex} out of range (${scenes.length} scenes)` });
+        res
+          .status(400)
+          .json({
+            error: `Scene index ${sceneIndex} out of range (${scenes.length} scenes)`,
+          });
         return;
       }
 
       const scene = scenes[sceneIndex];
       const prevScene = sceneIndex > 0 ? scenes[sceneIndex - 1] : null;
-      const nextScene = sceneIndex < scenes.length - 1 ? scenes[sceneIndex + 1] : null;
+      const nextScene =
+        sceneIndex < scenes.length - 1 ? scenes[sceneIndex + 1] : null;
 
       const durationHint = videoDurationSec
         ? `The replacement video is ${videoDurationSec.toFixed(1)} seconds long.`
@@ -3448,25 +4468,36 @@ ${videoDurationSec ? `Aim for narration that fills approximately ${videoDuration
 Keep the same tone and style as the surrounding scenes.
 Return ONLY the new narration text, no explanations or formatting.`;
 
-      const rewriteModel = bodyModel || await getUserSelectedModel();
-      const stream = copilot.chat(prompt, { tools: [], ...(rewriteModel ? { model: rewriteModel } : {}) });
+      const rewriteModel = bodyModel || (await getUserSelectedModel());
+      const stream = copilot.chat(prompt, {
+        tools: [],
+        ...(rewriteModel ? { model: rewriteModel } : {}),
+      });
       const chunks: string[] = [];
       for await (const chunk of stream) {
         chunks.push(chunk);
       }
-      const newScript = chunks.join("").trim().replace(/^["']|["']$/g, "");
+      const newScript = chunks
+        .join("")
+        .trim()
+        .replace(/^["']|["']$/g, "");
 
       // Update the draft manifest with the new script
       scene.scriptText = newScript;
       const now = new Date().toISOString();
-      db.prepare(`UPDATE director_drafts SET manifest = ?, updated_at = ? WHERE id = ?`)
-        .run(JSON.stringify(manifest), now, draftId);
+      db.prepare(
+        `UPDATE director_drafts SET manifest = ?, updated_at = ? WHERE id = ?`,
+      ).run(JSON.stringify(manifest), now, draftId);
 
-      logger.info(`[Director API] Rewrote script for scene ${sceneIndex} in draft ${draftId}`);
+      logger.info(
+        `[Director API] Rewrote script for scene ${sceneIndex} in draft ${draftId}`,
+      );
       res.json({ sceneIndex, newScript });
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
-      logger.error(`[Director API] POST /scenes/:sceneIndex/rewrite-script failed: ${msg}`);
+      logger.error(
+        `[Director API] POST /scenes/:sceneIndex/rewrite-script failed: ${msg}`,
+      );
       res.status(500).json({ error: msg });
     }
   });
@@ -3499,16 +4530,24 @@ Return ONLY the new narration text, no explanations or formatting.`;
 
       const fsMod = await import("node:fs");
       if (!fsMod.existsSync(sourceVideo)) {
-        res.status(404).json({ error: `Source video not found: ${sourceVideo}` });
+        res
+          .status(404)
+          .json({ error: `Source video not found: ${sourceVideo}` });
         return;
       }
 
       if (!voiceService) {
-        res.status(503).json({ error: "VoiceService is not available — Shorts pipeline requires TTS" });
+        res
+          .status(503)
+          .json({
+            error:
+              "VoiceService is not available — Shorts pipeline requires TTS",
+          });
         return;
       }
 
-      const { createShort } = await import("../video/shorts/shorts-pipeline.js");
+      const { createShort } =
+        await import("../video/shorts/shorts-pipeline.js");
       const result = await createShort(
         {
           sourceVideo,
@@ -3530,9 +4569,19 @@ Return ONLY the new narration text, no explanations or formatting.`;
       db.prepare(
         `INSERT INTO director_drafts (id, title, manifest, thumbnail, production_mode, created_at, updated_at, status)
          VALUES (?, ?, ?, ?, ?, ?, ?, 'draft')`,
-      ).run(draftId, title, JSON.stringify(result.manifest), null, "shorts", now, now);
+      ).run(
+        draftId,
+        title,
+        JSON.stringify(result.manifest),
+        null,
+        "shorts",
+        now,
+        now,
+      );
 
-      logger.info(`[Director API] Short created as draft ${draftId}: "${title}"`);
+      logger.info(
+        `[Director API] Short created as draft ${draftId}: "${title}"`,
+      );
 
       res.json({
         draftId,
@@ -3557,7 +4606,16 @@ Return ONLY the new narration text, no explanations or formatting.`;
    */
   router.post("/blog-to-video", async (req, res) => {
     try {
-      const { url, template, styleHint, imageProvider, imageModel, musicTrackPath, targetDuration, brandVoiceId } = req.body as {
+      const {
+        url,
+        template,
+        styleHint,
+        imageProvider,
+        imageModel,
+        musicTrackPath,
+        targetDuration,
+        brandVoiceId,
+      } = req.body as {
         url?: string;
         template?: "Minimalist" | "ContentCreator" | "Corporate" | "TechDemo";
         styleHint?: string;
@@ -3573,7 +4631,10 @@ Return ONLY the new narration text, no explanations or formatting.`;
         return;
       }
 
-      if (musicTrackPath && (musicTrackPath.includes("\0") || musicTrackPath.includes(".."))) {
+      if (
+        musicTrackPath &&
+        (musicTrackPath.includes("\0") || musicTrackPath.includes(".."))
+      ) {
         res.status(400).json({ error: "Invalid musicTrackPath" });
         return;
       }
@@ -3590,7 +4651,8 @@ Return ONLY the new narration text, no explanations or formatting.`;
         return;
       }
 
-      const { blogToVideo } = await import("../video/blog/blog-to-video-pipeline.js");
+      const { blogToVideo } =
+        await import("../video/blog/blog-to-video-pipeline.js");
       const result = await blogToVideo(
         {
           url,
@@ -3601,7 +4663,9 @@ Return ONLY the new narration text, no explanations or formatting.`;
           musicTrackPath,
           model: runtimeConfig.defaultModel || undefined,
           targetDuration,
-          brandVoiceBlock: brandVoiceService?.getVoicePromptBlockById(brandVoiceId) || undefined,
+          brandVoiceBlock:
+            brandVoiceService?.getVoicePromptBlockById(brandVoiceId) ||
+            undefined,
         },
         copilot,
         voiceService,
@@ -3616,9 +4680,19 @@ Return ONLY the new narration text, no explanations or formatting.`;
       db.prepare(
         `INSERT INTO director_drafts (id, title, manifest, thumbnail, production_mode, created_at, updated_at, status)
          VALUES (?, ?, ?, ?, ?, ?, ?, 'draft')`,
-      ).run(draftId, title, JSON.stringify(result.manifest), null, "blog-to-video", now, now);
+      ).run(
+        draftId,
+        title,
+        JSON.stringify(result.manifest),
+        null,
+        "blog-to-video",
+        now,
+        now,
+      );
 
-      logger.info(`[Director API] Blog-to-video saved as draft ${draftId}: "${title}"`);
+      logger.info(
+        `[Director API] Blog-to-video saved as draft ${draftId}: "${title}"`,
+      );
 
       res.json({
         draftId,
@@ -3653,7 +4727,15 @@ Return ONLY the new narration text, no explanations or formatting.`;
         return;
       }
 
-      const { manifest, codec, crf, quality, draftId, notifyViaTelegram, telegramChatId } = req.body as {
+      const {
+        manifest,
+        codec,
+        crf,
+        quality,
+        draftId,
+        notifyViaTelegram,
+        telegramChatId,
+      } = req.body as {
         manifest: unknown;
         codec?: string;
         crf?: number;
@@ -3675,10 +4757,12 @@ Return ONLY the new narration text, no explanations or formatting.`;
         lossless: 0,
       };
 
-      const resolvedCrf = crf ?? (quality ? qualityPresets[quality] : undefined);
+      const resolvedCrf =
+        crf ?? (quality ? qualityPresets[quality] : undefined);
 
       const jobId = await renderOrchestrator.submit({
-        manifest: manifest as import("../video/manifest/manifest-types.js").DirectorManifest,
+        manifest:
+          manifest as import("../video/manifest/manifest-types.js").DirectorManifest,
         notifyViaTelegram,
         telegramChatId,
       });
@@ -3686,7 +4770,12 @@ Return ONLY the new narration text, no explanations or formatting.`;
       // Store quality metadata on the job for logging/display
       const job = renderOrchestrator.getJob(jobId);
       if (job) {
-        const jobMeta = job as typeof job & { codec?: string; crf?: number; quality?: string; draftId?: string };
+        const jobMeta = job as typeof job & {
+          codec?: string;
+          crf?: number;
+          quality?: string;
+          draftId?: string;
+        };
         jobMeta.codec = codec ?? "h264";
         jobMeta.crf = resolvedCrf ?? 23;
         jobMeta.quality = quality ?? "standard";
@@ -3704,7 +4793,12 @@ Return ONLY the new narration text, no explanations or formatting.`;
         ).run(renderId, draftId, jobId, quality ?? "standard", now, now);
       }
 
-      res.json({ jobId, status: "queued", codec: codec ?? "h264", crf: resolvedCrf ?? 23 });
+      res.json({
+        jobId,
+        status: "queued",
+        codec: codec ?? "h264",
+        crf: resolvedCrf ?? 23,
+      });
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       logger.error(`[Director API] POST /render failed: ${msg}`);
@@ -3831,7 +4925,12 @@ Return ONLY the new narration text, no explanations or formatting.`;
 
       const osMod = await import("node:os");
       const fsMod = await import("node:fs/promises");
-      const imageOutputDir = path.join(osMod.homedir(), ".openzigs", "director", "images");
+      const imageOutputDir = path.join(
+        osMod.homedir(),
+        ".openzigs",
+        "director",
+        "images",
+      );
       await fsMod.mkdir(imageOutputDir, { recursive: true });
 
       let voiceoverPath: string;
@@ -3844,23 +4943,39 @@ Return ONLY the new narration text, no explanations or formatting.`;
         // Check if F5-TTS is available
         const sidecarUrl = voiceService.getSidecarUrl();
         let f5Available = false;
-        let f5Clips: Array<{ emotion: string; ref_audio_path: string; ref_text: string }> = [];
+        let f5Clips: Array<{
+          emotion: string;
+          ref_audio_path: string;
+          ref_text: string;
+        }> = [];
 
         try {
-          const healthResp = await fetch(`${sidecarUrl}/health`, { signal: AbortSignal.timeout(3000) });
+          const healthResp = await fetch(`${sidecarUrl}/health`, {
+            signal: AbortSignal.timeout(3000),
+          });
           if (healthResp.ok) {
-            const health = await healthResp.json() as { active_engine?: string };
+            const health = (await healthResp.json()) as {
+              active_engine?: string;
+            };
             if (health.active_engine === "f5tts") {
               const db = getDatabase();
-              const f5Profile = db.prepare(
-                `SELECT id FROM voice_profiles WHERE engine_type = 'f5tts'
+              const f5Profile = db
+                .prepare(
+                  `SELECT id FROM voice_profiles WHERE engine_type = 'f5tts'
                  ORDER BY updated_at DESC LIMIT 1`,
-              ).get() as { id: string } | undefined;
+                )
+                .get() as { id: string } | undefined;
               if (f5Profile) {
-                const clips = db.prepare(
-                  `SELECT emotion, ref_audio_path, ref_text FROM f5tts_clips
+                const clips = db
+                  .prepare(
+                    `SELECT emotion, ref_audio_path, ref_text FROM f5tts_clips
                    WHERE profile_id = ? ORDER BY sort_order ASC`,
-                ).all(f5Profile.id) as Array<{ emotion: string; ref_audio_path: string; ref_text: string }>;
+                  )
+                  .all(f5Profile.id) as Array<{
+                  emotion: string;
+                  ref_audio_path: string;
+                  ref_text: string;
+                }>;
                 if (clips.length > 0) {
                   f5Clips = clips;
                   f5Available = true;
@@ -3872,7 +4987,11 @@ Return ONLY the new narration text, no explanations or formatting.`;
           // F5-TTS not reachable
         }
 
-        if (f5Available && f5Clips.length > 0 && (resolvedEngine === "f5tts" || resolvedEngine === "auto")) {
+        if (
+          f5Available &&
+          f5Clips.length > 0 &&
+          (resolvedEngine === "f5tts" || resolvedEngine === "auto")
+        ) {
           const f5Result = await voiceService.synthesizeF5TTS(
             text,
             f5Clips.map((c) => ({
@@ -3880,27 +4999,39 @@ Return ONLY the new narration text, no explanations or formatting.`;
               refAudioPath: c.ref_audio_path,
               refText: c.ref_text,
             })),
-            f5ttsParams ? {
-              steps: f5ttsParams.steps,
-              method: f5ttsParams.method,
-              cfgStrength: f5ttsParams.cfgStrength,
-              swayCoef: f5ttsParams.swayCoef,
-              speed: f5ttsParams.speed,
-              seed: f5ttsParams.seed,
-            } : undefined,
+            f5ttsParams
+              ? {
+                  steps: f5ttsParams.steps,
+                  method: f5ttsParams.method,
+                  cfgStrength: f5ttsParams.cfgStrength,
+                  swayCoef: f5ttsParams.swayCoef,
+                  speed: f5ttsParams.speed,
+                  seed: f5ttsParams.seed,
+                }
+              : undefined,
           );
-          const voPath = path.join(imageOutputDir, `openzigs-vo-${nanoid(8)}.wav`);
+          const voPath = path.join(
+            imageOutputDir,
+            `openzigs-vo-${nanoid(8)}.wav`,
+          );
           await fsMod.writeFile(voPath, f5Result.audio);
           voiceoverPath = voPath;
           usedEngine = "f5tts";
         } else if (resolvedEngine === "f5tts") {
-          res.status(503).json({ error: "F5-TTS engine not available. Check sidecar health." });
+          res
+            .status(503)
+            .json({
+              error: "F5-TTS engine not available. Check sidecar health.",
+            });
           return;
         } else {
           // Fall back to Kokoro/VoiceService
           const ttsResult = await voiceService.synthesize(text, voice);
           const ext = ttsResult.contentType?.includes("wav") ? "wav" : "mp3";
-          const voPath = path.join(imageOutputDir, `openzigs-vo-${nanoid(8)}.${ext}`);
+          const voPath = path.join(
+            imageOutputDir,
+            `openzigs-vo-${nanoid(8)}.${ext}`,
+          );
           await fsMod.writeFile(voPath, ttsResult.audio);
           voiceoverPath = voPath;
           usedEngine = voiceService.getProvider();
@@ -3909,21 +5040,24 @@ Return ONLY the new narration text, no explanations or formatting.`;
         // Kokoro / VoiceService
         const ttsResult = await voiceService.synthesize(text, voice);
         const ext = ttsResult.contentType?.includes("wav") ? "wav" : "mp3";
-        const voPath = path.join(imageOutputDir, `openzigs-vo-${nanoid(8)}.${ext}`);
+        const voPath = path.join(
+          imageOutputDir,
+          `openzigs-vo-${nanoid(8)}.${ext}`,
+        );
         await fsMod.writeFile(voPath, ttsResult.audio);
         voiceoverPath = voPath;
         usedEngine = voiceService.getProvider();
       }
 
       // Measure duration
-      const durationSec = await probeAudioDurationSeconds(voiceoverPath) ?? 0;
+      const durationSec = (await probeAudioDurationSeconds(voiceoverPath)) ?? 0;
 
       // Update the draft manifest if draftId provided
       if (draftId) {
         const db = getDatabase();
-        const row = db.prepare(`SELECT manifest FROM director_drafts WHERE id = ?`).get(draftId) as
-          | { manifest: string }
-          | undefined;
+        const row = db
+          .prepare(`SELECT manifest FROM director_drafts WHERE id = ?`)
+          .get(draftId) as { manifest: string } | undefined;
 
         if (row) {
           try {
@@ -3939,7 +5073,10 @@ Return ONLY the new narration text, no explanations or formatting.`;
                     // Update scene duration to match new audio
                     const fps = manifest.composition?.fps ?? 30;
                     if (durationSec > 0) {
-                      const newDuration = Math.max(Math.round((durationSec + 0.35) * fps), fps);
+                      const newDuration = Math.max(
+                        Math.round((durationSec + 0.35) * fps),
+                        fps,
+                      );
                       manifest.timeline[i].duration = newDuration;
                     }
                     break;
@@ -3948,16 +5085,21 @@ Return ONLY the new narration text, no explanations or formatting.`;
                 }
               }
               const now = new Date().toISOString();
-              db.prepare(`UPDATE director_drafts SET manifest = ?, updated_at = ? WHERE id = ?`)
-                .run(JSON.stringify(manifest), now, draftId);
+              db.prepare(
+                `UPDATE director_drafts SET manifest = ?, updated_at = ? WHERE id = ?`,
+              ).run(JSON.stringify(manifest), now, draftId);
             }
           } catch {
-            logger.warn(`[Director API] Failed to update draft ${draftId} scene ${sceneIndex} voiceover`);
+            logger.warn(
+              `[Director API] Failed to update draft ${draftId} scene ${sceneIndex} voiceover`,
+            );
           }
         }
       }
 
-      logger.info(`[Director API] Re-recorded scene ${sceneIndex} voiceover: engine=${usedEngine}, dur=${durationSec.toFixed(1)}s`);
+      logger.info(
+        `[Director API] Re-recorded scene ${sceneIndex} voiceover: engine=${usedEngine}, dur=${durationSec.toFixed(1)}s`,
+      );
 
       res.json({
         sceneIndex,
@@ -3967,7 +5109,9 @@ Return ONLY the new narration text, no explanations or formatting.`;
       });
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
-      logger.error(`[Director API] POST /scenes/:sceneIndex/re-record failed: ${msg}`);
+      logger.error(
+        `[Director API] POST /scenes/:sceneIndex/re-record failed: ${msg}`,
+      );
       res.status(500).json({ error: msg });
     }
   });
@@ -3977,14 +5121,21 @@ Return ONLY the new narration text, no explanations or formatting.`;
    */
   router.get("/voice/engines", async (_req, res) => {
     try {
-      const engines: Array<{ id: string; name: string; available: boolean; active: boolean }> = [];
+      const engines: Array<{
+        id: string;
+        name: string;
+        available: boolean;
+        active: boolean;
+      }> = [];
 
       if (voiceService) {
         const provider = voiceService.getProvider();
         engines.push({
           id: "kokoro",
           name: "Kokoro (Local TTS)",
-          available: voiceService.isReady() && (provider === "local" || provider === "f5tts"),
+          available:
+            voiceService.isReady() &&
+            (provider === "local" || provider === "f5tts"),
           active: provider === "local",
         });
 
@@ -3992,9 +5143,13 @@ Return ONLY the new narration text, no explanations or formatting.`;
         const sidecarUrl = voiceService.getSidecarUrl();
         let f5Active = false;
         try {
-          const healthResp = await fetch(`${sidecarUrl}/health`, { signal: AbortSignal.timeout(3000) });
+          const healthResp = await fetch(`${sidecarUrl}/health`, {
+            signal: AbortSignal.timeout(3000),
+          });
           if (healthResp.ok) {
-            const health = await healthResp.json() as { active_engine?: string };
+            const health = (await healthResp.json()) as {
+              active_engine?: string;
+            };
             f5Active = health.active_engine === "f5tts";
           }
         } catch {
@@ -4005,11 +5160,13 @@ Return ONLY the new narration text, no explanations or formatting.`;
         let f5HasClips = false;
         try {
           const db = getDatabase();
-          const clipCount = db.prepare(
-            `SELECT COUNT(*) as cnt FROM f5tts_clips c
+          const clipCount = db
+            .prepare(
+              `SELECT COUNT(*) as cnt FROM f5tts_clips c
              JOIN voice_profiles p ON c.profile_id = p.id
              WHERE p.engine_type = 'f5tts'`,
-          ).get() as { cnt: number } | undefined;
+            )
+            .get() as { cnt: number } | undefined;
           f5HasClips = (clipCount?.cnt ?? 0) > 0;
         } catch {
           // DB not available
@@ -4048,7 +5205,10 @@ Return ONLY the new narration text, no explanations or formatting.`;
    */
   router.post("/voice/analyze-params", async (req, res) => {
     try {
-      const { text, model: bodyModel } = req.body as { text?: string; model?: string };
+      const { text, model: bodyModel } = req.body as {
+        text?: string;
+        model?: string;
+      };
       if (!text || typeof text !== "string" || text.trim().length === 0) {
         res.status(400).json({ error: "text is required" });
         return;
@@ -4077,7 +5237,7 @@ Consider these factors when recommending parameters:
 Respond ONLY with a bare JSON object — no markdown, no code fences:
 {"speed": number, "steps": number, "method": "euler"|"midpoint"|"rk4", "cfgStrength": number, "swayCoef": number, "reasoning": "One sentence explaining your choices"}`;
 
-      const ttsModel = bodyModel || await getUserSelectedModel();
+      const ttsModel = bodyModel || (await getUserSelectedModel());
       let fullResponse = "";
       for await (const chunk of copilot.chat(
         `Analyze this narration text and recommend optimal F5-TTS parameters:\n\n"${text.trim()}"`,
@@ -4112,7 +5272,9 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
       res.json({
         speed: Math.max(0.5, Math.min(2.0, parsed.speed ?? 1.0)),
         steps: Math.max(4, Math.min(32, Math.round(parsed.steps ?? 8))),
-        method: ["euler", "midpoint", "rk4"].includes(parsed.method ?? "") ? parsed.method : "rk4",
+        method: ["euler", "midpoint", "rk4"].includes(parsed.method ?? "")
+          ? parsed.method
+          : "rk4",
         cfgStrength: Math.max(0.5, Math.min(5.0, parsed.cfgStrength ?? 2.0)),
         swayCoef: Math.max(-3.0, Math.min(3.0, parsed.swayCoef ?? -1.0)),
         reasoning: parsed.reasoning ?? "",
@@ -4138,7 +5300,11 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
    */
   router.post("/voice/add-directives", async (req, res) => {
     try {
-      const { text, engine, model: bodyModel } = req.body as { text?: string; engine?: string; model?: string };
+      const {
+        text,
+        engine,
+        model: bodyModel,
+      } = req.body as { text?: string; engine?: string; model?: string };
       if (!text || typeof text !== "string" || text.trim().length === 0) {
         res.status(400).json({ error: "text is required" });
         return;
@@ -4166,14 +5332,18 @@ Wrap key words or short phrases in asterisks to indicate vocal emphasis.
 Use for: statistics/data, important names, action words, contrasts.
 Example: "Revenue grew by *forty percent*" or "This is *critical*."
 
-${isF5 ? `### Emotion Tags — (Emotion)
+${
+  isF5
+    ? `### Emotion Tags — (Emotion)
 F5-TTS can switch between reference audio clips tagged by emotion. Use these to control vocal tone:
 - (Regular) — normal, conversational tone (default)
 - (Excited) — enthusiastic, energetic delivery
 - (Serious) — grave, authoritative tone
 - (Whisper) — soft, intimate, secretive
 - (Warm) — friendly, empathetic, caring
-Place the emotion tag BEFORE the text that should use that tone. It stays active until the next emotion tag.` : ""}
+Place the emotion tag BEFORE the text that should use that tone. It stays active until the next emotion tag.`
+    : ""
+}
 
 ## Rules
 1. Do NOT rewrite, rephrase, or change ANY words in the source text. Only INSERT directive tags.
@@ -4188,7 +5358,7 @@ ${isF5 ? "6. Emotion tags should only change 1-3 times in a typical paragraph. D
 Respond ONLY with a bare JSON object — no markdown, no code fences:
 {"enhanced": "the original text with directives inserted", "reasoning": "Brief explanation of your choices"}`;
 
-      const directiveModel = bodyModel || await getUserSelectedModel();
+      const directiveModel = bodyModel || (await getUserSelectedModel());
       let fullResponse = "";
       for await (const chunk of copilot.chat(
         `Add narration directives to this script:\n\n"${text.trim()}"`,
@@ -4242,7 +5412,11 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
    */
   router.post("/scenes/:sceneIndex/enhance-prompt", async (req, res) => {
     try {
-      const { prompt, context, model: bodyModel } = req.body as { prompt?: string; context?: string; model?: string };
+      const {
+        prompt,
+        context,
+        model: bodyModel,
+      } = req.body as { prompt?: string; context?: string; model?: string };
 
       if (!prompt || typeof prompt !== "string" || prompt.trim().length === 0) {
         res.status(400).json({ error: "prompt is required" });
@@ -4266,7 +5440,7 @@ ${context ? `\nContext about the overall video: ${context}` : ""}
 Respond ONLY with a bare JSON object — no markdown, no code fences:
 {"thinking": "One sentence explaining what you improved", "enhanced_prompt": "The enhanced prompt string"}`;
 
-      const sceneModel = bodyModel || await getUserSelectedModel();
+      const sceneModel = bodyModel || (await getUserSelectedModel());
       let fullResponse = "";
       for await (const chunk of copilot.chat(
         `Enhance this image generation prompt:\n\n"${prompt.trim()}"`,
@@ -4299,7 +5473,9 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
       });
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
-      logger.error(`[Director API] POST /scenes/:sceneIndex/enhance-prompt failed: ${msg}`);
+      logger.error(
+        `[Director API] POST /scenes/:sceneIndex/enhance-prompt failed: ${msg}`,
+      );
       res.status(500).json({ error: msg });
     }
   });
@@ -4340,7 +5516,8 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
 
       // Load draft to get the current image path
       const db = getDatabase();
-      const row = db.prepare(`SELECT manifest FROM director_drafts WHERE id = ?`)
+      const row = db
+        .prepare(`SELECT manifest FROM director_drafts WHERE id = ?`)
         .get(draftId) as { manifest: string } | undefined;
       if (!row) {
         res.status(404).json({ error: "Draft not found" });
@@ -4354,7 +5531,8 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
       }
 
       const scenes = manifestData.timeline.filter(
-        (e: { type: string }) => e.type === "image_scene" || e.type === "video_clip",
+        (e: { type: string }) =>
+          e.type === "image_scene" || e.type === "video_clip",
       );
       if (!scenes[sceneIndex] || !scenes[sceneIndex].src) {
         res.status(404).json({ error: "Scene or scene image not found" });
@@ -4364,15 +5542,26 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
       const currentImagePath = scenes[sceneIndex].src as string;
       const fsMod = await import("node:fs");
       if (!fsMod.existsSync(currentImagePath)) {
-        res.status(404).json({ error: `Source image not found: ${currentImagePath}` });
+        res
+          .status(404)
+          .json({ error: `Source image not found: ${currentImagePath}` });
         return;
       }
 
       const osMod = await import("node:os");
-      const imageOutputDir = path.join(osMod.homedir(), ".openzigs", "director", "images");
-      const { ImageGenService } = await import("../video/generators/image-gen-service.js");
+      const imageOutputDir = path.join(
+        osMod.homedir(),
+        ".openzigs",
+        "director",
+        "images",
+      );
+      const { ImageGenService } =
+        await import("../video/generators/image-gen-service.js");
       const imageGenUserConfig = await ImageGenService.loadUserImageGenConfig();
-      const imageService = new ImageGenService({ outputDir: imageOutputDir, ...imageGenUserConfig });
+      const imageService = new ImageGenService({
+        outputDir: imageOutputDir,
+        ...imageGenUserConfig,
+      });
       await imageService.initialize();
 
       const result = await imageService.enhanceImage(currentImagePath, prompt, {
@@ -4384,8 +5573,9 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
       // Update the draft manifest with the new image
       scenes[sceneIndex].src = result.filePath;
       const now = new Date().toISOString();
-      db.prepare(`UPDATE director_drafts SET manifest = ?, updated_at = ? WHERE id = ?`)
-        .run(JSON.stringify(manifestData), now, draftId);
+      db.prepare(
+        `UPDATE director_drafts SET manifest = ?, updated_at = ? WHERE id = ?`,
+      ).run(JSON.stringify(manifestData), now, draftId);
 
       res.json({
         sceneIndex,
@@ -4394,7 +5584,9 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
       });
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
-      logger.error(`[Director API] POST /scenes/:sceneIndex/img2img failed: ${msg}`);
+      logger.error(
+        `[Director API] POST /scenes/:sceneIndex/img2img failed: ${msg}`,
+      );
       res.status(500).json({ error: msg });
     }
   });
@@ -4407,9 +5599,16 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
    */
   router.post("/enhance-overview", async (req, res) => {
     try {
-      const { overview, model: bodyModel } = req.body as { overview?: string; model?: string };
+      const { overview, model: bodyModel } = req.body as {
+        overview?: string;
+        model?: string;
+      };
 
-      if (!overview || typeof overview !== "string" || overview.trim().length === 0) {
+      if (
+        !overview ||
+        typeof overview !== "string" ||
+        overview.trim().length === 0
+      ) {
         res.status(400).json({ error: "overview is required" });
         return;
       }
@@ -4429,7 +5628,7 @@ Your job: take a rough hero reel overview description and enhance it into a clea
 Respond ONLY with a bare JSON object — no markdown, no code fences:
 {"enhanced_overview": "The improved overview string"}`;
 
-      const overviewModel = bodyModel || await getUserSelectedModel();
+      const overviewModel = bodyModel || (await getUserSelectedModel());
       let fullResponse = "";
       for await (const chunk of copilot.chat(
         `Enhance this hero reel overview description:\n\n"${overview.trim()}"`,
@@ -4472,7 +5671,11 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
     try {
       const { filePath: inputPath } = req.body as { filePath?: string };
 
-      if (!inputPath || typeof inputPath !== "string" || inputPath.trim().length === 0) {
+      if (
+        !inputPath ||
+        typeof inputPath !== "string" ||
+        inputPath.trim().length === 0
+      ) {
         res.status(400).json({ error: "filePath is required" });
         return;
       }
@@ -4497,7 +5700,8 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
       const extractedImages: Array<{ path: string; description: string }> = [];
 
       // Extract text content using the converter registry
-      const { createDefaultRegistry } = await import("../knowledge/converters/index.js");
+      const { createDefaultRegistry } =
+        await import("../knowledge/converters/index.js");
       const registry = await createDefaultRegistry();
 
       if (registry.canConvert(inputPath)) {
@@ -4505,13 +5709,26 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
         if (result.success) {
           extractedText = result.text;
         } else {
-          logger.warn(`[Director API] Inspiration file conversion failed: ${result.error}`);
+          logger.warn(
+            `[Director API] Inspiration file conversion failed: ${result.error}`,
+          );
         }
       } else {
         // For images, just read them directly
-        const imageExts = [".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".tiff"];
+        const imageExts = [
+          ".png",
+          ".jpg",
+          ".jpeg",
+          ".webp",
+          ".gif",
+          ".bmp",
+          ".tiff",
+        ];
         if (imageExts.includes(ext)) {
-          extractedImages.push({ path: inputPath, description: pathMod.basename(inputPath) });
+          extractedImages.push({
+            path: inputPath,
+            description: pathMod.basename(inputPath),
+          });
           res.json({ text: "", images: extractedImages });
           return;
         }
@@ -4535,7 +5752,9 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
             await fs.access(imgPath);
             extractedImages.push({ path: imgPath, description: altText });
           } catch {
-            logger.debug(`[Director API] Inspiration image not found: ${imgPath}`);
+            logger.debug(
+              `[Director API] Inspiration image not found: ${imgPath}`,
+            );
           }
         }
       }
@@ -4547,7 +5766,12 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
         const { promisify } = await import("node:util");
         const execFileAsync = promisify(execFile);
         const osMod = await import("node:os");
-        const imgDir = pathMod.join(osMod.homedir(), ".openzigs", "director", "images");
+        const imgDir = pathMod.join(
+          osMod.homedir(),
+          ".openzigs",
+          "director",
+          "images",
+        );
         await fs.mkdir(imgDir, { recursive: true });
 
         let hasPdfImages = false;
@@ -4560,7 +5784,10 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
 
         if (hasPdfImages) {
           // Extract actual embedded images from the PDF
-          const tmpDir = pathMod.join(osMod.tmpdir(), `openzigs-pdfimg-${Date.now()}`);
+          const tmpDir = pathMod.join(
+            osMod.tmpdir(),
+            `openzigs-pdfimg-${Date.now()}`,
+          );
           await fs.mkdir(tmpDir, { recursive: true });
           try {
             const prefix = pathMod.join(tmpDir, "img");
@@ -4581,7 +5808,10 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
 
               idx++;
               if (idx > 30) break; // Cap at 30 embedded images
-              const outExt = pathMod.extname(imgFile).toLowerCase() === ".jpg" ? ".jpg" : ".png";
+              const outExt =
+                pathMod.extname(imgFile).toLowerCase() === ".jpg"
+                  ? ".jpg"
+                  : ".png";
               const outName = `insp-pdf-embed-${Date.now()}-${idx}${outExt}`;
               const outPath = pathMod.join(imgDir, outName);
 
@@ -4602,12 +5832,18 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
               });
             }
             if (extractedImages.length > 0) {
-              logger.info(`[Director API] Extracted ${extractedImages.length} embedded image(s) from PDF via pdfimages`);
+              logger.info(
+                `[Director API] Extracted ${extractedImages.length} embedded image(s) from PDF via pdfimages`,
+              );
             }
           } catch (err) {
-            logger.warn(`[Director API] pdfimages extraction failed: ${err instanceof Error ? err.message : String(err)}`);
+            logger.warn(
+              `[Director API] pdfimages extraction failed: ${err instanceof Error ? err.message : String(err)}`,
+            );
           } finally {
-            await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+            await fs
+              .rm(tmpDir, { recursive: true, force: true })
+              .catch(() => {});
           }
         }
 
@@ -4618,16 +5854,23 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
             await execFileAsync("magick", ["--version"]);
             hasMagick = true;
           } catch {
-            logger.debug("[Director API] ImageMagick not available for PDF page rendering");
+            logger.debug(
+              "[Director API] ImageMagick not available for PDF page rendering",
+            );
           }
 
           if (hasMagick) {
             let pageCount = 0;
             try {
-              const { stdout } = await execFileAsync("magick", ["identify", inputPath]);
+              const { stdout } = await execFileAsync("magick", [
+                "identify",
+                inputPath,
+              ]);
               pageCount = stdout.trim().split("\n").length;
             } catch (err) {
-              logger.warn(`[Director API] Failed to identify PDF pages: ${err instanceof Error ? err.message : String(err)}`);
+              logger.warn(
+                `[Director API] Failed to identify PDF pages: ${err instanceof Error ? err.message : String(err)}`,
+              );
             }
 
             if (pageCount > 0) {
@@ -4637,11 +5880,14 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
                   const outName = `insp-pdf-${Date.now()}-page${i + 1}.png`;
                   const outPath = pathMod.join(imgDir, outName);
                   await execFileAsync("magick", [
-                    "-density", "200",
-                    "-quality", "90",
+                    "-density",
+                    "200",
+                    "-quality",
+                    "90",
                     `${inputPath}[${i}]`,
                     "-flatten",
-                    "-resize", "1536x1536>",
+                    "-resize",
+                    "1536x1536>",
                     outPath,
                   ]);
                   extractedImages.push({
@@ -4649,11 +5895,15 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
                     description: `PDF page ${i + 1}`,
                   });
                 } catch (err) {
-                  logger.warn(`[Director API] PDF page ${i + 1} render failed: ${err instanceof Error ? err.message : String(err)}`);
+                  logger.warn(
+                    `[Director API] PDF page ${i + 1} render failed: ${err instanceof Error ? err.message : String(err)}`,
+                  );
                 }
               }
               if (extractedImages.length > 0) {
-                logger.info(`[Director API] Extracted ${extractedImages.length} page image(s) from PDF (fallback)`);
+                logger.info(
+                  `[Director API] Extracted ${extractedImages.length} page image(s) from PDF (fallback)`,
+                );
               }
             }
           }
@@ -4666,17 +5916,34 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
         const { promisify } = await import("node:util");
         const execFileAsync = promisify(execFile);
         const osMod = await import("node:os");
-        const imgDir = pathMod.join(osMod.homedir(), ".openzigs", "director", "images");
+        const imgDir = pathMod.join(
+          osMod.homedir(),
+          ".openzigs",
+          "director",
+          "images",
+        );
         await fs.mkdir(imgDir, { recursive: true });
 
-        const tmpDir = pathMod.join(osMod.tmpdir(), `openzigs-docximg-${Date.now()}`);
+        const tmpDir = pathMod.join(
+          osMod.tmpdir(),
+          `openzigs-docximg-${Date.now()}`,
+        );
         await fs.mkdir(tmpDir, { recursive: true });
         try {
           // DOCX is a ZIP archive — extract word/media/* which contains embedded images
-          await execFileAsync("unzip", ["-j", "-o", inputPath, "word/media/*", "-d", tmpDir]);
+          await execFileAsync("unzip", [
+            "-j",
+            "-o",
+            inputPath,
+            "word/media/*",
+            "-d",
+            tmpDir,
+          ]);
           const tmpFiles = await fs.readdir(tmpDir);
           const imageFiles = tmpFiles
-            .filter((f) => /\.(png|jpg|jpeg|gif|bmp|tiff|emf|wmf|svg)$/i.test(f))
+            .filter((f) =>
+              /\.(png|jpg|jpeg|gif|bmp|tiff|emf|wmf|svg)$/i.test(f),
+            )
             .sort();
 
           let idx = 0;
@@ -4701,7 +5968,9 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
             });
           }
           if (extractedImages.length > 0) {
-            logger.info(`[Director API] Extracted ${extractedImages.length} embedded image(s) from DOCX`);
+            logger.info(
+              `[Director API] Extracted ${extractedImages.length} embedded image(s) from DOCX`,
+            );
           }
         } catch (err) {
           // unzip returns exit code 11 if no matching files found — not an error
@@ -4718,12 +5987,19 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
       if (extractedImages.length > 0) {
         const conversationId = `describe-inspiration-images-${Date.now()}`;
         try {
-          const imageList = extractedImages.map((img, i) => `${i}: "${img.description}"`).join("\n");
+          const imageList = extractedImages
+            .map((img, i) => `${i}: "${img.description}"`)
+            .join("\n");
           const descModel = await getUserSelectedModel();
           let descResponse = "";
           for await (const chunk of copilot.chat(
             `Given these image references from a document, write a concise visual description (1 sentence) for each that would be useful for a hero reel video. If the alt text is already descriptive, refine it. If it's just a filename, infer from context.\n\nImages:\n${imageList}\n\nDocument context (first 1000 chars):\n${extractedText.slice(0, 1000)}\n\nRespond with a JSON array of strings, one description per image. No markdown fences.`,
-            { conversationId, tools: [], availableTools: [], ...(descModel ? { model: descModel } : {}) },
+            {
+              conversationId,
+              tools: [],
+              availableTools: [],
+              ...(descModel ? { model: descModel } : {}),
+            },
           )) {
             descResponse += chunk;
           }
@@ -4732,14 +6008,20 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
           const jsonMatch = descResponse.match(/\[[\s\S]*\]/);
           if (jsonMatch) {
             const descriptions = JSON.parse(jsonMatch[0]) as string[];
-            for (let i = 0; i < Math.min(descriptions.length, extractedImages.length); i++) {
+            for (
+              let i = 0;
+              i < Math.min(descriptions.length, extractedImages.length);
+              i++
+            ) {
               if (descriptions[i] && typeof descriptions[i] === "string") {
                 extractedImages[i].description = descriptions[i];
               }
             }
           }
         } catch (descErr) {
-          logger.warn(`[Director API] Image description generation failed: ${descErr instanceof Error ? descErr.message : String(descErr)}`);
+          logger.warn(
+            `[Director API] Image description generation failed: ${descErr instanceof Error ? descErr.message : String(descErr)}`,
+          );
         }
       }
 
@@ -4752,7 +6034,9 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
       });
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
-      logger.error(`[Director API] POST /hero-reel/process-inspiration failed: ${msg}`);
+      logger.error(
+        `[Director API] POST /hero-reel/process-inspiration failed: ${msg}`,
+      );
       res.status(500).json({ error: msg });
     }
   });
@@ -4760,12 +6044,16 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
   // ── YouTube Direct Publishing Pipeline ──────────────────────
 
   // Lazy-init YouTube publish service
-  let _youtubePublishService: import("../video/youtube-publish-service.js").YouTubePublishService | null = null;
+  let _youtubePublishService:
+    | import("../video/youtube-publish-service.js").YouTubePublishService
+    | null = null;
 
   async function getYouTubePublishService() {
     if (!_youtubePublishService) {
-      const { YouTubePublishService } = await import("../video/youtube-publish-service.js");
-      const { YouTubePublishRepository } = await import("../video/youtube-publish-repository.js");
+      const { YouTubePublishService } =
+        await import("../video/youtube-publish-service.js");
+      const { YouTubePublishRepository } =
+        await import("../video/youtube-publish-repository.js");
       const publishRepo = new YouTubePublishRepository(getDatabase());
       _youtubePublishService = new YouTubePublishService({
         toolRegistry: toolRegistry!,
@@ -4778,9 +6066,14 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
   }
 
   const youtubePublishSchema = z.object({
-    draftId: z.string({ required_error: "draftId is required" }).min(1, "draftId is required"),
+    draftId: z
+      .string({ required_error: "draftId is required" })
+      .min(1, "draftId is required"),
     filePath: z.string().optional(),
-    title: z.string({ required_error: "title is required" }).min(1, "title is required").transform((s) => s.trim()),
+    title: z
+      .string({ required_error: "title is required" })
+      .min(1, "title is required")
+      .transform((s) => s.trim()),
     description: z.string().optional(),
     tags: z.array(z.string()).optional(),
     categoryId: z.string().optional(),
@@ -4808,18 +6101,40 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
 
       const parsed = youtubePublishSchema.safeParse(req.body);
       if (!parsed.success) {
-        res.status(400).json({ error: parsed.error.issues.map((i) => i.message).join("; ") });
+        res
+          .status(400)
+          .json({
+            error: parsed.error.issues.map((i) => i.message).join("; "),
+          });
         return;
       }
 
-      const { draftId, filePath, title, description, tags, categoryId, privacyStatus, notifySubscribers, scheduledPublishTime } = parsed.data;
+      const {
+        draftId,
+        filePath,
+        title,
+        description,
+        tags,
+        categoryId,
+        privacyStatus,
+        notifySubscribers,
+        scheduledPublishTime,
+      } = parsed.data;
 
       // Path traversal guard: filePath must resolve to an allowed directory
       if (filePath) {
-        const resolved = path.resolve(filePath.startsWith("~") ? path.join(os.homedir(), filePath.slice(1)) : filePath);
-        const allowed = YOUTUBE_PUBLISH_ALLOWED_DIRS.some((dir) => resolved.startsWith(dir + path.sep) || resolved === dir);
+        const resolved = path.resolve(
+          filePath.startsWith("~")
+            ? path.join(os.homedir(), filePath.slice(1))
+            : filePath,
+        );
+        const allowed = YOUTUBE_PUBLISH_ALLOWED_DIRS.some(
+          (dir) => resolved.startsWith(dir + path.sep) || resolved === dir,
+        );
         if (!allowed) {
-          res.status(403).json({ error: "File path is outside allowed directories" });
+          res
+            .status(403)
+            .json({ error: "File path is outside allowed directories" });
           return;
         }
       }
@@ -4890,7 +6205,9 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
       res.json({ publishes: history });
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
-      logger.error(`[Director API] GET /youtube/publish history failed: ${msg}`);
+      logger.error(
+        `[Director API] GET /youtube/publish history failed: ${msg}`,
+      );
       res.status(500).json({ error: msg });
     }
   });
@@ -4928,7 +6245,10 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
    */
   router.post("/youtube/generate-metadata", async (req, res) => {
     try {
-      const { draftId, model: bodyModel } = req.body as { draftId?: string; model?: string };
+      const { draftId, model: bodyModel } = req.body as {
+        draftId?: string;
+        model?: string;
+      };
 
       if (!draftId || typeof draftId !== "string") {
         res.status(400).json({ error: "draftId is required" });
@@ -4936,10 +6256,14 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
       }
 
       const db = getDatabase();
-      const row = db.prepare(`SELECT title, manifest FROM director_drafts WHERE id = ?`).get(draftId) as {
-        title: string;
-        manifest: string;
-      } | undefined;
+      const row = db
+        .prepare(`SELECT title, manifest FROM director_drafts WHERE id = ?`)
+        .get(draftId) as
+        | {
+            title: string;
+            manifest: string;
+          }
+        | undefined;
 
       if (!row) {
         res.status(404).json({ error: "Draft not found" });
@@ -4954,7 +6278,9 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
       }
 
       // Extract narration text and scene descriptions from the manifest
-      const timeline = Array.isArray(manifest.timeline) ? manifest.timeline : [];
+      const timeline = Array.isArray(manifest.timeline)
+        ? manifest.timeline
+        : [];
       const narrationParts: string[] = [];
       const sceneDescriptions: string[] = [];
       for (const entry of timeline) {
@@ -4963,11 +6289,14 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
       }
 
       // Generate chapter text for context
-      const { generateChapters, formatChaptersForDescription } = await import("../video/youtube-chapters.js");
-      const chapters = generateChapters(manifest as import("../video/youtube-chapters.js").ManifestForChapters);
+      const { generateChapters, formatChaptersForDescription } =
+        await import("../video/youtube-chapters.js");
+      const chapters = generateChapters(
+        manifest as import("../video/youtube-chapters.js").ManifestForChapters,
+      );
       const chapterText = formatChaptersForDescription(chapters);
 
-      const seoModel = bodyModel || await getUserSelectedModel();
+      const seoModel = bodyModel || (await getUserSelectedModel());
       const prompt = `You are a YouTube SEO expert. Given the following video content, generate optimized YouTube metadata.
 
 VIDEO TITLE: "${row.title}"
@@ -4987,7 +6316,10 @@ Generate the following as JSON (and ONLY JSON, no markdown fences):
   "suggestedCategory": "One of: Film & Animation, Education, Science & Technology, Entertainment, Howto & Style, People & Blogs, Music, Gaming, News & Politics, Comedy"
 }`;
 
-      const stream = copilot.chat(prompt, { tools: [], ...(seoModel ? { model: seoModel } : {}) });
+      const stream = copilot.chat(prompt, {
+        tools: [],
+        ...(seoModel ? { model: seoModel } : {}),
+      });
       const chunks: string[] = [];
       for await (const chunk of stream) {
         chunks.push(chunk);
@@ -5002,15 +6334,28 @@ Generate the following as JSON (and ONLY JSON, no markdown fences):
         if (!jsonMatch) throw new Error("No JSON found in response");
         parsed = JSON.parse(jsonMatch[0]);
       } catch {
-        res.status(500).json({ error: "Failed to parse LLM response", raw: rawResponse });
+        res
+          .status(500)
+          .json({ error: "Failed to parse LLM response", raw: rawResponse });
         return;
       }
 
       // Validate and sanitize the response
-      const generatedTitle = typeof parsed.title === "string" ? parsed.title.slice(0, 100) : row.title;
-      const generatedDescription = typeof parsed.description === "string" ? parsed.description.slice(0, 5000) : "";
-      const generatedTags = Array.isArray(parsed.tags) ? parsed.tags.filter((t: unknown) => typeof t === "string").slice(0, 30) : [];
-      const suggestedCategory = typeof parsed.suggestedCategory === "string" ? parsed.suggestedCategory : "Education";
+      const generatedTitle =
+        typeof parsed.title === "string"
+          ? parsed.title.slice(0, 100)
+          : row.title;
+      const generatedDescription =
+        typeof parsed.description === "string"
+          ? parsed.description.slice(0, 5000)
+          : "";
+      const generatedTags = Array.isArray(parsed.tags)
+        ? parsed.tags.filter((t: unknown) => typeof t === "string").slice(0, 30)
+        : [];
+      const suggestedCategory =
+        typeof parsed.suggestedCategory === "string"
+          ? parsed.suggestedCategory
+          : "Education";
 
       res.json({
         title: generatedTitle,
@@ -5021,7 +6366,9 @@ Generate the following as JSON (and ONLY JSON, no markdown fences):
       });
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
-      logger.error(`[Director API] POST /youtube/generate-metadata failed: ${msg}`);
+      logger.error(
+        `[Director API] POST /youtube/generate-metadata failed: ${msg}`,
+      );
       res.status(500).json({ error: msg });
     }
   });
@@ -5041,10 +6388,12 @@ Generate the following as JSON (and ONLY JSON, no markdown fences):
 
   router.get("/brand-kits/:id", (req, res) => {
     try {
-      
       const repo = new BrandKitRepository(getDatabase());
       const kit = repo.getById(req.params.id);
-      if (!kit) { res.status(404).json({ error: "Brand kit not found" }); return; }
+      if (!kit) {
+        res.status(404).json({ error: "Brand kit not found" });
+        return;
+      }
       res.json(kit);
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
@@ -5055,12 +6404,22 @@ Generate the following as JSON (and ONLY JSON, no markdown fences):
 
   router.post("/brand-kits", (req, res) => {
     try {
-      const { name, primaryColor, secondaryColor, accentColor, fontFamily, logoPath, watermarkPath, introTemplateId, outroTemplateId } = req.body as Record<string, string | null | undefined>;
+      const {
+        name,
+        primaryColor,
+        secondaryColor,
+        accentColor,
+        fontFamily,
+        logoPath,
+        watermarkPath,
+        introTemplateId,
+        outroTemplateId,
+      } = req.body as Record<string, string | null | undefined>;
       if (!name || typeof name !== "string" || !name.trim()) {
         res.status(400).json({ error: "name is required" });
         return;
       }
-      
+
       const repo = new BrandKitRepository(getDatabase());
       const id = nanoid();
       const kit = repo.create({
@@ -5085,25 +6444,35 @@ Generate the following as JSON (and ONLY JSON, no markdown fences):
 
   router.put("/brand-kits/:id", (req, res) => {
     try {
-      const brandKitUpdateSchema = z.object({
-        name: z.string().min(1).optional(),
-        primaryColor: z.string().optional(),
-        secondaryColor: z.string().optional(),
-        accentColor: z.string().optional(),
-        fontFamily: z.string().optional(),
-        logoPath: z.string().nullable().optional(),
-        watermarkPath: z.string().nullable().optional(),
-        introTemplateId: z.string().nullable().optional(),
-        outroTemplateId: z.string().nullable().optional(),
-      }).strict();
+      const brandKitUpdateSchema = z
+        .object({
+          name: z.string().min(1).optional(),
+          primaryColor: z.string().optional(),
+          secondaryColor: z.string().optional(),
+          accentColor: z.string().optional(),
+          fontFamily: z.string().optional(),
+          logoPath: z.string().nullable().optional(),
+          watermarkPath: z.string().nullable().optional(),
+          introTemplateId: z.string().nullable().optional(),
+          outroTemplateId: z.string().nullable().optional(),
+        })
+        .strict();
       const parsed = brandKitUpdateSchema.safeParse(req.body);
       if (!parsed.success) {
-        res.status(400).json({ error: "Invalid fields", details: parsed.error.flatten().fieldErrors });
+        res
+          .status(400)
+          .json({
+            error: "Invalid fields",
+            details: parsed.error.flatten().fieldErrors,
+          });
         return;
       }
       const repo = new BrandKitRepository(getDatabase());
       const updated = repo.update(req.params.id, parsed.data);
-      if (!updated) { res.status(404).json({ error: "Brand kit not found" }); return; }
+      if (!updated) {
+        res.status(404).json({ error: "Brand kit not found" });
+        return;
+      }
       res.json(updated);
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
@@ -5114,10 +6483,12 @@ Generate the following as JSON (and ONLY JSON, no markdown fences):
 
   router.delete("/brand-kits/:id", (req, res) => {
     try {
-      
       const repo = new BrandKitRepository(getDatabase());
       const deleted = repo.delete(req.params.id);
-      if (!deleted) { res.status(404).json({ error: "Brand kit not found" }); return; }
+      if (!deleted) {
+        res.status(404).json({ error: "Brand kit not found" });
+        return;
+      }
       res.json({ success: true });
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
@@ -5137,26 +6508,44 @@ Generate the following as JSON (and ONLY JSON, no markdown fences):
       }
 
       const db = getDatabase();
-      const results: Array<{ draftId: string; jobId?: string; error?: string }> = [];
+      const results: Array<{
+        draftId: string;
+        jobId?: string;
+        error?: string;
+      }> = [];
 
       // Process sequentially to avoid overwhelming the render queue
       for (const draftId of draftIds) {
         try {
-          const row = db.prepare(`SELECT id, manifest FROM director_drafts WHERE id = ?`).get(draftId) as {
-            id: string;
-            manifest: string;
-          } | undefined;
+          const row = db
+            .prepare(`SELECT id, manifest FROM director_drafts WHERE id = ?`)
+            .get(draftId) as
+            | {
+                id: string;
+                manifest: string;
+              }
+            | undefined;
 
-          if (!row) { results.push({ draftId, error: "Draft not found" }); continue; }
+          if (!row) {
+            results.push({ draftId, error: "Draft not found" });
+            continue;
+          }
 
           let manifest: Record<string, unknown>;
           try {
             manifest = JSON.parse(row.manifest);
           } catch {
-            results.push({ draftId, error: "Corrupt manifest" }); continue;
+            results.push({ draftId, error: "Corrupt manifest" });
+            continue;
           }
 
-          if (!renderOrchestrator) { results.push({ draftId, error: "Render orchestrator not available" }); continue; }
+          if (!renderOrchestrator) {
+            results.push({
+              draftId,
+              error: "Render orchestrator not available",
+            });
+            continue;
+          }
 
           const jobId = nanoid();
           const now = new Date().toISOString();
@@ -5171,7 +6560,10 @@ Generate the following as JSON (and ONLY JSON, no markdown fences):
 
           results.push({ draftId, jobId });
         } catch (err) {
-          results.push({ draftId, error: err instanceof Error ? err.message : String(err) });
+          results.push({
+            draftId,
+            error: err instanceof Error ? err.message : String(err),
+          });
         }
       }
 
@@ -5191,10 +6583,22 @@ Generate the following as JSON (and ONLY JSON, no markdown fences):
     try {
       const db = getDatabase();
       ensureGalleryTables(db);
-      const rows = db.prepare(`SELECT * FROM gallery_collections ORDER BY name ASC`).all() as Array<{
-        id: string; name: string; description: string; created_at: string;
+      const rows = db
+        .prepare(`SELECT * FROM gallery_collections ORDER BY name ASC`)
+        .all() as Array<{
+        id: string;
+        name: string;
+        description: string;
+        created_at: string;
       }>;
-      res.json({ collections: rows.map((r) => ({ id: r.id, name: r.name, description: r.description, createdAt: r.created_at })) });
+      res.json({
+        collections: rows.map((r) => ({
+          id: r.id,
+          name: r.name,
+          description: r.description,
+          createdAt: r.created_at,
+        })),
+      });
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       res.status(500).json({ error: msg });
@@ -5203,16 +6607,29 @@ Generate the following as JSON (and ONLY JSON, no markdown fences):
 
   router.post("/gallery/collections", (req, res) => {
     try {
-      const { name, description } = req.body as { name?: string; description?: string };
+      const { name, description } = req.body as {
+        name?: string;
+        description?: string;
+      };
       if (!name || typeof name !== "string" || !name.trim()) {
-        res.status(400).json({ error: "name is required" }); return;
+        res.status(400).json({ error: "name is required" });
+        return;
       }
       const db = getDatabase();
       ensureGalleryTables(db);
       const id = nanoid();
       const now = new Date().toISOString();
-      db.prepare(`INSERT INTO gallery_collections (id, name, description, created_at) VALUES (?, ?, ?, ?)`).run(id, name.trim(), (description || "").trim(), now);
-      res.status(201).json({ id, name: name.trim(), description: (description || "").trim(), createdAt: now });
+      db.prepare(
+        `INSERT INTO gallery_collections (id, name, description, created_at) VALUES (?, ?, ?, ?)`,
+      ).run(id, name.trim(), (description || "").trim(), now);
+      res
+        .status(201)
+        .json({
+          id,
+          name: name.trim(),
+          description: (description || "").trim(),
+          createdAt: now,
+        });
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       res.status(500).json({ error: msg });
@@ -5221,18 +6638,34 @@ Generate the following as JSON (and ONLY JSON, no markdown fences):
 
   router.put("/gallery/collections/:id", (req, res) => {
     try {
-      const { name, description } = req.body as { name?: string; description?: string };
+      const { name, description } = req.body as {
+        name?: string;
+        description?: string;
+      };
       const db = getDatabase();
       ensureGalleryTables(db);
-      const existing = db.prepare(`SELECT id FROM gallery_collections WHERE id = ?`).get(req.params.id);
-      if (!existing) { res.status(404).json({ error: "Collection not found" }); return; }
+      const existing = db
+        .prepare(`SELECT id FROM gallery_collections WHERE id = ?`)
+        .get(req.params.id);
+      if (!existing) {
+        res.status(404).json({ error: "Collection not found" });
+        return;
+      }
       const sets: string[] = [];
       const values: unknown[] = [];
-      if (name !== undefined) { sets.push("name = ?"); values.push(name.trim()); }
-      if (description !== undefined) { sets.push("description = ?"); values.push(description.trim()); }
+      if (name !== undefined) {
+        sets.push("name = ?");
+        values.push(name.trim());
+      }
+      if (description !== undefined) {
+        sets.push("description = ?");
+        values.push(description.trim());
+      }
       if (sets.length > 0) {
         values.push(req.params.id);
-        db.prepare(`UPDATE gallery_collections SET ${sets.join(", ")} WHERE id = ?`).run(...values);
+        db.prepare(
+          `UPDATE gallery_collections SET ${sets.join(", ")} WHERE id = ?`,
+        ).run(...values);
       }
       res.json({ success: true });
     } catch (error) {
@@ -5245,9 +6678,16 @@ Generate the following as JSON (and ONLY JSON, no markdown fences):
     try {
       const db = getDatabase();
       ensureGalleryTables(db);
-      db.prepare(`DELETE FROM gallery_collection_items WHERE collection_id = ?`).run(req.params.id);
-      const result = db.prepare(`DELETE FROM gallery_collections WHERE id = ?`).run(req.params.id);
-      if (result.changes === 0) { res.status(404).json({ error: "Collection not found" }); return; }
+      db.prepare(
+        `DELETE FROM gallery_collection_items WHERE collection_id = ?`,
+      ).run(req.params.id);
+      const result = db
+        .prepare(`DELETE FROM gallery_collections WHERE id = ?`)
+        .run(req.params.id);
+      if (result.changes === 0) {
+        res.status(404).json({ error: "Collection not found" });
+        return;
+      }
       res.json({ success: true });
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
@@ -5258,10 +6698,15 @@ Generate the following as JSON (and ONLY JSON, no markdown fences):
   router.post("/gallery/collections/:id/items", (req, res) => {
     try {
       const { assetPath } = req.body as { assetPath?: string };
-      if (!assetPath) { res.status(400).json({ error: "assetPath is required" }); return; }
+      if (!assetPath) {
+        res.status(400).json({ error: "assetPath is required" });
+        return;
+      }
       const db = getDatabase();
       ensureGalleryTables(db);
-      db.prepare(`INSERT OR IGNORE INTO gallery_collection_items (collection_id, asset_path) VALUES (?, ?)`).run(req.params.id, assetPath);
+      db.prepare(
+        `INSERT OR IGNORE INTO gallery_collection_items (collection_id, asset_path) VALUES (?, ?)`,
+      ).run(req.params.id, assetPath);
       res.status(201).json({ success: true });
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
@@ -5272,10 +6717,15 @@ Generate the following as JSON (and ONLY JSON, no markdown fences):
   router.delete("/gallery/collections/:id/items", (req, res) => {
     try {
       const { assetPath } = req.body as { assetPath?: string };
-      if (!assetPath) { res.status(400).json({ error: "assetPath is required" }); return; }
+      if (!assetPath) {
+        res.status(400).json({ error: "assetPath is required" });
+        return;
+      }
       const db = getDatabase();
       ensureGalleryTables(db);
-      db.prepare(`DELETE FROM gallery_collection_items WHERE collection_id = ? AND asset_path = ?`).run(req.params.id, assetPath);
+      db.prepare(
+        `DELETE FROM gallery_collection_items WHERE collection_id = ? AND asset_path = ?`,
+      ).run(req.params.id, assetPath);
       res.json({ success: true });
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
@@ -5287,7 +6737,11 @@ Generate the following as JSON (and ONLY JSON, no markdown fences):
     try {
       const db = getDatabase();
       ensureGalleryTables(db);
-      const rows = db.prepare(`SELECT asset_path FROM gallery_collection_items WHERE collection_id = ?`).all(req.params.id) as Array<{ asset_path: string }>;
+      const rows = db
+        .prepare(
+          `SELECT asset_path FROM gallery_collection_items WHERE collection_id = ?`,
+        )
+        .all(req.params.id) as Array<{ asset_path: string }>;
       res.json({ items: rows.map((r) => r.asset_path) });
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
@@ -5297,11 +6751,19 @@ Generate the following as JSON (and ONLY JSON, no markdown fences):
 
   router.post("/gallery/tags", (req, res) => {
     try {
-      const { assetPath, tag } = req.body as { assetPath?: string; tag?: string };
-      if (!assetPath || !tag) { res.status(400).json({ error: "assetPath and tag are required" }); return; }
+      const { assetPath, tag } = req.body as {
+        assetPath?: string;
+        tag?: string;
+      };
+      if (!assetPath || !tag) {
+        res.status(400).json({ error: "assetPath and tag are required" });
+        return;
+      }
       const db = getDatabase();
       ensureGalleryTables(db);
-      db.prepare(`INSERT OR IGNORE INTO gallery_tags (asset_path, tag) VALUES (?, ?)`).run(assetPath, tag.trim().toLowerCase());
+      db.prepare(
+        `INSERT OR IGNORE INTO gallery_tags (asset_path, tag) VALUES (?, ?)`,
+      ).run(assetPath, tag.trim().toLowerCase());
       res.status(201).json({ success: true });
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
@@ -5311,11 +6773,19 @@ Generate the following as JSON (and ONLY JSON, no markdown fences):
 
   router.delete("/gallery/tags", (req, res) => {
     try {
-      const { assetPath, tag } = req.body as { assetPath?: string; tag?: string };
-      if (!assetPath || !tag) { res.status(400).json({ error: "assetPath and tag are required" }); return; }
+      const { assetPath, tag } = req.body as {
+        assetPath?: string;
+        tag?: string;
+      };
+      if (!assetPath || !tag) {
+        res.status(400).json({ error: "assetPath and tag are required" });
+        return;
+      }
       const db = getDatabase();
       ensureGalleryTables(db);
-      db.prepare(`DELETE FROM gallery_tags WHERE asset_path = ? AND tag = ?`).run(assetPath, tag.trim().toLowerCase());
+      db.prepare(
+        `DELETE FROM gallery_tags WHERE asset_path = ? AND tag = ?`,
+      ).run(assetPath, tag.trim().toLowerCase());
       res.json({ success: true });
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
@@ -5327,16 +6797,27 @@ Generate the following as JSON (and ONLY JSON, no markdown fences):
     try {
       const db = getDatabase();
       ensureGalleryTables(db);
-      const assetPath = typeof req.query.assetPath === "string" ? req.query.assetPath : undefined;
+      const assetPath =
+        typeof req.query.assetPath === "string"
+          ? req.query.assetPath
+          : undefined;
       const tag = typeof req.query.tag === "string" ? req.query.tag : undefined;
       if (assetPath) {
-        const rows = db.prepare(`SELECT tag FROM gallery_tags WHERE asset_path = ?`).all(assetPath) as Array<{ tag: string }>;
+        const rows = db
+          .prepare(`SELECT tag FROM gallery_tags WHERE asset_path = ?`)
+          .all(assetPath) as Array<{ tag: string }>;
         res.json({ tags: rows.map((r) => r.tag) });
       } else if (tag) {
-        const rows = db.prepare(`SELECT asset_path FROM gallery_tags WHERE tag = ?`).all(tag.trim().toLowerCase()) as Array<{ asset_path: string }>;
+        const rows = db
+          .prepare(`SELECT asset_path FROM gallery_tags WHERE tag = ?`)
+          .all(tag.trim().toLowerCase()) as Array<{ asset_path: string }>;
         res.json({ assets: rows.map((r) => r.asset_path) });
       } else {
-        const rows = db.prepare(`SELECT tag, COUNT(*) as count FROM gallery_tags GROUP BY tag ORDER BY count DESC, tag ASC`).all() as Array<{ tag: string; count: number }>;
+        const rows = db
+          .prepare(
+            `SELECT tag, COUNT(*) as count FROM gallery_tags GROUP BY tag ORDER BY count DESC, tag ASC`,
+          )
+          .all() as Array<{ tag: string; count: number }>;
         res.json({ tags: rows });
       }
     } catch (error) {
@@ -5359,14 +6840,21 @@ Generate the following as JSON (and ONLY JSON, no markdown fences):
     `);
   }
 
-  function getAnalyticsCache(key: string): { data: unknown; fetchedAt: Date } | null {
+  function getAnalyticsCache(
+    key: string,
+  ): { data: unknown; fetchedAt: Date } | null {
     try {
       const db = getDatabase();
       const row = db
-        .prepare(`SELECT data, fetched_at FROM youtube_analytics_cache WHERE key = ?`)
+        .prepare(
+          `SELECT data, fetched_at FROM youtube_analytics_cache WHERE key = ?`,
+        )
         .get(key) as { data: string; fetched_at: number } | undefined;
       if (!row) return null;
-      return { data: JSON.parse(row.data), fetchedAt: new Date(row.fetched_at) };
+      return {
+        data: JSON.parse(row.data),
+        fetchedAt: new Date(row.fetched_at),
+      };
     } catch {
       return null;
     }
@@ -5376,7 +6864,7 @@ Generate the following as JSON (and ONLY JSON, no markdown fences):
     try {
       const db = getDatabase();
       db.prepare(
-        `INSERT OR REPLACE INTO youtube_analytics_cache (key, data, fetched_at) VALUES (?, ?, ?)`
+        `INSERT OR REPLACE INTO youtube_analytics_cache (key, data, fetched_at) VALUES (?, ?, ?)`,
       ).run(key, JSON.stringify(data), Date.now());
     } catch {
       // Non-fatal — cache write failure shouldn't break the response
@@ -5389,7 +6877,11 @@ Generate the following as JSON (and ONLY JSON, no markdown fences):
       if (!toolRegistry) {
         const cached = getAnalyticsCache(CACHE_KEY);
         if (cached) {
-          res.json({ ...cached.data as object, _cached: true, _cachedAt: cached.fetchedAt.toISOString() });
+          res.json({
+            ...(cached.data as object),
+            _cached: true,
+            _cachedAt: cached.fetchedAt.toISOString(),
+          });
           return;
         }
         res.status(503).json({ error: "Tool registry not available" });
@@ -5400,10 +6892,16 @@ Generate the following as JSON (and ONLY JSON, no markdown fences):
       if (!tool) {
         const cached = getAnalyticsCache(CACHE_KEY);
         if (cached) {
-          res.json({ ...cached.data as object, _cached: true, _cachedAt: cached.fetchedAt.toISOString() });
+          res.json({
+            ...(cached.data as object),
+            _cached: true,
+            _cachedAt: cached.fetchedAt.toISOString(),
+          });
           return;
         }
-        res.status(503).json({ error: "youtube-get-channel-info tool not registered" });
+        res
+          .status(503)
+          .json({ error: "youtube-get-channel-info tool not registered" });
         return;
       }
       let data: unknown;
@@ -5425,15 +6923,25 @@ Generate the following as JSON (and ONLY JSON, no markdown fences):
           subscriberCount: Number(stats.subscriberCount ?? 0),
           viewCount: Number(stats.viewCount ?? 0),
           videoCount: Number(stats.videoCount ?? 0),
-          thumbnailUrl: snippet.thumbnails?.default?.url ?? snippet.thumbnails?.medium?.url ?? "",
+          thumbnailUrl:
+            snippet.thumbnails?.default?.url ??
+            snippet.thumbnails?.medium?.url ??
+            "",
         };
         setAnalyticsCache(CACHE_KEY, data);
       } catch (liveErr) {
-        const msg = liveErr instanceof Error ? liveErr.message : String(liveErr);
-        logger.warn(`[Director API] YouTube channel analytics live fetch failed: ${msg} — falling back to cache`);
+        const msg =
+          liveErr instanceof Error ? liveErr.message : String(liveErr);
+        logger.warn(
+          `[Director API] YouTube channel analytics live fetch failed: ${msg} — falling back to cache`,
+        );
         const cached = getAnalyticsCache(CACHE_KEY);
         if (cached) {
-          res.json({ ...cached.data as object, _cached: true, _cachedAt: cached.fetchedAt.toISOString() });
+          res.json({
+            ...(cached.data as object),
+            _cached: true,
+            _cachedAt: cached.fetchedAt.toISOString(),
+          });
           return;
         }
         res.status(502).json({ error: msg });
@@ -5442,35 +6950,55 @@ Generate the following as JSON (and ONLY JSON, no markdown fences):
       res.json(data);
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
-      logger.error(`[Director API] GET /youtube/analytics/channel failed: ${msg}`);
+      logger.error(
+        `[Director API] GET /youtube/analytics/channel failed: ${msg}`,
+      );
       res.status(500).json({ error: msg });
     }
   });
 
   router.get("/youtube/analytics/videos", async (req, res) => {
-    const maxResults = typeof req.query.maxResults === "string" ? req.query.maxResults : undefined;
-    const limit = typeof req.query.limit === "string" ? req.query.limit : undefined;
+    const maxResults =
+      typeof req.query.maxResults === "string"
+        ? req.query.maxResults
+        : undefined;
+    const limit =
+      typeof req.query.limit === "string" ? req.query.limit : undefined;
     const max = parseInt(maxResults ?? limit ?? "50", 10) || 50;
     const CACHE_KEY = `videos:${max}`;
     try {
       if (!toolRegistry) {
         const cached = getAnalyticsCache(CACHE_KEY);
         if (cached) {
-          res.json({ ...cached.data as object, _cached: true, _cachedAt: cached.fetchedAt.toISOString() });
+          res.json({
+            ...(cached.data as object),
+            _cached: true,
+            _cachedAt: cached.fetchedAt.toISOString(),
+          });
           return;
         }
         res.status(503).json({ error: "Tool registry not available" });
         return;
       }
-      const listTool = toolRegistry.getToolDefinition("youtube-get-channel-videos");
-      const detailTool = toolRegistry.getToolDefinition("youtube-get-video-details");
+      const listTool = toolRegistry.getToolDefinition(
+        "youtube-get-channel-videos",
+      );
+      const detailTool = toolRegistry.getToolDefinition(
+        "youtube-get-video-details",
+      );
       if (!listTool) {
         const cached = getAnalyticsCache(CACHE_KEY);
         if (cached) {
-          res.json({ ...cached.data as object, _cached: true, _cachedAt: cached.fetchedAt.toISOString() });
+          res.json({
+            ...(cached.data as object),
+            _cached: true,
+            _cachedAt: cached.fetchedAt.toISOString(),
+          });
           return;
         }
-        res.status(503).json({ error: "youtube-get-channel-videos tool not registered" });
+        res
+          .status(503)
+          .json({ error: "youtube-get-channel-videos tool not registered" });
         return;
       }
       let data: unknown;
@@ -5486,7 +7014,8 @@ Generate the following as JSON (and ONLY JSON, no markdown fences):
           .map((item: Record<string, unknown>) => {
             const id = item.id as Record<string, unknown> | string | undefined;
             if (typeof id === "string") return id;
-            if (id && typeof id === "object") return (id as Record<string, string>).videoId;
+            if (id && typeof id === "object")
+              return (id as Record<string, string>).videoId;
             return undefined;
           })
           .filter(Boolean) as string[];
@@ -5512,37 +7041,78 @@ Generate the following as JSON (and ONLY JSON, no markdown fences):
           const detailResults = await Promise.all(detailPromises);
           for (const item of detailResults) {
             if (!item) continue;
-            const snippet = (item as Record<string, unknown>).snippet as Record<string, unknown> | undefined ?? {};
-            const stats = (item as Record<string, unknown>).statistics as Record<string, unknown> | undefined ?? {};
-            const contentDetails = (item as Record<string, unknown>).contentDetails as Record<string, unknown> | undefined ?? {};
+            const snippet =
+              ((item as Record<string, unknown>).snippet as
+                | Record<string, unknown>
+                | undefined) ?? {};
+            const stats =
+              ((item as Record<string, unknown>).statistics as
+                | Record<string, unknown>
+                | undefined) ?? {};
+            const contentDetails =
+              ((item as Record<string, unknown>).contentDetails as
+                | Record<string, unknown>
+                | undefined) ?? {};
             videos.push({
               videoId: (item as Record<string, string>).id ?? "",
               title: (snippet as Record<string, string>).title ?? "",
-              publishedAt: (snippet as Record<string, string>).publishedAt ?? "",
-              viewCount: Number((stats as Record<string, string>).viewCount ?? 0),
-              likeCount: Number((stats as Record<string, string>).likeCount ?? 0),
-              commentCount: Number((stats as Record<string, string>).commentCount ?? 0),
-              duration: (contentDetails as Record<string, string>).duration ?? "",
-              thumbnailUrl: ((snippet as Record<string, Record<string, Record<string, string>>>).thumbnails?.medium?.url) ?? "",
-              likeRatio: Number((stats as Record<string, string>).likeCount ?? 0) > 0
-                ? Number((stats as Record<string, string>).likeCount ?? 0) /
-                  (Number((stats as Record<string, string>).likeCount ?? 0) + Number((stats as Record<string, string>).dislikeCount ?? 0) || 1)
-                : 0,
+              publishedAt:
+                (snippet as Record<string, string>).publishedAt ?? "",
+              viewCount: Number(
+                (stats as Record<string, string>).viewCount ?? 0,
+              ),
+              likeCount: Number(
+                (stats as Record<string, string>).likeCount ?? 0,
+              ),
+              commentCount: Number(
+                (stats as Record<string, string>).commentCount ?? 0,
+              ),
+              duration:
+                (contentDetails as Record<string, string>).duration ?? "",
+              thumbnailUrl:
+                (
+                  snippet as Record<
+                    string,
+                    Record<string, Record<string, string>>
+                  >
+                ).thumbnails?.medium?.url ?? "",
+              likeRatio:
+                Number((stats as Record<string, string>).likeCount ?? 0) > 0
+                  ? Number((stats as Record<string, string>).likeCount ?? 0) /
+                    (Number((stats as Record<string, string>).likeCount ?? 0) +
+                      Number(
+                        (stats as Record<string, string>).dislikeCount ?? 0,
+                      ) || 1)
+                  : 0,
             });
           }
           data = { videos };
         } else {
           // No detail tool — return basic info from search results
           const videos = searchItems.map((item: Record<string, unknown>) => {
-            const snippet = item.snippet as Record<string, unknown> | undefined ?? {};
+            const snippet =
+              (item.snippet as Record<string, unknown> | undefined) ?? {};
             const id = item.id as Record<string, unknown> | string | undefined;
-            const videoId = typeof id === "string" ? id : (id as Record<string, string>)?.videoId ?? "";
+            const videoId =
+              typeof id === "string"
+                ? id
+                : ((id as Record<string, string>)?.videoId ?? "");
             return {
               videoId,
               title: (snippet as Record<string, string>).title ?? "",
-              publishedAt: (snippet as Record<string, string>).publishedAt ?? "",
-              viewCount: 0, likeCount: 0, commentCount: 0,
-              duration: "", thumbnailUrl: ((snippet as Record<string, Record<string, Record<string, string>>>).thumbnails?.medium?.url) ?? "",
+              publishedAt:
+                (snippet as Record<string, string>).publishedAt ?? "",
+              viewCount: 0,
+              likeCount: 0,
+              commentCount: 0,
+              duration: "",
+              thumbnailUrl:
+                (
+                  snippet as Record<
+                    string,
+                    Record<string, Record<string, string>>
+                  >
+                ).thumbnails?.medium?.url ?? "",
               likeRatio: 0,
             };
           });
@@ -5550,11 +7120,18 @@ Generate the following as JSON (and ONLY JSON, no markdown fences):
         }
         setAnalyticsCache(CACHE_KEY, data);
       } catch (liveErr) {
-        const msg = liveErr instanceof Error ? liveErr.message : String(liveErr);
-        logger.warn(`[Director API] YouTube videos analytics live fetch failed: ${msg} — falling back to cache`);
+        const msg =
+          liveErr instanceof Error ? liveErr.message : String(liveErr);
+        logger.warn(
+          `[Director API] YouTube videos analytics live fetch failed: ${msg} — falling back to cache`,
+        );
         const cached = getAnalyticsCache(CACHE_KEY);
         if (cached) {
-          res.json({ ...cached.data as object, _cached: true, _cachedAt: cached.fetchedAt.toISOString() });
+          res.json({
+            ...(cached.data as object),
+            _cached: true,
+            _cachedAt: cached.fetchedAt.toISOString(),
+          });
           return;
         }
         res.status(502).json({ error: msg });
@@ -5563,7 +7140,9 @@ Generate the following as JSON (and ONLY JSON, no markdown fences):
       res.json(data);
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
-      logger.error(`[Director API] GET /youtube/analytics/videos failed: ${msg}`);
+      logger.error(
+        `[Director API] GET /youtube/analytics/videos failed: ${msg}`,
+      );
       res.status(500).json({ error: msg });
     }
   });
@@ -5572,38 +7151,55 @@ Generate the following as JSON (and ONLY JSON, no markdown fences):
 
   router.post("/shorts/from-manifest", async (req, res) => {
     try {
-      const { draftId, maxClips } = req.body as { draftId?: string; maxClips?: number };
+      const { draftId, maxClips } = req.body as {
+        draftId?: string;
+        maxClips?: number;
+      };
       if (!draftId || typeof draftId !== "string") {
         res.status(400).json({ error: "draftId is required" });
         return;
       }
 
       const db = getDatabase();
-      const row = db.prepare(`SELECT title, manifest FROM director_drafts WHERE id = ?`).get(draftId) as {
-        title: string;
-        manifest: string;
-      } | undefined;
+      const row = db
+        .prepare(`SELECT title, manifest FROM director_drafts WHERE id = ?`)
+        .get(draftId) as
+        | {
+            title: string;
+            manifest: string;
+          }
+        | undefined;
 
-      if (!row) { res.status(404).json({ error: "Draft not found" }); return; }
+      if (!row) {
+        res.status(404).json({ error: "Draft not found" });
+        return;
+      }
 
       let manifest: Record<string, unknown>;
       try {
         manifest = JSON.parse(row.manifest);
       } catch {
-        res.status(500).json({ error: "Corrupt manifest" }); return;
+        res.status(500).json({ error: "Corrupt manifest" });
+        return;
       }
 
-      const timeline = Array.isArray(manifest.timeline) ? manifest.timeline : [];
+      const timeline = Array.isArray(manifest.timeline)
+        ? manifest.timeline
+        : [];
       if (timeline.length === 0) {
-        res.status(400).json({ error: "Manifest has no timeline scenes" }); return;
+        res.status(400).json({ error: "Manifest has no timeline scenes" });
+        return;
       }
 
       // Use LLM to identify most engaging segments
-      const sceneDescriptions = timeline.map((s: Record<string, unknown>, i: number) => {
-        const text = (s.scriptText as string) || (s.title as string) || `Scene ${i + 1}`;
-        const dur = typeof s.duration === "number" ? s.duration : 5000;
-        return `[${i}] (${Math.round(dur < 1000 ? dur : dur / 1000)}s) ${text.slice(0, 200)}`;
-      }).join("\n");
+      const sceneDescriptions = timeline
+        .map((s: Record<string, unknown>, i: number) => {
+          const text =
+            (s.scriptText as string) || (s.title as string) || `Scene ${i + 1}`;
+          const dur = typeof s.duration === "number" ? s.duration : 5000;
+          return `[${i}] (${Math.round(dur < 1000 ? dur : dur / 1000)}s) ${text.slice(0, 200)}`;
+        })
+        .join("\n");
 
       const limit = Math.min(maxClips || 3, 5);
       const prompt = `You are a viral content strategist. Analyze these video scenes and select up to ${limit} segments that would make the most engaging YouTube Shorts (max 60 seconds each).
@@ -5624,9 +7220,14 @@ For each Short, respond with JSON only (no markdown fences):
 ]`;
 
       const seoModel = await getUserSelectedModel();
-      const stream = copilot.chat(prompt, { tools: [], ...(seoModel ? { model: seoModel } : {}) });
+      const stream = copilot.chat(prompt, {
+        tools: [],
+        ...(seoModel ? { model: seoModel } : {}),
+      });
       const chunks: string[] = [];
-      for await (const chunk of stream) { chunks.push(chunk); }
+      for await (const chunk of stream) {
+        chunks.push(chunk);
+      }
 
       const rawResponse = chunks.join("").trim();
       let suggestions: Array<{
@@ -5643,19 +7244,30 @@ For each Short, respond with JSON only (no markdown fences):
         if (!jsonMatch) throw new Error("No JSON array found");
         suggestions = JSON.parse(jsonMatch[0]);
       } catch {
-        res.status(500).json({ error: "Failed to parse LLM response", raw: rawResponse });
+        res
+          .status(500)
+          .json({ error: "Failed to parse LLM response", raw: rawResponse });
         return;
       }
 
       // Validate and enrich suggestions
       const enriched = suggestions.slice(0, limit).map((s) => {
-        const startIdx = Math.max(0, Math.min(s.startSceneIndex, timeline.length - 1));
-        const endIdx = Math.max(startIdx, Math.min(s.endSceneIndex, timeline.length - 1));
+        const startIdx = Math.max(
+          0,
+          Math.min(s.startSceneIndex, timeline.length - 1),
+        );
+        const endIdx = Math.max(
+          startIdx,
+          Math.min(s.endSceneIndex, timeline.length - 1),
+        );
         const scenes = timeline.slice(startIdx, endIdx + 1);
-        const totalDurationMs = scenes.reduce((acc: number, sc: Record<string, unknown>) => {
-          const d = typeof sc.duration === "number" ? sc.duration : 5000;
-          return acc + (d < 1000 ? d * 1000 : d);
-        }, 0);
+        const totalDurationMs = scenes.reduce(
+          (acc: number, sc: Record<string, unknown>) => {
+            const d = typeof sc.duration === "number" ? sc.duration : 5000;
+            return acc + (d < 1000 ? d * 1000 : d);
+          },
+          0,
+        );
 
         return {
           ...s,
@@ -5689,38 +7301,57 @@ For each Short, respond with JSON only (no markdown fences):
       const { maxShorts } = req.body as { maxShorts?: number };
 
       const db = getDatabase();
-      const row = db.prepare(`SELECT title, manifest FROM director_drafts WHERE id = ?`).get(draftId) as {
-        title: string;
-        manifest: string;
-      } | undefined;
+      const row = db
+        .prepare(`SELECT title, manifest FROM director_drafts WHERE id = ?`)
+        .get(draftId) as
+        | {
+            title: string;
+            manifest: string;
+          }
+        | undefined;
 
-      if (!row) { res.status(404).json({ error: "Draft not found" }); return; }
+      if (!row) {
+        res.status(404).json({ error: "Draft not found" });
+        return;
+      }
 
       let manifest: Record<string, unknown>;
       try {
         manifest = JSON.parse(row.manifest);
       } catch {
-        res.status(500).json({ error: "Corrupt manifest" }); return;
+        res.status(500).json({ error: "Corrupt manifest" });
+        return;
       }
 
-      const timeline = Array.isArray(manifest.timeline) ? manifest.timeline : [];
+      const timeline = Array.isArray(manifest.timeline)
+        ? manifest.timeline
+        : [];
       if (timeline.length === 0) {
-        res.status(400).json({ error: "Manifest has no timeline scenes" }); return;
+        res.status(400).json({ error: "Manifest has no timeline scenes" });
+        return;
       }
 
       // Build cumulative start/end times for each scene
       let cumulativeMs = 0;
       const sceneTimes = timeline.map((s: Record<string, unknown>) => {
-        const dur = typeof s.duration === "number" ? (s.duration < 1000 ? s.duration * 1000 : s.duration) : 5000;
+        const dur =
+          typeof s.duration === "number"
+            ? s.duration < 1000
+              ? s.duration * 1000
+              : s.duration
+            : 5000;
         const start = cumulativeMs;
         cumulativeMs += dur;
         return { startMs: start, endMs: cumulativeMs, durationMs: dur };
       });
 
-      const sceneDescriptions = timeline.map((s: Record<string, unknown>, i: number) => {
-        const text = (s.scriptText as string) || (s.title as string) || `Scene ${i + 1}`;
-        return `[${i}] (${Math.round(sceneTimes[i].durationMs / 1000)}s) ${text.slice(0, 200)}`;
-      }).join("\n");
+      const sceneDescriptions = timeline
+        .map((s: Record<string, unknown>, i: number) => {
+          const text =
+            (s.scriptText as string) || (s.title as string) || `Scene ${i + 1}`;
+          return `[${i}] (${Math.round(sceneTimes[i].durationMs / 1000)}s) ${text.slice(0, 200)}`;
+        })
+        .join("\n");
 
       const limit = Math.min(maxShorts || 3, 5);
       const prompt = `You are a viral content strategist. Analyze these video scenes and select up to ${limit} segments that would make the most engaging YouTube Shorts (max 60 seconds each).
@@ -5742,9 +7373,14 @@ For each Short, respond with JSON only (no markdown fences):
 ]`;
 
       const seoModel = await getUserSelectedModel();
-      const stream = copilot.chat(prompt, { tools: [], ...(seoModel ? { model: seoModel } : {}) });
+      const stream = copilot.chat(prompt, {
+        tools: [],
+        ...(seoModel ? { model: seoModel } : {}),
+      });
       const chunks: string[] = [];
-      for await (const chunk of stream) { chunks.push(chunk); }
+      for await (const chunk of stream) {
+        chunks.push(chunk);
+      }
 
       const rawResponse = chunks.join("").trim();
       let suggestions: Array<{
@@ -5762,14 +7398,22 @@ For each Short, respond with JSON only (no markdown fences):
         if (!jsonMatch) throw new Error("No JSON array found");
         suggestions = JSON.parse(jsonMatch[0]);
       } catch {
-        res.status(500).json({ error: "Failed to parse LLM response", raw: rawResponse });
+        res
+          .status(500)
+          .json({ error: "Failed to parse LLM response", raw: rawResponse });
         return;
       }
 
       // Map to the shape the UI expects: { startTime, endTime, title, hookText, ctaText, score, reason }
       const proposals = suggestions.slice(0, limit).map((s) => {
-        const startIdx = Math.max(0, Math.min(s.startSceneIndex, timeline.length - 1));
-        const endIdx = Math.max(startIdx, Math.min(s.endSceneIndex, timeline.length - 1));
+        const startIdx = Math.max(
+          0,
+          Math.min(s.startSceneIndex, timeline.length - 1),
+        );
+        const endIdx = Math.max(
+          startIdx,
+          Math.min(s.endSceneIndex, timeline.length - 1),
+        );
         return {
           startTime: sceneTimes[startIdx].startMs / 1000,
           endTime: sceneTimes[endIdx].endMs / 1000,
@@ -5784,7 +7428,9 @@ For each Short, respond with JSON only (no markdown fences):
       res.json({ proposals });
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
-      logger.error(`[Director API] POST /drafts/:draftId/shorts/propose failed: ${msg}`);
+      logger.error(
+        `[Director API] POST /drafts/:draftId/shorts/propose failed: ${msg}`,
+      );
       res.status(500).json({ error: msg });
     }
   });
@@ -5807,26 +7453,43 @@ For each Short, respond with JSON only (no markdown fences):
         burnSubtitles: z.boolean().optional().default(false),
       });
       const bodySchema = z.object({
-        segments: z.array(segmentSchema).min(1, "At least one segment is required"),
+        segments: z
+          .array(segmentSchema)
+          .min(1, "At least one segment is required"),
       });
       const parsed = bodySchema.safeParse(req.body);
       if (!parsed.success) {
-        res.status(400).json({ error: "Invalid request body", details: parsed.error.flatten().fieldErrors });
+        res
+          .status(400)
+          .json({
+            error: "Invalid request body",
+            details: parsed.error.flatten().fieldErrors,
+          });
         return;
       }
 
       const db = getDatabase();
-      const parentDraft = db.prepare(`SELECT id, title, manifest FROM director_drafts WHERE id = ?`).get(draftId) as {
-        id: string; title: string; manifest: string;
-      } | undefined;
+      const parentDraft = db
+        .prepare(`SELECT id, title, manifest FROM director_drafts WHERE id = ?`)
+        .get(draftId) as
+        | {
+            id: string;
+            title: string;
+            manifest: string;
+          }
+        | undefined;
 
-      if (!parentDraft) { res.status(404).json({ error: "Parent draft not found" }); return; }
+      if (!parentDraft) {
+        res.status(404).json({ error: "Parent draft not found" });
+        return;
+      }
 
       let parentManifest: Record<string, unknown>;
       try {
         parentManifest = JSON.parse(parentDraft.manifest);
       } catch {
-        res.status(500).json({ error: "Corrupt parent manifest" }); return;
+        res.status(500).json({ error: "Corrupt parent manifest" });
+        return;
       }
 
       const jobIds: string[] = [];
@@ -5841,7 +7504,7 @@ For each Short, respond with JSON only (no markdown fences):
           ...parentManifest,
           projectTitle: seg.title,
           composition: {
-            ...(parentManifest.composition as Record<string, unknown> || {}),
+            ...((parentManifest.composition as Record<string, unknown>) || {}),
             width: 1080,
             height: 1920,
           },
@@ -5858,7 +7521,15 @@ For each Short, respond with JSON only (no markdown fences):
         db.prepare(
           `INSERT INTO director_drafts (id, title, manifest, thumbnail, production_mode, created_at, updated_at, status)
            VALUES (?, ?, ?, ?, ?, ?, ?, 'draft')`,
-        ).run(shortDraftId, seg.title, JSON.stringify(shortsManifest), null, "shorts", now, now);
+        ).run(
+          shortDraftId,
+          seg.title,
+          JSON.stringify(shortsManifest),
+          null,
+          "shorts",
+          now,
+          now,
+        );
 
         db.prepare(
           `INSERT INTO director_renders (id, draft_id, job_id, quality, status, created_at, updated_at)
@@ -5866,17 +7537,23 @@ For each Short, respond with JSON only (no markdown fences):
         ).run(nanoid(), shortDraftId, jobId, now, now);
 
         if (renderOrchestrator) {
-          await renderOrchestrator.submit({ manifest: shortsManifest as never });
+          await renderOrchestrator.submit({
+            manifest: shortsManifest as never,
+          });
         }
 
         jobIds.push(jobId);
       }
 
-      logger.info(`[Director API] Queued ${jobIds.length} Short render(s) from draft ${draftId}`);
+      logger.info(
+        `[Director API] Queued ${jobIds.length} Short render(s) from draft ${draftId}`,
+      );
       res.json({ jobIds });
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
-      logger.error(`[Director API] POST /drafts/:draftId/shorts/render failed: ${msg}`);
+      logger.error(
+        `[Director API] POST /drafts/:draftId/shorts/render failed: ${msg}`,
+      );
       res.status(500).json({ error: msg });
     }
   });

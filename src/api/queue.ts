@@ -12,14 +12,35 @@ import { logger } from "../logging/logger.js";
 import { getDatabase } from "../productivity/database.js";
 import type { QueueMaster } from "../queue/queue-master.js";
 import type { MediaQueueRepository } from "../queue/media-queue-repository.js";
-import type { CreateMediaJobInput, MediaJobType, MediaJobStatus, TargetNode, MediaJobPayload } from "../queue/types.js";
-import { MAX_VIDEO_FRAMES, MAX_VIDEO_DURATION_SEC, DEFAULT_VIDEO_FPS } from "../queue/types.js";
+import type {
+  CreateMediaJobInput,
+  MediaJobType,
+  MediaJobStatus,
+  TargetNode,
+  MediaJobPayload,
+} from "../queue/types.js";
+import {
+  MAX_VIDEO_FRAMES,
+  MAX_VIDEO_DURATION_SEC,
+  DEFAULT_VIDEO_FPS,
+} from "../queue/types.js";
 import type { CharacterRepository } from "../characters/character-repository.js";
 import type { KnowledgeIngestionService } from "../knowledge/index.js";
 
 // ── Helpers ─────────────────────────────────────────────────
 
-const VALID_JOB_TYPES: MediaJobType[] = ["txt2img", "img2img", "txt2video", "img2video", "tts", "txt2music", "voice2voice", "remix_analyze", "remix_replace", "remix_master"];
+const VALID_JOB_TYPES: MediaJobType[] = [
+  "txt2img",
+  "img2img",
+  "txt2video",
+  "img2video",
+  "tts",
+  "txt2music",
+  "voice2voice",
+  "remix_analyze",
+  "remix_replace",
+  "remix_master",
+];
 
 const GALLERY_DIR = path.join(os.homedir(), ".openzigs", "gallery");
 
@@ -29,13 +50,20 @@ async function ensureGalleryDir(): Promise<void> {
 
 function mimeToExtension(mime: string): string {
   switch (mime) {
-    case "image/png": return ".png";
-    case "image/jpeg": return ".jpg";
-    case "image/webp": return ".webp";
-    case "video/mp4": return ".mp4";
-    case "audio/wav": return ".wav";
-    case "audio/mp3": return ".mp3";
-    default: return ".bin";
+    case "image/png":
+      return ".png";
+    case "image/jpeg":
+      return ".jpg";
+    case "image/webp":
+      return ".webp";
+    case "video/mp4":
+      return ".mp4";
+    case "audio/wav":
+      return ".wav";
+    case "audio/mp3":
+      return ".mp3";
+    default:
+      return ".bin";
   }
 }
 
@@ -64,7 +92,12 @@ export interface QueueRouterOptions {
  * Safety: the handler also validates that job_id matches an existing dispatched
  * job via queueMaster.handleJobCompletion; unknown job IDs are rejected.
  */
-export const createQueueCallbackRouter = ({ queueMaster, repo, knowledgeService, workerSecret }: QueueRouterOptions): Router => {
+export const createQueueCallbackRouter = ({
+  queueMaster,
+  repo,
+  knowledgeService,
+  workerSecret,
+}: QueueRouterOptions): Router => {
   const callbackRouter = Router();
 
   // Worker secret auth middleware (opt-in via config.auth.workerSecret)
@@ -74,36 +107,58 @@ export const createQueueCallbackRouter = ({ queueMaster, repo, knowledgeService,
       const authHeader = req.headers.authorization ?? "";
       const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
       const tokenBuf = Buffer.from(token);
-      if (tokenBuf.length !== expectedBuf.length || !timingSafeEqual(tokenBuf, expectedBuf)) {
-        logger.warn(`[QueueAPI] Rejected callback — invalid worker secret from ${req.ip}`);
+      if (
+        tokenBuf.length !== expectedBuf.length ||
+        !timingSafeEqual(tokenBuf, expectedBuf)
+      ) {
+        logger.warn(
+          `[QueueAPI] Rejected callback — invalid worker secret from ${req.ip}`,
+        );
         res.status(401).json({ error: "Invalid worker secret" });
         return;
       }
       next();
     });
-    logger.info("[QueueAPI] Worker callback auth enabled (workerSecret configured)");
+    logger.info(
+      "[QueueAPI] Worker callback auth enabled (workerSecret configured)",
+    );
   } else {
-    logger.warn("[QueueAPI] Worker callbacks are UNAUTHENTICATED — set auth.workerSecret to secure them");
+    logger.warn(
+      "[QueueAPI] Worker callbacks are UNAUTHENTICATED — set auth.workerSecret to secure them",
+    );
   }
 
   callbackRouter.post("/complete", async (req, res) => {
     try {
-      const { job_id, status, media_base64, media_type, file_path, metadata, error, ...extraFields } = req.body;
+      const {
+        job_id,
+        status,
+        media_base64,
+        media_type,
+        file_path,
+        metadata,
+        error,
+        ...extraFields
+      } = req.body;
 
       logger.info(
         `[QueueAPI] /complete called — job_id=${job_id ?? "(missing)"} status=${status ?? "(missing)"} ` +
-        `has_media=${!!media_base64} has_file=${!!file_path} media_type=${media_type ?? "(none)"} ` +
-        `body_keys=${Object.keys(req.body ?? {}).join(",") || "(empty)"}`,
+          `has_media=${!!media_base64} has_file=${!!file_path} media_type=${media_type ?? "(none)"} ` +
+          `body_keys=${Object.keys(req.body ?? {}).join(",") || "(empty)"}`,
       );
 
       if (!job_id || !status) {
-        logger.warn(`[QueueAPI] /complete rejected 400 — missing job_id or status. body=${JSON.stringify(req.body).slice(0, 200)}`);
+        logger.warn(
+          `[QueueAPI] /complete rejected 400 — missing job_id or status. body=${JSON.stringify(req.body).slice(0, 200)}`,
+        );
         res.status(400).json({ error: "job_id and status are required" });
         return;
       }
 
       if (status === "failed") {
-        await queueMaster.handleJobCompletion(job_id, { error: error ?? "Unknown worker error" });
+        await queueMaster.handleJobCompletion(job_id, {
+          error: error ?? "Unknown worker error",
+        });
         res.json({ ok: true });
         return;
       }
@@ -117,8 +172,12 @@ export const createQueueCallbackRouter = ({ queueMaster, repo, knowledgeService,
         const resolved = path.resolve(String(file_path));
         // Security: ensure file is within gallery dir
         if (!resolved.startsWith(path.resolve(GALLERY_DIR))) {
-          logger.warn(`[QueueAPI] /complete rejected — file_path outside gallery: ${file_path}`);
-          res.status(400).json({ error: "file_path must be within gallery directory" });
+          logger.warn(
+            `[QueueAPI] /complete rejected — file_path outside gallery: ${file_path}`,
+          );
+          res
+            .status(400)
+            .json({ error: "file_path must be within gallery directory" });
           return;
         }
 
@@ -146,7 +205,9 @@ export const createQueueCallbackRouter = ({ queueMaster, repo, knowledgeService,
           projectId: job?.projectId ?? undefined,
         });
 
-        logger.info(`[QueueAPI] Asset saved (file-based): ${galleryAssetId} (${filename}, ${stat.size} bytes)`);
+        logger.info(
+          `[QueueAPI] Asset saved (file-based): ${galleryAssetId} (${filename}, ${stat.size} bytes)`,
+        );
       } else if (media_base64 && media_type) {
         // Legacy base64 callback (kept for backward compat with other sidecars)
         await ensureGalleryDir();
@@ -169,7 +230,9 @@ export const createQueueCallbackRouter = ({ queueMaster, repo, knowledgeService,
           fileSizeBytes: buffer.length,
           width: (metadata?.width as number) ?? undefined,
           height: (metadata?.height as number) ?? undefined,
-          durationSeconds: (metadata?.duration as number) ?? (assetType === "video" ? MAX_VIDEO_DURATION_SEC : undefined),
+          durationSeconds:
+            (metadata?.duration as number) ??
+            (assetType === "video" ? MAX_VIDEO_DURATION_SEC : undefined),
           prompt: job?.payload?.prompt,
           model: (metadata?.model as string) ?? job?.requiredModel,
           generationParams: metadata as Record<string, unknown> | undefined,
@@ -178,7 +241,9 @@ export const createQueueCallbackRouter = ({ queueMaster, repo, knowledgeService,
           projectId: job?.projectId ?? undefined,
         });
 
-        logger.info(`[QueueAPI] Asset saved: ${galleryAssetId} (${filename}, ${buffer.length} bytes)`);
+        logger.info(
+          `[QueueAPI] Asset saved: ${galleryAssetId} (${filename}, ${buffer.length} bytes)`,
+        );
       }
 
       await queueMaster.handleJobCompletion(job_id, {
@@ -194,7 +259,12 @@ export const createQueueCallbackRouter = ({ queueMaster, repo, knowledgeService,
 
       // Update the job with result URL and gallery asset ID
       if (resultUrl) {
-        repo.markComplete(job_id, resultUrl, metadata as Record<string, unknown>, galleryAssetId);
+        repo.markComplete(
+          job_id,
+          resultUrl,
+          metadata as Record<string, unknown>,
+          galleryAssetId,
+        );
       }
 
       // Ingest the new asset into the RAG knowledge base
@@ -202,22 +272,29 @@ export const createQueueCallbackRouter = ({ queueMaster, repo, knowledgeService,
         const asset = repo.getAsset(galleryAssetId);
         if (asset) {
           const job = repo.getJob(job_id);
-          const tags = asset.tags ? JSON.parse(String(asset.tags)) as string[] : [];
-          void knowledgeService.ingestAsset({
-            id: galleryAssetId,
-            type: asset.type as "image" | "video" | "audio" | "scene",
-            filename: String(asset.filename),
-            filePath: asset.file_path as string | undefined,
-            prompt: job?.payload?.prompt ?? (asset.prompt as string | undefined),
-            model: (asset.model as string | undefined),
-            tags,
-            source: String(asset.source ?? "generated"),
-            durationSeconds: asset.duration_seconds as number | undefined,
-            width: asset.width as number | undefined,
-            height: asset.height as number | undefined,
-          }).catch((err) => {
-            logger.warn(`[QueueAPI] RAG ingest failed for asset ${galleryAssetId}: ${err instanceof Error ? err.message : String(err)}`);
-          });
+          const tags = asset.tags
+            ? (JSON.parse(String(asset.tags)) as string[])
+            : [];
+          void knowledgeService
+            .ingestAsset({
+              id: galleryAssetId,
+              type: asset.type as "image" | "video" | "audio" | "scene",
+              filename: String(asset.filename),
+              filePath: asset.file_path as string | undefined,
+              prompt:
+                job?.payload?.prompt ?? (asset.prompt as string | undefined),
+              model: asset.model as string | undefined,
+              tags,
+              source: String(asset.source ?? "generated"),
+              durationSeconds: asset.duration_seconds as number | undefined,
+              width: asset.width as number | undefined,
+              height: asset.height as number | undefined,
+            })
+            .catch((err) => {
+              logger.warn(
+                `[QueueAPI] RAG ingest failed for asset ${galleryAssetId}: ${err instanceof Error ? err.message : String(err)}`,
+              );
+            });
         }
       }
 
@@ -256,7 +333,12 @@ export const createQueueCallbackRouter = ({ queueMaster, repo, knowledgeService,
   return callbackRouter;
 };
 
-export const createQueueRouter = ({ queueMaster, repo, characterRepo, knowledgeService }: QueueRouterOptions): Router => {
+export const createQueueRouter = ({
+  queueMaster,
+  repo,
+  characterRepo,
+  knowledgeService,
+}: QueueRouterOptions): Router => {
   const router = Router();
 
   /**
@@ -278,14 +360,19 @@ export const createQueueRouter = ({ queueMaster, repo, characterRepo, knowledgeS
       for (const char of readyCharacters) {
         if (!char.trainedLoraPath || !char.triggerWord) continue;
         // Check if the trigger word appears in the prompt (case-insensitive, word boundary)
-        const regex = new RegExp(`\\b${char.triggerWord.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i");
+        const regex = new RegExp(
+          `\\b${char.triggerWord.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`,
+          "i",
+        );
         if (regex.test(prompt)) {
           // Note: the LoRA path is on the image-gen sidecar's filesystem (which may be
           // a remote network node), so we cannot existsSync it here. The sidecar will
           // error if the path is invalid. Only skip if the path looks obviously empty.
           loraPaths.push(char.trainedLoraPath);
           loraScales.push(char.loraScale);
-          logger.info(`[QueueAPI] Auto-injecting LoRA for character "${char.name}" (trigger: ${char.triggerWord}, scale: ${char.loraScale})`);
+          logger.info(
+            `[QueueAPI] Auto-injecting LoRA for character "${char.name}" (trigger: ${char.triggerWord}, scale: ${char.loraScale})`,
+          );
         }
       }
 
@@ -294,17 +381,31 @@ export const createQueueRouter = ({ queueMaster, repo, characterRepo, knowledgeS
         payload.lora_scales = loraScales;
       }
     } catch (err) {
-      logger.warn(`[QueueAPI] Character LoRA auto-injection failed: ${err instanceof Error ? err.message : String(err)}`);
+      logger.warn(
+        `[QueueAPI] Character LoRA auto-injection failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
     }
   }
 
   // ── POST /jobs — Submit a new media generation job ──────
   router.post("/jobs", (req, res) => {
     try {
-      const { type, payload, model, projectId, priority, notifyViaTelegram, telegramChatId } = req.body as Partial<CreateMediaJobInput>;
+      const {
+        type,
+        payload,
+        model,
+        projectId,
+        priority,
+        notifyViaTelegram,
+        telegramChatId,
+      } = req.body as Partial<CreateMediaJobInput>;
 
       if (!type || !VALID_JOB_TYPES.includes(type)) {
-        res.status(400).json({ error: `Invalid job type. Must be one of: ${VALID_JOB_TYPES.join(", ")}` });
+        res
+          .status(400)
+          .json({
+            error: `Invalid job type. Must be one of: ${VALID_JOB_TYPES.join(", ")}`,
+          });
         return;
       }
 
@@ -320,13 +421,23 @@ export const createQueueRouter = ({ queueMaster, repo, characterRepo, knowledgeS
       }
 
       const MAX_TASK_INPUT_LENGTH = 50_000;
-      if (typeof payload.prompt === "string" && payload.prompt.length > MAX_TASK_INPUT_LENGTH) {
-        res.status(400).json({ error: `Prompt exceeds ${MAX_TASK_INPUT_LENGTH} characters` });
+      if (
+        typeof payload.prompt === "string" &&
+        payload.prompt.length > MAX_TASK_INPUT_LENGTH
+      ) {
+        res
+          .status(400)
+          .json({
+            error: `Prompt exceeds ${MAX_TASK_INPUT_LENGTH} characters`,
+          });
         return;
       }
 
       // Enforce video frame limits
-      if ((type === "txt2video" || type === "img2video") && payload.num_frames) {
+      if (
+        (type === "txt2video" || type === "img2video") &&
+        payload.num_frames
+      ) {
         if (payload.num_frames > MAX_VIDEO_FRAMES) {
           res.status(400).json({
             error: `Video frame count ${payload.num_frames} exceeds maximum ${MAX_VIDEO_FRAMES} (${MAX_VIDEO_DURATION_SEC}s at ${DEFAULT_VIDEO_FPS}fps)`,
@@ -350,7 +461,9 @@ export const createQueueRouter = ({ queueMaster, repo, characterRepo, knowledgeS
         telegramChatId: telegramChatId ?? undefined,
       });
 
-      logger.info(`[QueueAPI] Job created: ${job.id} (${job.type} → ${job.targetNode})`);
+      logger.info(
+        `[QueueAPI] Job created: ${job.id} (${job.type} → ${job.targetNode})`,
+      );
       res.status(201).json(job);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -391,14 +504,20 @@ export const createQueueRouter = ({ queueMaster, repo, characterRepo, knowledgeS
   // ── GET /jobs/:id — Get a single job ────────────────────
   router.get("/jobs/:id", (req, res) => {
     const job = repo.getJob(req.params.id);
-    if (!job) { res.status(404).json({ error: "Job not found" }); return; }
+    if (!job) {
+      res.status(404).json({ error: "Job not found" });
+      return;
+    }
     res.json(job);
   });
 
   // ── DELETE /jobs/:id — Cancel a pending job ─────────────
   router.delete("/jobs/:id", (req, res) => {
     const cancelled = repo.cancelJob(req.params.id);
-    if (!cancelled) { res.status(404).json({ error: "Job not found or not pending" }); return; }
+    if (!cancelled) {
+      res.status(404).json({ error: "Job not found or not pending" });
+      return;
+    }
     res.json({ ok: true });
   });
 
@@ -406,14 +525,26 @@ export const createQueueRouter = ({ queueMaster, repo, characterRepo, knowledgeS
   router.post("/jobs/:id/kill", async (req, res) => {
     try {
       const job = repo.getJob(req.params.id);
-      if (!job || (job.status !== "dispatched" && job.status !== "processing")) {
-        res.status(404).json({ error: "Job not found or not in a killable state" });
+      if (
+        !job ||
+        (job.status !== "dispatched" && job.status !== "processing")
+      ) {
+        res
+          .status(404)
+          .json({ error: "Job not found or not in a killable state" });
         return;
       }
       const killed = repo.killJob(req.params.id);
-      if (!killed) { res.status(409).json({ error: "Kill failed — job may have already completed" }); return; }
+      if (!killed) {
+        res
+          .status(409)
+          .json({ error: "Kill failed — job may have already completed" });
+        return;
+      }
 
-      logger.info(`[QueueAPI] Job ${req.params.id} killed by user (was ${job.status} on ${job.targetNode})`);
+      logger.info(
+        `[QueueAPI] Job ${req.params.id} killed by user (was ${job.status} on ${job.targetNode})`,
+      );
 
       // Best-effort: unload the worker node to free VRAM
       try {
@@ -424,7 +555,8 @@ export const createQueueRouter = ({ queueMaster, repo, characterRepo, knowledgeS
 
       // Emit so Socket.IO listeners in server.ts re-broadcast to UI
       const updatedJob = repo.getJob(req.params.id);
-      if (updatedJob) queueMaster.emit("job:failed", updatedJob, "Killed by user");
+      if (updatedJob)
+        queueMaster.emit("job:failed", updatedJob, "Killed by user");
 
       res.json({ ok: true });
     } catch (err) {
@@ -446,7 +578,15 @@ export const createQueueRouter = ({ queueMaster, repo, characterRepo, knowledgeS
       const limit = req.query.limit ? Number(req.query.limit) : 50;
       const offset = req.query.offset ? Number(req.query.offset) : 0;
 
-      let assets = repo.listAssets({ type, source, projectId, folder, q, limit, offset });
+      let assets = repo.listAssets({
+        type,
+        source,
+        projectId,
+        folder,
+        q,
+        limit,
+        offset,
+      });
       let total = repo.countAssets({ type, source, projectId, folder, q });
 
       // Server-side filtering by collection and/or tags from gallery tables
@@ -456,21 +596,28 @@ export const createQueueRouter = ({ queueMaster, repo, characterRepo, knowledgeS
           let allowedPaths: Set<string> | null = null;
 
           if (collection) {
-            const rows = dirDb.prepare(
-              `SELECT asset_path FROM gallery_collection_items WHERE collection_id = ?`,
-            ).all(collection) as Array<{ asset_path: string }>;
+            const rows = dirDb
+              .prepare(
+                `SELECT asset_path FROM gallery_collection_items WHERE collection_id = ?`,
+              )
+              .all(collection) as Array<{ asset_path: string }>;
             allowedPaths = new Set(rows.map((r) => r.asset_path));
           }
 
           if (tags) {
-            const tagList = tags.split(",").map((t) => t.trim()).filter(Boolean);
+            const tagList = tags
+              .split(",")
+              .map((t) => t.trim())
+              .filter(Boolean);
             for (const tag of tagList) {
-              const rows = dirDb.prepare(
-                `SELECT asset_path FROM gallery_tags WHERE tag = ?`,
-              ).all(tag.toLowerCase()) as Array<{ asset_path: string }>;
+              const rows = dirDb
+                .prepare(`SELECT asset_path FROM gallery_tags WHERE tag = ?`)
+                .all(tag.toLowerCase()) as Array<{ asset_path: string }>;
               const tagPaths = new Set(rows.map((r) => r.asset_path));
               if (allowedPaths) {
-                allowedPaths = new Set([...allowedPaths].filter((p) => tagPaths.has(p)));
+                allowedPaths = new Set(
+                  [...allowedPaths].filter((p) => tagPaths.has(p)),
+                );
               } else {
                 allowedPaths = tagPaths;
               }
@@ -479,7 +626,9 @@ export const createQueueRouter = ({ queueMaster, repo, characterRepo, knowledgeS
 
           if (allowedPaths !== null) {
             assets = assets.filter(
-              (a) => allowedPaths!.has(String(a.file_path)) || allowedPaths!.has(String(a.filename)),
+              (a) =>
+                allowedPaths!.has(String(a.file_path)) ||
+                allowedPaths!.has(String(a.filename)),
             );
             total = assets.length;
           }
@@ -509,7 +658,10 @@ export const createQueueRouter = ({ queueMaster, repo, characterRepo, knowledgeS
   // ── GET /assets/:id — Get a single asset ────────────────
   router.get("/assets/:id", (req, res) => {
     const asset = repo.getAsset(req.params.id);
-    if (!asset) { res.status(404).json({ error: "Asset not found" }); return; }
+    if (!asset) {
+      res.status(404).json({ error: "Asset not found" });
+      return;
+    }
     res.json(asset);
   });
 
@@ -517,16 +669,25 @@ export const createQueueRouter = ({ queueMaster, repo, characterRepo, knowledgeS
   router.delete("/assets/:id", async (req, res) => {
     try {
       const asset = repo.getAsset(req.params.id);
-      if (!asset) { res.status(404).json({ error: "Asset not found" }); return; }
+      if (!asset) {
+        res.status(404).json({ error: "Asset not found" });
+        return;
+      }
 
       // Delete file from filesystem
       const filePath = asset.file_path as string;
-      try { await fs.unlink(filePath); } catch { /* file may already be gone */ }
+      try {
+        await fs.unlink(filePath);
+      } catch {
+        /* file may already be gone */
+      }
 
       // Remove from RAG knowledge base
       if (knowledgeService) {
         void knowledgeService.removeAsset(req.params.id).catch((err) => {
-          logger.warn(`[QueueAPI] RAG removal failed for asset ${req.params.id}: ${err instanceof Error ? err.message : String(err)}`);
+          logger.warn(
+            `[QueueAPI] RAG removal failed for asset ${req.params.id}: ${err instanceof Error ? err.message : String(err)}`,
+          );
         });
       }
 
@@ -542,7 +703,10 @@ export const createQueueRouter = ({ queueMaster, repo, characterRepo, knowledgeS
   router.patch("/assets/:id/tags", (req, res) => {
     try {
       const { tags } = req.body;
-      if (!Array.isArray(tags)) { res.status(400).json({ error: "tags must be an array" }); return; }
+      if (!Array.isArray(tags)) {
+        res.status(400).json({ error: "tags must be an array" });
+        return;
+      }
       repo.updateAssetTags(req.params.id, tags);
       res.json({ ok: true });
     } catch (err) {
@@ -554,47 +718,78 @@ export const createQueueRouter = ({ queueMaster, repo, characterRepo, knowledgeS
   // ── PATCH /assets/:id/knowledge — Update RAG visibility/category ──
   router.patch("/assets/:id/knowledge", async (req, res) => {
     try {
-      const { visibility, category } = req.body as { visibility?: string; category?: string };
+      const { visibility, category } = req.body as {
+        visibility?: string;
+        category?: string;
+      };
       const VALID_VISIBILITY = ["public", "internal", "private"];
-      const VALID_CATEGORY = ["media", "document", "presentation", "social", "system", "conversation"];
+      const VALID_CATEGORY = [
+        "media",
+        "document",
+        "presentation",
+        "social",
+        "system",
+        "conversation",
+      ];
 
       if (visibility && !VALID_VISIBILITY.includes(visibility)) {
-        res.status(400).json({ error: `visibility must be one of: ${VALID_VISIBILITY.join(", ")}` });
+        res
+          .status(400)
+          .json({
+            error: `visibility must be one of: ${VALID_VISIBILITY.join(", ")}`,
+          });
         return;
       }
       if (category && !VALID_CATEGORY.includes(category)) {
-        res.status(400).json({ error: `category must be one of: ${VALID_CATEGORY.join(", ")}` });
+        res
+          .status(400)
+          .json({
+            error: `category must be one of: ${VALID_CATEGORY.join(", ")}`,
+          });
         return;
       }
 
       const asset = repo.getAsset(req.params.id);
-      if (!asset) { res.status(404).json({ error: "Asset not found" }); return; }
+      if (!asset) {
+        res.status(404).json({ error: "Asset not found" });
+        return;
+      }
 
-      const newVisibility = visibility ?? String(asset.knowledge_visibility ?? "public");
-      const newCategory = category ?? String(asset.knowledge_category ?? "media");
+      const newVisibility =
+        visibility ?? String(asset.knowledge_visibility ?? "public");
+      const newCategory =
+        category ?? String(asset.knowledge_category ?? "media");
 
       repo.updateAssetKnowledgeMeta(req.params.id, newVisibility, newCategory);
 
       // Re-ingest into RAG with updated metadata
       if (knowledgeService) {
-        const tags = asset.tags ? JSON.parse(String(asset.tags)) as string[] : [];
-        void knowledgeService.ingestAsset({
-          id: req.params.id,
-          type: asset.type as "image" | "video" | "audio" | "scene",
-          filename: String(asset.filename),
-          filePath: asset.file_path as string | undefined,
-          prompt: asset.prompt as string | undefined,
-          model: asset.model as string | undefined,
-          tags,
-          source: String(asset.source ?? "generated"),
-          durationSeconds: asset.duration_seconds as number | undefined,
-          width: asset.width as number | undefined,
-          height: asset.height as number | undefined,
-          visibility: newVisibility as import("../knowledge/types.js").KnowledgeVisibility,
-          category: newCategory as import("../knowledge/types.js").KnowledgeCategory,
-        }).catch((err) => {
-          logger.warn(`[QueueAPI] RAG re-ingest failed for ${req.params.id}: ${err instanceof Error ? err.message : String(err)}`);
-        });
+        const tags = asset.tags
+          ? (JSON.parse(String(asset.tags)) as string[])
+          : [];
+        void knowledgeService
+          .ingestAsset({
+            id: req.params.id,
+            type: asset.type as "image" | "video" | "audio" | "scene",
+            filename: String(asset.filename),
+            filePath: asset.file_path as string | undefined,
+            prompt: asset.prompt as string | undefined,
+            model: asset.model as string | undefined,
+            tags,
+            source: String(asset.source ?? "generated"),
+            durationSeconds: asset.duration_seconds as number | undefined,
+            width: asset.width as number | undefined,
+            height: asset.height as number | undefined,
+            visibility:
+              newVisibility as import("../knowledge/types.js").KnowledgeVisibility,
+            category:
+              newCategory as import("../knowledge/types.js").KnowledgeCategory,
+          })
+          .catch((err) => {
+            logger.warn(
+              `[QueueAPI] RAG re-ingest failed for ${req.params.id}: ${err instanceof Error ? err.message : String(err)}`,
+            );
+          });
       }
 
       res.json({ ok: true, visibility: newVisibility, category: newCategory });
@@ -608,13 +803,25 @@ export const createQueueRouter = ({ queueMaster, repo, characterRepo, knowledgeS
   router.patch("/assets/:id/folder", (req, res) => {
     try {
       const { folder } = req.body as { folder?: string | null };
-      if (folder !== null && folder !== undefined && typeof folder !== "string") {
+      if (
+        folder !== null &&
+        folder !== undefined &&
+        typeof folder !== "string"
+      ) {
         res.status(400).json({ error: "folder must be a string or null" });
         return;
       }
       const asset = repo.getAsset(req.params.id);
-      if (!asset) { res.status(404).json({ error: "Asset not found" }); return; }
-      const sanitized = folder ? folder.trim().replace(/[<>:"|?*]/g, "").slice(0, 100) : null;
+      if (!asset) {
+        res.status(404).json({ error: "Asset not found" });
+        return;
+      }
+      const sanitized = folder
+        ? folder
+            .trim()
+            .replace(/[<>:"|?*]/g, "")
+            .slice(0, 100)
+        : null;
       repo.updateAssetFolder(req.params.id, sanitized);
       res.json({ ok: true, folder: sanitized });
     } catch (err) {
@@ -633,7 +840,10 @@ export const createQueueRouter = ({ queueMaster, repo, characterRepo, knowledgeS
       }
       const safeName = path.basename(filename);
       const asset = repo.getAsset(req.params.id);
-      if (!asset) { res.status(404).json({ error: "Asset not found" }); return; }
+      if (!asset) {
+        res.status(404).json({ error: "Asset not found" });
+        return;
+      }
       repo.renameAsset(req.params.id, safeName);
       res.json({ ok: true, filename: safeName });
     } catch (err) {
@@ -651,28 +861,41 @@ export const createQueueRouter = ({ queueMaster, repo, characterRepo, knowledgeS
         return;
       }
       const asset = repo.getAsset(req.params.id);
-      if (!asset) { res.status(404).json({ error: "Asset not found" }); return; }
+      if (!asset) {
+        res.status(404).json({ error: "Asset not found" });
+        return;
+      }
       repo.updateAssetDescription(req.params.id, prompt);
       // Re-ingest into RAG with updated description
       if (knowledgeService) {
-        const tags = asset.tags ? JSON.parse(String(asset.tags)) as string[] : [];
-        void knowledgeService.ingestAsset({
-          id: req.params.id,
-          type: asset.type as "image" | "video" | "audio" | "scene",
-          filename: String(asset.filename),
-          filePath: asset.file_path as string | undefined,
-          prompt: prompt || undefined,
-          model: asset.model as string | undefined,
-          tags,
-          source: String(asset.source ?? "generated"),
-          durationSeconds: asset.duration_seconds as number | undefined,
-          width: asset.width as number | undefined,
-          height: asset.height as number | undefined,
-          visibility: asset.knowledge_visibility as import("../knowledge/types.js").KnowledgeVisibility | undefined,
-          category: asset.knowledge_category as import("../knowledge/types.js").KnowledgeCategory | undefined,
-        }).catch((err) => {
-          logger.warn(`[QueueAPI] RAG re-ingest failed after description update for ${req.params.id}: ${err instanceof Error ? err.message : String(err)}`);
-        });
+        const tags = asset.tags
+          ? (JSON.parse(String(asset.tags)) as string[])
+          : [];
+        void knowledgeService
+          .ingestAsset({
+            id: req.params.id,
+            type: asset.type as "image" | "video" | "audio" | "scene",
+            filename: String(asset.filename),
+            filePath: asset.file_path as string | undefined,
+            prompt: prompt || undefined,
+            model: asset.model as string | undefined,
+            tags,
+            source: String(asset.source ?? "generated"),
+            durationSeconds: asset.duration_seconds as number | undefined,
+            width: asset.width as number | undefined,
+            height: asset.height as number | undefined,
+            visibility: asset.knowledge_visibility as
+              | import("../knowledge/types.js").KnowledgeVisibility
+              | undefined,
+            category: asset.knowledge_category as
+              | import("../knowledge/types.js").KnowledgeCategory
+              | undefined,
+          })
+          .catch((err) => {
+            logger.warn(
+              `[QueueAPI] RAG re-ingest failed after description update for ${req.params.id}: ${err instanceof Error ? err.message : String(err)}`,
+            );
+          });
       }
       res.json({ ok: true, prompt });
     } catch (err) {
@@ -684,9 +907,18 @@ export const createQueueRouter = ({ queueMaster, repo, characterRepo, knowledgeS
   // ── POST /assets/upload — Upload a file directly to gallery ──
   const MAX_UPLOAD_BYTES = 25 * 1024 * 1024; // 25 MB decoded limit
   const ALLOWED_UPLOAD_MIMES = new Set([
-    "image/png", "image/jpeg", "image/webp", "image/gif",
-    "video/mp4", "video/webm", "video/quicktime",
-    "audio/wav", "audio/mp3", "audio/mpeg", "audio/ogg", "audio/flac",
+    "image/png",
+    "image/jpeg",
+    "image/webp",
+    "image/gif",
+    "video/mp4",
+    "video/webm",
+    "video/quicktime",
+    "audio/wav",
+    "audio/mp3",
+    "audio/mpeg",
+    "audio/ogg",
+    "audio/flac",
   ]);
 
   router.post("/assets/upload", async (req, res) => {
@@ -694,13 +926,19 @@ export const createQueueRouter = ({ queueMaster, repo, characterRepo, knowledgeS
       const { filename, data_base64, mime_type, tags, projectId } = req.body;
 
       if (!filename || !data_base64 || !mime_type) {
-        res.status(400).json({ error: "filename, data_base64, and mime_type are required" });
+        res
+          .status(400)
+          .json({ error: "filename, data_base64, and mime_type are required" });
         return;
       }
 
       // Validate MIME type against allowlist
       if (!ALLOWED_UPLOAD_MIMES.has(mime_type)) {
-        res.status(400).json({ error: `Unsupported MIME type: ${mime_type}. Allowed: ${[...ALLOWED_UPLOAD_MIMES].join(", ")}` });
+        res
+          .status(400)
+          .json({
+            error: `Unsupported MIME type: ${mime_type}. Allowed: ${[...ALLOWED_UPLOAD_MIMES].join(", ")}`,
+          });
         return;
       }
 
@@ -709,12 +947,19 @@ export const createQueueRouter = ({ queueMaster, repo, characterRepo, knowledgeS
 
       // Validate decoded file size
       if (buffer.length > MAX_UPLOAD_BYTES) {
-        res.status(413).json({ error: `File too large: ${buffer.length} bytes exceeds ${MAX_UPLOAD_BYTES} byte limit` });
+        res
+          .status(413)
+          .json({
+            error: `File too large: ${buffer.length} bytes exceeds ${MAX_UPLOAD_BYTES} byte limit`,
+          });
         return;
       }
 
       const safeName = path.basename(filename);
-      const filePath = path.join(GALLERY_DIR, `upload-${Date.now()}-${safeName}`);
+      const filePath = path.join(
+        GALLERY_DIR,
+        `upload-${Date.now()}-${safeName}`,
+      );
       await fs.writeFile(filePath, buffer);
 
       const assetType = assetTypeFromMime(mime_type);
@@ -731,16 +976,20 @@ export const createQueueRouter = ({ queueMaster, repo, characterRepo, knowledgeS
 
       // Ingest uploaded asset into RAG
       if (knowledgeService) {
-        void knowledgeService.ingestAsset({
-          id: assetId,
-          type: assetType,
-          filename: safeName,
-          filePath,
-          tags: Array.isArray(tags) ? tags : undefined,
-          source: "uploaded",
-        }).catch((err) => {
-          logger.warn(`[QueueAPI] RAG ingest failed for uploaded asset ${assetId}: ${err instanceof Error ? err.message : String(err)}`);
-        });
+        void knowledgeService
+          .ingestAsset({
+            id: assetId,
+            type: assetType,
+            filename: safeName,
+            filePath,
+            tags: Array.isArray(tags) ? tags : undefined,
+            source: "uploaded",
+          })
+          .catch((err) => {
+            logger.warn(
+              `[QueueAPI] RAG ingest failed for uploaded asset ${assetId}: ${err instanceof Error ? err.message : String(err)}`,
+            );
+          });
       }
 
       res.status(201).json({ id: assetId, file_path: filePath });
@@ -769,7 +1018,10 @@ export const createQueueRouter = ({ queueMaster, repo, characterRepo, knowledgeS
       // CORP would silently block <img> and <video> tags in the UI).
       res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
       if (req.query.download === "1") {
-        res.setHeader("Content-Disposition", `attachment; filename="${safeName}"`);
+        res.setHeader(
+          "Content-Disposition",
+          `attachment; filename="${safeName}"`,
+        );
       }
       res.sendFile(resolved);
     } catch {
@@ -781,7 +1033,10 @@ export const createQueueRouter = ({ queueMaster, repo, characterRepo, knowledgeS
   router.get("/assets/:id/file", async (req, res) => {
     try {
       const asset = repo.getAsset(req.params.id);
-      if (!asset) { res.status(404).json({ error: "Asset not found" }); return; }
+      if (!asset) {
+        res.status(404).json({ error: "Asset not found" });
+        return;
+      }
 
       const filePath = asset.file_path as string;
       // Restrict to paths within the user's home dir to prevent SSRF/path traversal
@@ -796,7 +1051,10 @@ export const createQueueRouter = ({ queueMaster, repo, characterRepo, knowledgeS
       res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
       const safeName = path.basename(resolved);
       if (req.query.download === "1") {
-        res.setHeader("Content-Disposition", `attachment; filename="${safeName}"`);
+        res.setHeader(
+          "Content-Disposition",
+          `attachment; filename="${safeName}"`,
+        );
       }
       res.sendFile(resolved);
     } catch {
@@ -807,13 +1065,22 @@ export const createQueueRouter = ({ queueMaster, repo, characterRepo, knowledgeS
   // ── POST /assets/scenes — Save a scene (TimelineEntry JSON) as a gallery asset ──
   router.post("/assets/scenes", async (req, res) => {
     try {
-      const { scene, title, draftId } = req.body as { scene?: Record<string, unknown>; title?: string; draftId?: string };
+      const { scene, title, draftId } = req.body as {
+        scene?: Record<string, unknown>;
+        title?: string;
+        draftId?: string;
+      };
       if (!scene || typeof scene !== "object") {
         res.status(400).json({ error: "scene object is required" });
         return;
       }
 
-      const sceneDir = path.join(os.homedir(), ".openzigs", "gallery", "scenes");
+      const sceneDir = path.join(
+        os.homedir(),
+        ".openzigs",
+        "gallery",
+        "scenes",
+      );
       await fs.mkdir(sceneDir, { recursive: true });
 
       const filename = `scene-${Date.now()}.json`;
@@ -835,24 +1102,34 @@ export const createQueueRouter = ({ queueMaster, repo, characterRepo, knowledgeS
         mimeType: "application/json",
         fileSizeBytes: Buffer.byteLength(JSON.stringify(scene)),
         source: "director",
-        prompt: title || (scene.title as string) || (scene.scriptText as string)?.slice(0, 100) || "Saved scene",
+        prompt:
+          title ||
+          (scene.title as string) ||
+          (scene.scriptText as string)?.slice(0, 100) ||
+          "Saved scene",
         tags: ["scene"],
-        ...(Object.keys(generationParams).length > 0 ? { generationParams } : {}),
+        ...(Object.keys(generationParams).length > 0
+          ? { generationParams }
+          : {}),
       });
 
       // Ingest scene into RAG
       if (knowledgeService) {
-        void knowledgeService.ingestAsset({
-          id,
-          type: "scene",
-          filename,
-          filePath,
-          prompt: title || (scene.title as string) || "Saved scene",
-          source: "director",
-          tags: ["scene"],
-        }).catch((err) => {
-          logger.warn(`[QueueAPI] RAG ingest failed for scene ${id}: ${err instanceof Error ? err.message : String(err)}`);
-        });
+        void knowledgeService
+          .ingestAsset({
+            id,
+            type: "scene",
+            filename,
+            filePath,
+            prompt: title || (scene.title as string) || "Saved scene",
+            source: "director",
+            tags: ["scene"],
+          })
+          .catch((err) => {
+            logger.warn(
+              `[QueueAPI] RAG ingest failed for scene ${id}: ${err instanceof Error ? err.message : String(err)}`,
+            );
+          });
       }
 
       res.json({ id, filename, filePath });
@@ -898,33 +1175,30 @@ export const createQueueRouter = ({ queueMaster, repo, characterRepo, knowledgeS
   // Bypasses the queue; uses ImageGenService (cloud Imagen or local sidecar).
   router.post("/image/generate", async (req, res) => {
     try {
-      const {
-        prompt,
-        provider,
-        imageModel,
-        width,
-        height,
-        steps,
-        seed,
-      } = req.body as {
-        prompt?: string;
-        provider?: "cloud" | "local" | "auto";
-        imageModel?: string;
-        width?: number;
-        height?: number;
-        steps?: number;
-        seed?: number;
-      };
+      const { prompt, provider, imageModel, width, height, steps, seed } =
+        req.body as {
+          prompt?: string;
+          provider?: "cloud" | "local" | "auto";
+          imageModel?: string;
+          width?: number;
+          height?: number;
+          steps?: number;
+          seed?: number;
+        };
 
       if (!prompt?.trim()) {
         res.status(400).json({ error: "prompt is required" });
         return;
       }
 
-      const { ImageGenService } = await import("../video/generators/image-gen-service.js");
+      const { ImageGenService } =
+        await import("../video/generators/image-gen-service.js");
       await ensureGalleryDir();
       const userConfig = await ImageGenService.loadUserImageGenConfig();
-      const imageService = new ImageGenService({ outputDir: GALLERY_DIR, ...userConfig });
+      const imageService = new ImageGenService({
+        outputDir: GALLERY_DIR,
+        ...userConfig,
+      });
       await imageService.initialize();
 
       const result = await imageService.generateImage(prompt.trim(), {
@@ -938,7 +1212,10 @@ export const createQueueRouter = ({ queueMaster, repo, characterRepo, knowledgeS
 
       const filename = path.basename(result.filePath);
       const stats = await fs.stat(result.filePath);
-      const modelLabel = result.provider === "cloud" ? "imagen-3" : (imageModel ?? "flux-schnell");
+      const modelLabel =
+        result.provider === "cloud"
+          ? "imagen-3"
+          : (imageModel ?? "flux-schnell");
 
       const assetId = repo.createAsset({
         type: "image",
@@ -950,30 +1227,47 @@ export const createQueueRouter = ({ queueMaster, repo, characterRepo, knowledgeS
         height: result.height || undefined,
         prompt: prompt.trim(),
         model: modelLabel,
-        generationParams: { provider: result.provider, seed, generationTimeMs: result.generationTimeMs },
+        generationParams: {
+          provider: result.provider,
+          seed,
+          generationTimeMs: result.generationTimeMs,
+        },
         source: "generated",
       });
 
-      logger.info(`[QueueAPI] Cloud image generated: ${filename} via ${result.provider} in ${result.generationTimeMs}ms → asset ${assetId}`);
+      logger.info(
+        `[QueueAPI] Cloud image generated: ${filename} via ${result.provider} in ${result.generationTimeMs}ms → asset ${assetId}`,
+      );
 
       // Ingest into RAG
       if (knowledgeService) {
-        void knowledgeService.ingestAsset({
-          id: assetId,
-          type: "image",
-          filename,
-          filePath: result.filePath,
-          prompt: prompt.trim(),
-          model: modelLabel,
-          source: "generated",
-          width: result.width || undefined,
-          height: result.height || undefined,
-        }).catch((err) => {
-          logger.warn(`[QueueAPI] RAG ingest failed for cloud image ${assetId}: ${err instanceof Error ? err.message : String(err)}`);
-        });
+        void knowledgeService
+          .ingestAsset({
+            id: assetId,
+            type: "image",
+            filename,
+            filePath: result.filePath,
+            prompt: prompt.trim(),
+            model: modelLabel,
+            source: "generated",
+            width: result.width || undefined,
+            height: result.height || undefined,
+          })
+          .catch((err) => {
+            logger.warn(
+              `[QueueAPI] RAG ingest failed for cloud image ${assetId}: ${err instanceof Error ? err.message : String(err)}`,
+            );
+          });
       }
 
-      res.status(201).json({ assetId, provider: result.provider, model: modelLabel, filename });
+      res
+        .status(201)
+        .json({
+          assetId,
+          provider: result.provider,
+          model: modelLabel,
+          filename,
+        });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       logger.warn(`[QueueAPI] Cloud image generate failed: ${msg}`);
@@ -997,7 +1291,9 @@ export const createQueueRouter = ({ queueMaster, repo, characterRepo, knowledgeS
     try {
       const node = req.params.node as TargetNode;
       if (node !== "mac-mini" && node !== "m2-pro") {
-        res.status(400).json({ error: "Invalid node. Must be 'mac-mini' or 'm2-pro'" });
+        res
+          .status(400)
+          .json({ error: "Invalid node. Must be 'mac-mini' or 'm2-pro'" });
         return;
       }
 
@@ -1014,14 +1310,29 @@ export const createQueueRouter = ({ queueMaster, repo, characterRepo, knowledgeS
   // Body: { targetNode: "mac-mini"|"m2-pro"|"local", model?: "flux-schnell" }
   router.post("/nodes/switch", async (req, res) => {
     try {
-      const { targetNode, model } = req.body as { targetNode?: string; model?: string };
+      const { targetNode, model } = req.body as {
+        targetNode?: string;
+        model?: string;
+      };
 
-      if (!targetNode || (targetNode !== "mac-mini" && targetNode !== "m2-pro" && targetNode !== "local")) {
-        res.status(400).json({ error: "targetNode must be 'mac-mini', 'm2-pro', or 'local'" });
+      if (
+        !targetNode ||
+        (targetNode !== "mac-mini" &&
+          targetNode !== "m2-pro" &&
+          targetNode !== "local")
+      ) {
+        res
+          .status(400)
+          .json({
+            error: "targetNode must be 'mac-mini', 'm2-pro', or 'local'",
+          });
         return;
       }
 
-      const result = await queueMaster.switchActiveNode(targetNode as TargetNode, model);
+      const result = await queueMaster.switchActiveNode(
+        targetNode as TargetNode,
+        model,
+      );
       res.json(result);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
