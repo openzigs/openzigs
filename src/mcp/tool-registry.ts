@@ -6,7 +6,18 @@ import type * as z from "zod";
 import { ALWAYS_ON_TOOLS } from "./constants.js";
 
 export type RiskLevel = "low" | "medium" | "high";
-export type ToolCategory = "filesystem" | "search" | "browser" | "shell" | "productivity" | "social" | "documents" | "personal" | "data" | "developer" | "knowledge";
+export type ToolCategory =
+  | "filesystem"
+  | "search"
+  | "browser"
+  | "shell"
+  | "productivity"
+  | "social"
+  | "documents"
+  | "personal"
+  | "data"
+  | "developer"
+  | "knowledge";
 
 export type ToolDefinition = {
   name: string;
@@ -17,7 +28,9 @@ export type ToolDefinition = {
     required?: string[];
   };
   zodSchema: z.ZodSchema;
-  handler: (args: Record<string, unknown>) => Promise<{ text: string; isError?: boolean }>;
+  handler: (
+    args: Record<string, unknown>,
+  ) => Promise<{ text: string; isError?: boolean }>;
   category: ToolCategory;
   riskLevel: RiskLevel;
   /** The sidecar/source this tool belongs to (e.g., "linkedin", "gmail", "github"). */
@@ -66,7 +79,10 @@ const loadState = (statePath: string): ToolRegistryState | null => {
       : [];
 
     const customRiskOverrides: Record<string, RiskLevel> = {};
-    if (parsed.customRiskOverrides && typeof parsed.customRiskOverrides === "object") {
+    if (
+      parsed.customRiskOverrides &&
+      typeof parsed.customRiskOverrides === "object"
+    ) {
       for (const [tool, risk] of Object.entries(parsed.customRiskOverrides)) {
         if (isRiskLevel(risk)) {
           customRiskOverrides[tool] = risk;
@@ -75,8 +91,13 @@ const loadState = (statePath: string): ToolRegistryState | null => {
     }
 
     const globalApprovalOverrides: Record<string, boolean> = {};
-    if (parsed.globalApprovalOverrides && typeof parsed.globalApprovalOverrides === "object") {
-      for (const [tool, value] of Object.entries(parsed.globalApprovalOverrides as Record<string, unknown>)) {
+    if (
+      parsed.globalApprovalOverrides &&
+      typeof parsed.globalApprovalOverrides === "object"
+    ) {
+      for (const [tool, value] of Object.entries(
+        parsed.globalApprovalOverrides as Record<string, unknown>,
+      )) {
         if (typeof value === "boolean") {
           globalApprovalOverrides[tool] = value;
         }
@@ -89,17 +110,36 @@ const loadState = (statePath: string): ToolRegistryState | null => {
       globalApprovalOverrides,
     };
   } catch (error) {
-    console.error(`[ToolRegistry] Failed to load state from ${statePath}:`, error);
+    console.error(
+      `[ToolRegistry] Failed to load state from ${statePath}:`,
+      error,
+    );
     return null;
   }
 };
 
 const saveState = async (statePath: string, state: ToolRegistryState) => {
   await fsPromises.mkdir(path.dirname(statePath), { recursive: true });
-  await fsPromises.writeFile(statePath, JSON.stringify(state, null, 2), "utf-8");
+  await fsPromises.writeFile(
+    statePath,
+    JSON.stringify(state, null, 2),
+    "utf-8",
+  );
 };
 
-const toolCategories: ToolCategory[] = ["filesystem", "search", "browser", "shell", "productivity", "social", "documents", "personal", "data", "developer", "knowledge"];
+const toolCategories: ToolCategory[] = [
+  "filesystem",
+  "search",
+  "browser",
+  "shell",
+  "productivity",
+  "social",
+  "documents",
+  "personal",
+  "data",
+  "developer",
+  "knowledge",
+];
 
 export type ToolRegistryOptions = {
   statePath: string;
@@ -123,9 +163,12 @@ export class ToolRegistry extends EventEmitter {
       this.customRiskOverrides = state.customRiskOverrides;
       this.globalApprovalOverrides = state.globalApprovalOverrides;
     } else {
-      this.enabledTools = defaultEnabledTools.length > 0 ? new Set(defaultEnabledTools) : null;
+      this.enabledTools =
+        defaultEnabledTools.length > 0 ? new Set(defaultEnabledTools) : null;
       this.customRiskOverrides = { ...defaultState.customRiskOverrides };
-      this.globalApprovalOverrides = { ...defaultState.globalApprovalOverrides };
+      this.globalApprovalOverrides = {
+        ...defaultState.globalApprovalOverrides,
+      };
     }
   }
 
@@ -139,7 +182,7 @@ export class ToolRegistry extends EventEmitter {
 
   getAllTools(): Record<ToolCategory, ToolInfo[]> {
     const grouped = Object.fromEntries(
-      toolCategories.map((category) => [category, []])
+      toolCategories.map((category) => [category, []]),
     ) as unknown as Record<ToolCategory, ToolInfo[]>;
 
     for (const tool of this.tools.values()) {
@@ -151,7 +194,8 @@ export class ToolRegistry extends EventEmitter {
         riskLevel,
         enabled: this.isEnabled(tool.name),
         source: tool.source,
-        globalApprovalRequired: this.globalApprovalOverrides[tool.name] === true ? true : undefined,
+        globalApprovalRequired:
+          this.globalApprovalOverrides[tool.name] === true ? true : undefined,
       });
     }
 
@@ -174,7 +218,8 @@ export class ToolRegistry extends EventEmitter {
       riskLevel: this.getRiskLevel(name) ?? tool.riskLevel,
       enabled: this.isEnabled(name),
       source: tool.source,
-      globalApprovalRequired: this.globalApprovalOverrides[name] === true ? true : undefined,
+      globalApprovalRequired:
+        this.globalApprovalOverrides[name] === true ? true : undefined,
     };
   }
 
@@ -190,7 +235,8 @@ export class ToolRegistry extends EventEmitter {
           riskLevel: this.getRiskLevel(tool.name) ?? tool.riskLevel,
           enabled: this.isEnabled(tool.name),
           source: tool.source,
-          globalApprovalRequired: this.globalApprovalOverrides[tool.name] === true ? true : undefined,
+          globalApprovalRequired:
+            this.globalApprovalOverrides[tool.name] === true ? true : undefined,
         });
       }
     }
@@ -202,7 +248,8 @@ export class ToolRegistry extends EventEmitter {
       return Array.from(this.tools.values());
     }
     return Array.from(this.tools.values()).filter(
-      (tool) => this.enabledTools?.has(tool.name) || ALWAYS_ON_TOOLS.has(tool.name),
+      (tool) =>
+        this.enabledTools?.has(tool.name) || ALWAYS_ON_TOOLS.has(tool.name),
     );
   }
 
@@ -242,7 +289,8 @@ export class ToolRegistry extends EventEmitter {
     if (this.globalApprovalOverrides[name] === true) {
       return true;
     }
-    const riskLevel = this.getRiskLevel(name) ?? this.tools.get(name)?.riskLevel;
+    const riskLevel =
+      this.getRiskLevel(name) ?? this.tools.get(name)?.riskLevel;
     return riskLevel === "high";
   }
 

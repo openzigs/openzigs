@@ -3,30 +3,49 @@ import Database from "better-sqlite3";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { createWebExtractTool, ExtractionRepository, EXTRACTION_TEMPLATES } from "./web-extract.js";
+import {
+  createWebExtractTool,
+  ExtractionRepository,
+  EXTRACTION_TEMPLATES,
+} from "./web-extract.js";
 
 // ── Mocks ────────────────────────────────────────────────────────────────
 
 vi.mock("../../browser/firecrawl-client.js", () => {
   const mockClient = {
-    getConfig: vi.fn(() => ({ enabled: true, url: "http://localhost:3002", idleTimeoutMs: 600_000 })),
+    getConfig: vi.fn(() => ({
+      enabled: true,
+      url: "http://localhost:3002",
+      idleTimeoutMs: 600_000,
+    })),
     scrape: vi.fn(async () => ({
-      markdown: "# Pricing\n\n- Basic: $10/mo\n- Pro: $25/mo\n- Enterprise: Contact us",
+      markdown:
+        "# Pricing\n\n- Basic: $10/mo\n- Pro: $25/mo\n- Enterprise: Contact us",
       html: undefined,
       metadata: { title: "Pricing Page" },
       url: "https://example.com/pricing",
     })),
     crawl: vi.fn(async () => ({
       pages: [
-        { markdown: "# Page 1\nContent A", url: "https://example.com/a", metadata: {} },
-        { markdown: "# Page 2\nContent B", url: "https://example.com/b", metadata: {} },
+        {
+          markdown: "# Page 1\nContent A",
+          url: "https://example.com/a",
+          metadata: {},
+        },
+        {
+          markdown: "# Page 2\nContent B",
+          url: "https://example.com/b",
+          metadata: {},
+        },
       ],
       totalPages: 2,
     })),
   };
   return {
     getFirecrawlClient: vi.fn(() => mockClient),
-    isBlockedUrl: vi.fn((url: string) => url.includes("127.0.0.1") || url.includes("localhost")),
+    isBlockedUrl: vi.fn(
+      (url: string) => url.includes("127.0.0.1") || url.includes("localhost"),
+    ),
     __mockClient: mockClient,
   };
 });
@@ -70,7 +89,10 @@ describe("web-extract tool", () => {
   });
 
   it("blocks SSRF URLs", async () => {
-    const result = await tool.handler({ url: "http://127.0.0.1:8080/admin", prompt: "extract" });
+    const result = await tool.handler({
+      url: "http://127.0.0.1:8080/admin",
+      prompt: "extract",
+    });
     expect(result.isError).toBe(true);
     expect(result.text).toContain("SSRF blocked");
   });
@@ -82,9 +104,19 @@ describe("web-extract tool", () => {
   });
 
   it("returns Firecrawl disabled error when not enabled", async () => {
-    const { __mockClient } = await import("../../browser/firecrawl-client.js") as unknown as { __mockClient: { getConfig: ReturnType<typeof vi.fn> } };
-    __mockClient.getConfig.mockReturnValueOnce({ enabled: false, url: "http://localhost:3002", idleTimeoutMs: 600_000 });
-    const result = await tool.handler({ url: "https://example.com/pricing", prompt: "extract prices" });
+    const { __mockClient } =
+      (await import("../../browser/firecrawl-client.js")) as unknown as {
+        __mockClient: { getConfig: ReturnType<typeof vi.fn> };
+      };
+    __mockClient.getConfig.mockReturnValueOnce({
+      enabled: false,
+      url: "http://localhost:3002",
+      idleTimeoutMs: 600_000,
+    });
+    const result = await tool.handler({
+      url: "https://example.com/pricing",
+      prompt: "extract prices",
+    });
     expect(result.isError).toBe(true);
     expect(result.text).toContain("not enabled");
   });
@@ -150,7 +182,10 @@ describe("web-extract tool", () => {
   });
 
   it("handles scrape errors gracefully", async () => {
-    const { __mockClient } = await import("../../browser/firecrawl-client.js") as unknown as { __mockClient: { scrape: ReturnType<typeof vi.fn> } };
+    const { __mockClient } =
+      (await import("../../browser/firecrawl-client.js")) as unknown as {
+        __mockClient: { scrape: ReturnType<typeof vi.fn> };
+      };
     __mockClient.scrape.mockRejectedValueOnce(new Error("Connection refused"));
     const result = await tool.handler({
       url: "https://example.com/pricing",
@@ -161,20 +196,27 @@ describe("web-extract tool", () => {
   });
 
   it("passes actions to scrape", async () => {
-    const { __mockClient } = await import("../../browser/firecrawl-client.js") as unknown as {
-      __mockClient: { scrape: ReturnType<typeof vi.fn> };
-    };
+    const { __mockClient } =
+      (await import("../../browser/firecrawl-client.js")) as unknown as {
+        __mockClient: { scrape: ReturnType<typeof vi.fn> };
+      };
 
     await tool.handler({
       url: "https://example.com/pricing",
       prompt: "extract",
-      actions: [{ type: "scroll", direction: "down" }, { type: "wait", milliseconds: 1000 }],
+      actions: [
+        { type: "scroll", direction: "down" },
+        { type: "wait", milliseconds: 1000 },
+      ],
     });
 
     expect(__mockClient.scrape).toHaveBeenCalledWith(
       "https://example.com/pricing",
       expect.objectContaining({
-        actions: [{ type: "scroll", direction: "down" }, { type: "wait", milliseconds: 1000 }],
+        actions: [
+          { type: "scroll", direction: "down" },
+          { type: "wait", milliseconds: 1000 },
+        ],
       }),
     );
   });
@@ -224,14 +266,22 @@ describe("ExtractionRepository", () => {
   });
 
   it("creates web_extractions table", () => {
-    const tables = repo.getDb().prepare(
-      "SELECT name FROM sqlite_master WHERE type='table' AND name='web_extractions'",
-    ).all();
+    const tables = repo
+      .getDb()
+      .prepare(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='web_extractions'",
+      )
+      .all();
     expect(tables).toHaveLength(1);
   });
 
   it("saves and retrieves extractions", () => {
-    const id = repo.saveExtraction("https://example.com", "get prices", "# Prices\n- $10", { prices: [] });
+    const id = repo.saveExtraction(
+      "https://example.com",
+      "get prices",
+      "# Prices\n- $10",
+      { prices: [] },
+    );
     expect(id).toBeGreaterThan(0);
 
     const row = repo.getExtraction(id);

@@ -66,6 +66,10 @@ import { getFirecrawlClient } from "../browser/firecrawl-client.js";
 import { createLeadExtractTool } from "./tools/lead-extract.js";
 import { createPriceMonitorTool } from "./tools/price-monitor.js";
 import { createSiteToDatasetTool } from "./tools/site-to-dataset.js";
+import { createAirtableReadTools } from "./tools/airtable/airtable-read-tools.js";
+import { createAirtableWriteTools } from "./tools/airtable/airtable-write-tools.js";
+import { createSheetsReadTools } from "./tools/sheets/sheets-read-tools.js";
+import { createSheetsWriteTools } from "./tools/sheets/sheets-write-tools.js";
 import { ToolRegistry, type ToolDefinition } from "./tool-registry.js";
 import type { LocalMcpServerManager } from "./local-mcp-server-manager.js";
 import { AuditLogger } from "../logging/audit-logger.js";
@@ -650,9 +654,16 @@ export const registerMcpTools = (
   registerTool(createWebExtractTool());
   registerTool(createWebMapTool());
   registerTool(createFirecrawlSearchTool());
-  registerTool(createLeadExtractTool());
+  registerTool(createLeadExtractTool(options.vaultService));
   registerTool(createPriceMonitorTool());
-  registerTool(createSiteToDatasetTool());
+  registerTool(createSiteToDatasetTool(options.vaultService));
+
+  // ── Airtable & Google Sheets Tools ──
+  const vaultRef = options.vaultService ?? null;
+  for (const tool of createAirtableReadTools(vaultRef)) registerTool(tool);
+  for (const tool of createAirtableWriteTools(vaultRef)) registerTool(tool);
+  for (const tool of createSheetsReadTools(vaultRef)) registerTool(tool);
+  for (const tool of createSheetsWriteTools(vaultRef)) registerTool(tool);
 
   // ── Document Intelligence Tools (PDF native, Word/Calendar via local MCP servers) ──
   const docTools = createDocumentIntelligenceTools({

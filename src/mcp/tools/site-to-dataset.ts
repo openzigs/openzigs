@@ -11,18 +11,61 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import type { ToolDefinition } from "../tool-registry.js";
-import { getFirecrawlClient, isBlockedUrl } from "../../browser/firecrawl-client.js";
+import {
+  getFirecrawlClient,
+  isBlockedUrl,
+} from "../../browser/firecrawl-client.js";
+import {
+  outputToSchema,
+  writeToOutput,
+  outputSummaryLine,
+} from "./data-output-helper.js";
+import type { SecretVaultService } from "../../vault/secret-vault-service.js";
 
 // ── Zod Schema ───────────────────────────────────────────────────────────
 
 const siteToDatasetSchema = z.object({
   url: z.string().url().describe("Site to crawl"),
-  maxPages: z.number().int().min(1).max(500).optional().default(50).describe("Max pages to crawl"),
-  maxDepth: z.number().int().min(1).max(10).optional().default(3).describe("Crawl depth"),
-  includePaths: z.array(z.string()).optional().describe("URL patterns to include"),
-  excludePaths: z.array(z.string()).optional().describe("URL patterns to exclude"),
-  format: z.enum(["markdown", "jsonl", "csv"]).optional().default("markdown").describe("Output format"),
-  chunkSize: z.number().int().min(100).max(10_000).optional().default(1000).describe("Characters per chunk for JSONL output"),
+  maxPages: z
+    .number()
+    .int()
+    .min(1)
+    .max(500)
+    .optional()
+    .default(50)
+    .describe("Max pages to crawl"),
+  maxDepth: z
+    .number()
+    .int()
+    .min(1)
+    .max(10)
+    .optional()
+    .default(3)
+    .describe("Crawl depth"),
+  includePaths: z
+    .array(z.string())
+    .optional()
+    .describe("URL patterns to include"),
+  excludePaths: z
+    .array(z.string())
+    .optional()
+    .describe("URL patterns to exclude"),
+  format: z
+    .enum(["markdown", "jsonl", "csv"])
+    .optional()
+    .default("markdown")
+    .describe("Output format"),
+  chunkSize: z
+    .number()
+    .int()
+    .min(100)
+    .max(10_000)
+    .optional()
+    .default(1000)
+    .describe("Characters per chunk for JSONL output"),
+  outputTo: outputToSchema.describe(
+    "Optional: write extracted data to Airtable or Google Sheets",
+  ),
 });
 
 export type SiteToDatasetInput = z.infer<typeof siteToDatasetSchema>;
@@ -58,11 +101,13 @@ function sanitizeDomain(url: string): string {
 function sanitizeFilename(urlString: string): string {
   try {
     const u = new URL(urlString);
-    return (u.pathname + u.search)
-      .replace(/^\//, "")
-      .replace(/[^a-zA-Z0-9_-]/g, "_")
-      .replace(/_+/g, "_")
-      .slice(0, 100) || "index";
+    return (
+      (u.pathname + u.search)
+        .replace(/^\//, "")
+        .replace(/[^a-zA-Z0-9_-]/g, "_")
+        .replace(/_+/g, "_")
+        .slice(0, 100) || "index"
+    );
   } catch {
     return "page";
   }
@@ -99,7 +144,9 @@ export function chunkText(text: string, chunkSize: number): string[] {
 
 // ── Tool Factory ─────────────────────────────────────────────────────────
 
-export function createSiteToDatasetTool(): ToolDefinition {
+export function createSiteToDatasetTool(
+  vault?: SecretVaultService | null,
+): ToolDefinition {
   return {
     name: "site-to-dataset",
     description:
@@ -111,12 +158,34 @@ export function createSiteToDatasetTool(): ToolDefinition {
       type: "object",
       properties: {
         url: { type: "string", description: "Site to crawl" },
-        maxPages: { type: "number", description: "Max pages to crawl (default: 50)" },
+        maxPages: {
+          type: "number",
+          description: "Max pages to crawl (default: 50)",
+        },
         maxDepth: { type: "number", description: "Crawl depth (default: 3)" },
         includePaths: { type: "array", description: "URL patterns to include" },
         excludePaths: { type: "array", description: "URL patterns to exclude" },
-        format: { type: "string", enum: ["markdown", "jsonl", "csv"], description: "Output format (default: markdown)" },
-        chunkSize: { type: "number", description: "Characters per chunk for JSONL output (default: 1000)" },
+        format: {
+          type: "string",
+          enum: ["markdown", "jsonl", "csv"],
+          description: "Output format (default: markdown)",
+        },
+        chunkSize: {
+          type: "number",
+          description: "Characters per chunk for JSONL output (default: 1000)",
+        },
+        outputTo: {
+          type: "object",
+          description:
+            "Optional: write extracted data to Airtable or Google Sheets",
+          properties: {
+            type: { type: "string", enum: ["airtable", "sheets"] },
+            baseId: { type: "string" },
+            tableIdOrName: { type: "string" },
+            spreadsheetId: { type: "string" },
+            range: { type: "string" },
+          },
+        },
       },
       required: ["url"],
     },
@@ -125,15 +194,30 @@ export function createSiteToDatasetTool(): ToolDefinition {
     riskLevel: "medium",
     handler: async (args) => {
       const parsed = siteToDatasetSchema.parse(args);
-      const { url, maxPages, maxDepth, includePaths, excludePaths, format, chunkSize } = parsed;
+      const {
+        url,
+        maxPages,
+        maxDepth,
+        includePaths,
+        excludePaths,
+        format,
+        chunkSize,
+        outputTo,
+      } = parsed;
 
       if (isBlockedUrl(url)) {
-        return { text: `SSRF blocked: "${url}" targets an internal/private network address`, isError: true };
+        return {
+          text: `SSRF blocked: "${url}" targets an internal/private network address`,
+          isError: true,
+        };
       }
 
       const client = getFirecrawlClient();
       if (!client.getConfig().enabled) {
-        return { text: "Firecrawl is not enabled. Enable it in Admin → Settings.", isError: true };
+        return {
+          text: "Firecrawl is not enabled. Enable it in Admin → Settings.",
+          isError: true,
+        };
       }
 
       try {
@@ -147,7 +231,10 @@ export function createSiteToDatasetTool(): ToolDefinition {
         });
 
         if (crawlResult.pages.length === 0) {
-          return { text: `No pages crawled from ${url}. Site may block crawling or require authentication.`, isError: true };
+          return {
+            text: `No pages crawled from ${url}. Site may block crawling or require authentication.`,
+            isError: true,
+          };
         }
 
         // Step 2: Create output directory
@@ -176,7 +263,11 @@ export function createSiteToDatasetTool(): ToolDefinition {
             const filePath = path.join(outputDir, filename);
             const header = `---\nurl: ${page.url}\ncaptured: ${new Date().toISOString()}\n---\n\n`;
             fs.writeFileSync(filePath, header + content, "utf-8");
-            manifest.files.push({ path: filename, url: page.url, characters: content.length });
+            manifest.files.push({
+              path: filename,
+              url: page.url,
+              characters: content.length,
+            });
             manifest.totalCharacters += content.length;
           }
           manifest.totalChunks = crawlResult.pages.length;
@@ -189,20 +280,26 @@ export function createSiteToDatasetTool(): ToolDefinition {
             const content = page.markdown ?? "";
             const chunks = chunkText(content, chunkSize);
             for (let i = 0; i < chunks.length; i++) {
-              lines.push(JSON.stringify({
-                url: page.url,
-                chunk_index: i,
-                total_chunks: chunks.length,
-                content: chunks[i],
-                metadata: page.metadata ?? {},
-              }));
+              lines.push(
+                JSON.stringify({
+                  url: page.url,
+                  chunk_index: i,
+                  total_chunks: chunks.length,
+                  content: chunks[i],
+                  metadata: page.metadata ?? {},
+                }),
+              );
               totalChunks++;
             }
             manifest.totalCharacters += content.length;
           }
 
           fs.writeFileSync(jsonlPath, lines.join("\n"), "utf-8");
-          manifest.files.push({ path: "dataset.jsonl", url, characters: manifest.totalCharacters });
+          manifest.files.push({
+            path: "dataset.jsonl",
+            url,
+            characters: manifest.totalCharacters,
+          });
           manifest.totalChunks = totalChunks;
         } else if (format === "csv") {
           const csvPath = path.join(outputDir, "dataset.csv");
@@ -215,18 +312,28 @@ export function createSiteToDatasetTool(): ToolDefinition {
             const wordCount = content.split(/\s+/).filter(Boolean).length;
             // CSV escape: wrap in quotes, double any interior quotes
             const escaped = `"${content.replace(/"/g, '""').replace(/\n/g, "\\n")}"`;
-            rows.push(`"${page.url}","${title.replace(/"/g, '""')}",${wordCount},${escaped}`);
+            rows.push(
+              `"${page.url}","${title.replace(/"/g, '""')}",${wordCount},${escaped}`,
+            );
             manifest.totalCharacters += content.length;
           }
 
           fs.writeFileSync(csvPath, header + rows.join("\n"), "utf-8");
-          manifest.files.push({ path: "dataset.csv", url, characters: manifest.totalCharacters });
+          manifest.files.push({
+            path: "dataset.csv",
+            url,
+            characters: manifest.totalCharacters,
+          });
           manifest.totalChunks = crawlResult.pages.length;
         }
 
         // Step 4: Write manifest
         const manifestPath = path.join(outputDir, "manifest.json");
-        fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2), "utf-8");
+        fs.writeFileSync(
+          manifestPath,
+          JSON.stringify(manifest, null, 2),
+          "utf-8",
+        );
 
         // Step 5: Build response
         const lines: string[] = [
@@ -253,10 +360,32 @@ export function createSiteToDatasetTool(): ToolDefinition {
           lines.push(`\n... and ${crawlResult.pages.length - 20} more pages.`);
         }
 
-        lines.push("\nDataset is ready for processing. You can read the files or use them for further analysis.");
+        lines.push(
+          "\nDataset is ready for processing. You can read the files or use them for further analysis.",
+        );
+
+        // Optional: write to Airtable or Sheets
+        if (outputTo) {
+          const rows = crawlResult.pages.map((p) => ({
+            url: p.url,
+            title: (p.metadata?.title as string) ?? "",
+            characters: (p.markdown ?? "").length,
+            words: (p.markdown ?? "").split(/\s+/).filter(Boolean).length,
+          }));
+          const outputResult = await writeToOutput(
+            outputTo,
+            rows,
+            vault ?? null,
+          );
+          lines.push(outputSummaryLine(outputResult));
+        }
+
         return { text: lines.join("\n") };
       } catch (err) {
-        return { text: `Site-to-dataset failed: ${err instanceof Error ? err.message : String(err)}`, isError: true };
+        return {
+          text: `Site-to-dataset failed: ${err instanceof Error ? err.message : String(err)}`,
+          isError: true,
+        };
       }
     },
   };

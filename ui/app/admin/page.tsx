@@ -18,6 +18,7 @@ import { McpEditorPanel } from "@/components/admin/mcp-editor-panel";
 import { SentinelPanel } from "@/components/admin/sentinel-panel";
 import { KnowledgeConfigPanel } from "@/components/admin/knowledge-config-panel";
 import { VaultPanel } from "@/components/admin/vault-panel";
+import { IntegrationsPanel } from "@/components/admin/integrations-panel";
 import { MemoryPanel } from "@/components/admin/memory-panel";
 import { DirectorPanel } from "@/components/admin/director-panel";
 import { ImageGenPanel } from "@/components/admin/image-gen-panel";
@@ -45,7 +46,8 @@ export default function AdminPage() {
 
   const toolsQuery = useQuery({
     queryKey: ["tools"],
-    queryFn: () => fetchJson<{ tools: Record<string, ToolInfo[]> }>("/api/admin/tools"),
+    queryFn: () =>
+      fetchJson<{ tools: Record<string, ToolInfo[]> }>("/api/admin/tools"),
   });
 
   const toolGroups = toolsQuery.data?.tools ?? {};
@@ -55,7 +57,10 @@ export default function AdminPage() {
     setRestarting(true);
     try {
       await fetchJson("/api/admin/restart", { method: "POST" });
-      showToast("Server restarting… page will reconnect automatically.", "info");
+      showToast(
+        "Server restarting… page will reconnect automatically.",
+        "info",
+      );
     } catch {
       showToast("Failed to send restart command.", "error");
     }
@@ -67,8 +72,12 @@ export default function AdminPage() {
     <main className="mx-auto max-w-6xl px-6 py-10 lg:px-12">
       <header className="mb-8 flex items-end justify-between">
         <div>
-          <p className="text-sm uppercase tracking-[0.3em] text-muted-foreground">OpenZigs</p>
-          <h1 className="mt-1 text-3xl font-semibold text-foreground">Administration</h1>
+          <p className="text-sm uppercase tracking-[0.3em] text-muted-foreground">
+            OpenZigs
+          </p>
+          <h1 className="mt-1 text-3xl font-semibold text-foreground">
+            Administration
+          </h1>
           <p className="mt-1 text-sm text-muted-foreground">
             Channels, MCP servers, tool controls, and environment at a glance.
           </p>
@@ -81,7 +90,9 @@ export default function AdminPage() {
             disabled={restarting}
             title="Restart the backend server (applies pending config changes)"
           >
-            <RotateCw className={`h-4 w-4 ${restarting ? "animate-spin" : ""}`} />
+            <RotateCw
+              className={`h-4 w-4 ${restarting ? "animate-spin" : ""}`}
+            />
             {restarting ? "Restarting…" : "Restart Server"}
           </button>
         </div>
@@ -124,6 +135,10 @@ export default function AdminPage() {
           <VaultPanel />
         </SectionCard>
 
+        <SectionCard title="Integrations" defaultOpen={false}>
+          <IntegrationsPanel />
+        </SectionCard>
+
         <SectionCard title="Agent Memory" defaultOpen={false}>
           <MemoryPanel />
         </SectionCard>
@@ -136,15 +151,43 @@ export default function AdminPage() {
           <DirectorPanel />
         </SectionCard>
 
-        <SectionCard title={<span className="flex items-center gap-2">Image Generation Node <PlatformBadge feature={platformData?.features?.imageGeneration} /></span>} defaultOpen={false}>
+        <SectionCard
+          title={
+            <span className="flex items-center gap-2">
+              Image Generation Node{" "}
+              <PlatformBadge
+                feature={platformData?.features?.imageGeneration}
+              />
+            </span>
+          }
+          defaultOpen={false}
+        >
           <ImageGenPanel />
         </SectionCard>
 
-        <SectionCard title={<span className="flex items-center gap-2">Video Generation Node <PlatformBadge feature={platformData?.features?.videoRendering} /></span>} defaultOpen={false}>
+        <SectionCard
+          title={
+            <span className="flex items-center gap-2">
+              Video Generation Node{" "}
+              <PlatformBadge feature={platformData?.features?.videoRendering} />
+            </span>
+          }
+          defaultOpen={false}
+        >
           <VideoGenPanel />
         </SectionCard>
 
-        <SectionCard title={<span className="flex items-center gap-2">Music Generation Node <PlatformBadge feature={platformData?.features?.musicGeneration} /></span>} defaultOpen={false}>
+        <SectionCard
+          title={
+            <span className="flex items-center gap-2">
+              Music Generation Node{" "}
+              <PlatformBadge
+                feature={platformData?.features?.musicGeneration}
+              />
+            </span>
+          }
+          defaultOpen={false}
+        >
           <MusicGenPanel />
         </SectionCard>
 
@@ -202,7 +245,11 @@ export default function AdminPage() {
       </div>
 
       <ToastContainer />
-      <AskAiPanel pageContext={PAGE_CONTEXTS["admin"]} open={askAiOpen} onClose={() => setAskAiOpen(false)} />
+      <AskAiPanel
+        pageContext={PAGE_CONTEXTS["admin"]}
+        open={askAiOpen}
+        onClose={() => setAskAiOpen(false)}
+      />
     </main>
   );
 }

@@ -99,6 +99,7 @@ import { VoiceService } from "./voice/index.js";
 import { createVoiceRouter } from "./api/voice.js";
 import { SecretVaultService } from "./vault/index.js";
 import { createVaultRouter } from "./api/vault.js";
+import { createIntegrationsRouter } from "./api/integrations.js";
 import {
   MemoryManager,
   createGitHubApiClient,
@@ -1439,6 +1440,10 @@ app.use("/api/pinterest", authMiddleware, pinterestRouter);
 // Vault API routes
 const vaultRouter = createVaultRouter({ vaultService });
 app.use("/api/admin/vault", authMiddleware, vaultRouter);
+
+// Integrations API routes
+const integrationsRouter = createIntegrationsRouter({ vaultService });
+app.use("/api/admin/integrations", authMiddleware, integrationsRouter);
 
 // Outbox API routes
 const outboxRouter = createOutboxRouter({

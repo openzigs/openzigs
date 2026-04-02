@@ -52,7 +52,8 @@ export type EncryptedVaultFile = {
  * The shape of the reference token embedded in tool arguments.
  * Pattern: {{SECRET:<uuid>}}
  */
-export const SECRET_TOKEN_PATTERN = /\{\{SECRET:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\}\}/gi;
+export const SECRET_TOKEN_PATTERN =
+  /\{\{SECRET:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\}\}/gi;
 
 /**
  * Build a reference token string for a given secret ID.
