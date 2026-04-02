@@ -7442,6 +7442,49 @@ Reports include:
 | Slow crawls | Reduce `maxPages` or `maxDepth`; Firecrawl renders JS pages which takes time |
 | Missing pages | Some sites block crawlers — try reducing concurrency or adding delays |
 
+### Firecrawl Search Tool
+
+The `firecrawl-search` MCP tool provides direct web search via Firecrawl's self-hosted search engine (DuckDuckGo-backed — no API key required).
+
+**Parameters:**
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `query` | string (required) | — | Search query string |
+| `limit` | number | 5 | Number of results to return (max 20) |
+| `lang` | string | — | Language code (e.g., `en`) |
+| `country` | string | — | Country code (e.g., `us`) |
+
+**Example prompts:**
+
+```
+"Use firecrawl-search to find recent articles about Next.js server components"
+"Search the web using firecrawl for 'machine learning optimization techniques' with 10 results"
+```
+
+The `web-search` tool also uses Firecrawl as an automatic fallback when `BRAVE_API_KEY` is not configured and the Firecrawl Docker sidecar is running. The fallback chain is: **Brave Search → Firecrawl search**.
+
+### Webhook Mode
+
+Firecrawl async operations (crawl, batch scrape) support a webhook callback mode for faster completion notification instead of polling.
+
+**Config:** Set `firecrawl.useWebhooks` in `~/.openzigs/config.json`:
+
+```json
+{
+  "firecrawl": {
+    "enabled": true,
+    "useWebhooks": true
+  }
+}
+```
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `firecrawl.useWebhooks` | boolean | `true` | When `true`, async Firecrawl jobs use webhook callbacks for instant completion notification. When `false`, falls back to polling the Firecrawl status API every 2 seconds. |
+
+Webhooks are internal-only (`localhost`), HMAC-signed, and require no additional configuration beyond enabling Firecrawl.
+
 ---
 
 ## Pinterest SEO Engine

@@ -225,13 +225,13 @@ export function createFirecrawlWebhookRouter(
       return;
     }
 
-    // Validate webhook origin is localhost
-    const host = req.hostname ?? req.ip;
+    // Validate webhook origin is localhost using the actual TCP source IP
+    // (req.hostname is derived from the Host header and is attacker-controlled)
+    const remoteAddr = req.socket.remoteAddress;
     if (
-      host !== "localhost" &&
-      host !== "127.0.0.1" &&
-      host !== "::1" &&
-      host !== "::ffff:127.0.0.1"
+      remoteAddr !== "127.0.0.1" &&
+      remoteAddr !== "::1" &&
+      remoteAddr !== "::ffff:127.0.0.1"
     ) {
       res
         .status(403)
@@ -244,14 +244,12 @@ export function createFirecrawlWebhookRouter(
       (req.headers["x-firecrawl-signature"] as string) ??
       "";
 
-    // Get raw body — express.json() may have parsed it already
-    let rawBody: Buffer | string;
-    if (Buffer.isBuffer((req as unknown as Record<string, unknown>).rawBody)) {
-      rawBody = (req as unknown as Record<string, Buffer>).rawBody;
-    } else if (typeof req.body === "string") {
-      rawBody = req.body;
-    } else {
-      rawBody = JSON.stringify(req.body);
+    // Use the raw body buffer captured by the express.json verify callback
+    // to ensure HMAC is verified against the exact bytes Firecrawl sent
+    const rawBody = (req as unknown as Record<string, Buffer>).rawBody;
+    if (!rawBody) {
+      res.status(400).json({ error: "Missing raw body for HMAC verification" });
+      return;
     }
 
     const result = handler.handleWebhook(jobId, rawBody, signature);

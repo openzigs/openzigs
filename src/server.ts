@@ -2114,6 +2114,16 @@ if (firecrawlUseWebhooks) {
     port: config.server.port,
     enabled: true,
   });
+  // Capture raw body for HMAC verification — must be registered before the router
+  app.use(
+    "/api/webhooks/firecrawl",
+    express.json({
+      limit: "1mb",
+      verify: (req, _res, buf) => {
+        (req as unknown as Record<string, unknown>).rawBody = buf;
+      },
+    }),
+  );
   const fcWebhookRouter = createFirecrawlWebhookRouter(firecrawlWebhookHandler);
   app.use("/api/webhooks/firecrawl", fcWebhookRouter);
 

@@ -849,6 +849,17 @@ Self-hosted Firecrawl sidecar for deep website crawling with browser rendering. 
 
 **Config:** Set `firecrawl.enabled=true` and optionally `firecrawl.url` (default `http://localhost:3002`) and `firecrawl.idleTimeoutMs` (default 600000) in `~/.openzigs/config.json`.
 
+#### Firecrawl Search & Webhook Architecture (Epic #739)
+
+**Search provider chain:** The `web-search` tool uses a two-tier fallback: Brave Search (primary, requires `BRAVE_API_KEY`) → Firecrawl search (fallback when Brave key is absent and the Firecrawl sidecar is running). The standalone `firecrawl-search` tool provides direct access to Firecrawl's `/v2/search` endpoint (DuckDuckGo-backed in self-hosted mode).
+
+**Webhook endpoint:** `/api/webhooks/firecrawl` — internal-only POST endpoint for async crawl/batch scrape completion callbacks from the Firecrawl Docker sidecar.
+
+- **HMAC-SHA256 validation:** Every payload is verified against a per-session random secret (`generateWebhookSecret()`). Raw body bytes are captured via `express.json({ verify })` middleware and verified with timing-safe comparison.
+- **Localhost enforcement:** Only requests from loopback addresses (`127.0.0.1`, `::1`, `::ffff:127.0.0.1`) are accepted, validated via `req.socket.remoteAddress` (not the `Host` header).
+- **Polling fallback:** When `firecrawl.useWebhooks` is `false` (or the webhook handler is unavailable), the `FirecrawlClient` falls back to polling the Firecrawl status API on a 2-second interval.
+- **Source:** `src/browser/firecrawl-webhooks.ts` (handler + router), `src/server.ts` (mount + raw-body middleware).
+
 **Data Flow:**
 ```
 targetUrl + keyword
