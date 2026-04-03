@@ -56,17 +56,6 @@ export const LTX_MODEL_CATALOG = [
     version: "2.0",
     audio: true,
   },
-  {
-    id: "ltx-2.3-distilled-q4",
-    repo: "dgrauet/ltx-2.3-mlx-distilled-q4",
-    name: "LTX-2.3 Distilled Q4",
-    memoryGB: 20,
-    downloadGB: 41,
-    version: "2.3",
-    audio: true,
-    warning:
-      "Large download (~41 GB). Ensure sufficient disk space before selecting.",
-  },
 ] as const;
 
 /** Audio/music job types that have dedicated dispatch handlers and must NOT be dispatched via the video worker. */

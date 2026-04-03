@@ -113,9 +113,11 @@ describe("LTX_MODEL_CATALOG", () => {
     expect(defaultModel!.repo).toBe("AITRADER/ltx2-distilled-4bit-mlx");
   });
 
-  it("includes LTX-2.3 models", () => {
-    const v23Models = LTX_MODEL_CATALOG.filter((m) => m.version === "2.3");
-    expect(v23Models.length).toBeGreaterThanOrEqual(1);
+  it("includes only supported models (LTX-2 via AITRADER)", () => {
+    // LTX-2.3 removed from catalog — mlx_video (Blaizzy fork) only supports LTX-2 format.
+    // dgrauet/ltx-2.3-mlx-q4 uses a flat layout incompatible with the current library.
+    const supported = LTX_MODEL_CATALOG.filter((m) => m.version === "2.0");
+    expect(supported.length).toBeGreaterThanOrEqual(1);
   });
 });
 
