@@ -36,9 +36,11 @@ logger = logging.getLogger("m2pro-worker")
 # ── Security Utilities ───────────────────────────────────────
 
 def validate_callback_url(url: str) -> str:
-    """Validate that a callback URL is safe (SSRF protection).
+    """Validate that a callback URL is safe.
 
-    Allows only http/https and blocks private/internal networks.
+    Allows http/https to private-network and loopback hosts (required for
+    LAN sidecar→primary callbacks).  Blocks metadata endpoints and
+    non-HTTP schemes.
     """
     from urllib.parse import urlparse
     parsed = urlparse(url)
@@ -47,16 +49,10 @@ def validate_callback_url(url: str) -> str:
     hostname = parsed.hostname or ""
     if not hostname:
         raise ValueError("URL must have a hostname")
-    _blocked = {"localhost", "0.0.0.0", "metadata.google.internal"}
+    _blocked = {"metadata.google.internal", "metadata.google.com",
+                "169.254.169.254"}  # cloud metadata endpoints
     if hostname.lower() in _blocked:
-        raise ValueError(f"Blocked hostname: {hostname}")
-    try:
-        addr = ipaddress.ip_address(hostname.strip("[]"))
-        if addr.is_private or addr.is_loopback or addr.is_link_local or addr.is_reserved:
-            raise ValueError(f"Blocked private/internal IP: {addr}")
-    except ValueError as e:
-        if "Blocked" in str(e):
-            raise
+        raise ValueError(f"Blocked metadata hostname: {hostname}")
     return url
 
 
@@ -120,6 +116,23 @@ class WorkerState:
             return {"is_busy": self.is_busy, "loaded_model": self.loaded_model}
 
 state = WorkerState()
+
+# ── Job Result Store ─────────────────────────────────────────
+# In-memory ring buffer of completed/failed job results.  When the callback
+# POST fails (e.g. "No route to host"), QueueMaster can poll GET /job-result/{id}
+# to pick up the result instead.  Capped at _MAX_STORED_RESULTS entries.
+import threading as _threading
+_MAX_STORED_RESULTS = 100
+_job_results: dict[str, dict] = {}       # job_id → payload (same shape as callback body)
+_job_results_lock = _threading.Lock()
+
+def _store_result(job_id: str, payload: dict) -> None:
+    """Store a job result for later polling.  Evicts oldest when full."""
+    with _job_results_lock:
+        _job_results[job_id] = payload
+        while len(_job_results) > _MAX_STORED_RESULTS:
+            oldest = next(iter(_job_results))
+            del _job_results[oldest]
 
 # ── Request/Response Models ──────────────────────────────────
 
@@ -333,13 +346,11 @@ def _generate_with_mlx_video(request: GenerateRequest, num_frames: int, fps: int
         # Fall back to old import path for backward compatibility
         from mlx_video.generate import generate_video, PipelineType  # type: ignore[import-untyped]
 
-    pipeline_map = {
-        "distilled": PipelineType.DISTILLED,
-        "dev": PipelineType.DEV,
-        "dev-two-stage": PipelineType.DEV_TWO_STAGE,
-        "dev-two-stage-hq": PipelineType.DEV_TWO_STAGE_HQ,
-    }
-    pipeline_type = pipeline_map.get(request.pipeline.lower(), PipelineType.DISTILLED)
+    # Resolve pipeline type via getattr — available variants depend on
+    # the installed mlx-video version.  Missing entries (e.g. DEV_TWO_STAGE)
+    # gracefully fall back to DISTILLED instead of crashing at dict-build time.
+    pipeline_name = request.pipeline.upper().replace("-", "_")
+    pipeline_type = getattr(PipelineType, pipeline_name, PipelineType.DISTILLED)
     use_dev = request.pipeline.lower() in ("dev", "dev-two-stage", "dev-two-stage-hq")
 
     resolved_model_repo = request.model_repo or DEFAULT_MODEL_REPO
@@ -565,6 +576,9 @@ async def run_generation_job(request: GenerateRequest):
             resp = await client.post(validated_url, json=payload)
             logger.info(f"Webhook callback: {resp.status_code}")
 
+        # Store result for polling fallback regardless of callback success
+        _store_result(request.job_id, payload)
+
         # Report completion progress (#762)
         await _report_progress(request.job_id, request.progress_url, "Complete", 100, "Video delivered")
 
@@ -573,14 +587,16 @@ async def run_generation_job(request: GenerateRequest):
         logger.error(f"Job {request.job_id} failed after {elapsed:.1f}s: {e}")
 
         # Notify failure
+        error_payload = {
+            "job_id": request.job_id,
+            "status": "failed",
+            "error": str(e),
+        }
+        _store_result(request.job_id, error_payload)
         try:
             validated_url = validate_callback_url(request.callback_url)
             async with httpx.AsyncClient(timeout=30.0) as client:
-                await client.post(validated_url, json={
-                    "job_id": request.job_id,
-                    "status": "failed",
-                    "error": str(e),
-                })
+                await client.post(validated_url, json=error_payload)
         except Exception as webhook_err:
             logger.error(f"Failed to send error webhook: {webhook_err}")
 
@@ -653,6 +669,18 @@ async def health():
         worker="m2-pro",
         loaded_model=state.loaded_model,
     )
+
+
+@app.get("/job-result/{job_id}")
+async def get_job_result(job_id: str):
+    """Poll for a completed job result.  Returns the same payload that would
+    have been POSTed to the callback URL.  Returns 404 if the job is unknown
+    or still in progress.  The result is deleted after retrieval (ack)."""
+    with _job_results_lock:
+        result = _job_results.pop(job_id, None)
+    if result is None:
+        raise HTTPException(status_code=404, detail="No result for this job")
+    return result
 
 
 @app.get("/memory")
