@@ -9,8 +9,15 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 import { logger } from "../logging/logger.js";
-import type { CharacterRepository, CharacterCreate, CharacterUpdate } from "../characters/character-repository.js";
-import type { CopilotWrapperService, SdkAttachment } from "../copilot/copilot-wrapper.js";
+import type {
+  CharacterRepository,
+  CharacterCreate,
+  CharacterUpdate,
+} from "../characters/character-repository.js";
+import type {
+  CopilotWrapperService,
+  SdkAttachment,
+} from "../copilot/copilot-wrapper.js";
 import type { Server as SocketIOServer } from "socket.io";
 import { getUserSelectedModel } from "../config/user-model.js";
 import type { ChannelManager } from "../channels/channel-manager.js";
@@ -31,7 +38,10 @@ export function setCharacterIO(io: SocketIOServer): void {
 // ── Channel manager (injected for Telegram training notifications) ─
 let _channelManager: ChannelManager | null = null;
 let _fallbackChatId: string | undefined;
-export function setCharacterChannelManager(mgr: ChannelManager, fallbackChatId?: string): void {
+export function setCharacterChannelManager(
+  mgr: ChannelManager,
+  fallbackChatId?: string,
+): void {
   _channelManager = mgr;
   _fallbackChatId = fallbackChatId;
 }
@@ -47,7 +57,12 @@ function getCharactersDir(): string {
 
 function getPhotosDir(characterId: string): string {
   // Prevent path traversal via character ID
-  if (characterId.includes("..") || characterId.includes("/") || characterId.includes("\\") || characterId.includes("\0")) {
+  if (
+    characterId.includes("..") ||
+    characterId.includes("/") ||
+    characterId.includes("\\") ||
+    characterId.includes("\0")
+  ) {
     throw new Error("Invalid character ID");
   }
   return path.join(getCharactersDir(), characterId, "photos");
@@ -70,18 +85,31 @@ const upload = multer({
   }),
   limits: { fileSize: 20 * 1024 * 1024, files: 20 },
   fileFilter: (_req, file, cb) => {
-    const allowed = ["image/jpeg", "image/png", "image/webp", "image/heic", "image/heif"];
+    const allowed = [
+      "image/jpeg",
+      "image/png",
+      "image/webp",
+      "image/heic",
+      "image/heif",
+    ];
     if (allowed.includes(file.mimetype)) {
       cb(null, true);
     } else {
-      cb(new Error(`Unsupported file type: ${file.mimetype}. Allowed: ${allowed.join(", ")}`));
+      cb(
+        new Error(
+          `Unsupported file type: ${file.mimetype}. Allowed: ${allowed.join(", ")}`,
+        ),
+      );
     }
   },
 });
 
 // ── Factory ─────────────────────────────────────────────────
 
-export function createCharacterRouter({ characterRepo, copilot }: CharacterRouterDeps): Router {
+export function createCharacterRouter({
+  characterRepo,
+  copilot,
+}: CharacterRouterDeps): Router {
   const router = Router();
 
   // ── Startup: reset any characters stuck in "training" from a previous server run ──
@@ -91,7 +119,9 @@ export function createCharacterRouter({ characterRepo, copilot }: CharacterRoute
       status: "failed",
       errorMessage: "Training was interrupted by a server restart",
     });
-    logger.warn(`[Characters] Reset stale training status for '${char.name}' (${char.id})`);
+    logger.warn(
+      `[Characters] Reset stale training status for '${char.name}' (${char.id})`,
+    );
   }
 
   // ── GET / — List all characters ───────────────────────────
@@ -138,7 +168,8 @@ export function createCharacterRouter({ characterRepo, copilot }: CharacterRoute
 
       const input: CharacterCreate = {
         name: body.name.trim(),
-        description: typeof body.description === "string" ? body.description.trim() : "",
+        description:
+          typeof body.description === "string" ? body.description.trim() : "",
         triggerWord: body.triggerWord.trim(),
         referencePhotos: body.referencePhotos ?? [],
         loraScale: body.loraScale ?? 0.8,
@@ -146,12 +177,16 @@ export function createCharacterRouter({ characterRepo, copilot }: CharacterRoute
       };
 
       const character = characterRepo.create(input);
-      logger.info(`[Characters] Created character '${character.name}' (${character.id})`);
+      logger.info(
+        `[Characters] Created character '${character.name}' (${character.id})`,
+      );
       res.status(201).json(character);
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       if (msg.includes("UNIQUE constraint failed")) {
-        res.status(409).json({ error: "A character with that name already exists" });
+        res
+          .status(409)
+          .json({ error: "A character with that name already exists" });
         return;
       }
       logger.error(`[Characters] Failed to create character: ${msg}`);
@@ -168,12 +203,16 @@ export function createCharacterRouter({ characterRepo, copilot }: CharacterRoute
         res.status(404).json({ error: "Character not found" });
         return;
       }
-      logger.info(`[Characters] Updated character '${updated.name}' (${updated.id})`);
+      logger.info(
+        `[Characters] Updated character '${updated.name}' (${updated.id})`,
+      );
       res.json(updated);
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       if (msg.includes("UNIQUE constraint failed")) {
-        res.status(409).json({ error: "A character with that name already exists" });
+        res
+          .status(409)
+          .json({ error: "A character with that name already exists" });
         return;
       }
       logger.error(`[Characters] Failed to update character: ${msg}`);
@@ -192,7 +231,12 @@ export function createCharacterRouter({ characterRepo, copilot }: CharacterRoute
 
       // Delete associated files (photos, LoRA weights)
       const sanitizedId = String(req.params.id);
-      if (sanitizedId.includes("..") || sanitizedId.includes("/") || sanitizedId.includes("\\") || sanitizedId.includes("\0")) {
+      if (
+        sanitizedId.includes("..") ||
+        sanitizedId.includes("/") ||
+        sanitizedId.includes("\\") ||
+        sanitizedId.includes("\0")
+      ) {
         res.status(400).json({ error: "Invalid character ID" });
         return;
       }
@@ -213,23 +257,27 @@ export function createCharacterRouter({ characterRepo, copilot }: CharacterRoute
             method: "DELETE",
             headers: {
               "Content-Type": "application/json",
-              ...(sidecarToken ? { Authorization: `Bearer ${sidecarToken}` } : {}),
+              ...(sidecarToken
+                ? { Authorization: `Bearer ${sidecarToken}` }
+                : {}),
             },
             body: JSON.stringify({ character_id: req.params.id }),
           });
           const cleanupBody = await cleanupRes.json().catch(() => ({}));
           logger.info(
-            `[Characters] Sidecar train-data cleanup for '${character.name}' (${req.params.id}): ${JSON.stringify(cleanupBody)}`
+            `[Characters] Sidecar train-data cleanup for '${character.name}' (${req.params.id}): ${JSON.stringify(cleanupBody)}`,
           );
         }
       } catch (cleanupErr) {
         logger.warn(
-          `[Characters] Could not clean up sidecar training files for '${character.name}' (${req.params.id}): ${cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr)}`
+          `[Characters] Could not clean up sidecar training files for '${character.name}' (${req.params.id}): ${cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr)}`,
         );
       }
 
       characterRepo.delete(req.params.id);
-      logger.info(`[Characters] Deleted character '${character.name}' (${character.id})`);
+      logger.info(
+        `[Characters] Deleted character '${character.name}' (${character.id})`,
+      );
       res.json({ ok: true });
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
@@ -266,10 +314,18 @@ export function createCharacterRouter({ characterRepo, copilot }: CharacterRoute
 
       // Append to existing photos
       const allPhotos = [...character.referencePhotos, ...newPhotoPaths];
-      characterRepo.update(String(req.params.id), { referencePhotos: allPhotos });
+      characterRepo.update(String(req.params.id), {
+        referencePhotos: allPhotos,
+      });
 
-      logger.info(`[Characters] Uploaded ${files.length} photos for '${character.name}'`);
-      res.json({ uploaded: newPhotoPaths.length, totalPhotos: allPhotos.length, paths: newPhotoPaths });
+      logger.info(
+        `[Characters] Uploaded ${files.length} photos for '${character.name}'`,
+      );
+      res.json({
+        uploaded: newPhotoPaths.length,
+        totalPhotos: allPhotos.length,
+        paths: newPhotoPaths,
+      });
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       logger.error(`[Characters] Failed to upload photos: ${msg}`);
@@ -280,7 +336,10 @@ export function createCharacterRouter({ characterRepo, copilot }: CharacterRoute
   // ── GET /:id/photos/:filename — Serve a reference photo ──
   router.get("/:id/photos/:filename", async (req, res) => {
     try {
-      const filePath = path.join(getPhotosDir(req.params.id), req.params.filename);
+      const filePath = path.join(
+        getPhotosDir(req.params.id),
+        req.params.filename,
+      );
       // Security: ensure the resolved path stays within the expected directory
       const resolvedPath = path.resolve(filePath);
       const expectedDir = path.resolve(getPhotosDir(req.params.id));
@@ -326,7 +385,9 @@ export function createCharacterRouter({ characterRepo, copilot }: CharacterRoute
       }
 
       // Update DB
-      const remaining = character.referencePhotos.filter((p) => !paths.includes(p));
+      const remaining = character.referencePhotos.filter(
+        (p) => !paths.includes(p),
+      );
       characterRepo.update(req.params.id, { referencePhotos: remaining });
 
       res.json({ removed: paths.length, remaining: remaining.length });
@@ -347,7 +408,9 @@ export function createCharacterRouter({ characterRepo, copilot }: CharacterRoute
       }
 
       if (character.status === "training") {
-        res.status(409).json({ error: "Training is already in progress for this character" });
+        res.status(409).json({
+          error: "Training is already in progress for this character",
+        });
         return;
       }
 
@@ -362,19 +425,28 @@ export function createCharacterRouter({ characterRepo, copilot }: CharacterRoute
       const sidecarUrl = await getImageGenSidecarUrl();
       if (!sidecarUrl) {
         res.status(503).json({
-          error: "Image generation sidecar not configured. Set imageGen.networkNodeUrl in config or IMAGE_GEN_NETWORK_URL env var.",
+          error:
+            "Image generation sidecar not configured. Set imageGen.networkNodeUrl in config or IMAGE_GEN_NETWORK_URL env var.",
         });
         return;
       }
 
       // Parse optional training overrides from request body
       const overrides = req.body as Record<string, unknown>;
-      const steps = typeof overrides.steps === "number" ? overrides.steps : 9;
-      const learningRate = typeof overrides.learningRate === "number" ? overrides.learningRate : 1e-4;
-      const loraRank = typeof overrides.loraRank === "number" ? overrides.loraRank : 16;
-      const numEpochs = typeof overrides.numEpochs === "number" ? overrides.numEpochs : 50;
+      const steps = typeof overrides.steps === "number" ? overrides.steps : 25;
+      const learningRate =
+        typeof overrides.learningRate === "number"
+          ? overrides.learningRate
+          : 1e-4;
+      const loraRank =
+        typeof overrides.loraRank === "number" ? overrides.loraRank : 8;
+      const numEpochs =
+        typeof overrides.numEpochs === "number" ? overrides.numEpochs : 50;
       const notifyViaTelegram = overrides.notifyViaTelegram === true;
-      const telegramChatId = typeof overrides.telegramChatId === "string" ? overrides.telegramChatId : undefined;
+      const telegramChatId =
+        typeof overrides.telegramChatId === "string"
+          ? overrides.telegramChatId
+          : undefined;
 
       // Build per-image prompt: use per-image caption if available,
       // fall back to character description, then generic trigger-word prompt
@@ -382,7 +454,11 @@ export function createCharacterRouter({ characterRepo, copilot }: CharacterRoute
         ? `A photo of ${character.triggerWord}, ${character.description}`
         : `A photo of ${character.triggerWord}`;
 
-      const photos: Array<{ image_base64: string; filename: string; prompt: string }> = [];
+      const photos: Array<{
+        image_base64: string;
+        filename: string;
+        prompt: string;
+      }> = [];
       for (const photoPath of character.referencePhotos) {
         try {
           const data = await fs.readFile(photoPath);
@@ -406,7 +482,7 @@ export function createCharacterRouter({ characterRepo, copilot }: CharacterRoute
       }
 
       const trainConfig = {
-        model: "z-image-turbo",
+        model: "flux-dev",
         trigger_word: character.triggerWord,
         steps,
         num_epochs: numEpochs,
@@ -422,9 +498,19 @@ export function createCharacterRouter({ characterRepo, copilot }: CharacterRoute
       });
 
       // POST to the image-gen sidecar's /train endpoint
-      startRemoteTraining(character.id, sidecarUrl, trainConfig, photos, characterRepo, notifyViaTelegram, telegramChatId);
+      startRemoteTraining(
+        character.id,
+        sidecarUrl,
+        trainConfig,
+        photos,
+        characterRepo,
+        notifyViaTelegram,
+        telegramChatId,
+      );
 
-      logger.info(`[Characters] Started LoRA training for '${character.name}' (${character.id}) via ${sidecarUrl}`);
+      logger.info(
+        `[Characters] Started LoRA training for '${character.name}' (${character.id}) via ${sidecarUrl}`,
+      );
       res.json({
         ok: true,
         message: `Training started for '${character.name}'`,
@@ -457,8 +543,13 @@ export function createCharacterRouter({ characterRepo, copilot }: CharacterRoute
         status: "failed",
         errorMessage: "Training cancelled by user",
       });
-      _io?.emit("character:training:failed", { characterId: req.params.id, characterName: character.name });
-      logger.info(`[Characters] Training cancelled for '${character.name}' (${req.params.id})`);
+      _io?.emit("character:training:failed", {
+        characterId: req.params.id,
+        characterName: character.name,
+      });
+      logger.info(
+        `[Characters] Training cancelled for '${character.name}' (${req.params.id})`,
+      );
       res.json({ ok: true, message: "Training cancelled" });
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
@@ -476,7 +567,9 @@ export function createCharacterRouter({ characterRepo, copilot }: CharacterRoute
       }
       const sidecarUrl = await getImageGenSidecarUrl();
       if (!sidecarUrl) {
-        res.status(503).json({ error: "Image generation sidecar not configured" });
+        res
+          .status(503)
+          .json({ error: "Image generation sidecar not configured" });
         return;
       }
       const token = await getImageGenToken();
@@ -521,11 +614,15 @@ export function createCharacterRouter({ characterRepo, copilot }: CharacterRoute
 
       const sidecarUrl = await getImageGenSidecarUrl();
       if (!sidecarUrl) {
-        res.status(503).json({ error: "Image generation sidecar not configured" });
+        res
+          .status(503)
+          .json({ error: "Image generation sidecar not configured" });
         return;
       }
       const token = await getImageGenToken();
-      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+      };
       if (token) headers["Authorization"] = `Bearer ${token}`;
 
       const response = await fetch(`${sidecarUrl}/train-resume`, {
@@ -539,13 +636,20 @@ export function createCharacterRouter({ characterRepo, copilot }: CharacterRoute
         throw new Error(`Sidecar returned ${response.status}: ${text}`);
       }
 
-      const result = await response.json() as { status: string; message: string; output_dir?: string };
+      const result = (await response.json()) as {
+        status: string;
+        message: string;
+        output_dir?: string;
+      };
 
       characterRepo.update(character.id, {
         status: "training",
         errorMessage: null,
       });
-      _io?.emit("character:training:start", { characterId: character.id, characterName: character.name });
+      _io?.emit("character:training:start", {
+        characterId: character.id,
+        characterName: character.name,
+      });
 
       // Resume polling — will pick up completion just like a fresh training run
       pollTrainingStatus(
@@ -557,7 +661,9 @@ export function createCharacterRouter({ characterRepo, copilot }: CharacterRoute
         characterRepo,
       );
 
-      logger.info(`[Characters] Resumed training for '${character.name}' (${character.id}) from ${checkpoint_path}`);
+      logger.info(
+        `[Characters] Resumed training for '${character.name}' (${character.id}) from ${checkpoint_path}`,
+      );
       res.json({ ok: true, message: result.message });
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
@@ -569,21 +675,34 @@ export function createCharacterRouter({ characterRepo, copilot }: CharacterRoute
   router.post("/:id/recover-training", async (req, res) => {
     try {
       const character = characterRepo.getById(req.params.id);
-      if (!character) { res.status(404).json({ error: "Character not found" }); return; }
+      if (!character) {
+        res.status(404).json({ error: "Character not found" });
+        return;
+      }
 
       const sidecarUrl = await getImageGenSidecarUrl();
-      if (!sidecarUrl) { res.status(503).json({ error: "Image generation sidecar not configured" }); return; }
+      if (!sidecarUrl) {
+        res
+          .status(503)
+          .json({ error: "Image generation sidecar not configured" });
+        return;
+      }
       const token = await getImageGenToken();
       const headers: Record<string, string> = {};
       if (token) headers["Authorization"] = `Bearer ${token}`;
 
-      const statusRes = await fetch(`${sidecarUrl}/train-status?character_id=${encodeURIComponent(character.id)}`, { headers });
+      const statusRes = await fetch(
+        `${sidecarUrl}/train-status?character_id=${encodeURIComponent(character.id)}`,
+        { headers },
+      );
       if (!statusRes.ok) {
-        res.status(502).json({ error: `Sidecar returned HTTP ${statusRes.status}` });
+        res
+          .status(502)
+          .json({ error: `Sidecar returned HTTP ${statusRes.status}` });
         return;
       }
 
-      const status = await statusRes.json() as {
+      const status = (await statusRes.json()) as {
         training: boolean;
         error?: string;
         lora_path?: string;
@@ -591,9 +710,23 @@ export function createCharacterRouter({ characterRepo, copilot }: CharacterRoute
 
       if (status.training) {
         // Still training — restart polling so the server captures completion
-        characterRepo.update(character.id, { status: "training", errorMessage: null });
-        pollTrainingStatus(character.id, character.name, sidecarUrl, token, null, characterRepo);
-        res.json({ ok: true, recovered: false, message: "Training is still in progress — polling restarted." });
+        characterRepo.update(character.id, {
+          status: "training",
+          errorMessage: null,
+        });
+        pollTrainingStatus(
+          character.id,
+          character.name,
+          sidecarUrl,
+          token,
+          null,
+          characterRepo,
+        );
+        res.json({
+          ok: true,
+          recovered: false,
+          message: "Training is still in progress — polling restarted.",
+        });
         return;
       }
 
@@ -603,12 +736,17 @@ export function createCharacterRouter({ characterRepo, copilot }: CharacterRoute
           trainedLoraPath: status.lora_path,
           errorMessage: null,
         });
-        _io?.emit("character:training:complete", { characterId: character.id, characterName: character.name });
+        _io?.emit("character:training:complete", {
+          characterId: character.id,
+          characterName: character.name,
+        });
         // Clean up training data since we've confirmed the character is ready.
         // The DELETE relocates the adapter to ~/.openzigs/loras/ and returns the new path.
         let finalLoraPath = status.lora_path;
         try {
-          const cleanupHeaders: Record<string, string> = { "Content-Type": "application/json" };
+          const cleanupHeaders: Record<string, string> = {
+            "Content-Type": "application/json",
+          };
           if (token) cleanupHeaders["Authorization"] = `Bearer ${token}`;
           const cleanupRes = await fetch(`${sidecarUrl}/train-data`, {
             method: "DELETE",
@@ -616,16 +754,31 @@ export function createCharacterRouter({ characterRepo, copilot }: CharacterRoute
             body: JSON.stringify({ character_id: character.id }),
           });
           if (cleanupRes.ok) {
-            const cleanupBody = await cleanupRes.json() as { lora_path?: string };
+            const cleanupBody = (await cleanupRes.json()) as {
+              lora_path?: string;
+            };
             if (cleanupBody.lora_path) {
               finalLoraPath = cleanupBody.lora_path;
-              characterRepo.update(character.id, { trainedLoraPath: finalLoraPath });
-              logger.info(`[Characters] Updated LoRA path for ${character.id}: ${finalLoraPath}`);
+              characterRepo.update(character.id, {
+                trainedLoraPath: finalLoraPath,
+              });
+              logger.info(
+                `[Characters] Updated LoRA path for ${character.id}: ${finalLoraPath}`,
+              );
             }
           }
-        } catch { /* non-critical */ }
-        logger.info(`[Characters] Recovered training for '${character.name}' (${character.id}): ${finalLoraPath}`);
-        res.json({ ok: true, recovered: true, loraPath: finalLoraPath, message: "Training was already complete — character marked as ready." });
+        } catch {
+          /* non-critical */
+        }
+        logger.info(
+          `[Characters] Recovered training for '${character.name}' (${character.id}): ${finalLoraPath}`,
+        );
+        res.json({
+          ok: true,
+          recovered: true,
+          loraPath: finalLoraPath,
+          message: "Training was already complete — character marked as ready.",
+        });
         return;
       }
 
@@ -646,22 +799,38 @@ export function createCharacterRouter({ characterRepo, copilot }: CharacterRoute
   router.post("/:id/pause-training", async (req, res) => {
     try {
       const character = characterRepo.getById(req.params.id);
-      if (!character) { res.status(404).json({ error: "Character not found" }); return; }
+      if (!character) {
+        res.status(404).json({ error: "Character not found" });
+        return;
+      }
       if (character.status !== "training") {
         res.status(409).json({ error: "Character is not currently training" });
         return;
       }
       const sidecarUrl = await getImageGenSidecarUrl();
-      if (!sidecarUrl) { res.status(503).json({ error: "Image generation sidecar not configured" }); return; }
+      if (!sidecarUrl) {
+        res
+          .status(503)
+          .json({ error: "Image generation sidecar not configured" });
+        return;
+      }
       const token = await getImageGenToken();
-      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+      };
       if (token) headers["Authorization"] = `Bearer ${token}`;
-      const response = await fetch(`${sidecarUrl}/train-pause`, { method: "POST", headers });
+      const response = await fetch(`${sidecarUrl}/train-pause`, {
+        method: "POST",
+        headers,
+      });
       if (!response.ok) {
         const text = await response.text();
         throw new Error(`Sidecar returned ${response.status}: ${text}`);
       }
-      const result = await response.json() as { ok: boolean; message: string };
+      const result = (await response.json()) as {
+        ok: boolean;
+        message: string;
+      };
       _io?.emit("character:training:paused", { characterId: character.id });
       res.json(result);
     } catch (error) {
@@ -674,22 +843,38 @@ export function createCharacterRouter({ characterRepo, copilot }: CharacterRoute
   router.post("/:id/unpause-training", async (req, res) => {
     try {
       const character = characterRepo.getById(req.params.id);
-      if (!character) { res.status(404).json({ error: "Character not found" }); return; }
+      if (!character) {
+        res.status(404).json({ error: "Character not found" });
+        return;
+      }
       if (character.status !== "training") {
         res.status(409).json({ error: "Character is not currently training" });
         return;
       }
       const sidecarUrl = await getImageGenSidecarUrl();
-      if (!sidecarUrl) { res.status(503).json({ error: "Image generation sidecar not configured" }); return; }
+      if (!sidecarUrl) {
+        res
+          .status(503)
+          .json({ error: "Image generation sidecar not configured" });
+        return;
+      }
       const token = await getImageGenToken();
-      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+      };
       if (token) headers["Authorization"] = `Bearer ${token}`;
-      const response = await fetch(`${sidecarUrl}/train-unpause`, { method: "POST", headers });
+      const response = await fetch(`${sidecarUrl}/train-unpause`, {
+        method: "POST",
+        headers,
+      });
       if (!response.ok) {
         const text = await response.text();
         throw new Error(`Sidecar returned ${response.status}: ${text}`);
       }
-      const result = await response.json() as { ok: boolean; message: string };
+      const result = (await response.json()) as {
+        ok: boolean;
+        message: string;
+      };
       _io?.emit("character:training:resumed", { characterId: character.id });
       res.json(result);
     } catch (error) {
@@ -712,7 +897,8 @@ export function createCharacterRouter({ characterRepo, copilot }: CharacterRoute
 
       if (!desc) {
         res.status(400).json({
-          error: "Please set a character description first (e.g. 'a husky dog with blue eyes'). The description is needed to generate meaningful training captions.",
+          error:
+            "Please set a character description first (e.g. 'a husky dog with blue eyes'). The description is needed to generate meaningful training captions.",
         });
         return;
       }
@@ -721,10 +907,11 @@ export function createCharacterRouter({ characterRepo, copilot }: CharacterRoute
       const filenames = character.referencePhotos.map((p) => path.basename(p));
 
       // Determine model: body override → user config → copilot default
-      const bodyModel = typeof (req.body as Record<string, unknown>)?.model === "string"
-        ? (req.body as Record<string, unknown>).model as string
-        : undefined;
-      const resolvedModel = bodyModel ?? await getUserSelectedModel();
+      const bodyModel =
+        typeof (req.body as Record<string, unknown>)?.model === "string"
+          ? ((req.body as Record<string, unknown>).model as string)
+          : undefined;
+      const resolvedModel = bodyModel ?? (await getUserSelectedModel());
 
       if (!copilot) {
         // Fallback when copilot is unavailable — use simple varied templates
@@ -757,17 +944,23 @@ export function createCharacterRouter({ characterRepo, copilot }: CharacterRoute
           await fs.access(photoPath);
           accessiblePhotos.push({ photoPath, filename: filenames[i] });
         } catch {
-          logger.warn(`[Characters] AI enhance: photo not accessible, skipping: ${photoPath}`);
+          logger.warn(
+            `[Characters] AI enhance: photo not accessible, skipping: ${photoPath}`,
+          );
         }
       }
 
       if (accessiblePhotos.length === 0) {
-        res.status(400).json({ error: "No reference photos are accessible on disk" });
+        res
+          .status(400)
+          .json({ error: "No reference photos are accessible on disk" });
         return;
       }
 
       const modelLabel = resolvedModel ?? "default";
-      logger.info(`[Characters] AI enhance for '${character.name}': analyzing ${accessiblePhotos.length} photos one-by-one with model=${modelLabel}`);
+      logger.info(
+        `[Characters] AI enhance for '${character.name}': analyzing ${accessiblePhotos.length} photos one-by-one with model=${modelLabel}`,
+      );
 
       // Process images one at a time to avoid overwhelming the model
       const captions: Record<string, string> = {};
@@ -776,7 +969,11 @@ export function createCharacterRouter({ characterRepo, copilot }: CharacterRoute
         const { photoPath, filename } = accessiblePhotos[i];
         const conversationId = `ai-enhance-${character.id}-${Date.now()}-${i}`;
 
-        const attachment: SdkAttachment = { type: "file", path: photoPath, displayName: filename };
+        const attachment: SdkAttachment = {
+          type: "file",
+          path: photoPath,
+          displayName: filename,
+        };
 
         const systemMsg = `You are a vision-capable AI analyzing a reference photo for LoRA training. Describe what you actually see in the attached image to create an accurate training caption.
 
@@ -806,7 +1003,9 @@ Please look at the attached image (${filename}) and write a single training capt
           }
         } catch (err) {
           const errMsg = err instanceof Error ? err.message : String(err);
-          logger.warn(`[Characters] AI enhance: vision failed for ${filename}: ${errMsg}`);
+          logger.warn(
+            `[Characters] AI enhance: vision failed for ${filename}: ${errMsg}`,
+          );
         } finally {
           await copilot.destroySession(conversationId).catch(() => {});
         }
@@ -814,15 +1013,22 @@ Please look at the attached image (${filename}) and write a single training capt
         // Clean up the response
         let caption = captionResponse.trim();
         // Remove quotes if wrapped
-        if ((caption.startsWith('"') && caption.endsWith('"')) || (caption.startsWith("'") && caption.endsWith("'"))) {
+        if (
+          (caption.startsWith('"') && caption.endsWith('"')) ||
+          (caption.startsWith("'") && caption.endsWith("'"))
+        ) {
           caption = caption.slice(1, -1).trim();
         }
         captions[filename] = caption || `${triggerWord}, ${desc}`;
 
-        logger.info(`[Characters] AI enhance: ${i + 1}/${accessiblePhotos.length} — ${filename}`);
+        logger.info(
+          `[Characters] AI enhance: ${i + 1}/${accessiblePhotos.length} — ${filename}`,
+        );
       }
 
-      logger.info(`[Characters] AI enhance for '${character.name}': ${Object.keys(captions).length} captions generated with model=${modelLabel}`);
+      logger.info(
+        `[Characters] AI enhance for '${character.name}': ${Object.keys(captions).length} captions generated with model=${modelLabel}`,
+      );
 
       res.json({ captions, totalSteps: photoCount * 50, model: modelLabel });
     } catch (error) {
@@ -839,13 +1045,15 @@ Please look at the attached image (${filename}) and write a single training capt
 
 async function getImageGenSidecarUrl(): Promise<string | null> {
   // Check env vars first
-  const envUrl = process.env.IMAGE_GEN_NETWORK_URL || process.env.IMAGE_GEN_SIDECAR_URL;
+  const envUrl =
+    process.env.IMAGE_GEN_NETWORK_URL || process.env.IMAGE_GEN_SIDECAR_URL;
   if (envUrl) return envUrl.replace(/\/$/, "");
 
   // Check user config
   try {
-    const configPath = process.env.OPENZIGS_CONFIG_PATH
-      ?? path.join(os.homedir(), ".openzigs", "config.json");
+    const configPath =
+      process.env.OPENZIGS_CONFIG_PATH ??
+      path.join(os.homedir(), ".openzigs", "config.json");
     const raw = await fs.readFile(configPath, "utf-8");
     const parsed = JSON.parse(raw) as Record<string, unknown>;
     const ig = parsed.imageGen as Record<string, unknown> | undefined;
@@ -866,8 +1074,9 @@ async function getImageGenToken(): Promise<string> {
   if (envToken) return envToken;
 
   try {
-    const configPath = process.env.OPENZIGS_CONFIG_PATH
-      ?? path.join(os.homedir(), ".openzigs", "config.json");
+    const configPath =
+      process.env.OPENZIGS_CONFIG_PATH ??
+      path.join(os.homedir(), ".openzigs", "config.json");
     const raw = await fs.readFile(configPath, "utf-8");
     const parsed = JSON.parse(raw) as Record<string, unknown>;
     const ig = parsed.imageGen as Record<string, unknown> | undefined;
@@ -896,12 +1105,17 @@ function sendTrainingTelegramNotification(
 ): void {
   const telegram = _channelManager?.getChannel("telegram");
   if (!telegram || !telegram.isConnected()) return;
-  const text = outcome === "complete"
-    ? `✅ *LoRA training complete* for character *${characterName}*. Ready to use!`
-    : `❌ *LoRA training failed* for character *${characterName}*${message ? `\n${message}` : ""}. Please check the logs.`;
-  telegram.sendMessage(chatId, { text, markdown: true }).catch((err: unknown) => {
-    logger.warn(`[Characters] Failed to send training Telegram notification for ${characterId}: ${err instanceof Error ? err.message : String(err)}`);
-  });
+  const text =
+    outcome === "complete"
+      ? `✅ *LoRA training complete* for character *${characterName}*. Ready to use!`
+      : `❌ *LoRA training failed* for character *${characterName}*${message ? `\n${message}` : ""}. Please check the logs.`;
+  telegram
+    .sendMessage(chatId, { text, markdown: true })
+    .catch((err: unknown) => {
+      logger.warn(
+        `[Characters] Failed to send training Telegram notification for ${characterId}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    });
 }
 
 // ── Remote Training Manager ─────────────────────────────────
@@ -918,7 +1132,9 @@ async function startRemoteTraining(
   const token = await getImageGenToken();
 
   try {
-    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+    };
     if (token) headers["Authorization"] = `Bearer ${token}`;
 
     const body = JSON.stringify({
@@ -927,7 +1143,9 @@ async function startRemoteTraining(
       character_id: characterId,
     });
 
-    logger.info(`[Characters] Sending ${photos.length} photos to sidecar for training (${(body.length / 1024 / 1024).toFixed(1)} MB)`);
+    logger.info(
+      `[Characters] Sending ${photos.length} photos to sidecar for training (${(body.length / 1024 / 1024).toFixed(1)} MB)`,
+    );
 
     const response = await fetch(`${sidecarUrl}/train`, {
       method: "POST",
@@ -940,33 +1158,53 @@ async function startRemoteTraining(
       throw new Error(`Sidecar returned ${response.status}: ${errText}`);
     }
 
-    const result = await response.json() as { status: string; message: string; output_dir?: string };
+    const result = (await response.json()) as {
+      status: string;
+      message: string;
+      output_dir?: string;
+    };
     logger.info(`[Characters] Sidecar accepted training: ${result.message}`);
 
-    const characterName = characterRepo.getById(characterId)?.name ?? characterId;
+    const characterName =
+      characterRepo.getById(characterId)?.name ?? characterId;
     _io?.emit("character:training:start", { characterId, characterName });
 
     // Start polling for completion
-    pollTrainingStatus(characterId, characterName, sidecarUrl, token, result.output_dir ?? null, characterRepo, notifyViaTelegram, telegramChatId);
+    pollTrainingStatus(
+      characterId,
+      characterName,
+      sidecarUrl,
+      token,
+      result.output_dir ?? null,
+      characterRepo,
+      notifyViaTelegram,
+      telegramChatId,
+    );
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
     characterRepo.update(characterId, {
       status: "failed",
       errorMessage: `Failed to start remote training: ${msg}`,
     });
-    logger.error(`[Characters] Remote training request failed for ${characterId}: ${msg}`);
+    logger.error(
+      `[Characters] Remote training request failed for ${characterId}: ${msg}`,
+    );
   }
 }
 
 async function getTrainingTimeoutMs(): Promise<number> {
   const DEFAULT_HOURS = 12; // minimum for realistic LoRA jobs
   try {
-    const configPath = process.env.OPENZIGS_CONFIG_PATH
-      ?? path.join(os.homedir(), ".openzigs", "config.json");
+    const configPath =
+      process.env.OPENZIGS_CONFIG_PATH ??
+      path.join(os.homedir(), ".openzigs", "config.json");
     const raw = await fs.readFile(configPath, "utf-8");
     const parsed = JSON.parse(raw) as Record<string, unknown>;
     const ig = parsed.imageGen as Record<string, unknown> | undefined;
-    let hours = typeof ig?.trainingTimeoutHours === "number" ? ig.trainingTimeoutHours : DEFAULT_HOURS;
+    let hours =
+      typeof ig?.trainingTimeoutHours === "number"
+        ? ig.trainingTimeoutHours
+        : DEFAULT_HOURS;
     // never allow less than 12h to avoid premature timeouts from impatient clients
     if (hours < DEFAULT_HOURS) hours = DEFAULT_HOURS;
     return hours * 60 * 60 * 1000;
@@ -991,7 +1229,14 @@ function pollTrainingStatus(
   const maybeNotify = (outcome: "complete" | "failed", message?: string) => {
     if (!notifyViaTelegram) return;
     const chatId = telegramChatId ?? _fallbackChatId;
-    if (chatId) sendTrainingTelegramNotification(characterId, characterName, outcome, chatId, message);
+    if (chatId)
+      sendTrainingTelegramNotification(
+        characterId,
+        characterName,
+        outcome,
+        chatId,
+        message,
+      );
   };
 
   const poll = async () => {
@@ -1009,9 +1254,12 @@ function pollTrainingStatus(
       try {
         const headers: Record<string, string> = {};
         if (token) headers["Authorization"] = `Bearer ${token}`;
-        const statusRes = await fetch(`${sidecarUrl}/train-status?character_id=${encodeURIComponent(characterId)}`, { headers });
+        const statusRes = await fetch(
+          `${sidecarUrl}/train-status?character_id=${encodeURIComponent(characterId)}`,
+          { headers },
+        );
         if (statusRes.ok) {
-          const status = await statusRes.json() as {
+          const status = (await statusRes.json()) as {
             training: boolean;
             lora_path?: string;
             checkpoint_count?: number;
@@ -1023,9 +1271,15 @@ function pollTrainingStatus(
               trainedLoraPath: status.lora_path,
               errorMessage: `Training timed out after ${hours}h but a partial checkpoint was saved and is usable. Results may improve with more training.`,
             });
-            _io?.emit("character:training:complete", { characterId, characterName, partial: true });
+            _io?.emit("character:training:complete", {
+              characterId,
+              characterName,
+              partial: true,
+            });
             maybeNotify("complete");
-            logger.warn(`[Characters] Training timed out for ${characterId} but partial checkpoint is usable: ${status.lora_path}`);
+            logger.warn(
+              `[Characters] Training timed out for ${characterId} but partial checkpoint is usable: ${status.lora_path}`,
+            );
             return;
           }
         }
@@ -1046,14 +1300,19 @@ function pollTrainingStatus(
       const headers: Record<string, string> = {};
       if (token) headers["Authorization"] = `Bearer ${token}`;
 
-      const response = await fetch(`${sidecarUrl}/train-status?character_id=${encodeURIComponent(characterId)}`, { headers });
+      const response = await fetch(
+        `${sidecarUrl}/train-status?character_id=${encodeURIComponent(characterId)}`,
+        { headers },
+      );
       if (!response.ok) {
-        logger.warn(`[Characters] Train status poll failed: HTTP ${response.status}`);
+        logger.warn(
+          `[Characters] Train status poll failed: HTTP ${response.status}`,
+        );
         setTimeout(poll, pollIntervalMs);
         return;
       }
 
-      const status = await response.json() as {
+      const status = (await response.json()) as {
         training: boolean;
         error?: string;
         lora_path?: string;
@@ -1074,21 +1333,30 @@ function pollTrainingStatus(
         });
         _io?.emit("character:training:failed", { characterId, characterName });
         maybeNotify("failed", status.error);
-        logger.error(`[Characters] Remote training failed for ${characterId}: ${status.error}`);
+        logger.error(
+          `[Characters] Remote training failed for ${characterId}: ${status.error}`,
+        );
       } else if (status.lora_path) {
         characterRepo.update(characterId, {
           status: "ready",
           trainedLoraPath: status.lora_path,
           errorMessage: null,
         });
-        _io?.emit("character:training:complete", { characterId, characterName });
+        _io?.emit("character:training:complete", {
+          characterId,
+          characterName,
+        });
         maybeNotify("complete");
-        logger.info(`[Characters] Remote training complete for ${characterId}: ${status.lora_path}`);
+        logger.info(
+          `[Characters] Remote training complete for ${characterId}: ${status.lora_path}`,
+        );
 
         // Clean up training data on the sidecar now that the character is confirmed ready.
         // The DELETE relocates the adapter to ~/.openzigs/loras/ and returns the new path.
         try {
-          const cleanupHeaders: Record<string, string> = { "Content-Type": "application/json" };
+          const cleanupHeaders: Record<string, string> = {
+            "Content-Type": "application/json",
+          };
           if (token) cleanupHeaders["Authorization"] = `Bearer ${token}`;
           const cleanupRes = await fetch(`${sidecarUrl}/train-data`, {
             method: "DELETE",
@@ -1096,10 +1364,16 @@ function pollTrainingStatus(
             body: JSON.stringify({ character_id: characterId }),
           });
           if (cleanupRes.ok) {
-            const cleanupBody = await cleanupRes.json() as { lora_path?: string };
+            const cleanupBody = (await cleanupRes.json()) as {
+              lora_path?: string;
+            };
             if (cleanupBody.lora_path) {
-              characterRepo.update(characterId, { trainedLoraPath: cleanupBody.lora_path });
-              logger.info(`[Characters] Updated LoRA path for ${characterId}: ${cleanupBody.lora_path}`);
+              characterRepo.update(characterId, {
+                trainedLoraPath: cleanupBody.lora_path,
+              });
+              logger.info(
+                `[Characters] Updated LoRA path for ${characterId}: ${cleanupBody.lora_path}`,
+              );
             }
           }
         } catch {
@@ -1108,15 +1382,20 @@ function pollTrainingStatus(
       } else {
         characterRepo.update(characterId, {
           status: "failed",
-          errorMessage: "Training completed but no LoRA adapter found in output directory",
+          errorMessage:
+            "Training completed but no LoRA adapter found in output directory",
         });
         _io?.emit("character:training:failed", { characterId, characterName });
         maybeNotify("failed", "No LoRA adapter found");
-        logger.error(`[Characters] Remote training completed but no LoRA found for ${characterId}`);
+        logger.error(
+          `[Characters] Remote training completed but no LoRA found for ${characterId}`,
+        );
       }
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
-      logger.warn(`[Characters] Train status poll error for ${characterId}: ${msg}`);
+      logger.warn(
+        `[Characters] Train status poll error for ${characterId}: ${msg}`,
+      );
       // Keep polling on transient errors
       setTimeout(poll, pollIntervalMs);
     }
@@ -1138,11 +1417,14 @@ export async function resumeStaleTrainingPolls(
 
   const sidecarUrl = await getImageGenSidecarUrl();
   if (!sidecarUrl) {
-    logger.warn(`[Characters] ${stale.length} character(s) stuck in training but no sidecar configured — marking as failed`);
+    logger.warn(
+      `[Characters] ${stale.length} character(s) stuck in training but no sidecar configured — marking as failed`,
+    );
     for (const c of stale) {
       characterRepo.update(c.id, {
         status: "failed",
-        errorMessage: "Server restarted during training and sidecar is not configured. Re-train when ready.",
+        errorMessage:
+          "Server restarted during training and sidecar is not configured. Re-train when ready.",
       });
     }
     return;
@@ -1150,7 +1432,16 @@ export async function resumeStaleTrainingPolls(
 
   const token = await getImageGenToken();
   for (const character of stale) {
-    logger.info(`[Characters] Resuming training poll for '${character.name}' (${character.id})`);
-    pollTrainingStatus(character.id, character.name, sidecarUrl, token, null, characterRepo);
+    logger.info(
+      `[Characters] Resuming training poll for '${character.name}' (${character.id})`,
+    );
+    pollTrainingStatus(
+      character.id,
+      character.name,
+      sidecarUrl,
+      token,
+      null,
+      characterRepo,
+    );
   }
 }
