@@ -949,7 +949,7 @@ describe("QueueMaster", () => {
           tiling: "conservative",
           enhance_prompt: true,
           pipeline: "dev-two-stage",
-          model_repo: "prince-canuma/LTX-2.3-distilled",
+          model_repo: "dgrauet/ltx-2.3-mlx-distilled-q4",
         },
       });
       repo.getPendingJobs.mockImplementation((node?: string) =>
@@ -991,7 +991,7 @@ describe("QueueMaster", () => {
       expect(body.tiling).toBe("conservative");
       expect(body.enhance_prompt).toBe(true);
       expect(body.pipeline).toBe("dev-two-stage");
-      expect(body.model_repo).toBe("prince-canuma/LTX-2.3-distilled");
+      expect(body.model_repo).toBe("dgrauet/ltx-2.3-mlx-distilled-q4");
     });
 
     it("uses defaults for audio/tiling/enhance_prompt when not specified", async () => {

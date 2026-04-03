@@ -378,7 +378,7 @@ The following table shows what features are available on Windows:
 | **Image Generation (MFLUX)** | ❌ | ✅ | Requires Apple Silicon |
 | **Music Generation (ACE-Step)** | ❌ | ✅ | Requires Apple Silicon |
 | **Music Studio (Demucs/Seed-VC)** | ❌ | ✅ | Requires Apple Silicon |
-| **Video Generation (LTX)** | ❌ | ✅ | Requires Apple Silicon |
+| **Video Generation (LTX)** | ❌ | ✅ | Requires Apple Silicon; supports audio+video joint generation |
 | **Voice Cloning (GPT-SoVITS)** | ❌ | ✅ | Requires Apple Silicon |
 | **Director Mode (Video)** | ⚠️ | ✅ | Render requires sidecars |
 | **Gallery (Media Creation)** | ⚠️ | ✅ | Generation requires sidecars |
@@ -599,7 +599,7 @@ Understanding when to use each:
 
 | Skill | Description | Example Prompts |
 |-------|-------------|-----------------|
-| **Media Director** 🎬 | Creates images (Flux), videos (LTX-2), audio (F5-TTS), music (ACE-Step). Handles character LoRA identity. | "Create a 4-second cyberpunk video" / "Generate a portrait with character Alex" / "Show images from this week" |
+| **Media Director** 🎬 | Creates images (Flux), videos with audio (LTX-2), audio (F5-TTS), music (ACE-Step). Handles character LoRA identity. | "Create a 4-second cyberpunk video with audio" / "Generate a portrait with character Alex" / "Show images from this week" |
 | **Remix Engineer** 🎵 | Audio stem separation, AI instrument replacement, and auto-mastering via the Remix Lab pipeline. | "Remix my track — replace drums with strings" / "Analyze stems of yesterday's upload" / "Master with a warm lofi vibe" |
 | **Platform Manager** 📡 | Scheduling, social media publishing (Twitter, LinkedIn, YouTube, Reddit, TikTok), knowledge base ops. | "Schedule a daily Twitter post at 9am" / "Publish the latest image to Twitter" / "List all scheduled jobs" |
 | **Content Creator** ✍️ | Blog-to-video, voiceovers (54+ voices), YouTube Shorts, brand voice enforcement. | "Convert this blog to a narrated video" / "Create a Short from the latest upload" / "Use the warm female voice" |
@@ -8009,7 +8009,7 @@ Navigate to **Gallery** in the top navigation bar. The page shows:
 - **Queue Stats Bar** — Live counts of Pending, Dispatched, Processing, Complete, and Failed jobs, updated every 5 seconds
 - **Worker Nodes** — 3-column status grid showing all worker nodes:
   - **Image Gen (FluxQ)** — Mac Mini network node (port 5005), with Activate/Unload for VRAM control
-  - **Video Gen (LTX-2)** — M2 Pro network node (port 5007), with Activate/Unload for VRAM control
+  - **Video Gen (LTX-2)** — M2 Pro network node (port 5007), with Activate/Unload for VRAM control. Default model: LTX-2 Distilled Q4 (~19 GB, audio+video). Optional LTX-2.3 Q4 available (~41 GB download).
   - **Music Gen (ACE-Step)** — Independent localhost sidecar (port 5009), no VRAM buttons needed
   - Each card shows a reachability dot (green = online, red = offline), loaded model name, and "Generating..." spinner when busy
 - **Asset Grid** — All generated and uploaded assets displayed as cards with thumbnails
@@ -8025,8 +8025,8 @@ Click **Create Asset** on the Gallery page to open the inline creation studio. F
 |---|---|---|
 | **Text → Image** | Generate an image from a text prompt | Width, Height, Steps, Guidance, Seed, Character (LoRA), ControlNet Strength |
 | **Image → Image** | Transform an uploaded image with a prompt | Source image upload, Strength (0–1), Steps, Guidance |
-| **Text → Video** | Generate a 4-second video clip from a text prompt | Frames (max 97), FPS, computed Duration display |
-| **Image → Video** | Animate an uploaded image with a motion prompt | Source image upload, Frames, FPS, Duration |
+| **Text → Video** | Generate a video clip with optional synchronized audio from a text prompt | Frames (max 97), FPS, computed Duration display, Audio toggle, Pipeline (distilled/dev/dev-two-stage/dev-two-stage-hq), Tiling mode, Model selection |
+| **Image → Video** | Animate an uploaded image with a motion prompt and optional audio | Source image upload, Frames, FPS, Duration, Audio toggle, Pipeline, Tiling mode |
 | **Text → Music** | Generate music from a text description | Duration (10–300s), Inference Steps (8–27, default 20), Instrumental toggle, Lyrics textarea, Seed |
 
 All jobs are submitted to the queue via **Submit to Queue** and processed by the appropriate worker node.

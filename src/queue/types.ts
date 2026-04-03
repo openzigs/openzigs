@@ -45,35 +45,27 @@ export const VALID_TILING_MODES = [
 ] as const;
 export type TilingMode = (typeof VALID_TILING_MODES)[number];
 
-/** Known LTX model catalog entries with memory requirements. */
+/** Known LTX model catalog entries with memory and disk requirements. */
 export const LTX_MODEL_CATALOG = [
   {
     id: "ltx-2-distilled-q4",
     repo: "AITRADER/ltx2-distilled-4bit-mlx",
     name: "LTX-2 Distilled Q4",
-    memoryGB: 8,
+    memoryGB: 19,
+    downloadGB: 19,
     version: "2.0",
-  },
-  {
-    id: "ltx-2.3-distilled",
-    repo: "prince-canuma/LTX-2.3-distilled",
-    name: "LTX-2.3 Distilled",
-    memoryGB: 16,
-    version: "2.3",
-  },
-  {
-    id: "ltx-2.3-dev",
-    repo: "prince-canuma/LTX-2.3-dev",
-    name: "LTX-2.3 Dev",
-    memoryGB: 16,
-    version: "2.3",
+    audio: true,
   },
   {
     id: "ltx-2.3-distilled-q4",
     repo: "dgrauet/ltx-2.3-mlx-distilled-q4",
     name: "LTX-2.3 Distilled Q4",
-    memoryGB: 19.4,
+    memoryGB: 20,
+    downloadGB: 41,
     version: "2.3",
+    audio: true,
+    warning:
+      "Large download (~41 GB). Ensure sufficient disk space before selecting.",
   },
 ] as const;
 

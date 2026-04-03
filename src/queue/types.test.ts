@@ -99,6 +99,7 @@ describe("LTX_MODEL_CATALOG", () => {
       expect(model.repo).toBeTruthy();
       expect(model.name).toBeTruthy();
       expect(model.memoryGB).toBeGreaterThan(0);
+      expect(model.downloadGB).toBeGreaterThan(0);
       expect(model.version).toBeTruthy();
     }
   });
