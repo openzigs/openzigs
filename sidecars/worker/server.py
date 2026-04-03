@@ -456,6 +456,26 @@ _last_progress_time: float = 0.0
 _PROGRESS_THROTTLE_SEC: float = 0.5  # Max 2 POSTs/second
 
 
+def _is_safe_callback_url(url: str) -> bool:
+    """Validate that a callback URL targets a private/loopback host (SSRF guard)."""
+    from urllib.parse import urlparse
+    try:
+        parsed = urlparse(url)
+        if parsed.scheme not in ("http", "https"):
+            return False
+        host = parsed.hostname or ""
+        if host in ("localhost", "127.0.0.1", "::1"):
+            return True
+        try:
+            addr = ipaddress.ip_address(host)
+            return addr.is_private or addr.is_loopback
+        except ValueError:
+            # Hostname, not IP — allow .local mDNS names (common in LAN setups)
+            return host.endswith(".local")
+    except Exception:
+        return False
+
+
 async def _report_progress(
     job_id: str,
     progress_url: str | None,
@@ -466,6 +486,9 @@ async def _report_progress(
     """POST a progress update to the Node.js server (throttled to 2/sec)."""
     global _last_progress_time
     if not progress_url:
+        return
+    if not _is_safe_callback_url(progress_url):
+        logger.warning(f"Rejected progress_url with non-private host: {progress_url}")
         return
     now = time.monotonic()
     if now - _last_progress_time < _PROGRESS_THROTTLE_SEC:

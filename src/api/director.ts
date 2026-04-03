@@ -587,11 +587,9 @@ export const createDirectorRouter = ({
             normalizedResolved === root,
         )
       ) {
-        res
-          .status(403)
-          .json({
-            error: "Access denied: file path is outside allowed directories",
-          });
+        res.status(403).json({
+          error: "Access denied: file path is outside allowed directories",
+        });
         return;
       }
 
@@ -641,7 +639,8 @@ export const createDirectorRouter = ({
     raw({ type: "*/*", limit: "2gb" }),
     async (req, res) => {
       try {
-        const kind = String(req.query.kind ?? "video");
+        const rawKind = req.query.kind;
+        const kind = typeof rawKind === "string" ? rawKind : "video";
         if (kind !== "video" && kind !== "audio" && kind !== "script") {
           res
             .status(400)
@@ -727,7 +726,8 @@ export const createDirectorRouter = ({
     raw({ type: "*/*", limit: "500mb" }),
     async (req, res) => {
       try {
-        const kind = String(req.query.kind ?? "image");
+        const rawKind = req.query.kind;
+        const kind = typeof rawKind === "string" ? rawKind : "image";
         if (kind !== "image" && kind !== "video") {
           res.status(400).json({ error: "kind must be 'image' or 'video'" });
           return;
@@ -943,11 +943,9 @@ Respond with ONLY a valid JSON array. No explanation. Example:
         !Array.isArray(placements) ||
         placements.length === 0
       ) {
-        res
-          .status(400)
-          .json({
-            error: "placements array is required and must not be empty",
-          });
+        res.status(400).json({
+          error: "placements array is required and must not be empty",
+        });
         return;
       }
 
@@ -1153,12 +1151,10 @@ Respond with ONLY a valid JSON array. No explanation. Example:
         !mode ||
         !["highlight", "script", "presentation", "hero-reel"].includes(mode)
       ) {
-        res
-          .status(400)
-          .json({
-            error:
-              "mode must be 'highlight', 'script', 'presentation', or 'hero-reel'",
-          });
+        res.status(400).json({
+          error:
+            "mode must be 'highlight', 'script', 'presentation', or 'hero-reel'",
+        });
         return;
       }
 
@@ -2678,11 +2674,9 @@ Respond with ONLY a valid JSON array. No markdown, no explanation.`;
             normalizedImagePath === root,
         )
       ) {
-        res
-          .status(403)
-          .json({
-            error: "Access denied: imagePath is outside allowed directories",
-          });
+        res.status(403).json({
+          error: "Access denied: imagePath is outside allowed directories",
+        });
         return;
       }
 
@@ -2865,11 +2859,9 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
             normalizedManifestPath === root,
         )
       ) {
-        res
-          .status(403)
-          .json({
-            error: "Access denied: manifestPath is outside allowed directories",
-          });
+        res.status(403).json({
+          error: "Access denied: manifestPath is outside allowed directories",
+        });
         return;
       }
       if (
@@ -2879,11 +2871,9 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
             normalizedOutputDir === root,
         )
       ) {
-        res
-          .status(403)
-          .json({
-            error: "Access denied: outputDir is outside allowed directories",
-          });
+        res.status(403).json({
+          error: "Access denied: outputDir is outside allowed directories",
+        });
         return;
       }
 
@@ -3669,12 +3659,10 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
         // Step 1 flow: just pick the best frame, no enhancement. Return fast.
         const frame = await resolveBaseFrame();
         if (!frame) {
-          res
-            .status(400)
-            .json({
-              error:
-                "No scene images found — ensure the draft has generated images",
-            });
+          res.status(400).json({
+            error:
+              "No scene images found — ensure the draft has generated images",
+          });
           return;
         }
         // Copy frame to thumbnails dir so it's serveable
@@ -3716,12 +3704,10 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
         // Long-running Kontext edit — return 202, run in background, poll or Socket.IO for result
         const frame = await resolveBaseFrame();
         if (!frame) {
-          res
-            .status(400)
-            .json({
-              error:
-                "No scene images found — ensure the draft has generated images",
-            });
+          res.status(400).json({
+            error:
+              "No scene images found — ensure the draft has generated images",
+          });
           return;
         }
 
@@ -4433,11 +4419,9 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
       );
 
       if (sceneIndex >= scenes.length) {
-        res
-          .status(400)
-          .json({
-            error: `Scene index ${sceneIndex} out of range (${scenes.length} scenes)`,
-          });
+        res.status(400).json({
+          error: `Scene index ${sceneIndex} out of range (${scenes.length} scenes)`,
+        });
         return;
       }
 
@@ -4537,12 +4521,9 @@ Return ONLY the new narration text, no explanations or formatting.`;
       }
 
       if (!voiceService) {
-        res
-          .status(503)
-          .json({
-            error:
-              "VoiceService is not available — Shorts pipeline requires TTS",
-          });
+        res.status(503).json({
+          error: "VoiceService is not available — Shorts pipeline requires TTS",
+        });
         return;
       }
 
@@ -5018,11 +4999,9 @@ Return ONLY the new narration text, no explanations or formatting.`;
           voiceoverPath = voPath;
           usedEngine = "f5tts";
         } else if (resolvedEngine === "f5tts") {
-          res
-            .status(503)
-            .json({
-              error: "F5-TTS engine not available. Check sidecar health.",
-            });
+          res.status(503).json({
+            error: "F5-TTS engine not available. Check sidecar health.",
+          });
           return;
         } else {
           // Fall back to Kokoro/VoiceService
@@ -6101,11 +6080,9 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
 
       const parsed = youtubePublishSchema.safeParse(req.body);
       if (!parsed.success) {
-        res
-          .status(400)
-          .json({
-            error: parsed.error.issues.map((i) => i.message).join("; "),
-          });
+        res.status(400).json({
+          error: parsed.error.issues.map((i) => i.message).join("; "),
+        });
         return;
       }
 
@@ -6459,12 +6436,10 @@ Generate the following as JSON (and ONLY JSON, no markdown fences):
         .strict();
       const parsed = brandKitUpdateSchema.safeParse(req.body);
       if (!parsed.success) {
-        res
-          .status(400)
-          .json({
-            error: "Invalid fields",
-            details: parsed.error.flatten().fieldErrors,
-          });
+        res.status(400).json({
+          error: "Invalid fields",
+          details: parsed.error.flatten().fieldErrors,
+        });
         return;
       }
       const repo = new BrandKitRepository(getDatabase());
@@ -6622,14 +6597,12 @@ Generate the following as JSON (and ONLY JSON, no markdown fences):
       db.prepare(
         `INSERT INTO gallery_collections (id, name, description, created_at) VALUES (?, ?, ?, ?)`,
       ).run(id, name.trim(), (description || "").trim(), now);
-      res
-        .status(201)
-        .json({
-          id,
-          name: name.trim(),
-          description: (description || "").trim(),
-          createdAt: now,
-        });
+      res.status(201).json({
+        id,
+        name: name.trim(),
+        description: (description || "").trim(),
+        createdAt: now,
+      });
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       res.status(500).json({ error: msg });
@@ -7459,12 +7432,10 @@ For each Short, respond with JSON only (no markdown fences):
       });
       const parsed = bodySchema.safeParse(req.body);
       if (!parsed.success) {
-        res
-          .status(400)
-          .json({
-            error: "Invalid request body",
-            details: parsed.error.flatten().fieldErrors,
-          });
+        res.status(400).json({
+          error: "Invalid request body",
+          details: parsed.error.flatten().fieldErrors,
+        });
         return;
       }
 
