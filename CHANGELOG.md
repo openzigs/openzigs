@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Gallery Studio: pipeline selector dropdown — choose between Distilled, Dev, 2-Stage, and 2-Stage HQ pipelines (#783)
+- Gallery Studio: audio generation toggle with ~30% time warning (#784)
+- Gallery Studio: VAE tiling mode selector — Auto, None, Default, Aggressive, Conservative (#785)
+- Gallery Studio: AI Enhance Prompt toggle wired to `enhance_prompt` payload field (#786)
+- Gallery Studio: model selector dropdown populated from LTX model catalog with memory info (#787)
+- Gallery Studio: preset picker with load/save — Quick Draft, Standard, High Quality built-ins plus custom presets (#788)
+- Gallery Studio: duration selector (4s / 8s / 12s / 16s) replacing fixed 4s — shows segment count (#794)
+- Multi-segment video generation: jobs with duration > 4s decompose into chained 4s segment sub-jobs (#790)
+- Multi-segment video: segment chaining via `/last-frame` endpoint — each segment uses previous segment's last frame as init image (#791)
+- Multi-segment video: ffmpeg concat stitching with 0.5s crossfade transitions between segments (#792)
+- Multi-segment video: aggregate progress reporting with segment indicator ("Segment 2/4") (#793)
+- Multi-segment video: audio post-processing runs on final stitched video only, not per-segment (#795)
+- Worker sidecar: `POST /last-frame` endpoint — extracts last frame of a video as base64 PNG via ffmpeg (#789)
 - LTX Video Engine v2: audio-video joint generation toggle (`audio` param) for synchronized sound (#760)
 - LTX Video Engine v2: 2-stage pipeline support — `dev-two-stage` and `dev-two-stage-hq` pipeline types (#759)
 - LTX Video Engine v2: model catalog with memory requirements and `GET /models` endpoint on sidecar (#761)

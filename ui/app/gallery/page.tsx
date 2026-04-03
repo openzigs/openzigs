@@ -2110,6 +2110,15 @@ interface StudioFormState {
   negative_prompt: string;
   characterId: string;
   controlnetStrength: number;
+  // Phase 1: Gallery Studio Feature Parity (#781)
+  pipeline: string;
+  audio: boolean;
+  tiling: string;
+  enhance_prompt: boolean;
+  model_repo: string;
+  preset_id: string;
+  // Phase 2: Multi-Segment Video (#782)
+  video_duration: number;
 }
 
 const DEFAULT_FORM: StudioFormState = {
@@ -2136,6 +2145,13 @@ const DEFAULT_FORM: StudioFormState = {
   negative_prompt: "",
   characterId: "",
   controlnetStrength: 0.4,
+  pipeline: "distilled",
+  audio: false,
+  tiling: "aggressive",
+  enhance_prompt: false,
+  model_repo: "",
+  preset_id: "",
+  video_duration: 4,
 };
 
 const MODE_INFO: Record<
@@ -2205,6 +2221,72 @@ function GalleryStudio({
     (c) => c.status === "ready",
   );
 
+  // Fetch video presets for the preset picker (#788)
+  const presetsQuery = useQuery({
+    queryKey: ["video-presets"],
+    queryFn: () =>
+      fetchJson<{
+        presets: Array<{
+          id: string;
+          name: string;
+          description: string | null;
+          config: {
+            width?: number;
+            height?: number;
+            numFrames?: number;
+            fps?: number;
+            pipeline?: string;
+            tiling?: string;
+            audio?: boolean;
+            enhancePrompt?: boolean;
+            model?: string;
+            modelRepo?: string;
+            imageStrength?: number;
+          };
+          isBuiltin: boolean;
+        }>;
+      }>("/api/admin/video-presets"),
+  });
+  const presets = presetsQuery.data?.presets ?? [];
+
+  // LTX model catalog constants
+  const ltxModelCatalog = [
+    {
+      id: "ltx-2-distilled-q4",
+      repo: "AITRADER/ltx2-distilled-4bit-mlx",
+      name: "LTX-2 Distilled Q4",
+      memoryGB: 19,
+    },
+    {
+      id: "ltx-2.3-distilled-q4",
+      repo: "dgrauet/ltx-2.3-mlx-distilled-q4",
+      name: "LTX-2.3 Distilled Q4",
+      memoryGB: 20,
+    },
+  ];
+
+  const validPipelines = [
+    { value: "distilled", label: "Distilled (Fast)" },
+    { value: "dev", label: "Dev (Quality)" },
+    { value: "dev-two-stage", label: "2-Stage (High Quality)" },
+    { value: "dev-two-stage-hq", label: "2-Stage HQ (Maximum)" },
+  ];
+
+  const validTilingModes = [
+    { value: "auto", label: "Auto" },
+    { value: "none", label: "None" },
+    { value: "default", label: "Default" },
+    { value: "aggressive", label: "Aggressive" },
+    { value: "conservative", label: "Conservative" },
+  ];
+
+  const validDurations = [
+    { value: 4, label: "4s", segments: 1 },
+    { value: 8, label: "8s", segments: 2 },
+    { value: 12, label: "12s", segments: 3 },
+    { value: 16, label: "16s", segments: 4 },
+  ];
+
   const imageGenMode = imageGenConfigQuery.data?.mode ?? "local";
   // When admin switches mode, reset provider default and clear turbo if needed
   const [form, setForm] = useState<StudioFormState>(() => ({
@@ -2253,6 +2335,67 @@ function GalleryStudio({
     imageGenMode === "network"
       ? "FluxQ (Network — via Admin)"
       : "FluxQ (Local)";
+
+  const handlePresetSelect = (presetId: string) => {
+    const preset = presets.find((p) => p.id === presetId);
+    if (!preset) return;
+    const c = preset.config;
+    setForm((prev) => ({
+      ...prev,
+      preset_id: presetId,
+      ...(c.width != null && { width: c.width }),
+      ...(c.height != null && { height: c.height }),
+      ...(c.numFrames != null && { num_frames: c.numFrames }),
+      ...(c.fps != null && { fps: c.fps }),
+      ...(c.pipeline != null && { pipeline: c.pipeline }),
+      ...(c.tiling != null && { tiling: c.tiling }),
+      ...(c.audio != null && { audio: c.audio }),
+      ...(c.enhancePrompt != null && { enhance_prompt: c.enhancePrompt }),
+      ...(c.modelRepo != null && { model_repo: c.modelRepo }),
+    }));
+    showToast(`Preset "${preset.name}" loaded`, "success");
+  };
+
+  const [savingPreset, setSavingPreset] = useState(false);
+  const [presetName, setPresetName] = useState("");
+
+  const handleSavePreset = async () => {
+    if (!presetName.trim()) {
+      showToast("Enter a preset name", "error");
+      return;
+    }
+    setSavingPreset(true);
+    try {
+      await fetchJson("/api/admin/video-presets", {
+        method: "POST",
+        body: JSON.stringify({
+          name: presetName.trim(),
+          description: null,
+          config: {
+            width: form.width,
+            height: form.height,
+            numFrames: form.num_frames,
+            fps: form.fps,
+            pipeline: form.pipeline,
+            tiling: form.tiling,
+            audio: form.audio,
+            enhancePrompt: form.enhance_prompt,
+            modelRepo: form.model_repo || undefined,
+          },
+        }),
+      });
+      showToast(`Preset "${presetName}" saved`, "success");
+      setPresetName("");
+      void presetsQuery.refetch();
+    } catch (err) {
+      showToast(
+        `Save failed: ${err instanceof Error ? err.message : String(err)}`,
+        "error",
+      );
+    } finally {
+      setSavingPreset(false);
+    }
+  };
 
   const handleEnhancePrompt = async () => {
     if (!form.prompt.trim()) {
@@ -2446,6 +2589,18 @@ function GalleryStudio({
         payload.cfg_scale = form.video_guidance;
         if (form.negative_prompt.trim()) {
           payload.negative_prompt = form.negative_prompt.trim();
+        }
+        // Phase 1: Gallery Studio Feature Parity fields (#783-#787)
+        payload.pipeline = form.pipeline;
+        payload.audio = form.audio;
+        payload.tiling = form.tiling;
+        payload.enhance_prompt = form.enhance_prompt;
+        if (form.model_repo) {
+          payload.model_repo = form.model_repo;
+        }
+        // Phase 2: Multi-Segment Video (#794)
+        if (form.video_duration > 4) {
+          payload.video_duration = form.video_duration;
         }
       }
 
@@ -2977,9 +3132,142 @@ function GalleryStudio({
               <label className="mb-1 block text-[11px] font-medium text-muted-foreground">
                 Duration
               </label>
-              <p className="mt-1 text-sm font-semibold text-foreground">
-                {(form.num_frames / form.fps).toFixed(1)}s
+              <select
+                value={form.video_duration}
+                onChange={(e) =>
+                  update("video_duration", parseInt(e.target.value))
+                }
+                className="w-full rounded-lg border border-border bg-card px-2 py-1.5 text-sm text-foreground"
+              >
+                {validDurations.map((d) => (
+                  <option key={d.value} value={d.value}>
+                    {d.label}
+                  </option>
+                ))}
+              </select>
+              {form.video_duration > 4 && (
+                <p className="mt-0.5 text-[10px] text-amber-600 dark:text-amber-400">
+                  {Math.ceil(form.video_duration / 4)} segments × 4s
+                </p>
+              )}
+            </div>
+          </div>
+
+          {/* Video Engine Controls — Pipeline, Model, Tiling (#783, #785, #787) */}
+          <div className="mb-4 grid grid-cols-3 gap-3">
+            <div>
+              <label className="mb-1 block text-[11px] font-medium text-muted-foreground">
+                Pipeline
+              </label>
+              <select
+                value={form.pipeline}
+                onChange={(e) => update("pipeline", e.target.value)}
+                className="w-full rounded-lg border border-border bg-card px-2 py-1.5 text-sm text-foreground"
+              >
+                {validPipelines.map((p) => (
+                  <option key={p.value} value={p.value}>
+                    {p.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="mb-1 block text-[11px] font-medium text-muted-foreground">
+                Tiling Mode
+              </label>
+              <select
+                value={form.tiling}
+                onChange={(e) => update("tiling", e.target.value)}
+                className="w-full rounded-lg border border-border bg-card px-2 py-1.5 text-sm text-foreground"
+              >
+                {validTilingModes.map((t) => (
+                  <option key={t.value} value={t.value}>
+                    {t.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="mb-1 block text-[11px] font-medium text-muted-foreground">
+                Model
+              </label>
+              <select
+                value={form.model_repo}
+                onChange={(e) => update("model_repo", e.target.value)}
+                className="w-full rounded-lg border border-border bg-card px-2 py-1.5 text-sm text-foreground"
+              >
+                <option value="">Default</option>
+                {ltxModelCatalog.map((m) => (
+                  <option key={m.id} value={m.repo}>
+                    {m.name} ({m.memoryGB}GB)
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          {/* Audio & AI Enhance toggles (#784, #786) */}
+          <div className="mb-4 flex items-center gap-4">
+            <label className="flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-1.5 text-sm cursor-pointer hover:bg-muted/50 transition">
+              <input
+                type="checkbox"
+                checked={form.audio}
+                onChange={(e) => update("audio", e.target.checked)}
+                className="rounded"
+              />
+              <span className="text-foreground">Audio</span>
+            </label>
+            {form.audio && (
+              <p className="text-[10px] text-amber-600 dark:text-amber-400">
+                Adds ~30% generation time
               </p>
+            )}
+            <label className="flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-1.5 text-sm cursor-pointer hover:bg-muted/50 transition">
+              <input
+                type="checkbox"
+                checked={form.enhance_prompt}
+                onChange={(e) => update("enhance_prompt", e.target.checked)}
+                className="rounded"
+              />
+              <span className="text-foreground">AI Enhance Prompt</span>
+            </label>
+          </div>
+
+          {/* Preset Picker (#788) */}
+          <div className="mb-4 flex items-center gap-3">
+            <div className="flex-1">
+              <label className="mb-1 block text-[11px] font-medium text-muted-foreground">
+                Preset
+              </label>
+              <select
+                value={form.preset_id}
+                onChange={(e) => handlePresetSelect(e.target.value)}
+                className="w-full rounded-lg border border-border bg-card px-2 py-1.5 text-sm text-foreground"
+              >
+                <option value="">Custom</option>
+                {presets.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                    {p.isBuiltin ? " (built-in)" : ""}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="flex items-end gap-2">
+              <input
+                type="text"
+                value={presetName}
+                onChange={(e) => setPresetName(e.target.value)}
+                className="w-32 rounded-lg border border-border bg-card px-2 py-1.5 text-sm text-foreground"
+                placeholder="Preset name"
+              />
+              <button
+                onClick={handleSavePreset}
+                disabled={savingPreset || !presetName.trim()}
+                className="rounded-lg border border-primary/30 bg-primary/5 px-3 py-1.5 text-xs font-semibold text-primary hover:bg-primary/10 disabled:opacity-50 transition"
+              >
+                {savingPreset ? "Saving..." : "Save Preset"}
+              </button>
             </div>
           </div>
           <div className="mb-4">
@@ -3017,7 +3305,7 @@ function GalleryStudio({
           {isMusic
             ? `ACE-Step · ${form.duration_seconds}s ${form.instrumental ? "instrumental" : "vocal"} · ${form.music_steps} steps`
             : isVideo
-              ? `Video: ${form.num_frames}fr @ ${form.fps}fps = ${(form.num_frames / form.fps).toFixed(1)}s · ${form.video_steps} steps · cfg ${form.video_guidance}`
+              ? `Video: ${form.video_duration}s${form.video_duration > 4 ? ` (${Math.ceil(form.video_duration / 4)} segments)` : ""} · ${form.pipeline} · ${form.video_steps} steps${form.audio ? " · audio" : ""}${form.enhance_prompt ? " · AI enhanced" : ""}`
               : form.imageProvider === "cloud"
                 ? `Cloud (Imagen 3) · ${form.width}x${form.height}`
                 : form.imageProvider === "auto"

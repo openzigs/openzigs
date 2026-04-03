@@ -716,6 +716,59 @@ async def unload():
     return {"status": "unloaded", "previous_model": prev}
 
 
+class LastFrameRequest(BaseModel):
+    video_path: str = Field(..., min_length=1, max_length=1024)
+
+
+@app.post("/last-frame", dependencies=[Depends(verify_token)])
+async def extract_last_frame(request: LastFrameRequest):
+    """Extract the last frame of a video file as a base64-encoded PNG.
+    Used for multi-segment video chaining — segment N's last frame
+    becomes segment N+1's init_image for visual continuity.
+    """
+    video_path = request.video_path
+    # Security: validate path exists and is a regular file
+    vp = Path(video_path)
+    if not vp.exists():
+        raise HTTPException(status_code=404, detail=f"Video file not found: {video_path}")
+    if not vp.is_file():
+        raise HTTPException(status_code=400, detail="Path is not a regular file")
+    # Only allow video files
+    suffix = vp.suffix.lower()
+    if suffix not in (".mp4", ".mov", ".mkv", ".webm", ".avi"):
+        raise HTTPException(status_code=400, detail=f"Unsupported video format: {suffix}")
+
+    try:
+        result = subprocess.run(
+            [
+                "ffmpeg", "-sseof", "-0.1",
+                "-i", str(vp),
+                "-frames:v", "1",
+                "-f", "image2pipe",
+                "-vcodec", "png",
+                "pipe:1",
+            ],
+            capture_output=True,
+            timeout=30,
+        )
+        if result.returncode != 0:
+            stderr = result.stderr.decode("utf-8", errors="replace")[:500]
+            raise HTTPException(
+                status_code=500,
+                detail=f"ffmpeg failed (exit {result.returncode}): {stderr}",
+            )
+        if not result.stdout:
+            raise HTTPException(status_code=500, detail="ffmpeg produced no output")
+        image_base64 = base64.b64encode(result.stdout).decode("ascii")
+        return {"image_base64": image_base64}
+    except subprocess.TimeoutExpired:
+        raise HTTPException(status_code=504, detail="ffmpeg timed out extracting last frame")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Last frame extraction failed: {str(e)}")
+
+
 @app.post("/generate", status_code=202, dependencies=[Depends(verify_token)])
 async def generate(request: GenerateRequest):
     """

@@ -11,7 +11,18 @@ vi.mock("node:fs/promises", () => ({
     readFile: vi.fn().mockRejectedValue(new Error("no config")),
     writeFile: vi.fn().mockResolvedValue(undefined),
     mkdir: vi.fn().mockResolvedValue(undefined),
+    copyFile: vi.fn().mockResolvedValue(undefined),
+    stat: vi.fn().mockResolvedValue({ size: 1000 }),
+    unlink: vi.fn().mockResolvedValue(undefined),
   },
+}));
+
+vi.mock("node:child_process", () => ({
+  execFile: vi.fn(
+    (_cmd: string, _args: string[], _opts: unknown, cb: Function) => {
+      cb(null, "", "");
+    },
+  ),
 }));
 
 const mockFetch = vi.fn();
@@ -57,6 +68,7 @@ function makeRepo() {
     isProjectComplete: vi.fn(() => ({ complete: false, total: 0 })),
     createAsset: vi.fn(() => "asset-1"),
     getAsset: vi.fn((): Record<string, unknown> | null => null),
+    createJob: vi.fn(() => ({ id: "seg-job-1" })),
   };
 }
 
@@ -1309,6 +1321,96 @@ describe("QueueMaster", () => {
         expect.stringContaining("Dispatch timeout"),
       );
       expect(failedHandler).toHaveBeenCalled();
+    });
+  });
+
+  describe("Multi-Segment Video Decomposition", () => {
+    it("decomposes a 8s job into 2 segments", () => {
+      const payload = { prompt: "a sunset", video_duration: 8 };
+      const result = qm.decomposeMultiSegmentJob("parent-1", payload, 8);
+      expect(result).toBe("seg-job-1");
+      expect(repo.createJob).toHaveBeenCalledTimes(1);
+      expect(repo.createJob).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "txt2video",
+          payload: expect.objectContaining({
+            segmentIndex: 0,
+            totalSegments: 2,
+            parentJobId: "parent-1",
+            audio: false,
+          }),
+          priority: 10,
+        }),
+      );
+    });
+
+    it("decomposes a 16s job into 4 segments", () => {
+      const payload = { prompt: "a sunset", video_duration: 16 };
+      const result = qm.decomposeMultiSegmentJob("parent-2", payload, 16);
+      expect(result).toBe("seg-job-1");
+      expect(repo.createJob).toHaveBeenCalledWith(
+        expect.objectContaining({
+          payload: expect.objectContaining({
+            totalSegments: 4,
+          }),
+        }),
+      );
+    });
+
+    it("returns null for 4s (no decomposition needed)", () => {
+      const payload = { prompt: "a sunset", video_duration: 4 };
+      const result = qm.decomposeMultiSegmentJob("parent-3", payload, 4);
+      expect(result).toBeNull();
+      expect(repo.createJob).not.toHaveBeenCalled();
+    });
+
+    it("uses img2video type when init_image is present", () => {
+      const payload = {
+        prompt: "animate this",
+        video_duration: 8,
+        init_image: "base64data",
+      };
+      qm.decomposeMultiSegmentJob("parent-4", payload, 8);
+      expect(repo.createJob).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "img2video",
+        }),
+      );
+    });
+  });
+
+  describe("ffmpegConcatWithCrossfade", () => {
+    it("copies single file without ffmpeg", async () => {
+      const { default: fsMock } = await import("node:fs/promises");
+      const copyFileSpy = vi
+        .spyOn(fsMock, "copyFile")
+        .mockResolvedValue(undefined);
+
+      await qm.ffmpegConcatWithCrossfade(
+        ["/tmp/seg1.mp4"],
+        "/tmp/output.mp4",
+        0.5,
+      );
+      expect(copyFileSpy).toHaveBeenCalledWith(
+        "/tmp/seg1.mp4",
+        "/tmp/output.mp4",
+      );
+      copyFileSpy.mockRestore();
+    });
+  });
+
+  describe("reportSegmentProgress", () => {
+    it("emits aggregate progress for multi-segment jobs", () => {
+      const handler = vi.fn();
+      qm.on("job:progress", handler);
+      qm.reportSegmentProgress("parent-1", 1, 4, 50);
+      expect(handler).toHaveBeenCalledWith(
+        "parent-1",
+        expect.objectContaining({
+          stage: "generating",
+          message: expect.stringContaining("Segment 2/4"),
+        }),
+      );
     });
   });
 });
