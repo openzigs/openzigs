@@ -221,16 +221,6 @@ export interface MediaJobPayload {
   image_strength?: number;
   /** URL for the sidecar to POST real-time progress updates */
   progress_url?: string;
-
-  // ── Multi-Segment Video fields ─────────────────────────────
-  /** Total requested video duration in seconds (4, 8, 12, 16). Triggers multi-segment decomposition when > 4. */
-  video_duration?: number;
-  /** 0-based index of this segment within a multi-segment job. */
-  segmentIndex?: number;
-  /** Total number of segments in the parent multi-segment job. */
-  totalSegments?: number;
-  /** Parent job ID that spawned this segment sub-job. */
-  parentJobId?: string;
 }
 
 // ── Stored Job ────────────────────────────────────────────────
@@ -345,37 +335,3 @@ export const MAX_VIDEO_DURATION_SEC = 4;
 
 /** Default video FPS. */
 export const DEFAULT_VIDEO_FPS = 24;
-
-/** Valid total video durations for multi-segment generation (seconds). */
-export const VALID_VIDEO_DURATIONS = [4, 8, 12, 16] as const;
-export type VideoDuration = (typeof VALID_VIDEO_DURATIONS)[number];
-
-/** Segment duration constant — each segment is 4 seconds. */
-export const SEGMENT_DURATION_SEC = 4;
-
-/**
- * Decompose a requested video duration into segment count.
- * @returns number of 4s segments needed (1 for ≤4s, 2 for 8s, etc.)
- */
-export function computeSegmentCount(durationSec: number): number {
-  if (durationSec <= SEGMENT_DURATION_SEC) return 1;
-  return Math.ceil(durationSec / SEGMENT_DURATION_SEC);
-}
-
-/**
- * Calculate aggregate multi-segment progress as a weighted average.
- * @param totalSegments total segments in the job
- * @param completedSegments count of fully completed segments
- * @param currentSegmentProgress progress (0-100) of the currently active segment
- * @returns aggregate progress 0-100
- */
-export function computeAggregateProgress(
-  totalSegments: number,
-  completedSegments: number,
-  currentSegmentProgress: number,
-): number {
-  if (totalSegments <= 0) return 0;
-  const completed = Math.min(completedSegments, totalSegments);
-  const current = Math.max(0, Math.min(100, currentSegmentProgress));
-  return Math.round(((completed * 100 + current) / totalSegments) * 100) / 100;
-}

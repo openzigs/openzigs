@@ -23,7 +23,6 @@ import {
   MAX_VIDEO_FRAMES,
   MAX_VIDEO_DURATION_SEC,
   DEFAULT_VIDEO_FPS,
-  VALID_VIDEO_DURATIONS,
 } from "../queue/types.js";
 import type { CharacterRepository } from "../characters/character-repository.js";
 import type { KnowledgeIngestionService } from "../knowledge/index.js";
@@ -322,22 +321,6 @@ export const createQueueCallbackRouter = ({
         return;
       }
 
-      // Multi-segment progress aggregation (#793):
-      // If this is a segment sub-job, route progress to the parent job.
-      const job = repo.getJob(job_id);
-      if (
-        job?.payload?.parentJobId &&
-        job.payload.segmentIndex !== undefined &&
-        job.payload.totalSegments
-      ) {
-        queueMaster.reportSegmentProgress(
-          job.payload.parentJobId,
-          job.payload.segmentIndex,
-          job.payload.totalSegments,
-          progress ?? 0,
-        );
-      }
-
       queueMaster.reportProgress(job_id, { stage, progress, message });
       res.json({ ok: true });
     } catch (err) {
@@ -418,9 +401,11 @@ export const createQueueRouter = ({
       } = req.body as Partial<CreateMediaJobInput>;
 
       if (!type || !VALID_JOB_TYPES.includes(type)) {
-        res.status(400).json({
-          error: `Invalid job type. Must be one of: ${VALID_JOB_TYPES.join(", ")}`,
-        });
+        res
+          .status(400)
+          .json({
+            error: `Invalid job type. Must be one of: ${VALID_JOB_TYPES.join(", ")}`,
+          });
         return;
       }
 
@@ -440,9 +425,11 @@ export const createQueueRouter = ({
         typeof payload.prompt === "string" &&
         payload.prompt.length > MAX_TASK_INPUT_LENGTH
       ) {
-        res.status(400).json({
-          error: `Prompt exceeds ${MAX_TASK_INPUT_LENGTH} characters`,
-        });
+        res
+          .status(400)
+          .json({
+            error: `Prompt exceeds ${MAX_TASK_INPUT_LENGTH} characters`,
+          });
         return;
       }
 
@@ -473,37 +460,6 @@ export const createQueueRouter = ({
         notifyViaTelegram: notifyViaTelegram ?? undefined,
         telegramChatId: telegramChatId ?? undefined,
       });
-
-      // Validate video_duration against allowed values (#796 review)
-      if (
-        (type === "txt2video" || type === "img2video") &&
-        payload.video_duration != null &&
-        !(VALID_VIDEO_DURATIONS as readonly number[]).includes(payload.video_duration)
-      ) {
-        res.status(400).json({
-          error: `Invalid video_duration. Must be one of: ${VALID_VIDEO_DURATIONS.join(", ")}`,
-        });
-        return;
-      }
-
-      // Multi-segment video decomposition (#790):
-      // When a video job requests duration > 4s, decompose into segment sub-jobs.
-      if (
-        (type === "txt2video" || type === "img2video") &&
-        payload.video_duration &&
-        payload.video_duration > 4
-      ) {
-        const firstSegId = queueMaster.decomposeMultiSegmentJob(
-          job.id,
-          payload,
-          payload.video_duration,
-        );
-        if (firstSegId) {
-          logger.info(
-            `[QueueAPI] Multi-segment decomposition: parent=${job.id}, first segment=${firstSegId}, duration=${payload.video_duration}s`,
-          );
-        }
-      }
 
       logger.info(
         `[QueueAPI] Job created: ${job.id} (${job.type} → ${job.targetNode})`,
@@ -777,15 +733,19 @@ export const createQueueRouter = ({
       ];
 
       if (visibility && !VALID_VISIBILITY.includes(visibility)) {
-        res.status(400).json({
-          error: `visibility must be one of: ${VALID_VISIBILITY.join(", ")}`,
-        });
+        res
+          .status(400)
+          .json({
+            error: `visibility must be one of: ${VALID_VISIBILITY.join(", ")}`,
+          });
         return;
       }
       if (category && !VALID_CATEGORY.includes(category)) {
-        res.status(400).json({
-          error: `category must be one of: ${VALID_CATEGORY.join(", ")}`,
-        });
+        res
+          .status(400)
+          .json({
+            error: `category must be one of: ${VALID_CATEGORY.join(", ")}`,
+          });
         return;
       }
 
@@ -974,9 +934,11 @@ export const createQueueRouter = ({
 
       // Validate MIME type against allowlist
       if (!ALLOWED_UPLOAD_MIMES.has(mime_type)) {
-        res.status(400).json({
-          error: `Unsupported MIME type: ${mime_type}. Allowed: ${[...ALLOWED_UPLOAD_MIMES].join(", ")}`,
-        });
+        res
+          .status(400)
+          .json({
+            error: `Unsupported MIME type: ${mime_type}. Allowed: ${[...ALLOWED_UPLOAD_MIMES].join(", ")}`,
+          });
         return;
       }
 
@@ -985,9 +947,11 @@ export const createQueueRouter = ({
 
       // Validate decoded file size
       if (buffer.length > MAX_UPLOAD_BYTES) {
-        res.status(413).json({
-          error: `File too large: ${buffer.length} bytes exceeds ${MAX_UPLOAD_BYTES} byte limit`,
-        });
+        res
+          .status(413)
+          .json({
+            error: `File too large: ${buffer.length} bytes exceeds ${MAX_UPLOAD_BYTES} byte limit`,
+          });
         return;
       }
 
@@ -1296,12 +1260,14 @@ export const createQueueRouter = ({
           });
       }
 
-      res.status(201).json({
-        assetId,
-        provider: result.provider,
-        model: modelLabel,
-        filename,
-      });
+      res
+        .status(201)
+        .json({
+          assetId,
+          provider: result.provider,
+          model: modelLabel,
+          filename,
+        });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       logger.warn(`[QueueAPI] Cloud image generate failed: ${msg}`);
@@ -1355,9 +1321,11 @@ export const createQueueRouter = ({
           targetNode !== "m2-pro" &&
           targetNode !== "local")
       ) {
-        res.status(400).json({
-          error: "targetNode must be 'mac-mini', 'm2-pro', or 'local'",
-        });
+        res
+          .status(400)
+          .json({
+            error: "targetNode must be 'mac-mini', 'm2-pro', or 'local'",
+          });
         return;
       }
 

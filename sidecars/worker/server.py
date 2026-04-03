@@ -734,7 +734,7 @@ async def extract_last_frame(request: LastFrameRequest):
     video_path = request.video_path
     # Security: resolve path and restrict to gallery directory (path traversal protection)
     vp = Path(video_path).resolve()
-    if not str(vp).startswith(str(GALLERY_DIR)):
+    if not vp.is_relative_to(GALLERY_DIR):
         raise HTTPException(status_code=403, detail="Access denied: path outside gallery directory")
     if not vp.exists():
         raise HTTPException(status_code=404, detail="Video file not found")

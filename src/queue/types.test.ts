@@ -11,10 +11,6 @@ import {
   VALID_PIPELINE_TYPES,
   VALID_TILING_MODES,
   LTX_MODEL_CATALOG,
-  VALID_VIDEO_DURATIONS,
-  SEGMENT_DURATION_SEC,
-  computeSegmentCount,
-  computeAggregateProgress,
 } from "./types.js";
 
 describe("targetNodeForJobType", () => {
@@ -119,64 +115,5 @@ describe("LTX_MODEL_CATALOG", () => {
   it("includes LTX-2.3 models", () => {
     const v23Models = LTX_MODEL_CATALOG.filter((m) => m.version === "2.3");
     expect(v23Models.length).toBeGreaterThanOrEqual(1);
-  });
-});
-
-describe("VALID_VIDEO_DURATIONS", () => {
-  it("contains 4, 8, 12, 16", () => {
-    expect([...VALID_VIDEO_DURATIONS]).toEqual([4, 8, 12, 16]);
-  });
-});
-
-describe("computeSegmentCount", () => {
-  it("returns 1 for durations <= 4s", () => {
-    expect(computeSegmentCount(1)).toBe(1);
-    expect(computeSegmentCount(4)).toBe(1);
-    expect(computeSegmentCount(SEGMENT_DURATION_SEC)).toBe(1);
-  });
-
-  it("returns 2 for 8s", () => {
-    expect(computeSegmentCount(8)).toBe(2);
-  });
-
-  it("returns 3 for 12s", () => {
-    expect(computeSegmentCount(12)).toBe(3);
-  });
-
-  it("returns 4 for 16s", () => {
-    expect(computeSegmentCount(16)).toBe(4);
-  });
-
-  it("rounds up for non-exact multiples", () => {
-    expect(computeSegmentCount(5)).toBe(2);
-    expect(computeSegmentCount(9)).toBe(3);
-  });
-});
-
-describe("computeAggregateProgress", () => {
-  it("returns 0 for 0 total segments", () => {
-    expect(computeAggregateProgress(0, 0, 0)).toBe(0);
-  });
-
-  it("returns 100 when all segments are complete", () => {
-    expect(computeAggregateProgress(4, 4, 0)).toBe(100);
-  });
-
-  it("computes weighted average correctly", () => {
-    // 4 segments, 1 complete, current at 50% → (100 + 50) / 4 = 37.5
-    expect(computeAggregateProgress(4, 1, 50)).toBe(37.5);
-  });
-
-  it("returns 25 for 4 segments with first at 100%", () => {
-    expect(computeAggregateProgress(4, 1, 0)).toBe(25);
-  });
-
-  it("returns 50 for 2 segments with one complete and second at 0%", () => {
-    expect(computeAggregateProgress(2, 1, 0)).toBe(50);
-  });
-
-  it("clamps current segment progress to 0-100", () => {
-    expect(computeAggregateProgress(2, 0, 150)).toBe(50);
-    expect(computeAggregateProgress(2, 0, -50)).toBe(0);
   });
 });
