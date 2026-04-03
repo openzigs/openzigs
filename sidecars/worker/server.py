@@ -142,10 +142,10 @@ class GenerateRequest(BaseModel):
     num_inference_steps: int | None = None  # DEV pipeline only; default 20
     # LTX Video Engine v2 fields
     audio: bool = False  # Enable synchronized audio generation
-    tiling: str = "aggressive"  # VAE tiling: auto, none, default, aggressive, conservative
-    model_repo: str | None = None  # Override model repository
+    tiling: str = Field(default="aggressive", pattern=r"^(auto|none|default|aggressive|conservative)$")
+    model_repo: str | None = Field(default=None, max_length=200, pattern=r"^[A-Za-z0-9_\-]+/[A-Za-z0-9_\-\.]+$")
     enhance_prompt: bool = False  # Gemma-based prompt enhancement
-    image_strength: float = 1.0  # I2V conditioning strength (0.0–1.0)
+    image_strength: float = Field(default=1.0, ge=0.0, le=1.0)  # I2V conditioning strength
 
 class StatusResponse(BaseModel):
     is_busy: bool
