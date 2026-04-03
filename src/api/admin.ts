@@ -1203,6 +1203,7 @@ export type AdminRouterOptions = {
   nativeMcpTester?: NativeMcpTester;
   pipelineTemplateManager?: PipelineTemplateManager;
   socialBrain?: import("../channels/social/social-brain.js").SocialBrain;
+  videoPresetsRepo?: import("../queue/video-presets.js").VideoPresetsRepository;
 };
 
 type SchedulerSuggestion = {
@@ -1316,6 +1317,7 @@ export const createAdminRouter = ({
   nativeMcpTester,
   pipelineTemplateManager,
   socialBrain,
+  videoPresetsRepo,
 }: AdminRouterOptions): Router => {
   const router = Router();
   const mcpTester = nativeMcpTester ?? new CopilotNativeMcpTester();
@@ -6631,6 +6633,85 @@ export const createAdminRouter = ({
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return res.status(500).json({ error: message });
+    }
+  });
+
+  // ── Video Generation Presets (#757) ───────────────────────────────────────
+
+  router.get("/video-presets", (_req, res) => {
+    if (!videoPresetsRepo)
+      return res.status(503).json({ error: "Video presets not available" });
+    return res.json({ presets: videoPresetsRepo.listPresets() });
+  });
+
+  router.get("/video-presets/:id", (req, res) => {
+    if (!videoPresetsRepo)
+      return res.status(503).json({ error: "Video presets not available" });
+    const preset = videoPresetsRepo.getPreset(req.params.id);
+    if (!preset) return res.status(404).json({ error: "Preset not found" });
+    return res.json(preset);
+  });
+
+  router.post("/video-presets", (req, res) => {
+    if (!videoPresetsRepo)
+      return res.status(503).json({ error: "Video presets not available" });
+    try {
+      const { name, description, config } = req.body as {
+        name?: string;
+        description?: string;
+        config?: Record<string, unknown>;
+      };
+      if (!name || typeof name !== "string" || !name.trim())
+        return res.status(400).json({ error: "name is required" });
+      if (!config || typeof config !== "object")
+        return res.status(400).json({ error: "config object is required" });
+      const preset = videoPresetsRepo.createPreset(
+        name.trim(),
+        typeof description === "string" ? description : null,
+        config,
+      );
+      return res.status(201).json(preset);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const status = message.includes("UNIQUE constraint") ? 409 : 500;
+      return res.status(status).json({ error: message });
+    }
+  });
+
+  router.put("/video-presets/:id", (req, res) => {
+    if (!videoPresetsRepo)
+      return res.status(503).json({ error: "Video presets not available" });
+    try {
+      const { name, description, config } = req.body as {
+        name?: string;
+        description?: string | null;
+        config?: Record<string, unknown>;
+      };
+      const updated = videoPresetsRepo.updatePreset(req.params.id, {
+        name,
+        description,
+        config,
+      });
+      if (!updated) return res.status(404).json({ error: "Preset not found" });
+      return res.json(updated);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const status = message.includes("built-in") ? 403 : 500;
+      return res.status(status).json({ error: message });
+    }
+  });
+
+  router.delete("/video-presets/:id", (req, res) => {
+    if (!videoPresetsRepo)
+      return res.status(503).json({ error: "Video presets not available" });
+    try {
+      const deleted = videoPresetsRepo.deletePreset(req.params.id);
+      if (!deleted) return res.status(404).json({ error: "Preset not found" });
+      return res.json({ ok: true });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const status = message.includes("built-in") ? 403 : 500;
+      return res.status(status).json({ error: message });
     }
   });
 

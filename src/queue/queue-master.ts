@@ -952,6 +952,15 @@ export class QueueMaster extends EventEmitter {
       enhance_prompt: job.payload.enhance_prompt ?? false,
     };
 
+    // Derive progress_url from callback_url for real-time progress streaming (#762)
+    const progressUrl = this.config.callbackUrl.replace(
+      /\/complete$/,
+      "/progress",
+    );
+    if (progressUrl !== this.config.callbackUrl) {
+      body.progress_url = progressUrl;
+    }
+
     if (job.payload.model_repo) {
       body.model_repo = job.payload.model_repo;
     }

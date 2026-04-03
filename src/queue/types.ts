@@ -227,6 +227,8 @@ export interface MediaJobPayload {
   enhance_prompt?: boolean;
   /** Image conditioning strength for img2video (0.0–1.0, default 1.0) */
   image_strength?: number;
+  /** URL for the sidecar to POST real-time progress updates */
+  progress_url?: string;
 }
 
 // ── Stored Job ────────────────────────────────────────────────

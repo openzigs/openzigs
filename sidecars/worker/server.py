@@ -146,6 +146,7 @@ class GenerateRequest(BaseModel):
     model_repo: str | None = Field(default=None, max_length=200, pattern=r"^[A-Za-z0-9_\-]+/[A-Za-z0-9_\-\.]+$")
     enhance_prompt: bool = False  # Gemma-based prompt enhancement
     image_strength: float = Field(default=1.0, ge=0.0, le=1.0)  # I2V conditioning strength
+    progress_url: str | None = None  # URL for real-time progress updates (#762)
 
 class StatusResponse(BaseModel):
     is_busy: bool
@@ -449,6 +450,39 @@ def _encode_with_videotoolbox(input_path: str, output_path: str, fps: int, has_a
         subprocess.run(cmd_fallback, capture_output=True, text=True, timeout=120, check=True)
 
 
+# ── Progress Reporting (#762) ────────────────────────────────
+
+_last_progress_time: float = 0.0
+_PROGRESS_THROTTLE_SEC: float = 0.5  # Max 2 POSTs/second
+
+
+async def _report_progress(
+    job_id: str,
+    progress_url: str | None,
+    stage: str,
+    progress: int,
+    message: str = "",
+) -> None:
+    """POST a progress update to the Node.js server (throttled to 2/sec)."""
+    global _last_progress_time
+    if not progress_url:
+        return
+    now = time.monotonic()
+    if now - _last_progress_time < _PROGRESS_THROTTLE_SEC:
+        return
+    _last_progress_time = now
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            await client.post(progress_url, json={
+                "job_id": job_id,
+                "stage": stage,
+                "progress": progress,
+                "message": message,
+            })
+    except Exception as e:
+        logger.debug(f"Progress report failed (non-fatal): {e}")
+
+
 # ── Async Job Runner ─────────────────────────────────────────
 
 async def run_generation_job(request: GenerateRequest):
@@ -458,8 +492,12 @@ async def run_generation_job(request: GenerateRequest):
         await state.set_busy(True)
         logger.info(f"Starting job {request.job_id} ({request.type}) callback_url={request.callback_url}")
 
+        # Report initial progress (#762)
+        await _report_progress(request.job_id, request.progress_url, "Initializing", 0, "Loading model…")
+
         # Run CPU/GPU-bound generation in a thread pool
         if request.type in ("txt2video", "img2video"):
+            await _report_progress(request.job_id, request.progress_url, "Generating", 10, "Model loaded, generating video…")
             media_bytes = await asyncio.get_event_loop().run_in_executor(
                 None, generate_video_ltx2, request
             )
@@ -469,6 +507,9 @@ async def run_generation_job(request: GenerateRequest):
 
         elapsed = time.time() - start
         logger.info(f"Job {request.job_id} generation done in {elapsed:.1f}s ({len(media_bytes)} bytes)")
+
+        # Report encoding progress (#762)
+        await _report_progress(request.job_id, request.progress_url, "Encoding", 80, "Re-encoding with H.264…")
 
         # Encode + POST result — this can take several seconds for large videos
         logger.info(f"Job {request.job_id} encoding base64 ({len(media_bytes):,} bytes)...")
@@ -500,6 +541,9 @@ async def run_generation_job(request: GenerateRequest):
         async with httpx.AsyncClient(timeout=60.0) as client:
             resp = await client.post(validated_url, json=payload)
             logger.info(f"Webhook callback: {resp.status_code}")
+
+        # Report completion progress (#762)
+        await _report_progress(request.job_id, request.progress_url, "Complete", 100, "Video delivered")
 
     except Exception as e:
         elapsed = time.time() - start
