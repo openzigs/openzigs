@@ -2331,6 +2331,16 @@ function GalleryStudio({
   const isMusic = form.mode === "txt2music";
   const needsImage = form.mode === "img2img" || form.mode === "img2video";
 
+  // Auto-disable audio when effective frame count exceeds safe limit for 32GB
+  const AUDIO_SAFE_FRAME_LIMIT = 97;
+  const effectiveFrames =
+    form.num_frames * Math.max(1, Math.ceil(form.video_duration / 4));
+  const audioDisabledByFrames =
+    isVideo && effectiveFrames > AUDIO_SAFE_FRAME_LIMIT;
+  if (audioDisabledByFrames && form.audio) {
+    setForm((prev) => ({ ...prev, audio: false }));
+  }
+
   const fluxQLabel =
     imageGenMode === "network"
       ? "FluxQ (Network — via Admin)"
@@ -3208,15 +3218,32 @@ function GalleryStudio({
 
           {/* Audio & AI Enhance toggles (#784, #786) */}
           <div className="mb-4 flex items-center gap-4">
-            <label className="flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-1.5 text-sm cursor-pointer hover:bg-muted/50 transition">
-              <input
-                type="checkbox"
-                checked={form.audio}
-                onChange={(e) => update("audio", e.target.checked)}
-                className="rounded"
-              />
-              <span className="text-foreground">Audio</span>
-            </label>
+            <div className="relative group">
+              <label
+                className={`flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-1.5 text-sm transition ${
+                  audioDisabledByFrames
+                    ? "opacity-50 cursor-not-allowed"
+                    : "cursor-pointer hover:bg-muted/50"
+                }`}
+              >
+                <input
+                  type="checkbox"
+                  checked={form.audio}
+                  onChange={(e) => update("audio", e.target.checked)}
+                  className="rounded"
+                  disabled={audioDisabledByFrames}
+                />
+                <span className="text-foreground">Audio</span>
+              </label>
+              {audioDisabledByFrames && (
+                <div className="absolute bottom-full left-0 mb-1 hidden group-hover:block z-50 w-56 rounded-lg bg-popover border border-border px-3 py-2 text-[11px] text-muted-foreground shadow-lg">
+                  Audio is disabled because the effective frame count (
+                  {effectiveFrames}) exceeds the safe limit of{" "}
+                  {AUDIO_SAFE_FRAME_LIMIT} for audio+video on 32GB systems.
+                  Reduce duration or frame count to enable audio.
+                </div>
+              )}
+            </div>
             {form.audio && (
               <p className="text-[10px] text-amber-600 dark:text-amber-400">
                 Adds ~30% generation time

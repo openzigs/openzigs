@@ -716,6 +716,11 @@ async def unload():
     return {"status": "unloaded", "previous_model": prev}
 
 
+# Safe directory for video file access — only files within this directory
+# (or subdirectories) are permitted for the /last-frame endpoint.
+GALLERY_DIR = Path(os.environ.get("GALLERY_DIR", str(Path.home() / ".openzigs" / "gallery"))).resolve()
+
+
 class LastFrameRequest(BaseModel):
     video_path: str = Field(..., min_length=1, max_length=1024)
 
@@ -727,10 +732,12 @@ async def extract_last_frame(request: LastFrameRequest):
     becomes segment N+1's init_image for visual continuity.
     """
     video_path = request.video_path
-    # Security: validate path exists and is a regular file
-    vp = Path(video_path)
+    # Security: resolve path and restrict to gallery directory (path traversal protection)
+    vp = Path(video_path).resolve()
+    if not str(vp).startswith(str(GALLERY_DIR)):
+        raise HTTPException(status_code=403, detail="Access denied: path outside gallery directory")
     if not vp.exists():
-        raise HTTPException(status_code=404, detail=f"Video file not found: {video_path}")
+        raise HTTPException(status_code=404, detail="Video file not found")
     if not vp.is_file():
         raise HTTPException(status_code=400, detail="Path is not a regular file")
     # Only allow video files
@@ -753,9 +760,10 @@ async def extract_last_frame(request: LastFrameRequest):
         )
         if result.returncode != 0:
             stderr = result.stderr.decode("utf-8", errors="replace")[:500]
+            logger.error(f"ffmpeg failed for {vp}: {stderr}")
             raise HTTPException(
                 status_code=500,
-                detail=f"ffmpeg failed (exit {result.returncode}): {stderr}",
+                detail="Frame extraction failed",
             )
         if not result.stdout:
             raise HTTPException(status_code=500, detail="ffmpeg produced no output")

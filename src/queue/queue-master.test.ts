@@ -1413,4 +1413,232 @@ describe("QueueMaster", () => {
       );
     });
   });
+
+  describe("handleSegmentCompletion", () => {
+    function setupTracker(segCount: number) {
+      const payload = { prompt: "a sunset", video_duration: segCount * 4 };
+      // Decompose to initialize the segmentTracker
+      repo.createJob.mockReturnValue({ id: "seg-0" });
+      qm.decomposeMultiSegmentJob("parent-hsc", payload, segCount * 4);
+      repo.createJob.mockClear();
+    }
+
+    it("chains next segment when more remain", async () => {
+      setupTracker(3);
+      // Mock extractLastFrame via fetch
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ image_base64: "fakebase64" }),
+      });
+      repo.createJob.mockReturnValue({ id: "seg-1" });
+
+      const segJob = makeJob({
+        id: "seg-0",
+        type: "txt2video",
+        payload: {
+          prompt: "a sunset",
+          segmentIndex: 0,
+          totalSegments: 3,
+          parentJobId: "parent-hsc",
+        },
+      });
+
+      const progressHandler = vi.fn();
+      qm.on("job:progress", progressHandler);
+
+      await qm.handleSegmentCompletion("seg-0", segJob, "/tmp/seg0.mp4");
+
+      // Should have created the next segment job
+      expect(repo.createJob).toHaveBeenCalledTimes(1);
+      expect(repo.createJob).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "img2video",
+          payload: expect.objectContaining({
+            segmentIndex: 1,
+            totalSegments: 3,
+            parentJobId: "parent-hsc",
+            init_image: "fakebase64",
+            audio: false,
+          }),
+        }),
+      );
+      // Should have emitted progress
+      expect(progressHandler).toHaveBeenCalled();
+    });
+
+    it("returns early if parentJobId is missing", async () => {
+      const segJob = makeJob({
+        id: "seg-orphan",
+        payload: { prompt: "orphan" },
+      });
+      await qm.handleSegmentCompletion("seg-orphan", segJob, "/tmp/seg.mp4");
+      expect(repo.createJob).not.toHaveBeenCalled();
+    });
+
+    it("warns and returns if tracker is missing for parentJobId", async () => {
+      const segJob = makeJob({
+        id: "seg-unknown",
+        payload: {
+          prompt: "x",
+          parentJobId: "no-such-parent",
+          segmentIndex: 0,
+        },
+      });
+      await qm.handleSegmentCompletion("seg-unknown", segJob, "/tmp/seg.mp4");
+      expect(repo.createJob).not.toHaveBeenCalled();
+    });
+
+    it("fails parent job after retry failure in chaining", async () => {
+      setupTracker(2);
+      // Both extractLastFrame attempts fail
+      mockFetch.mockRejectedValueOnce(new Error("network error"));
+      mockFetch.mockRejectedValueOnce(new Error("retry error"));
+
+      repo.getJob.mockReturnValue(makeJob({ id: "parent-hsc" }));
+
+      const segJob = makeJob({
+        id: "seg-0",
+        type: "txt2video",
+        payload: {
+          prompt: "x",
+          segmentIndex: 0,
+          totalSegments: 2,
+          parentJobId: "parent-hsc",
+        },
+      });
+
+      const failHandler = vi.fn();
+      qm.on("job:failed", failHandler);
+
+      await qm.handleSegmentCompletion("seg-0", segJob, "/tmp/seg0.mp4");
+
+      expect(repo.markFailed).toHaveBeenCalledWith(
+        "parent-hsc",
+        expect.stringContaining("Segment chaining failed"),
+      );
+      expect(failHandler).toHaveBeenCalled();
+    });
+
+    it("triggers stitching when all segments are complete", async () => {
+      setupTracker(2);
+      // Complete first segment
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ image_base64: "base64frame" }),
+      });
+      repo.createJob.mockReturnValue({ id: "seg-1" });
+
+      const seg0Job = makeJob({
+        id: "seg-0",
+        type: "txt2video",
+        payload: {
+          prompt: "x",
+          segmentIndex: 0,
+          totalSegments: 2,
+          parentJobId: "parent-hsc",
+        },
+      });
+      await qm.handleSegmentCompletion("seg-0", seg0Job, "/tmp/seg0.mp4");
+
+      // Now complete second segment — should trigger stitching
+      // Mock ffmpeg for stitching
+      const { execFile: execFileMock } = await import("node:child_process");
+      (execFileMock as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+        (_cmd: string, _args: string[], _opts: unknown, cb: Function) => {
+          cb(null, "", "");
+        },
+      );
+
+      repo.getJob.mockReturnValue(makeJob({ id: "parent-hsc" }));
+
+      const seg1Job = makeJob({
+        id: "seg-1",
+        type: "img2video",
+        payload: {
+          prompt: "x",
+          segmentIndex: 1,
+          totalSegments: 2,
+          parentJobId: "parent-hsc",
+        },
+      });
+
+      const completeHandler = vi.fn();
+      qm.on("job:complete", completeHandler);
+
+      await qm.handleSegmentCompletion("seg-1", seg1Job, "/tmp/seg1.mp4");
+
+      // Should have marked the parent complete
+      expect(repo.markComplete).toHaveBeenCalledWith(
+        "parent-hsc",
+        expect.stringContaining("stitched.mp4"),
+        expect.objectContaining({ segments: 2 }),
+        "asset-1",
+      );
+      expect(completeHandler).toHaveBeenCalled();
+    });
+  });
+
+  describe("stitchSegments — error paths", () => {
+    it("handles single segment file without ffmpeg", async () => {
+      // Access the private method via prototype
+      const tracker = {
+        totalSegments: 2,
+        segmentFiles: ["/tmp/seg0.mp4", null],
+        parentPayload: { prompt: "test" },
+      };
+
+      repo.getJob.mockReturnValue(makeJob({ id: "parent-stitch" }));
+
+      // Only 1 valid file — should treat as single segment
+      await (qm as any).stitchSegments("parent-stitch", tracker);
+
+      expect(repo.markComplete).toHaveBeenCalledWith(
+        "parent-stitch",
+        expect.stringContaining("seg0.mp4"),
+        { segments: 1 },
+      );
+    });
+
+    it("fails parent job when ffmpeg stitching throws", async () => {
+      const { execFile: execFileMock } = await import("node:child_process");
+      (execFileMock as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+        (_cmd: string, _args: string[], _opts: unknown, cb: Function) => {
+          cb(new Error("ffmpeg crashed"), "", "");
+        },
+      );
+
+      const tracker = {
+        totalSegments: 2,
+        segmentFiles: ["/tmp/seg0.mp4", "/tmp/seg1.mp4"],
+        parentPayload: { prompt: "test" },
+      };
+
+      repo.getJob.mockReturnValue(makeJob({ id: "parent-fail" }));
+
+      const failHandler = vi.fn();
+      qm.on("job:failed", failHandler);
+
+      await (qm as any).stitchSegments("parent-fail", tracker);
+
+      expect(repo.markFailed).toHaveBeenCalledWith(
+        "parent-fail",
+        expect.stringContaining("Segment stitching failed"),
+      );
+      expect(failHandler).toHaveBeenCalled();
+    });
+
+    it("handles zero valid segment files gracefully", async () => {
+      const tracker = {
+        totalSegments: 2,
+        segmentFiles: [null, null],
+        parentPayload: { prompt: "test" },
+      };
+
+      await (qm as any).stitchSegments("parent-empty", tracker);
+
+      // Should not mark complete or crash
+      expect(repo.markComplete).not.toHaveBeenCalled();
+      expect(repo.markFailed).not.toHaveBeenCalled();
+    });
+  });
 });

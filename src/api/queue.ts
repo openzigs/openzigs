@@ -23,6 +23,7 @@ import {
   MAX_VIDEO_FRAMES,
   MAX_VIDEO_DURATION_SEC,
   DEFAULT_VIDEO_FPS,
+  VALID_VIDEO_DURATIONS,
 } from "../queue/types.js";
 import type { CharacterRepository } from "../characters/character-repository.js";
 import type { KnowledgeIngestionService } from "../knowledge/index.js";
@@ -472,6 +473,18 @@ export const createQueueRouter = ({
         notifyViaTelegram: notifyViaTelegram ?? undefined,
         telegramChatId: telegramChatId ?? undefined,
       });
+
+      // Validate video_duration against allowed values (#796 review)
+      if (
+        (type === "txt2video" || type === "img2video") &&
+        payload.video_duration != null &&
+        !(VALID_VIDEO_DURATIONS as readonly number[]).includes(payload.video_duration)
+      ) {
+        res.status(400).json({
+          error: `Invalid video_duration. Must be one of: ${VALID_VIDEO_DURATIONS.join(", ")}`,
+        });
+        return;
+      }
 
       // Multi-segment video decomposition (#790):
       // When a video job requests duration > 4s, decompose into segment sub-jobs.

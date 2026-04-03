@@ -8025,11 +8025,51 @@ Click **Create Asset** on the Gallery page to open the inline creation studio. F
 |---|---|---|
 | **Text → Image** | Generate an image from a text prompt | Width, Height, Steps, Guidance, Seed, Character (LoRA), ControlNet Strength |
 | **Image → Image** | Transform an uploaded image with a prompt | Source image upload, Strength (0–1), Steps, Guidance |
-| **Text → Video** | Generate a video clip with optional synchronized audio from a text prompt | Frames (max 97), FPS, computed Duration display, Audio toggle, Pipeline (distilled/dev/dev-two-stage/dev-two-stage-hq), Tiling mode, Model selection |
+| **Text → Video** | Generate a video clip with optional synchronized audio from a text prompt | Frames (max 97), FPS, computed Duration display, Audio toggle, Pipeline (distilled/dev/dev-two-stage/dev-two-stage-hq), Tiling mode, Model selection, Duration (4–16s), Presets |
 | **Image → Video** | Animate an uploaded image with a motion prompt and optional audio | Source image upload, Frames, FPS, Duration, Audio toggle, Pipeline, Tiling mode |
 | **Text → Music** | Generate music from a text description | Duration (10–300s), Inference Steps (8–27, default 20), Instrumental toggle, Lyrics textarea, Seed |
 
 All jobs are submitted to the queue via **Submit to Queue** and processed by the appropriate worker node.
+
+#### Video Engine Controls
+
+When in **Text → Video** or **Image → Video** mode, the following advanced controls are available:
+
+- **Pipeline Selector** — Choose the generation pipeline:
+  - *Distilled* — Fast 2-stage pipeline (~2 min, good quality)
+  - *Dev* — CFG-guided photorealistic pipeline (~10 min, highest quality)
+  - *2-Stage* — Two-stage denoising pipeline
+  - *2-Stage HQ* — High-quality two-stage variant
+- **Audio Toggle** — Enable synchronized audio generation. Adds ~30% generation time. Automatically disabled when effective frame count exceeds 97 (the memory-safe limit for audio+video on 32GB M2 Pro). A tooltip explains the reason when disabled.
+- **VAE Tiling Mode** — Controls spatial/temporal chunking during VAE decode:
+  - *Auto* — Let the engine decide based on resolution
+  - *None* — No tiling (fastest but may OOM at high resolution)
+  - *Default* — Standard tiling
+  - *Aggressive* — Maximum chunking (safest for 32GB, recommended)
+  - *Conservative* — Minimal tiling
+- **AI Enhance Prompt** — Uses the text encoder to expand and refine your prompt before generation.
+- **Model Selector** — Choose from available LTX model variants with displayed memory requirements.
+- **Preset Picker** — Load or save parameter presets:
+  - Built-in presets: *Quick Draft*, *Standard*, *High Quality*
+  - Save custom presets with a name for quick reuse
+
+#### Multi-Segment Video Duration
+
+The **Duration** selector enables video generation beyond the 4-second hardware limit:
+
+| Duration | Segments | Generation Time |
+|---|---|---|
+| 4s | 1 | ~2 min (distilled) |
+| 8s | 2 | ~4–5 min |
+| 12s | 3 | ~6–8 min |
+| 16s | 4 | ~8–10 min |
+
+When a duration longer than 4s is selected:
+1. The job is decomposed into N × 4-second segment sub-jobs
+2. Each segment chains to the next using the last frame as an init_image for visual continuity
+3. After all segments complete, they are stitched together with 0.5-second crossfade transitions
+4. If audio is enabled, it is generated once on the final stitched video (not per-segment)
+5. Progress is reported as "Segment N/M" with an aggregate percentage
 
 ### Character Lab (LoRA Training & Identity Consistency)
 
