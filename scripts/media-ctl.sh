@@ -353,12 +353,20 @@ ltx_generate() {
   load_ltx_env
   local url
   url=$(ltx_api_url)
-  local pipeline="${1:-dev}"
+  local pipeline="${1:-distilled}"
   local prompt="${2:-A cat sitting on a windowsill watching rain fall outside, cozy atmosphere, warm lighting, photorealistic, cinematic}"
+  local audio="${3:-false}"
+  local tiling="${4:-aggressive}"
   local job_id
   job_id=$(python3 -c "import uuid; print(uuid.uuid4())")
 
-  info "Submitting test job — pipeline=$pipeline"
+  # Validate pipeline
+  case "$pipeline" in
+    distilled|dev|dev-two-stage|dev-two-stage-hq) ;;
+    *) fail "Unknown pipeline: $pipeline. Valid: distilled|dev|dev-two-stage|dev-two-stage-hq" ;;
+  esac
+
+  info "Submitting test job — pipeline=$pipeline audio=$audio tiling=$tiling"
   info "Prompt: \"$prompt\""
 
   local -a curl_opts=(-s -X POST "$url/generate" -H "Content-Type: application/json")
@@ -366,6 +374,7 @@ ltx_generate() {
     curl_opts+=(-H "Authorization: Bearer $LTX_SECRET_TOKEN")
   fi
 
+  # Use low resolution/frames for quick smoke test
   local response http_code body
   response=$(curl "${curl_opts[@]}" \
     -d "{
@@ -378,6 +387,8 @@ ltx_generate() {
       \"fps\": 24,
       \"model\": \"ltx-2\",
       \"pipeline\": \"$pipeline\",
+      \"audio\": $audio,
+      \"tiling\": \"$tiling\",
       \"cfg_scale\": 4.5,
       \"num_inference_steps\": 15,
       \"negative_prompt\": \"worst quality, blurry, distorted\",
@@ -392,10 +403,20 @@ ltx_generate() {
   if [[ "$http_code" == "202" ]]; then
     ok "Job accepted (id=$job_id)"
     info "Watch progress: $0 ltx logs"
-    info "Video saves to $(ltx_api_url)/... when complete — or use tmp/test_ltx_video.py for full callback handling"
+    info "Video saves when sidecar POSTs to callback_url. Use a real callback for full output."
   else
     fail "HTTP $http_code — $body"
   fi
+}
+
+ltx_models() {
+  local url
+  url=$(ltx_api_url)
+  info "Fetching model catalog from $url/models"
+  local response
+  response=$(curl -sf --max-time 5 "$url/models" 2>/dev/null) \
+    || fail "Could not reach $url/models — is the LTX worker running?"
+  echo "$response" | python3 -m json.tool 2>/dev/null || echo "$response"
 }
 
 # ── Unified Commands ─────────────────────────────────────────────────────────
@@ -475,7 +496,8 @@ cmd_help() {
   echo -e "    ${CYAN}ltx logs${NC}             Tail LTX worker logs"
   echo -e "    ${CYAN}ltx unload${NC}           Unload model from VRAM"
   echo -e "    ${CYAN}ltx sync${NC}             Sync server.py from repo → ~/ltx-worker"
-  echo -e "    ${CYAN}ltx generate [p] [t]${NC} Quick test: pipeline (dev|distilled) + prompt"
+  echo -e "    ${CYAN}ltx generate [pipeline] [prompt] [audio] [tiling]${NC} Quick test generation"
+  echo -e "    ${CYAN}ltx models${NC}           List available LTX model catalog from worker"
   echo
   echo -e "  ${BOLD}Unified commands:${NC}"
   echo -e "    ${CYAN}status${NC}               Show status of both services"
@@ -489,8 +511,10 @@ cmd_help() {
   echo
   echo -e "  ${YELLOW}Note:${NC} Both services share M2 unified memory."
   echo -e "        Only one model can be loaded at a time."
-  echo -e "        Video gen supports 'distilled' (fast) and 'dev' (photorealistic) pipelines."
-  echo -e "        On M2 Pro 32GB, DEV pipeline max resolution is 512x320."
+  echo -e "        Video gen pipelines: distilled (fast), dev (photorealistic),"
+  echo -e "          dev-two-stage (quality), dev-two-stage-hq (max quality)."
+  echo -e "        Run 'ltx models' to see the full model catalog with memory requirements."
+  echo -e "        On M2 Pro 32GB, 2-stage pipelines max out at 768x512."
 }
 
 # ── Service Dispatch ──────────────────────────────────────────────────────────
@@ -532,12 +556,13 @@ dispatch_ltx() {
     unload)   ltx_unload ;;
     sync)     ltx_sync ;;
     generate) ltx_generate "$@" ;;
+    models)   ltx_models ;;
     help|--help|-h)
-      echo -e "Usage: $0 ltx <start|stop|restart|status|logs|unload|sync|generate>"
+      echo -e "Usage: $0 ltx <start|stop|restart|status|logs|unload|sync|generate|models>"
       ;;
     *)
       warn "Unknown ltx command: $cmd"
-      echo -e "Usage: $0 ltx <start|stop|restart|status|logs|unload|sync|generate>"
+      echo -e "Usage: $0 ltx <start|stop|restart|status|logs|unload|sync|generate|models>"
       exit 1
       ;;
   esac

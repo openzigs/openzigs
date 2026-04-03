@@ -68,7 +68,13 @@ interface GalleryAsset {
   created_at: string;
   updated_at: string;
   knowledge_visibility: "public" | "internal" | "private";
-  knowledge_category: "media" | "document" | "presentation" | "social" | "system" | "conversation";
+  knowledge_category:
+    | "media"
+    | "document"
+    | "presentation"
+    | "social"
+    | "system"
+    | "conversation";
 }
 
 interface QueueStats {
@@ -142,24 +148,43 @@ function formatBytes(bytes: number | null): string {
 
 function typeIcon(type: string) {
   switch (type) {
-    case "image": return <ImageIcon className="h-4 w-4" />;
-    case "video": return <Video className="h-4 w-4" />;
-    case "audio": return <Music className="h-4 w-4" />;
-    case "scene": return <Layers className="h-4 w-4" />;
-    default: return <ImageIcon className="h-4 w-4" />;
+    case "image":
+      return <ImageIcon className="h-4 w-4" />;
+    case "video":
+      return <Video className="h-4 w-4" />;
+    case "audio":
+      return <Music className="h-4 w-4" />;
+    case "scene":
+      return <Layers className="h-4 w-4" />;
+    default:
+      return <ImageIcon className="h-4 w-4" />;
   }
 }
 
 function sourceBadge(source: string) {
   const map: Record<string, { label: string; classes: string }> = {
-    generated: { label: "Generated", classes: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" },
-    uploaded: { label: "Uploaded", classes: "bg-sky-500/10 text-sky-600 dark:text-sky-400" },
-    director: { label: "Director", classes: "bg-purple-500/10 text-purple-600 dark:text-purple-400" },
-    ingested: { label: "Ingested", classes: "bg-orange-500/10 text-orange-600 dark:text-orange-400" },
+    generated: {
+      label: "Generated",
+      classes: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
+    },
+    uploaded: {
+      label: "Uploaded",
+      classes: "bg-sky-500/10 text-sky-600 dark:text-sky-400",
+    },
+    director: {
+      label: "Director",
+      classes: "bg-purple-500/10 text-purple-600 dark:text-purple-400",
+    },
+    ingested: {
+      label: "Ingested",
+      classes: "bg-orange-500/10 text-orange-600 dark:text-orange-400",
+    },
   };
   const badge = map[source] ?? map.generated;
   return (
-    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold ${badge.classes}`}>
+    <span
+      className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold ${badge.classes}`}
+    >
       {badge.label}
     </span>
   );
@@ -185,7 +210,14 @@ export default function GalleryPage() {
   // ── Queries ─────────────────────────────────────────
 
   const assetsQuery = useQuery({
-    queryKey: ["gallery-assets", typeFilter, sourceFilter, folderFilter, activeCollection, activeTags],
+    queryKey: [
+      "gallery-assets",
+      typeFilter,
+      sourceFilter,
+      folderFilter,
+      activeCollection,
+      activeTags,
+    ],
     queryFn: () => {
       const params = new URLSearchParams();
       if (typeFilter) params.set("type", typeFilter);
@@ -194,7 +226,9 @@ export default function GalleryPage() {
       if (activeCollection) params.set("collection", activeCollection);
       if (activeTags.length > 0) params.set("tags", activeTags.join(","));
       params.set("limit", "100");
-      return fetchJson<{ assets: GalleryAsset[]; total: number }>(`/api/queue/assets?${params.toString()}`);
+      return fetchJson<{ assets: GalleryAsset[]; total: number }>(
+        `/api/queue/assets?${params.toString()}`,
+      );
     },
     refetchInterval: 5000,
   });
@@ -207,7 +241,10 @@ export default function GalleryPage() {
 
   const foldersQuery = useQuery({
     queryKey: ["gallery-folders"],
-    queryFn: () => fetchJson<{ folders: { folder: string; count: number }[] }>("/api/queue/assets/folders"),
+    queryFn: () =>
+      fetchJson<{ folders: { folder: string; count: number }[] }>(
+        "/api/queue/assets/folders",
+      ),
     refetchInterval: 10000,
   });
 
@@ -238,7 +275,10 @@ export default function GalleryPage() {
 
   const switchMutation = useMutation({
     mutationFn: (body: { targetNode: string; model?: string }) =>
-      fetchJson("/api/queue/nodes/switch", { method: "POST", body: JSON.stringify(body) }),
+      fetchJson("/api/queue/nodes/switch", {
+        method: "POST",
+        body: JSON.stringify(body),
+      }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["queue-nodes"] });
       showToast("Model switch initiated", "success");
@@ -260,8 +300,12 @@ export default function GalleryPage() {
     queryKey: ["queue-active-jobs"],
     queryFn: async () => {
       const [pending, dispatched] = await Promise.all([
-        fetchJson<{ jobs: MediaJob[] }>("/api/queue/jobs?status=pending&limit=50"),
-        fetchJson<{ jobs: MediaJob[] }>("/api/queue/jobs?status=dispatched&limit=50"),
+        fetchJson<{ jobs: MediaJob[] }>(
+          "/api/queue/jobs?status=pending&limit=50",
+        ),
+        fetchJson<{ jobs: MediaJob[] }>(
+          "/api/queue/jobs?status=dispatched&limit=50",
+        ),
       ]);
       return [...pending.jobs, ...dispatched.jobs];
     },
@@ -269,7 +313,8 @@ export default function GalleryPage() {
   });
 
   const cancelJobMutation = useMutation({
-    mutationFn: (id: string) => fetchJson(`/api/queue/jobs/${id}`, { method: "DELETE" }),
+    mutationFn: (id: string) =>
+      fetchJson(`/api/queue/jobs/${id}`, { method: "DELETE" }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["queue-active-jobs"] });
       queryClient.invalidateQueries({ queryKey: ["queue-stats"] });
@@ -279,7 +324,8 @@ export default function GalleryPage() {
   });
 
   const killJobMutation = useMutation({
-    mutationFn: (id: string) => fetchJson(`/api/queue/jobs/${id}/kill`, { method: "POST" }),
+    mutationFn: (id: string) =>
+      fetchJson(`/api/queue/jobs/${id}/kill`, { method: "POST" }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["queue-active-jobs"] });
       queryClient.invalidateQueries({ queryKey: ["queue-stats"] });
@@ -297,7 +343,8 @@ export default function GalleryPage() {
   // ── Mutations ───────────────────────────────────────
 
   const deleteMutation = useMutation({
-    mutationFn: (id: string) => fetchJson(`/api/queue/assets/${id}`, { method: "DELETE" }),
+    mutationFn: (id: string) =>
+      fetchJson(`/api/queue/assets/${id}`, { method: "DELETE" }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["gallery-assets"] });
       showToast("Asset deleted", "success");
@@ -307,7 +354,10 @@ export default function GalleryPage() {
 
   const tagMutation = useMutation({
     mutationFn: ({ id, tags }: { id: string; tags: string[] }) =>
-      fetchJson(`/api/queue/assets/${id}/tags`, { method: "PATCH", body: JSON.stringify({ tags }) }),
+      fetchJson(`/api/queue/assets/${id}/tags`, {
+        method: "PATCH",
+        body: JSON.stringify({ tags }),
+      }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["gallery-assets"] });
       showToast("Tags updated", "success");
@@ -316,7 +366,15 @@ export default function GalleryPage() {
   });
 
   const knowledgeMutation = useMutation({
-    mutationFn: ({ id, visibility, category }: { id: string; visibility: string; category: string }) =>
+    mutationFn: ({
+      id,
+      visibility,
+      category,
+    }: {
+      id: string;
+      visibility: string;
+      category: string;
+    }) =>
       fetchJson(`/api/queue/assets/${id}/knowledge`, {
         method: "PATCH",
         body: JSON.stringify({ visibility, category }),
@@ -365,7 +423,8 @@ export default function GalleryPage() {
       queryClient.invalidateQueries({ queryKey: ["gallery-folders"] });
       showToast("Folder updated", "success");
     },
-    onError: (err) => showToast(`Folder update failed: ${err.message}`, "error"),
+    onError: (err) =>
+      showToast(`Folder update failed: ${err.message}`, "error"),
   });
 
   const [pendingDelete, setPendingDelete] = useState<GalleryAsset | null>(null);
@@ -421,20 +480,38 @@ export default function GalleryPage() {
         `/api/queue/assets/scenes/${asset.id}/data`,
       );
       const scene = sceneData.scene;
-      const dur = (scene.durationInFrames as number | undefined) ?? (scene.duration as number | undefined) ?? 150;
+      const dur =
+        (scene.durationInFrames as number | undefined) ??
+        (scene.duration as number | undefined) ??
+        150;
       const manifest = {
         projectTitle: asset.prompt || "Loaded Scene",
-        composition: { width: 1920, height: 1080, fps: 30, durationInFrames: dur },
+        composition: {
+          width: 1920,
+          height: 1080,
+          fps: 30,
+          durationInFrames: dur,
+        },
         timeline: [scene],
         audio: {},
       };
-      const draft = await fetchJson<{ id: string }>("/api/admin/director/drafts", {
-        method: "POST",
-        body: JSON.stringify({ title: asset.prompt || "Loaded Scene", manifest, productionMode: "presentation" }),
-      });
+      const draft = await fetchJson<{ id: string }>(
+        "/api/admin/director/drafts",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            title: asset.prompt || "Loaded Scene",
+            manifest,
+            productionMode: "presentation",
+          }),
+        },
+      );
       router.push(`/director/studio/${draft.id}`);
     } catch (err) {
-      showToast(`Failed to open in Studio: ${err instanceof Error ? err.message : String(err)}`, "error");
+      showToast(
+        `Failed to open in Studio: ${err instanceof Error ? err.message : String(err)}`,
+        "error",
+      );
     } finally {
       setOpeningInStudio(null);
     }
@@ -444,10 +521,15 @@ export default function GalleryPage() {
     <main className="mx-auto max-w-6xl px-6 py-10 lg:px-12">
       <header className="mb-8 flex items-end justify-between">
         <div>
-          <p className="text-sm uppercase tracking-[0.3em] text-muted-foreground">OpenZigs</p>
-          <h1 className="mt-1 text-3xl font-semibold text-foreground">Asset Gallery</h1>
+          <p className="text-sm uppercase tracking-[0.3em] text-muted-foreground">
+            OpenZigs
+          </p>
+          <h1 className="mt-1 text-3xl font-semibold text-foreground">
+            Asset Gallery
+          </h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Browse, manage, and create media assets — images, videos, and audio from the generation queue.
+            Browse, manage, and create media assets — images, videos, and audio
+            from the generation queue.
           </p>
         </div>
         <AskAiButton onClick={() => setAskAiOpen(true)} />
@@ -456,13 +538,23 @@ export default function GalleryPage() {
       {/* Queue Stats Bar */}
       {stats && (
         <div className="mb-6 flex gap-3">
-          {(["pending", "dispatched", "processing", "complete", "failed"] as const).map((key) => (
+          {(
+            [
+              "pending",
+              "dispatched",
+              "processing",
+              "complete",
+              "failed",
+            ] as const
+          ).map((key) => (
             <div
               key={key}
               className="flex-1 rounded-xl border border-border bg-card px-4 py-3 text-center"
             >
               <p className="text-2xl font-bold text-foreground">{stats[key]}</p>
-              <p className="text-[11px] font-medium capitalize text-muted-foreground">{key}</p>
+              <p className="text-[11px] font-medium capitalize text-muted-foreground">
+                {key}
+              </p>
             </div>
           ))}
         </div>
@@ -484,81 +576,110 @@ export default function GalleryPage() {
         <div className="mb-6 rounded-xl border border-border bg-card p-4">
           <div className="mb-3 flex items-center gap-2">
             <Cpu className="h-4 w-4 text-muted-foreground" />
-            <h3 className="text-sm font-semibold text-foreground">Worker Nodes</h3>
-            <span className="text-[10px] text-muted-foreground">(shared M2 memory — only one model at a time)</span>
+            <h3 className="text-sm font-semibold text-foreground">
+              Worker Nodes
+            </h3>
+            <span className="text-[10px] text-muted-foreground">
+              (shared M2 memory — only one model at a time)
+            </span>
           </div>
           <div className="grid grid-cols-3 gap-3">
             {nodes.map((node) => {
-              const nodeLabel = node.node === "mac-mini" ? "Image Gen (FluxQ)"
-                : node.node === "music" ? "Audio Gen (ACE-Step)"
-                : "Video Gen (LTX-2)";
-              const isHardwareNode = node.node === "mac-mini" || node.node === "m2-pro";
+              const nodeLabel =
+                node.node === "mac-mini"
+                  ? "Image Gen (FluxQ)"
+                  : node.node === "music"
+                    ? "Audio Gen (ACE-Step)"
+                    : "Video Gen (LTX-2)";
+              const isHardwareNode =
+                node.node === "mac-mini" || node.node === "m2-pro";
               return (
-              <div
-                key={node.node}
-                className={`rounded-lg border px-4 py-3 ${
-                  node.loaded_model
-                    ? "border-emerald-500/30 bg-emerald-500/5"
-                    : node.reachable
-                    ? "border-border bg-card"
-                    : "border-red-500/30 bg-red-500/5"
-                }`}
-              >
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm font-semibold text-foreground">
-                      {nodeLabel}
-                    </p>
-                    <p className="text-[11px] text-muted-foreground">{node.url}</p>
+                <div
+                  key={node.node}
+                  className={`rounded-lg border px-4 py-3 ${
+                    node.loaded_model
+                      ? "border-emerald-500/30 bg-emerald-500/5"
+                      : node.reachable
+                        ? "border-border bg-card"
+                        : "border-red-500/30 bg-red-500/5"
+                  }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm font-semibold text-foreground">
+                        {nodeLabel}
+                      </p>
+                      <p className="text-[11px] text-muted-foreground">
+                        {node.url}
+                      </p>
+                    </div>
+                    <div
+                      className={`h-2.5 w-2.5 rounded-full ${
+                        !node.reachable
+                          ? "bg-red-500"
+                          : node.is_busy
+                            ? "bg-amber-500"
+                            : node.loaded_model
+                              ? "bg-emerald-500"
+                              : "bg-yellow-500"
+                      }`}
+                    />
                   </div>
-                  <div className={`h-2.5 w-2.5 rounded-full ${
-                    !node.reachable ? "bg-red-500" : node.is_busy ? "bg-amber-500" : node.loaded_model ? "bg-emerald-500" : "bg-yellow-500"
-                  }`} />
+                  <div className="mt-2 flex items-center justify-between">
+                    <div className="text-xs text-muted-foreground">
+                      {!node.reachable ? (
+                        <span className="text-red-500">Offline</span>
+                      ) : node.is_busy ? (
+                        <span className="flex items-center gap-1 text-amber-500">
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                          Generating...
+                        </span>
+                      ) : node.loaded_model ? (
+                        <span className="text-emerald-600 dark:text-emerald-400 font-medium">
+                          {node.loaded_model}
+                        </span>
+                      ) : (
+                        <span>No model loaded</span>
+                      )}
+                    </div>
+                    <div className="flex gap-1.5">
+                      {isHardwareNode &&
+                        node.reachable &&
+                        node.loaded_model && (
+                          <button
+                            onClick={() => unloadMutation.mutate(node.node)}
+                            disabled={unloadMutation.isPending || node.is_busy}
+                            className="rounded-lg border border-border px-2 py-1 text-[10px] font-medium text-muted-foreground hover:bg-muted disabled:opacity-50"
+                            title="Unload model to free VRAM"
+                          >
+                            <Power className="inline h-3 w-3 mr-0.5" />
+                            Unload
+                          </button>
+                        )}
+                      {isHardwareNode &&
+                        node.reachable &&
+                        !node.loaded_model && (
+                          <button
+                            onClick={() =>
+                              switchMutation.mutate({
+                                targetNode: node.node,
+                                model:
+                                  node.node === "mac-mini"
+                                    ? "flux-schnell"
+                                    : undefined,
+                              })
+                            }
+                            disabled={switchMutation.isPending}
+                            className="rounded-lg border border-primary/30 bg-primary/5 px-2 py-1 text-[10px] font-semibold text-primary hover:bg-primary/10 disabled:opacity-50"
+                            title={`Switch to ${node.node === "mac-mini" ? "image" : "video"} generation`}
+                          >
+                            <ArrowRightLeft className="inline h-3 w-3 mr-0.5" />
+                            Activate
+                          </button>
+                        )}
+                    </div>
+                  </div>
                 </div>
-                <div className="mt-2 flex items-center justify-between">
-                  <div className="text-xs text-muted-foreground">
-                    {!node.reachable ? (
-                      <span className="text-red-500">Offline</span>
-                    ) : node.is_busy ? (
-                      <span className="flex items-center gap-1 text-amber-500">
-                        <Loader2 className="h-3 w-3 animate-spin" />
-                        Generating...
-                      </span>
-                    ) : node.loaded_model ? (
-                      <span className="text-emerald-600 dark:text-emerald-400 font-medium">{node.loaded_model}</span>
-                    ) : (
-                      <span>No model loaded</span>
-                    )}
-                  </div>
-                  <div className="flex gap-1.5">
-                    {isHardwareNode && node.reachable && node.loaded_model && (
-                      <button
-                        onClick={() => unloadMutation.mutate(node.node)}
-                        disabled={unloadMutation.isPending || node.is_busy}
-                        className="rounded-lg border border-border px-2 py-1 text-[10px] font-medium text-muted-foreground hover:bg-muted disabled:opacity-50"
-                        title="Unload model to free VRAM"
-                      >
-                        <Power className="inline h-3 w-3 mr-0.5" />
-                        Unload
-                      </button>
-                    )}
-                    {isHardwareNode && node.reachable && !node.loaded_model && (
-                      <button
-                        onClick={() => switchMutation.mutate({
-                          targetNode: node.node,
-                          model: node.node === "mac-mini" ? "flux-schnell" : undefined,
-                        })}
-                        disabled={switchMutation.isPending}
-                        className="rounded-lg border border-primary/30 bg-primary/5 px-2 py-1 text-[10px] font-semibold text-primary hover:bg-primary/10 disabled:opacity-50"
-                        title={`Switch to ${node.node === "mac-mini" ? "image" : "video"} generation`}
-                      >
-                        <ArrowRightLeft className="inline h-3 w-3 mr-0.5" />
-                        Activate
-                      </button>
-                    )}
-                  </div>
-                </div>
-              </div>
               );
             })}
           </div>
@@ -633,12 +754,18 @@ export default function GalleryPage() {
                   placeholder="Folder name"
                   className="w-32 rounded-lg border border-border bg-card px-2 py-1.5 text-sm text-foreground"
                 />
-                <button type="submit" className="rounded-lg bg-primary px-2 py-1.5 text-xs font-semibold text-primary-foreground">
+                <button
+                  type="submit"
+                  className="rounded-lg bg-primary px-2 py-1.5 text-xs font-semibold text-primary-foreground"
+                >
                   <Check className="h-3.5 w-3.5" />
                 </button>
                 <button
                   type="button"
-                  onClick={() => { setCreatingFolder(false); setNewFolderName(""); }}
+                  onClick={() => {
+                    setCreatingFolder(false);
+                    setNewFolderName("");
+                  }}
                   className="rounded-lg border border-border px-2 py-1.5 text-xs text-muted-foreground"
                 >
                   <X className="h-3.5 w-3.5" />
@@ -699,71 +826,114 @@ export default function GalleryPage() {
           onSelectCollection={setActiveCollection}
         />
         <div className="min-w-0 flex-1">
-
-      {/* Gallery Grid / List */}
-      <SectionCard title={`Assets${folderFilter ? ` — ${folderFilter}` : ""} (${assets.length})`}>
-        {assetsQuery.isLoading ? (
-          <div className="flex items-center justify-center py-12">
-            <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-          </div>
-        ) : assets.length === 0 ? (
-          <p className="py-8 text-center text-sm text-muted-foreground">
-            No assets yet. Use the Studio to create images and videos, or wait for queued jobs to complete.
-          </p>
-        ) : viewMode === "grid" ? (
-          <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
-            {assets.map((asset) => (
-              <AssetCard
-                key={asset.id}
-                asset={asset}
-                onPreview={() => setPreviewAsset(asset)}
-                onDelete={() => handleDelete(asset)}
-                onTag={() => handleAddTag(asset)}
-                onDownload={() => handleDownload(asset)}
-                onAddToOutbox={() => setOutboxAsset(asset)}
-                onOpenInStudio={asset.type === "scene" ? () => void handleOpenInStudio(asset) : undefined}
-                openingInStudio={openingInStudio === asset.id}
-                onKnowledgeChange={(vis, cat) => knowledgeMutation.mutate({ id: asset.id, visibility: vis, category: cat })}
-                onRename={(filename) => renameMutation.mutate({ id: asset.id, filename })}
-                onDescription={(prompt) => descriptionMutation.mutate({ id: asset.id, prompt })}
-                onFolderChange={(folder) => folderMutation.mutate({ id: asset.id, folder })}
-                folders={(foldersQuery.data?.folders ?? []).map((f) => f.folder)}
-              />
-            ))}
-          </div>
-        ) : (
-          <div className="divide-y divide-border">
-            {assets.map((asset) => (
-              <AssetListRow
-                key={asset.id}
-                asset={asset}
-                onPreview={() => setPreviewAsset(asset)}
-                onDelete={() => handleDelete(asset)}
-                onTag={() => handleAddTag(asset)}
-                onDownload={() => handleDownload(asset)}
-                onAddToOutbox={() => setOutboxAsset(asset)}
-                onOpenInStudio={asset.type === "scene" ? () => void handleOpenInStudio(asset) : undefined}
-                openingInStudio={openingInStudio === asset.id}
-                onKnowledgeChange={(vis, cat) => knowledgeMutation.mutate({ id: asset.id, visibility: vis, category: cat })}
-                onRename={(filename) => renameMutation.mutate({ id: asset.id, filename })}
-                onDescription={(prompt) => descriptionMutation.mutate({ id: asset.id, prompt })}
-                onFolderChange={(folder) => folderMutation.mutate({ id: asset.id, folder })}
-                folders={(foldersQuery.data?.folders ?? []).map((f) => f.folder)}
-              />
-            ))}
-          </div>
-        )}
-      </SectionCard>
-
-        </div>{/* end flex-1 */}
-      </div>{/* end sidebar+grid flex */}
+          {/* Gallery Grid / List */}
+          <SectionCard
+            title={`Assets${folderFilter ? ` — ${folderFilter}` : ""} (${assets.length})`}
+          >
+            {assetsQuery.isLoading ? (
+              <div className="flex items-center justify-center py-12">
+                <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+              </div>
+            ) : assets.length === 0 ? (
+              <p className="py-8 text-center text-sm text-muted-foreground">
+                No assets yet. Use the Studio to create images and videos, or
+                wait for queued jobs to complete.
+              </p>
+            ) : viewMode === "grid" ? (
+              <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
+                {assets.map((asset) => (
+                  <AssetCard
+                    key={asset.id}
+                    asset={asset}
+                    onPreview={() => setPreviewAsset(asset)}
+                    onDelete={() => handleDelete(asset)}
+                    onTag={() => handleAddTag(asset)}
+                    onDownload={() => handleDownload(asset)}
+                    onAddToOutbox={() => setOutboxAsset(asset)}
+                    onOpenInStudio={
+                      asset.type === "scene"
+                        ? () => void handleOpenInStudio(asset)
+                        : undefined
+                    }
+                    openingInStudio={openingInStudio === asset.id}
+                    onKnowledgeChange={(vis, cat) =>
+                      knowledgeMutation.mutate({
+                        id: asset.id,
+                        visibility: vis,
+                        category: cat,
+                      })
+                    }
+                    onRename={(filename) =>
+                      renameMutation.mutate({ id: asset.id, filename })
+                    }
+                    onDescription={(prompt) =>
+                      descriptionMutation.mutate({ id: asset.id, prompt })
+                    }
+                    onFolderChange={(folder) =>
+                      folderMutation.mutate({ id: asset.id, folder })
+                    }
+                    folders={(foldersQuery.data?.folders ?? []).map(
+                      (f) => f.folder,
+                    )}
+                  />
+                ))}
+              </div>
+            ) : (
+              <div className="divide-y divide-border">
+                {assets.map((asset) => (
+                  <AssetListRow
+                    key={asset.id}
+                    asset={asset}
+                    onPreview={() => setPreviewAsset(asset)}
+                    onDelete={() => handleDelete(asset)}
+                    onTag={() => handleAddTag(asset)}
+                    onDownload={() => handleDownload(asset)}
+                    onAddToOutbox={() => setOutboxAsset(asset)}
+                    onOpenInStudio={
+                      asset.type === "scene"
+                        ? () => void handleOpenInStudio(asset)
+                        : undefined
+                    }
+                    openingInStudio={openingInStudio === asset.id}
+                    onKnowledgeChange={(vis, cat) =>
+                      knowledgeMutation.mutate({
+                        id: asset.id,
+                        visibility: vis,
+                        category: cat,
+                      })
+                    }
+                    onRename={(filename) =>
+                      renameMutation.mutate({ id: asset.id, filename })
+                    }
+                    onDescription={(prompt) =>
+                      descriptionMutation.mutate({ id: asset.id, prompt })
+                    }
+                    onFolderChange={(folder) =>
+                      folderMutation.mutate({ id: asset.id, folder })
+                    }
+                    folders={(foldersQuery.data?.folders ?? []).map(
+                      (f) => f.folder,
+                    )}
+                  />
+                ))}
+              </div>
+            )}
+          </SectionCard>
+        </div>
+        {/* end flex-1 */}
+      </div>
+      {/* end sidebar+grid flex */}
 
       {/* Preview Lightbox */}
       {previewAsset && (
         <PreviewLightbox
           asset={previewAsset}
           onClose={() => setPreviewAsset(null)}
-          onOpenInStudio={previewAsset.type === "scene" ? () => void handleOpenInStudio(previewAsset) : undefined}
+          onOpenInStudio={
+            previewAsset.type === "scene"
+              ? () => void handleOpenInStudio(previewAsset)
+              : undefined
+          }
           openingInStudio={openingInStudio === previewAsset.id}
         />
       )}
@@ -785,14 +955,20 @@ export default function GalleryPage() {
           onClose={() => setOutboxAsset(null)}
           initialAssetId={outboxAsset.id}
           initialAssetFilename={outboxAsset.filename}
-          initialAssetType={outboxAsset.type === "scene" ? "image" : outboxAsset.type}
+          initialAssetType={
+            outboxAsset.type === "scene" ? "image" : outboxAsset.type
+          }
           defaultContext={outboxAsset.prompt ?? ""}
           initialTab="gallery"
         />
       )}
 
       <ToastContainer />
-      <AskAiPanel pageContext={PAGE_CONTEXTS["gallery"]} open={askAiOpen} onClose={() => setAskAiOpen(false)} />
+      <AskAiPanel
+        pageContext={PAGE_CONTEXTS["gallery"]}
+        open={askAiOpen}
+        onClose={() => setAskAiOpen(false)}
+      />
     </main>
   );
 }
@@ -800,9 +976,24 @@ export default function GalleryPage() {
 // ── Knowledge Labels ────────────────────────────────────────
 
 const VISIBILITY_OPTIONS = [
-  { value: "public", label: "Public", color: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400", dot: "bg-emerald-500" },
-  { value: "internal", label: "Internal", color: "bg-sky-500/10 text-sky-700 dark:text-sky-400", dot: "bg-sky-500" },
-  { value: "private", label: "Private", color: "bg-slate-500/10 text-slate-600 dark:text-slate-400", dot: "bg-slate-400" },
+  {
+    value: "public",
+    label: "Public",
+    color: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400",
+    dot: "bg-emerald-500",
+  },
+  {
+    value: "internal",
+    label: "Internal",
+    color: "bg-sky-500/10 text-sky-700 dark:text-sky-400",
+    dot: "bg-sky-500",
+  },
+  {
+    value: "private",
+    label: "Private",
+    color: "bg-slate-500/10 text-slate-600 dark:text-slate-400",
+    dot: "bg-slate-400",
+  },
 ] as const;
 
 const CATEGORY_OPTIONS = [
@@ -829,25 +1020,35 @@ function KnowledgeLabels({
   const [catOpen, setCatOpen] = useState(false);
   const visRef = useRef<HTMLDivElement>(null);
   const catRef = useRef<HTMLDivElement>(null);
-  const visOption = VISIBILITY_OPTIONS.find((v) => v.value === visibility) ?? VISIBILITY_OPTIONS[1];
+  const visOption =
+    VISIBILITY_OPTIONS.find((v) => v.value === visibility) ??
+    VISIBILITY_OPTIONS[1];
 
   // Close dropdowns when clicking outside
   useEffect(() => {
     if (!visOpen && !catOpen) return;
     const handler = (e: MouseEvent) => {
-      if (visRef.current && !visRef.current.contains(e.target as Node)) setVisOpen(false);
-      if (catRef.current && !catRef.current.contains(e.target as Node)) setCatOpen(false);
+      if (visRef.current && !visRef.current.contains(e.target as Node))
+        setVisOpen(false);
+      if (catRef.current && !catRef.current.contains(e.target as Node))
+        setCatOpen(false);
     };
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
   }, [visOpen, catOpen]);
 
   return (
-    <div className={`flex flex-wrap items-center gap-1.5 ${compact ? "mt-1" : "mt-1.5"}`} onClick={(e) => e.stopPropagation()}>
+    <div
+      className={`flex flex-wrap items-center gap-1.5 ${compact ? "mt-1" : "mt-1.5"}`}
+      onClick={(e) => e.stopPropagation()}
+    >
       {/* Visibility picker */}
       <div className="relative" ref={visRef}>
         <button
-          onClick={() => { setVisOpen((v) => !v); setCatOpen(false); }}
+          onClick={() => {
+            setVisOpen((v) => !v);
+            setCatOpen(false);
+          }}
           className={`flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold transition-opacity hover:opacity-80 ${visOption.color}`}
           title="RAG Visibility — controls who can see this in AI searches"
         >
@@ -856,11 +1057,16 @@ function KnowledgeLabels({
         </button>
         {visOpen && (
           <div className="absolute left-0 top-full z-[200] mt-1 min-w-[110px] rounded-lg border border-border bg-card p-1 shadow-lg">
-            <p className="mb-1 px-2 text-[9px] font-bold uppercase tracking-wide text-muted-foreground">AI Visibility</p>
+            <p className="mb-1 px-2 text-[9px] font-bold uppercase tracking-wide text-muted-foreground">
+              AI Visibility
+            </p>
             {VISIBILITY_OPTIONS.map((opt) => (
               <button
                 key={opt.value}
-                onClick={() => { onChange(opt.value, category); setVisOpen(false); }}
+                onClick={() => {
+                  onChange(opt.value, category);
+                  setVisOpen(false);
+                }}
                 className={`flex w-full items-center gap-2 rounded-md px-2 py-1 text-left text-[11px] hover:bg-muted ${visibility === opt.value ? "font-semibold" : ""}`}
               >
                 <span className={`h-1.5 w-1.5 rounded-full ${opt.dot}`} />
@@ -873,19 +1079,28 @@ function KnowledgeLabels({
       {/* Category picker */}
       <div className="relative" ref={catRef}>
         <button
-          onClick={() => { setCatOpen((v) => !v); setVisOpen(false); }}
+          onClick={() => {
+            setCatOpen((v) => !v);
+            setVisOpen(false);
+          }}
           className="flex items-center gap-1 rounded-full bg-violet-500/10 px-2 py-0.5 text-[10px] font-semibold text-violet-700 transition-opacity hover:opacity-80 dark:text-violet-400"
           title="RAG Category — organizes this item in the AI knowledge base"
         >
-          {CATEGORY_OPTIONS.find((c) => c.value === category)?.label ?? category}
+          {CATEGORY_OPTIONS.find((c) => c.value === category)?.label ??
+            category}
         </button>
         {catOpen && (
           <div className="absolute left-0 top-full z-[200] mt-1 min-w-[120px] rounded-lg border border-border bg-card p-1 shadow-lg">
-            <p className="mb-1 px-2 text-[9px] font-bold uppercase tracking-wide text-muted-foreground">AI Category</p>
+            <p className="mb-1 px-2 text-[9px] font-bold uppercase tracking-wide text-muted-foreground">
+              AI Category
+            </p>
             {CATEGORY_OPTIONS.map((opt) => (
               <button
                 key={opt.value}
-                onClick={() => { onChange(visibility, opt.value); setCatOpen(false); }}
+                onClick={() => {
+                  onChange(visibility, opt.value);
+                  setCatOpen(false);
+                }}
                 className={`w-full rounded-md px-2 py-1 text-left text-[11px] hover:bg-muted ${category === opt.value ? "font-semibold" : ""}`}
               >
                 {opt.label}
@@ -933,9 +1148,10 @@ function AssetCard({
   const [editName, setEditName] = useState(asset.filename);
   const [editDesc, setEditDesc] = useState(asset.prompt ?? "");
   const url = assetUrl(asset);
-  const scenePreviewUrl = asset.type === "scene" && asset.generation_params?.previewSrc
-    ? directorFileUrl(asset.generation_params.previewSrc as string)
-    : null;
+  const scenePreviewUrl =
+    asset.type === "scene" && asset.generation_params?.previewSrc
+      ? directorFileUrl(asset.generation_params.previewSrc as string)
+      : null;
 
   const commitEdit = (e: React.MouseEvent | React.FormEvent) => {
     e.stopPropagation();
@@ -947,14 +1163,27 @@ function AssetCard({
   };
 
   return (
-    <div onClick={onPreview} className="group relative z-0 cursor-pointer rounded-2xl border border-border bg-card hover:z-10">
+    <div
+      onClick={onPreview}
+      className="group relative z-0 cursor-pointer rounded-2xl border border-border bg-card hover:z-10"
+    >
       {/* Thumbnail */}
       <div className="block w-full overflow-hidden rounded-t-2xl">
         {asset.type === "image" ? (
-          <img src={url} alt={asset.prompt ?? asset.filename} className="aspect-square w-full object-cover" loading="lazy" />
+          <img
+            src={url}
+            alt={asset.prompt ?? asset.filename}
+            className="aspect-square w-full object-cover"
+            loading="lazy"
+          />
         ) : asset.type === "video" ? (
           <div className="relative aspect-square w-full bg-muted">
-            <video src={url} className="h-full w-full object-cover" muted preload="metadata" />
+            <video
+              src={url}
+              className="h-full w-full object-cover"
+              muted
+              preload="metadata"
+            />
             <div className="absolute inset-0 flex items-center justify-center">
               <div className="rounded-full bg-black/50 p-3">
                 <Video className="h-6 w-6 text-white" />
@@ -963,7 +1192,12 @@ function AssetCard({
           </div>
         ) : asset.type === "scene" ? (
           scenePreviewUrl ? (
-            <img src={scenePreviewUrl} alt={asset.prompt ?? "Scene"} className="aspect-square w-full object-cover" loading="lazy" />
+            <img
+              src={scenePreviewUrl}
+              alt={asset.prompt ?? "Scene"}
+              className="aspect-square w-full object-cover"
+              loading="lazy"
+            />
           ) : (
             <div className="flex aspect-square flex-col items-center justify-center gap-3 bg-muted px-4">
               <Layers className="h-10 w-10 text-muted-foreground/50" />
@@ -976,7 +1210,9 @@ function AssetCard({
           <div className="flex aspect-square flex-col items-center justify-center gap-3 bg-muted px-4">
             <Music className="h-10 w-10 text-muted-foreground/50" />
             {asset.artist && (
-              <span className="text-xs font-medium text-muted-foreground truncate max-w-full">{asset.artist}</span>
+              <span className="text-xs font-medium text-muted-foreground truncate max-w-full">
+                {asset.artist}
+              </span>
             )}
             <audio
               src={url}
@@ -993,44 +1229,66 @@ function AssetCard({
       <div className="absolute right-2 top-2 flex gap-1 opacity-0 transition group-hover:opacity-100">
         {onOpenInStudio && (
           <button
-            onClick={(e) => { e.stopPropagation(); onOpenInStudio(); }}
+            onClick={(e) => {
+              e.stopPropagation();
+              onOpenInStudio();
+            }}
             className="rounded-lg bg-black/60 p-1.5 text-white hover:bg-black/80 disabled:opacity-50"
             title="Edit in Director Studio"
             disabled={openingInStudio}
           >
-            {openingInStudio ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Clapperboard className="h-3.5 w-3.5" />}
+            {openingInStudio ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Clapperboard className="h-3.5 w-3.5" />
+            )}
           </button>
         )}
         <button
-          onClick={(e) => { e.stopPropagation(); onPreview(); }}
+          onClick={(e) => {
+            e.stopPropagation();
+            onPreview();
+          }}
           className="rounded-lg bg-black/60 p-1.5 text-white hover:bg-black/80"
           title="Preview"
         >
           <Eye className="h-3.5 w-3.5" />
         </button>
         <button
-          onClick={(e) => { e.stopPropagation(); onDownload(); }}
+          onClick={(e) => {
+            e.stopPropagation();
+            onDownload();
+          }}
           className="rounded-lg bg-black/60 p-1.5 text-white hover:bg-black/80"
           title="Download"
         >
           <Download className="h-3.5 w-3.5" />
         </button>
         <button
-          onClick={(e) => { e.stopPropagation(); onTag(); }}
+          onClick={(e) => {
+            e.stopPropagation();
+            onTag();
+          }}
           className="rounded-lg bg-black/60 p-1.5 text-white hover:bg-black/80"
           title="Add Tag"
         >
           <Tag className="h-3.5 w-3.5" />
         </button>
         <button
-          onClick={(e) => { e.stopPropagation(); onAddToOutbox(); }}
+          onClick={(e) => {
+            e.stopPropagation();
+            onAddToOutbox();
+          }}
           className="rounded-lg bg-black/60 p-1.5 text-white hover:bg-black/80"
           title="Add to Outbox"
         >
           <Send className="h-3.5 w-3.5" />
         </button>
         <button
-          onClick={(e) => { e.stopPropagation(); onDelete(); }}
+          onClick={(e) => {
+            e.stopPropagation();
+            onDelete();
+          }}
           className="rounded-lg bg-red-600/80 p-1.5 text-white hover:bg-red-700"
           title="Delete"
         >
@@ -1049,15 +1307,30 @@ function AssetCard({
             </span>
           )}
           <button
-            onClick={(e) => { e.stopPropagation(); if (!editing) { setEditName(asset.filename); setEditDesc(asset.prompt ?? ""); } setEditing((v) => !v); }}
+            onClick={(e) => {
+              e.stopPropagation();
+              if (!editing) {
+                setEditName(asset.filename);
+                setEditDesc(asset.prompt ?? "");
+              }
+              setEditing((v) => !v);
+            }}
             className="ml-auto rounded p-0.5 text-muted-foreground hover:text-foreground"
             title="Edit name and description"
           >
-            {editing ? <Check className="h-3 w-3 text-primary" /> : <Pencil className="h-3 w-3" />}
+            {editing ? (
+              <Check className="h-3 w-3 text-primary" />
+            ) : (
+              <Pencil className="h-3 w-3" />
+            )}
           </button>
         </div>
         {editing ? (
-          <form onSubmit={commitEdit} onClick={(e) => e.stopPropagation()} className="mt-1.5 flex flex-col gap-1.5">
+          <form
+            onSubmit={commitEdit}
+            onClick={(e) => e.stopPropagation()}
+            className="mt-1.5 flex flex-col gap-1.5"
+          >
             <input
               autoFocus
               value={editName}
@@ -1073,22 +1346,43 @@ function AssetCard({
               className="w-full rounded border border-border bg-muted px-2 py-1 text-xs text-foreground resize-none"
             />
             <div className="flex gap-1.5">
-              <button type="submit" className="rounded bg-primary px-2 py-0.5 text-[10px] font-semibold text-primary-foreground">Save</button>
-              <button type="button" onClick={(e) => { e.stopPropagation(); setEditing(false); }} className="rounded border border-border px-2 py-0.5 text-[10px] font-semibold text-muted-foreground">Cancel</button>
+              <button
+                type="submit"
+                className="rounded bg-primary px-2 py-0.5 text-[10px] font-semibold text-primary-foreground"
+              >
+                Save
+              </button>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setEditing(false);
+                }}
+                className="rounded border border-border px-2 py-0.5 text-[10px] font-semibold text-muted-foreground"
+              >
+                Cancel
+              </button>
             </div>
           </form>
         ) : (
           <>
-            <p className="mt-1 truncate text-[10px] text-muted-foreground/60">{asset.filename}</p>
+            <p className="mt-1 truncate text-[10px] text-muted-foreground/60">
+              {asset.filename}
+            </p>
             {asset.prompt && (
-              <p className="mt-0.5 line-clamp-2 text-xs text-muted-foreground">{asset.prompt}</p>
+              <p className="mt-0.5 line-clamp-2 text-xs text-muted-foreground">
+                {asset.prompt}
+              </p>
             )}
           </>
         )}
         {asset.tags && asset.tags.length > 0 && (
           <div className="mt-1.5 flex flex-wrap gap-1">
             {asset.tags.map((tag) => (
-              <span key={tag} className="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-semibold text-primary">
+              <span
+                key={tag}
+                className="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-semibold text-primary"
+              >
                 {tag}
               </span>
             ))}
@@ -1103,7 +1397,9 @@ function AssetCard({
           >
             <option value="">No folder</option>
             {folders.map((f) => (
-              <option key={f} value={f}>{f}</option>
+              <option key={f} value={f}>
+                {f}
+              </option>
             ))}
           </select>
         </div>
@@ -1115,7 +1411,9 @@ function AssetCard({
         />
         <div className="mt-2 flex items-center justify-between text-[10px] text-muted-foreground">
           <span>{formatBytes(asset.file_size_bytes)}</span>
-          {asset.duration_seconds && <span>{asset.duration_seconds.toFixed(1)}s</span>}
+          {asset.duration_seconds && (
+            <span>{asset.duration_seconds.toFixed(1)}s</span>
+          )}
           <span>{new Date(asset.created_at).toLocaleDateString()}</span>
         </div>
       </div>
@@ -1158,9 +1456,10 @@ function AssetListRow({
   const [editName, setEditName] = useState(asset.filename);
   const [editDesc, setEditDesc] = useState(asset.prompt ?? "");
   const url = assetUrl(asset);
-  const scenePreviewUrl = asset.type === "scene" && asset.generation_params?.previewSrc
-    ? directorFileUrl(asset.generation_params.previewSrc as string)
-    : null;
+  const scenePreviewUrl =
+    asset.type === "scene" && asset.generation_params?.previewSrc
+      ? directorFileUrl(asset.generation_params.previewSrc as string)
+      : null;
 
   const commitEdit = (e: React.MouseEvent | React.FormEvent) => {
     e.stopPropagation();
@@ -1174,16 +1473,29 @@ function AssetListRow({
   return (
     <div className="relative z-0 flex items-center gap-4 py-3 px-1 hover:z-10 hover:bg-muted/40 rounded-lg transition">
       {/* Thumbnail */}
-      <button onClick={onPreview} className="flex-shrink-0 h-14 w-14 rounded-lg overflow-hidden border border-border bg-muted">
+      <button
+        onClick={onPreview}
+        className="flex-shrink-0 h-14 w-14 rounded-lg overflow-hidden border border-border bg-muted"
+      >
         {asset.type === "image" ? (
-          <img src={url} alt={asset.prompt ?? asset.filename} className="h-full w-full object-cover" loading="lazy" />
+          <img
+            src={url}
+            alt={asset.prompt ?? asset.filename}
+            className="h-full w-full object-cover"
+            loading="lazy"
+          />
         ) : asset.type === "video" ? (
           <div className="relative h-full w-full bg-muted flex items-center justify-center">
             <Video className="h-5 w-5 text-muted-foreground" />
           </div>
         ) : asset.type === "scene" ? (
           scenePreviewUrl ? (
-            <img src={scenePreviewUrl} alt={asset.prompt ?? "Scene"} className="h-full w-full object-cover" loading="lazy" />
+            <img
+              src={scenePreviewUrl}
+              alt={asset.prompt ?? "Scene"}
+              className="h-full w-full object-cover"
+              loading="lazy"
+            />
           ) : (
             <div className="flex h-full w-full items-center justify-center">
               <Layers className="h-5 w-5 text-muted-foreground" />
@@ -1208,7 +1520,11 @@ function AssetListRow({
       {/* Info */}
       <div className="flex-1 min-w-0">
         {editing ? (
-          <form onSubmit={commitEdit} onClick={(e) => e.stopPropagation()} className="flex flex-col gap-1">
+          <form
+            onSubmit={commitEdit}
+            onClick={(e) => e.stopPropagation()}
+            className="flex flex-col gap-1"
+          >
             <input
               autoFocus
               value={editName}
@@ -1223,15 +1539,31 @@ function AssetListRow({
               className="w-full rounded border border-border bg-muted px-2 py-1 text-xs text-foreground"
             />
             <div className="flex gap-1">
-              <button type="submit" className="rounded bg-primary px-2 py-0.5 text-[10px] font-semibold text-primary-foreground">Save</button>
-              <button type="button" onClick={(e) => { e.stopPropagation(); setEditing(false); }} className="rounded border border-border px-2 py-0.5 text-[10px] font-semibold text-muted-foreground">Cancel</button>
+              <button
+                type="submit"
+                className="rounded bg-primary px-2 py-0.5 text-[10px] font-semibold text-primary-foreground"
+              >
+                Save
+              </button>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setEditing(false);
+                }}
+                className="rounded border border-border px-2 py-0.5 text-[10px] font-semibold text-muted-foreground"
+              >
+                Cancel
+              </button>
             </div>
           </form>
         ) : (
           <>
             <div className="flex items-center gap-2">
-              <span className="text-xs font-medium text-foreground truncate">{asset.filename}</span>
-                  {sourceBadge(asset.source)}
+              <span className="text-xs font-medium text-foreground truncate">
+                {asset.filename}
+              </span>
+              {sourceBadge(asset.source)}
               {asset.model && (
                 <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
                   {asset.model}
@@ -1239,22 +1571,35 @@ function AssetListRow({
               )}
             </div>
             {asset.prompt && (
-              <p className="mt-0.5 text-xs text-muted-foreground truncate">{asset.prompt}</p>
+              <p className="mt-0.5 text-xs text-muted-foreground truncate">
+                {asset.prompt}
+              </p>
             )}
             <div className="mt-0.5 flex items-center gap-3 text-[10px] text-muted-foreground">
               {formatBytes(asset.file_size_bytes)}
-              {asset.width && asset.height && <span>{asset.width}×{asset.height}</span>}
-              {asset.duration_seconds && <span>{asset.duration_seconds.toFixed(1)}s</span>}
+              {asset.width && asset.height && (
+                <span>
+                  {asset.width}×{asset.height}
+                </span>
+              )}
+              {asset.duration_seconds && (
+                <span>{asset.duration_seconds.toFixed(1)}s</span>
+              )}
               <span>{new Date(asset.created_at).toLocaleDateString()}</span>
               <select
                 value={asset.folder ?? ""}
-                onChange={(e) => { e.stopPropagation(); onFolderChange(e.target.value || null); }}
+                onChange={(e) => {
+                  e.stopPropagation();
+                  onFolderChange(e.target.value || null);
+                }}
                 onClick={(e) => e.stopPropagation()}
                 className="rounded border border-border bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground"
               >
                 <option value="">No folder</option>
                 {folders.map((f) => (
-                  <option key={f} value={f}>{f}</option>
+                  <option key={f} value={f}>
+                    {f}
+                  </option>
                 ))}
               </select>
             </div>
@@ -1272,51 +1617,84 @@ function AssetListRow({
       <div className="flex-shrink-0 flex items-center gap-1.5">
         {onOpenInStudio && (
           <button
-            onClick={(e) => { e.stopPropagation(); onOpenInStudio(); }}
+            onClick={(e) => {
+              e.stopPropagation();
+              onOpenInStudio();
+            }}
             className="rounded-lg border border-border p-1.5 text-muted-foreground hover:bg-muted disabled:opacity-50"
             title="Edit in Director Studio"
             disabled={openingInStudio}
           >
-            {openingInStudio ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Clapperboard className="h-3.5 w-3.5" />}
+            {openingInStudio ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Clapperboard className="h-3.5 w-3.5" />
+            )}
           </button>
         )}
         <button
-          onClick={(e) => { e.stopPropagation(); if (!editing) { setEditName(asset.filename); setEditDesc(asset.prompt ?? ""); } setEditing((v) => !v); }}
+          onClick={(e) => {
+            e.stopPropagation();
+            if (!editing) {
+              setEditName(asset.filename);
+              setEditDesc(asset.prompt ?? "");
+            }
+            setEditing((v) => !v);
+          }}
           className="rounded-lg border border-border p-1.5 text-muted-foreground hover:bg-muted"
           title={editing ? "Save changes" : "Edit name and description"}
         >
-          {editing ? <Check className="h-3.5 w-3.5 text-primary" /> : <Pencil className="h-3.5 w-3.5" />}
+          {editing ? (
+            <Check className="h-3.5 w-3.5 text-primary" />
+          ) : (
+            <Pencil className="h-3.5 w-3.5" />
+          )}
         </button>
         <button
-          onClick={(e) => { e.stopPropagation(); onPreview(); }}
+          onClick={(e) => {
+            e.stopPropagation();
+            onPreview();
+          }}
           className="rounded-lg border border-border p-1.5 text-muted-foreground hover:bg-muted"
           title="Preview"
         >
           <Eye className="h-3.5 w-3.5" />
         </button>
         <button
-          onClick={(e) => { e.stopPropagation(); onDownload(); }}
+          onClick={(e) => {
+            e.stopPropagation();
+            onDownload();
+          }}
           className="rounded-lg border border-border p-1.5 text-muted-foreground hover:bg-muted"
           title="Download"
         >
           <Download className="h-3.5 w-3.5" />
         </button>
         <button
-          onClick={(e) => { e.stopPropagation(); onTag(); }}
+          onClick={(e) => {
+            e.stopPropagation();
+            onTag();
+          }}
           className="rounded-lg border border-border p-1.5 text-muted-foreground hover:bg-muted"
           title="Add tag"
         >
           <Tag className="h-3.5 w-3.5" />
         </button>
         <button
-          onClick={(e) => { e.stopPropagation(); onAddToOutbox(); }}
+          onClick={(e) => {
+            e.stopPropagation();
+            onAddToOutbox();
+          }}
           className="rounded-lg border border-border p-1.5 text-muted-foreground hover:bg-muted"
           title="Add to Outbox"
         >
           <Send className="h-3.5 w-3.5" />
         </button>
         <button
-          onClick={(e) => { e.stopPropagation(); onDelete(); }}
+          onClick={(e) => {
+            e.stopPropagation();
+            onDelete();
+          }}
           className="rounded-lg border border-red-500/30 p-1.5 text-red-500 hover:bg-red-500/10"
           title="Delete"
         >
@@ -1329,19 +1707,28 @@ function AssetListRow({
 
 // ── Preview Lightbox ────────────────────────────────────────
 
-function PreviewLightbox({ asset, onClose, onOpenInStudio, openingInStudio }: {
+function PreviewLightbox({
+  asset,
+  onClose,
+  onOpenInStudio,
+  openingInStudio,
+}: {
   asset: GalleryAsset;
   onClose: () => void;
   onOpenInStudio?: () => void;
   openingInStudio?: boolean;
 }) {
   const url = assetUrl(asset);
-  const scenePreviewUrl = asset.type === "scene" && asset.generation_params?.previewSrc
-    ? directorFileUrl(asset.generation_params.previewSrc as string)
-    : null;
+  const scenePreviewUrl =
+    asset.type === "scene" && asset.generation_params?.previewSrc
+      ? directorFileUrl(asset.generation_params.previewSrc as string)
+      : null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm" onClick={onClose}>
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm"
+      onClick={onClose}
+    >
       <div
         className="relative max-h-[90vh] max-w-[90vw] rounded-2xl bg-card p-4 shadow-2xl"
         onClick={(e) => e.stopPropagation()}
@@ -1354,54 +1741,97 @@ function PreviewLightbox({ asset, onClose, onOpenInStudio, openingInStudio }: {
         </button>
 
         {asset.type === "image" ? (
-          <img src={url} alt={asset.prompt ?? ""} className="max-h-[80vh] rounded-lg object-contain" />
+          <img
+            src={url}
+            alt={asset.prompt ?? ""}
+            className="max-h-[80vh] rounded-lg object-contain"
+          />
         ) : asset.type === "video" ? (
-          <video src={url} controls autoPlay className="max-h-[80vh] rounded-lg" />
+          <video
+            src={url}
+            controls
+            autoPlay
+            className="max-h-[80vh] rounded-lg"
+          />
         ) : asset.type === "scene" ? (
           <div className="flex flex-col items-center gap-4">
             {scenePreviewUrl ? (
-              <img src={scenePreviewUrl} alt={asset.prompt ?? "Scene"} className="max-h-[60vh] rounded-lg object-contain" />
+              <img
+                src={scenePreviewUrl}
+                alt={asset.prompt ?? "Scene"}
+                className="max-h-[60vh] rounded-lg object-contain"
+              />
             ) : (
               <div className="flex flex-col items-center gap-3 py-8 px-12">
                 <Layers className="h-16 w-16 text-muted-foreground" />
-                <p className="text-sm font-medium text-foreground">Saved Scene</p>
+                <p className="text-sm font-medium text-foreground">
+                  Saved Scene
+                </p>
               </div>
             )}
             {asset.prompt && (
-              <p className="text-xs text-muted-foreground text-center max-w-sm">{asset.prompt}</p>
+              <p className="text-xs text-muted-foreground text-center max-w-sm">
+                {asset.prompt}
+              </p>
             )}
           </div>
         ) : (
           <div className="flex flex-col items-center gap-4 py-8 px-12">
             <Music className="h-16 w-16 text-muted-foreground" />
             {asset.artist && (
-              <p className="text-sm font-medium text-muted-foreground">{asset.artist}</p>
+              <p className="text-sm font-medium text-muted-foreground">
+                {asset.artist}
+              </p>
             )}
-            <audio src={url} controls autoPlay className="w-full min-w-[300px]" />
+            <audio
+              src={url}
+              controls
+              autoPlay
+              className="w-full min-w-[300px]"
+            />
           </div>
         )}
 
         <div className="mt-3 max-w-lg">
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
-              <p className="text-sm font-medium text-foreground">{asset.filename}</p>
-              {asset.prompt && <p className="mt-1 text-xs text-muted-foreground">{asset.prompt}</p>}
+              <p className="text-sm font-medium text-foreground">
+                {asset.filename}
+              </p>
+              {asset.prompt && (
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {asset.prompt}
+                </p>
+              )}
               <div className="mt-2 flex items-center gap-2 text-[11px] text-muted-foreground">
                 {sourceBadge(asset.source)}
                 <span>{formatBytes(asset.file_size_bytes)}</span>
-                {asset.width && asset.height && <span>{asset.width}x{asset.height}</span>}
-                {asset.duration_seconds && <span>{asset.duration_seconds.toFixed(1)}s</span>}
+                {asset.width && asset.height && (
+                  <span>
+                    {asset.width}x{asset.height}
+                  </span>
+                )}
+                {asset.duration_seconds && (
+                  <span>{asset.duration_seconds.toFixed(1)}s</span>
+                )}
                 {asset.model && <span>{asset.model}</span>}
               </div>
             </div>
             <div className="flex flex-shrink-0 items-center gap-2">
               {onOpenInStudio && (
                 <button
-                  onClick={(e) => { e.stopPropagation(); onOpenInStudio(); }}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onOpenInStudio();
+                  }}
                   disabled={openingInStudio}
                   className="flex items-center gap-1.5 rounded-lg border border-primary/50 bg-primary/10 px-3 py-1.5 text-xs font-medium text-primary hover:bg-primary/20 disabled:opacity-50"
                 >
-                  {openingInStudio ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Clapperboard className="h-3.5 w-3.5" />}
+                  {openingInStudio ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Clapperboard className="h-3.5 w-3.5" />
+                  )}
                   Edit in Studio
                 </button>
               )}
@@ -1446,9 +1876,39 @@ function QueueJobsPanel({
   isCancelling: boolean;
   isKilling: boolean;
 }) {
+  const { socket } = useSocket();
   const [expanded, setExpanded] = useState(true);
+  const [progressMap, setProgressMap] = useState<
+    Record<string, { stage?: string; progress?: number; message?: string }>
+  >({});
   const pending = jobs.filter((j) => j.status === "pending");
-  const active = jobs.filter((j) => j.status === "dispatched" || j.status === "processing");
+  const active = jobs.filter(
+    (j) => j.status === "dispatched" || j.status === "processing",
+  );
+
+  // Listen for real-time progress events (#762)
+  useEffect(() => {
+    if (!socket) return;
+    const onProgress = (data: {
+      jobId: string;
+      stage?: string;
+      progress?: number;
+      message?: string;
+    }) => {
+      setProgressMap((prev) => ({
+        ...prev,
+        [data.jobId]: {
+          stage: data.stage,
+          progress: data.progress,
+          message: data.message,
+        },
+      }));
+    };
+    socket.on("queue:job:progress", onProgress);
+    return () => {
+      socket.off("queue:job:progress", onProgress);
+    };
+  }, [socket]);
 
   return (
     <div className="mb-6 rounded-xl border border-amber-500/30 bg-amber-500/5">
@@ -1471,7 +1931,11 @@ function QueueJobsPanel({
           </span>
         )}
         <div className="ml-auto text-muted-foreground">
-          {expanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+          {expanded ? (
+            <ChevronDown className="h-4 w-4" />
+          ) : (
+            <ChevronRight className="h-4 w-4" />
+          )}
         </div>
       </button>
 
@@ -1492,26 +1956,58 @@ function QueueJobsPanel({
                     <Loader2 className="h-3.5 w-3.5 animate-spin flex-shrink-0 text-amber-500" />
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
-                        <span className="text-xs font-semibold text-foreground">{job.type}</span>
+                        <span className="text-xs font-semibold text-foreground">
+                          {job.type}
+                        </span>
                         <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
                           {job.targetNode}
                         </span>
-                        <span className="text-[10px] text-muted-foreground">{job.requiredModel}</span>
+                        <span className="text-[10px] text-muted-foreground">
+                          {job.requiredModel}
+                        </span>
                       </div>
                       {job.payload?.prompt && (
                         <p className="mt-0.5 truncate text-[11px] text-muted-foreground">
                           {job.payload.prompt as string}
                         </p>
                       )}
+                      {/* Real-time progress bar (#762) */}
+                      {progressMap[job.id] && (
+                        <div className="mt-1.5">
+                          <div className="flex items-center justify-between text-[10px]">
+                            <span className="text-amber-600 dark:text-amber-400">
+                              {progressMap[job.id].stage ?? "Processing"}
+                            </span>
+                            {progressMap[job.id].progress != null && (
+                              <span className="text-muted-foreground">
+                                {progressMap[job.id].progress}%
+                              </span>
+                            )}
+                          </div>
+                          <div className="mt-0.5 h-1 w-full overflow-hidden rounded-full bg-zinc-800">
+                            <div
+                              className="h-full rounded-full bg-amber-500 transition-all duration-300"
+                              style={{
+                                width: `${progressMap[job.id].progress ?? 0}%`,
+                              }}
+                            />
+                          </div>
+                        </div>
+                      )}
                     </div>
                     <div className="flex-shrink-0 text-right">
                       <p className="text-[10px] text-muted-foreground">
-                        {job.dispatchedAt ? formatAge(job.dispatchedAt) : formatAge(job.createdAt)}
+                        {job.dispatchedAt
+                          ? formatAge(job.dispatchedAt)
+                          : formatAge(job.createdAt)}
                       </p>
                     </div>
                     <button
                       onClick={() => {
-                        if (!confirm("Kill this job and unload the worker node?")) return;
+                        if (
+                          !confirm("Kill this job and unload the worker node?")
+                        )
+                          return;
                         onKill(job.id);
                       }}
                       disabled={isKilling}
@@ -1541,11 +2037,15 @@ function QueueJobsPanel({
                     <div className="h-3.5 w-3.5 flex-shrink-0 rounded-full border-2 border-muted-foreground/40" />
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
-                        <span className="text-xs font-semibold text-foreground">{job.type}</span>
+                        <span className="text-xs font-semibold text-foreground">
+                          {job.type}
+                        </span>
                         <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
                           {job.targetNode}
                         </span>
-                        <span className="text-[10px] text-muted-foreground">{job.requiredModel}</span>
+                        <span className="text-[10px] text-muted-foreground">
+                          {job.requiredModel}
+                        </span>
                       </div>
                       {job.payload?.prompt && (
                         <p className="mt-0.5 truncate text-[11px] text-muted-foreground">
@@ -1554,7 +2054,9 @@ function QueueJobsPanel({
                       )}
                     </div>
                     <div className="flex-shrink-0 text-right">
-                      <p className="text-[10px] text-muted-foreground">{formatAge(job.createdAt)}</p>
+                      <p className="text-[10px] text-muted-foreground">
+                        {formatAge(job.createdAt)}
+                      </p>
                     </div>
                     <button
                       onClick={() => onCancel(job.id)}
@@ -1577,7 +2079,12 @@ function QueueJobsPanel({
 
 // ── Gallery Studio (Sub-Issue #329) ─────────────────────────
 
-type StudioMode = "txt2img" | "img2img" | "txt2video" | "img2video" | "txt2music";
+type StudioMode =
+  | "txt2img"
+  | "img2img"
+  | "txt2video"
+  | "img2video"
+  | "txt2music";
 
 interface StudioFormState {
   mode: StudioMode;
@@ -1631,56 +2138,121 @@ const DEFAULT_FORM: StudioFormState = {
   controlnetStrength: 0.4,
 };
 
-const MODE_INFO: Record<StudioMode, { label: string; desc: string; icon: React.ReactNode }> = {
-  txt2img: { label: "Text → Image", desc: "Generate an image from a text prompt", icon: <ImageIcon className="h-4 w-4" /> },
-  img2img: { label: "Image → Image", desc: "Transform an existing image with a text prompt", icon: <ImageIcon className="h-4 w-4" /> },
-  txt2video: { label: "Text → Video", desc: "4-second cinematic B-roll from text", icon: <Video className="h-4 w-4" /> },
-  img2video: { label: "Image → Video", desc: "Animate an image into 4-second video", icon: <Video className="h-4 w-4" /> },
-  txt2music: { label: "Text → Music", desc: "Generate music from a text description", icon: <Music className="h-4 w-4" /> },
+const MODE_INFO: Record<
+  StudioMode,
+  { label: string; desc: string; icon: React.ReactNode }
+> = {
+  txt2img: {
+    label: "Text → Image",
+    desc: "Generate an image from a text prompt",
+    icon: <ImageIcon className="h-4 w-4" />,
+  },
+  img2img: {
+    label: "Image → Image",
+    desc: "Transform an existing image with a text prompt",
+    icon: <ImageIcon className="h-4 w-4" />,
+  },
+  txt2video: {
+    label: "Text → Video",
+    desc: "4-second cinematic B-roll from text",
+    icon: <Video className="h-4 w-4" />,
+  },
+  img2video: {
+    label: "Image → Video",
+    desc: "Animate an image into 4-second video",
+    icon: <Video className="h-4 w-4" />,
+  },
+  txt2music: {
+    label: "Text → Music",
+    desc: "Generate music from a text description",
+    icon: <Music className="h-4 w-4" />,
+  },
 };
 
-function GalleryStudio({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
+function GalleryStudio({
+  onClose,
+  onCreated,
+}: {
+  onClose: () => void;
+  onCreated: () => void;
+}) {
   const imageGenConfigQuery = useQuery({
     queryKey: ["admin-image-gen-config"],
-    queryFn: () => fetchJson<{ mode: "local" | "network"; networkNodeUrl: string; hasToken: boolean }>("/api/admin/image-gen/config"),
+    queryFn: () =>
+      fetchJson<{
+        mode: "local" | "network";
+        networkNodeUrl: string;
+        hasToken: boolean;
+      }>("/api/admin/image-gen/config"),
   });
 
   // Fetch ready characters for the character dropdown
   const charactersQuery = useQuery({
     queryKey: ["characters"],
-    queryFn: () => fetchJson<{ characters: Array<{ id: string; name: string; triggerWord: string; trainedLoraPath: string | null; loraScale: number; status: string }> }>("/api/characters"),
+    queryFn: () =>
+      fetchJson<{
+        characters: Array<{
+          id: string;
+          name: string;
+          triggerWord: string;
+          trainedLoraPath: string | null;
+          loraScale: number;
+          status: string;
+        }>;
+      }>("/api/characters"),
   });
-  const readyCharacters = (charactersQuery.data?.characters ?? []).filter((c) => c.status === "ready");
+  const readyCharacters = (charactersQuery.data?.characters ?? []).filter(
+    (c) => c.status === "ready",
+  );
 
   const imageGenMode = imageGenConfigQuery.data?.mode ?? "local";
   // When admin switches mode, reset provider default and clear turbo if needed
-  const [form, setForm] = useState<StudioFormState>(() => ({ ...DEFAULT_FORM, imageProvider: "local" }));
+  const [form, setForm] = useState<StudioFormState>(() => ({
+    ...DEFAULT_FORM,
+    imageProvider: "local",
+  }));
   const [submitting, setSubmitting] = useState(false);
   const [enhancing, setEnhancing] = useState(false);
   const [llmModel, setLlmModel] = useState("");
 
   // If admin mode is network/cloud, SDXL Turbo is unavailable — auto-reset model
-  const turboAvailable = imageGenMode === "local" && form.imageProvider === "local";
+  const turboAvailable =
+    imageGenMode === "local" && form.imageProvider === "local";
   if (form.imageModel === "sdxl-turbo" && !turboAvailable) {
     setForm((prev) => ({ ...prev, imageModel: "flux-schnell" }));
   }
   // img2img always uses flux-kontext
   if (form.mode === "img2img" && form.imageModel !== "flux-kontext") {
-    setForm((prev) => ({ ...prev, imageModel: "flux-kontext", steps: 20, guidance: 2.5 }));
+    setForm((prev) => ({
+      ...prev,
+      imageModel: "flux-kontext",
+      steps: 20,
+      guidance: 2.5,
+    }));
   }
   // switching away from img2img resets to flux-schnell defaults
   if (form.mode !== "img2img" && form.imageModel === "flux-kontext") {
-    setForm((prev) => ({ ...prev, imageModel: "flux-schnell", steps: 4, guidance: 3.5 }));
+    setForm((prev) => ({
+      ...prev,
+      imageModel: "flux-schnell",
+      steps: 4,
+      guidance: 3.5,
+    }));
   }
 
-  const update = <K extends keyof StudioFormState>(key: K, value: StudioFormState[K]) =>
-    setForm((prev) => ({ ...prev, [key]: value }));
+  const update = <K extends keyof StudioFormState>(
+    key: K,
+    value: StudioFormState[K],
+  ) => setForm((prev) => ({ ...prev, [key]: value }));
 
   const isVideo = form.mode === "txt2video" || form.mode === "img2video";
   const isMusic = form.mode === "txt2music";
   const needsImage = form.mode === "img2img" || form.mode === "img2video";
 
-  const fluxQLabel = imageGenMode === "network" ? "FluxQ (Network — via Admin)" : "FluxQ (Local)";
+  const fluxQLabel =
+    imageGenMode === "network"
+      ? "FluxQ (Network — via Admin)"
+      : "FluxQ (Local)";
 
   const handleEnhancePrompt = async () => {
     if (!form.prompt.trim()) {
@@ -1716,7 +2288,11 @@ function GalleryStudio({ onClose, onCreated }: { onClose: () => void; onCreated:
           seed: form.seed ? parseInt(form.seed, 10) : undefined,
           ...(llmModel ? { llmModel } : {}),
           parameters: isMusic
-            ? { duration_seconds: form.duration_seconds, music_steps: form.music_steps, instrumental: form.instrumental }
+            ? {
+                duration_seconds: form.duration_seconds,
+                music_steps: form.music_steps,
+                instrumental: form.instrumental,
+              }
             : {
                 width: form.width,
                 height: form.height,
@@ -1730,7 +2306,9 @@ function GalleryStudio({ onClose, onCreated }: { onClose: () => void; onCreated:
         }),
       });
 
-      const updates: Partial<StudioFormState> = { prompt: result.enhanced_prompt };
+      const updates: Partial<StudioFormState> = {
+        prompt: result.enhanced_prompt,
+      };
       const sp = result.suggested_parameters;
       if (sp.steps != null) updates.steps = sp.steps;
       if (sp.guidance != null) updates.guidance = sp.guidance;
@@ -1739,17 +2317,25 @@ function GalleryStudio({ onClose, onCreated }: { onClose: () => void; onCreated:
       if (sp.num_frames != null) updates.num_frames = sp.num_frames;
       if (sp.fps != null) updates.fps = sp.fps;
       if (sp.seed != null) updates.seed = String(sp.seed);
-      if (sp.duration_seconds != null) updates.duration_seconds = sp.duration_seconds;
+      if (sp.duration_seconds != null)
+        updates.duration_seconds = sp.duration_seconds;
       if (sp.music_steps != null) updates.music_steps = sp.music_steps;
       if (sp.video_steps != null) updates.video_steps = sp.video_steps;
       if (sp.video_guidance != null) updates.video_guidance = sp.video_guidance;
       if (result.suggested_lyrics) updates.lyrics = result.suggested_lyrics;
-      if (result.suggested_negative_prompt) updates.negative_prompt = result.suggested_negative_prompt;
+      if (result.suggested_negative_prompt)
+        updates.negative_prompt = result.suggested_negative_prompt;
 
       setForm((prev) => ({ ...prev, ...updates }));
-      showToast(result.thinking ? `✨ ${result.thinking}` : "Prompt enhanced!", "success");
+      showToast(
+        result.thinking ? `✨ ${result.thinking}` : "Prompt enhanced!",
+        "success",
+      );
     } catch (err) {
-      showToast(`Enhance failed: ${err instanceof Error ? err.message : String(err)}`, "error");
+      showToast(
+        `Enhance failed: ${err instanceof Error ? err.message : String(err)}`,
+        "error",
+      );
     } finally {
       setEnhancing(false);
     }
@@ -1793,7 +2379,11 @@ function GalleryStudio({ onClose, onCreated }: { onClose: () => void; onCreated:
 
         await fetchJson("/api/queue/jobs", {
           method: "POST",
-          body: JSON.stringify({ type: "txt2music", payload, model: "ace-step" }),
+          body: JSON.stringify({
+            type: "txt2music",
+            payload,
+            model: "ace-step",
+          }),
         });
 
         showToast("Music generation job submitted!", "success");
@@ -1803,7 +2393,10 @@ function GalleryStudio({ onClose, onCreated }: { onClose: () => void; onCreated:
       }
 
       // Cloud/auto image generation — direct route, bypasses queue
-      if (!isVideo && (form.imageProvider === "cloud" || form.imageProvider === "auto")) {
+      if (
+        !isVideo &&
+        (form.imageProvider === "cloud" || form.imageProvider === "auto")
+      ) {
         await fetchJson("/api/queue/image/generate", {
           method: "POST",
           body: JSON.stringify({
@@ -1890,7 +2483,10 @@ function GalleryStudio({ onClose, onCreated }: { onClose: () => void; onCreated:
       onCreated();
       setForm(DEFAULT_FORM);
     } catch (err) {
-      showToast(`Failed: ${err instanceof Error ? err.message : String(err)}`, "error");
+      showToast(
+        `Failed: ${err instanceof Error ? err.message : String(err)}`,
+        "error",
+      );
     } finally {
       setSubmitting(false);
     }
@@ -1899,7 +2495,9 @@ function GalleryStudio({ onClose, onCreated }: { onClose: () => void; onCreated:
   return (
     <div className="rounded-2xl border border-primary/20 bg-card p-5">
       <div className="mb-4 flex items-center justify-between">
-        <h3 className="text-lg font-semibold text-foreground">Gallery Studio</h3>
+        <h3 className="text-lg font-semibold text-foreground">
+          Gallery Studio
+        </h3>
         <button onClick={onClose} className="rounded-lg p-1.5 hover:bg-muted">
           <X className="h-4 w-4 text-muted-foreground" />
         </button>
@@ -1907,7 +2505,12 @@ function GalleryStudio({ onClose, onCreated }: { onClose: () => void; onCreated:
 
       {/* Mode Selector */}
       <div className="mb-4 grid grid-cols-5 gap-2">
-        {(Object.entries(MODE_INFO) as [StudioMode, typeof MODE_INFO["txt2img"]][]).map(([mode, info]) => (
+        {(
+          Object.entries(MODE_INFO) as [
+            StudioMode,
+            (typeof MODE_INFO)["txt2img"],
+          ][]
+        ).map(([mode, info]) => (
           <button
             key={mode}
             onClick={() => update("mode", mode)}
@@ -1918,10 +2521,20 @@ function GalleryStudio({ onClose, onCreated }: { onClose: () => void; onCreated:
             }`}
           >
             <div className="flex items-center gap-1.5">
-              <span className={form.mode === mode ? "text-primary" : "text-muted-foreground"}>{info.icon}</span>
-              <span className="text-xs font-semibold text-foreground">{info.label}</span>
+              <span
+                className={
+                  form.mode === mode ? "text-primary" : "text-muted-foreground"
+                }
+              >
+                {info.icon}
+              </span>
+              <span className="text-xs font-semibold text-foreground">
+                {info.label}
+              </span>
             </div>
-            <p className="mt-1 text-[10px] text-muted-foreground">{info.desc}</p>
+            <p className="mt-1 text-[10px] text-muted-foreground">
+              {info.desc}
+            </p>
             {(mode === "txt2video" || mode === "img2video") && (
               <span className="mt-1 inline-block rounded bg-amber-500/10 px-1.5 py-0.5 text-[9px] font-semibold text-amber-600 dark:text-amber-400">
                 4s cinematic B-roll
@@ -1939,7 +2552,9 @@ function GalleryStudio({ onClose, onCreated }: { onClose: () => void; onCreated:
       {/* Prompt */}
       <div className="mb-4">
         <div className="mb-1 flex items-center justify-between">
-          <label className="text-xs font-medium text-muted-foreground">Prompt</label>
+          <label className="text-xs font-medium text-muted-foreground">
+            Prompt
+          </label>
           <div className="flex items-center gap-2">
             <InlineModelPicker value={llmModel} onChange={setLlmModel} />
             <button
@@ -1947,7 +2562,11 @@ function GalleryStudio({ onClose, onCreated }: { onClose: () => void; onCreated:
               disabled={enhancing || !form.prompt.trim()}
               className="flex items-center gap-1.5 rounded-lg border border-primary/30 bg-primary/5 px-3 py-1 text-xs font-semibold text-primary hover:bg-primary/10 disabled:opacity-50 transition"
             >
-              {enhancing ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
+              {enhancing ? (
+                <Loader2 className="h-3 w-3 animate-spin" />
+              ) : (
+                <Sparkles className="h-3 w-3" />
+              )}
               AI Enhance
             </button>
           </div>
@@ -1957,7 +2576,13 @@ function GalleryStudio({ onClose, onCreated }: { onClose: () => void; onCreated:
           onChange={(e) => update("prompt", e.target.value)}
           className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-foreground"
           rows={3}
-          placeholder={isMusic ? "Upbeat electronic dance track, 128 BPM, energetic synth leads, punchy drums..." : isVideo ? "A cinematic aerial shot of a coastal city at golden hour..." : "A photorealistic portrait of a futuristic city skyline at dusk..."}
+          placeholder={
+            isMusic
+              ? "Upbeat electronic dance track, 128 BPM, energetic synth leads, punchy drums..."
+              : isVideo
+                ? "A cinematic aerial shot of a coastal city at golden hour..."
+                : "A photorealistic portrait of a futuristic city skyline at dusk..."
+          }
         />
       </div>
 
@@ -1966,11 +2591,18 @@ function GalleryStudio({ onClose, onCreated }: { onClose: () => void; onCreated:
         <>
           <div className="mb-4 grid grid-cols-3 gap-3">
             <div>
-              <label className="mb-1 block text-[11px] font-medium text-muted-foreground">Duration (seconds)</label>
+              <label className="mb-1 block text-[11px] font-medium text-muted-foreground">
+                Duration (seconds)
+              </label>
               <input
                 type="number"
                 value={form.duration_seconds}
-                onChange={(e) => update("duration_seconds", Math.min(Math.max(parseInt(e.target.value) || 10, 10), 300))}
+                onChange={(e) =>
+                  update(
+                    "duration_seconds",
+                    Math.min(Math.max(parseInt(e.target.value) || 10, 10), 300),
+                  )
+                }
                 min={10}
                 max={300}
                 className="w-full rounded-lg border border-border bg-card px-2 py-1.5 text-sm text-foreground"
@@ -1986,7 +2618,9 @@ function GalleryStudio({ onClose, onCreated }: { onClose: () => void; onCreated:
                 min={8}
                 max={27}
                 value={form.music_steps}
-                onChange={(e) => update("music_steps", parseInt(e.target.value))}
+                onChange={(e) =>
+                  update("music_steps", parseInt(e.target.value))
+                }
                 className="w-full"
               />
               <div className="flex justify-between text-[10px] text-muted-foreground">
@@ -2005,20 +2639,26 @@ function GalleryStudio({ onClose, onCreated }: { onClose: () => void; onCreated:
                 <span className="text-foreground">Instrumental</span>
               </label>
               <p className="text-[10px] text-muted-foreground">
-                {form.instrumental ? "No vocals — pure instrumental" : "Vocals enabled — add lyrics below"}
+                {form.instrumental
+                  ? "No vocals — pure instrumental"
+                  : "Vocals enabled — add lyrics below"}
               </p>
             </div>
           </div>
 
           {!form.instrumental && (
             <div className="mb-4">
-              <label className="mb-1 block text-[11px] font-medium text-muted-foreground">Lyrics (optional)</label>
+              <label className="mb-1 block text-[11px] font-medium text-muted-foreground">
+                Lyrics (optional)
+              </label>
               <textarea
                 value={form.lyrics}
                 onChange={(e) => update("lyrics", e.target.value)}
                 className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-foreground font-mono"
                 rows={4}
-                placeholder={"[Verse 1]\nWalking through the city lights\nNeon dreams and starry nights\n\n[Chorus]\nWe're alive, we're alive tonight"}
+                placeholder={
+                  "[Verse 1]\nWalking through the city lights\nNeon dreams and starry nights\n\n[Chorus]\nWe're alive, we're alive tonight"
+                }
               />
             </div>
           )}
@@ -2028,11 +2668,22 @@ function GalleryStudio({ onClose, onCreated }: { onClose: () => void; onCreated:
       {/* Image Upload (for img2img / img2video) */}
       {needsImage && (
         <div className="mb-4">
-          <label className="mb-1 block text-xs font-medium text-muted-foreground">Source Image</label>
+          <label className="mb-1 block text-xs font-medium text-muted-foreground">
+            Source Image
+          </label>
           <div className="flex items-center gap-4">
-            <input type="file" accept="image/*" onChange={handleImageSelect} className="text-sm text-foreground" />
+            <input
+              type="file"
+              accept="image/*"
+              onChange={handleImageSelect}
+              className="text-sm text-foreground"
+            />
             {form.initImagePreview && (
-              <img src={form.initImagePreview} alt="Preview" className="h-20 w-20 rounded-lg object-cover border border-border" />
+              <img
+                src={form.initImagePreview}
+                alt="Preview"
+                className="h-20 w-20 rounded-lg object-cover border border-border"
+              />
             )}
           </div>
         </div>
@@ -2044,14 +2695,25 @@ function GalleryStudio({ onClose, onCreated }: { onClose: () => void; onCreated:
           <div>
             <label className="mb-1 flex items-center gap-2 text-[11px] font-medium text-muted-foreground">
               Provider
-              {imageGenConfigQuery.isLoading && <span className="text-[10px] text-muted-foreground/60">(loading...)</span>}
+              {imageGenConfigQuery.isLoading && (
+                <span className="text-[10px] text-muted-foreground/60">
+                  (loading...)
+                </span>
+              )}
               {imageGenMode === "network" && form.imageProvider === "local" && (
-                <span className="rounded bg-sky-500/10 px-1.5 py-0.5 text-[9px] font-semibold text-sky-600 dark:text-sky-400">network node</span>
+                <span className="rounded bg-sky-500/10 px-1.5 py-0.5 text-[9px] font-semibold text-sky-600 dark:text-sky-400">
+                  network node
+                </span>
               )}
             </label>
             <select
               value={form.imageProvider}
-              onChange={(e) => update("imageProvider", e.target.value as "local" | "cloud" | "auto")}
+              onChange={(e) =>
+                update(
+                  "imageProvider",
+                  e.target.value as "local" | "cloud" | "auto",
+                )
+              }
               className="w-full rounded-lg border border-border bg-card px-2 py-1.5 text-sm text-foreground"
             >
               <option value="local">{fluxQLabel}</option>
@@ -2061,16 +2723,19 @@ function GalleryStudio({ onClose, onCreated }: { onClose: () => void; onCreated:
           </div>
           {form.imageProvider === "local" && (
             <div>
-              <label className="mb-1 block text-[11px] font-medium text-muted-foreground">Model</label>
+              <label className="mb-1 block text-[11px] font-medium text-muted-foreground">
+                Model
+              </label>
               <select
                 value={form.imageModel}
                 onChange={(e) => {
                   const m = e.target.value as StudioFormState["imageModel"];
-                  const defaults = m === "flux-dev"
-                    ? { steps: 25, guidance: 3.5 }
-                    : m === "flux-schnell"
-                    ? { steps: 4, guidance: 3.5 }
-                    : {};
+                  const defaults =
+                    m === "flux-dev"
+                      ? { steps: 25, guidance: 3.5 }
+                      : m === "flux-schnell"
+                        ? { steps: 4, guidance: 3.5 }
+                        : {};
                   setForm((prev) => ({ ...prev, imageModel: m, ...defaults }));
                 }}
                 className="w-full rounded-lg border border-border bg-card px-2 py-1.5 text-sm text-foreground"
@@ -2080,9 +2745,17 @@ function GalleryStudio({ onClose, onCreated }: { onClose: () => void; onCreated:
                   <option value="flux-kontext">Flux Kontext</option>
                 ) : (
                   <>
-                    <option value="flux-schnell">Flux Schnell (fast, 4 steps)</option>
-                    <option value="flux-dev">Flux Dev (quality, 25 steps)</option>
-                    {turboAvailable && <option value="sdxl-turbo">SDXL Turbo (local only)</option>}
+                    <option value="flux-schnell">
+                      Flux Schnell (fast, 4 steps)
+                    </option>
+                    <option value="flux-dev">
+                      Flux Dev (quality, 25 steps)
+                    </option>
+                    {turboAvailable && (
+                      <option value="sdxl-turbo">
+                        SDXL Turbo (local only)
+                      </option>
+                    )}
                   </>
                 )}
               </select>
@@ -2095,7 +2768,9 @@ function GalleryStudio({ onClose, onCreated }: { onClose: () => void; onCreated:
       {!isVideo && !isMusic && readyCharacters.length > 0 && (
         <div className="mb-4 space-y-3">
           <div>
-            <label className="mb-1 block text-[11px] font-medium text-muted-foreground">Character</label>
+            <label className="mb-1 block text-[11px] font-medium text-muted-foreground">
+              Character
+            </label>
             <select
               value={form.characterId}
               onChange={(e) => update("characterId", e.target.value)}
@@ -2113,7 +2788,9 @@ function GalleryStudio({ onClose, onCreated }: { onClose: () => void; onCreated:
             <div>
               <label className="mb-1 flex items-center justify-between text-[11px] font-medium text-muted-foreground">
                 <span>ControlNet Strength</span>
-                <span className="font-mono">{form.controlnetStrength.toFixed(2)}</span>
+                <span className="font-mono">
+                  {form.controlnetStrength.toFixed(2)}
+                </span>
               </label>
               <input
                 type="range"
@@ -2121,7 +2798,9 @@ function GalleryStudio({ onClose, onCreated }: { onClose: () => void; onCreated:
                 max={1}
                 step={0.05}
                 value={form.controlnetStrength}
-                onChange={(e) => update("controlnetStrength", parseFloat(e.target.value))}
+                onChange={(e) =>
+                  update("controlnetStrength", parseFloat(e.target.value))
+                }
                 className="w-full"
               />
               <div className="flex justify-between text-[10px] text-muted-foreground">
@@ -2137,25 +2816,35 @@ function GalleryStudio({ onClose, onCreated }: { onClose: () => void; onCreated:
       {!isVideo && !isMusic && (
         <div className="mb-4 grid grid-cols-4 gap-3">
           <div>
-            <label className="mb-1 block text-[11px] font-medium text-muted-foreground">Width</label>
+            <label className="mb-1 block text-[11px] font-medium text-muted-foreground">
+              Width
+            </label>
             <input
               type="number"
               value={form.width}
-              onChange={(e) => update("width", parseInt(e.target.value) || 1024)}
+              onChange={(e) =>
+                update("width", parseInt(e.target.value) || 1024)
+              }
               className="w-full rounded-lg border border-border bg-card px-2 py-1.5 text-sm text-foreground"
             />
           </div>
           <div>
-            <label className="mb-1 block text-[11px] font-medium text-muted-foreground">Height</label>
+            <label className="mb-1 block text-[11px] font-medium text-muted-foreground">
+              Height
+            </label>
             <input
               type="number"
               value={form.height}
-              onChange={(e) => update("height", parseInt(e.target.value) || 1024)}
+              onChange={(e) =>
+                update("height", parseInt(e.target.value) || 1024)
+              }
               className="w-full rounded-lg border border-border bg-card px-2 py-1.5 text-sm text-foreground"
             />
           </div>
           <div>
-            <label className="mb-1 block text-[11px] font-medium text-muted-foreground">Steps</label>
+            <label className="mb-1 block text-[11px] font-medium text-muted-foreground">
+              Steps
+            </label>
             <input
               type="number"
               value={form.steps}
@@ -2166,11 +2855,15 @@ function GalleryStudio({ onClose, onCreated }: { onClose: () => void; onCreated:
             />
           </div>
           <div>
-            <label className="mb-1 block text-[11px] font-medium text-muted-foreground">Guidance</label>
+            <label className="mb-1 block text-[11px] font-medium text-muted-foreground">
+              Guidance
+            </label>
             <input
               type="number"
               value={form.guidance}
-              onChange={(e) => update("guidance", parseFloat(e.target.value) || 3.5)}
+              onChange={(e) =>
+                update("guidance", parseFloat(e.target.value) || 3.5)
+              }
               min={0}
               max={20}
               step={0.5}
@@ -2208,18 +2901,27 @@ function GalleryStudio({ onClose, onCreated }: { onClose: () => void; onCreated:
         <>
           <div className="mb-4 grid grid-cols-5 gap-3">
             <div>
-              <label className="mb-1 block text-[11px] font-medium text-muted-foreground">Frames (max 97)</label>
+              <label className="mb-1 block text-[11px] font-medium text-muted-foreground">
+                Frames (max 97)
+              </label>
               <input
                 type="number"
                 value={form.num_frames}
-                onChange={(e) => update("num_frames", Math.min(parseInt(e.target.value) || 97, 97))}
+                onChange={(e) =>
+                  update(
+                    "num_frames",
+                    Math.min(parseInt(e.target.value) || 97, 97),
+                  )
+                }
                 min={1}
                 max={97}
                 className="w-full rounded-lg border border-border bg-card px-2 py-1.5 text-sm text-foreground"
               />
             </div>
             <div>
-              <label className="mb-1 block text-[11px] font-medium text-muted-foreground">FPS</label>
+              <label className="mb-1 block text-[11px] font-medium text-muted-foreground">
+                FPS
+              </label>
               <input
                 type="number"
                 value={form.fps}
@@ -2239,7 +2941,9 @@ function GalleryStudio({ onClose, onCreated }: { onClose: () => void; onCreated:
                 min={10}
                 max={60}
                 value={form.video_steps}
-                onChange={(e) => update("video_steps", parseInt(e.target.value))}
+                onChange={(e) =>
+                  update("video_steps", parseInt(e.target.value))
+                }
                 className="w-full"
               />
               <div className="flex justify-between text-[10px] text-muted-foreground">
@@ -2248,11 +2952,21 @@ function GalleryStudio({ onClose, onCreated }: { onClose: () => void; onCreated:
               </div>
             </div>
             <div>
-              <label className="mb-1 block text-[11px] font-medium text-muted-foreground">Guidance</label>
+              <label className="mb-1 block text-[11px] font-medium text-muted-foreground">
+                Guidance
+              </label>
               <input
                 type="number"
                 value={form.video_guidance}
-                onChange={(e) => update("video_guidance", Math.min(Math.max(parseFloat(e.target.value) || 3.5, 1.0), 8.0))}
+                onChange={(e) =>
+                  update(
+                    "video_guidance",
+                    Math.min(
+                      Math.max(parseFloat(e.target.value) || 3.5, 1.0),
+                      8.0,
+                    ),
+                  )
+                }
                 min={1.0}
                 max={8.0}
                 step={0.1}
@@ -2260,14 +2974,18 @@ function GalleryStudio({ onClose, onCreated }: { onClose: () => void; onCreated:
               />
             </div>
             <div>
-              <label className="mb-1 block text-[11px] font-medium text-muted-foreground">Duration</label>
+              <label className="mb-1 block text-[11px] font-medium text-muted-foreground">
+                Duration
+              </label>
               <p className="mt-1 text-sm font-semibold text-foreground">
                 {(form.num_frames / form.fps).toFixed(1)}s
               </p>
             </div>
           </div>
           <div className="mb-4">
-            <label className="mb-1 block text-[11px] font-medium text-muted-foreground">Negative Prompt</label>
+            <label className="mb-1 block text-[11px] font-medium text-muted-foreground">
+              Negative Prompt
+            </label>
             <textarea
               value={form.negative_prompt}
               onChange={(e) => update("negative_prompt", e.target.value)}
@@ -2281,7 +2999,9 @@ function GalleryStudio({ onClose, onCreated }: { onClose: () => void; onCreated:
 
       {/* Seed */}
       <div className="mb-4">
-        <label className="mb-1 block text-[11px] font-medium text-muted-foreground">Seed (optional)</label>
+        <label className="mb-1 block text-[11px] font-medium text-muted-foreground">
+          Seed (optional)
+        </label>
         <input
           type="text"
           value={form.seed}
@@ -2297,12 +3017,12 @@ function GalleryStudio({ onClose, onCreated }: { onClose: () => void; onCreated:
           {isMusic
             ? `ACE-Step · ${form.duration_seconds}s ${form.instrumental ? "instrumental" : "vocal"} · ${form.music_steps} steps`
             : isVideo
-            ? `Video: ${form.num_frames}fr @ ${form.fps}fps = ${(form.num_frames / form.fps).toFixed(1)}s · ${form.video_steps} steps · cfg ${form.video_guidance}`
-            : form.imageProvider === "cloud"
-            ? `Cloud (Imagen 3) · ${form.width}x${form.height}`
-            : form.imageProvider === "auto"
-            ? `Auto (cloud→local) · ${form.width}x${form.height}`
-            : `${form.imageModel} · ${form.width}x${form.height}, ${form.steps} steps`}
+              ? `Video: ${form.num_frames}fr @ ${form.fps}fps = ${(form.num_frames / form.fps).toFixed(1)}s · ${form.video_steps} steps · cfg ${form.video_guidance}`
+              : form.imageProvider === "cloud"
+                ? `Cloud (Imagen 3) · ${form.width}x${form.height}`
+                : form.imageProvider === "auto"
+                  ? `Auto (cloud→local) · ${form.width}x${form.height}`
+                  : `${form.imageModel} · ${form.width}x${form.height}, ${form.steps} steps`}
         </p>
         <button
           onClick={handleSubmit}

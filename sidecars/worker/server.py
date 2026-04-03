@@ -136,10 +136,17 @@ class GenerateRequest(BaseModel):
     init_image: str | None = None  # base64 for img2video
     seed: int | None = None
     # Quality controls
-    pipeline: str = "distilled"  # "distilled" (fast) or "dev" (photorealistic)
+    pipeline: str = "distilled"  # "distilled", "dev", "dev-two-stage", "dev-two-stage-hq"
     negative_prompt: str | None = None
     cfg_scale: float | None = None  # DEV pipeline only; default 4.5
     num_inference_steps: int | None = None  # DEV pipeline only; default 20
+    # LTX Video Engine v2 fields
+    audio: bool = False  # Enable synchronized audio generation
+    tiling: str = Field(default="aggressive", pattern=r"^(auto|none|default|aggressive|conservative)$")
+    model_repo: str | None = Field(default=None, max_length=200, pattern=r"^[A-Za-z0-9_\-]+/[A-Za-z0-9_\-\.]+$")
+    enhance_prompt: bool = False  # Gemma-based prompt enhancement
+    image_strength: float = Field(default=1.0, ge=0.0, le=1.0)  # I2V conditioning strength
+    progress_url: str | None = None  # URL for real-time progress updates (#762)
 
 class StatusResponse(BaseModel):
     is_busy: bool
@@ -288,11 +295,12 @@ def generate_video_ltx2(request: GenerateRequest) -> bytes:
 
     # Check if we need to swap models
     target_model = "ltx-2"
-    if state._model_name != target_model:
+    resolved_repo = request.model_repo or DEFAULT_MODEL_REPO
+    if state._model_name != target_model or state.loaded_model != resolved_repo:
         unload_model()
-        state.loaded_model = target_model
+        state.loaded_model = resolved_repo
         state._model_name = target_model
-        logger.info(f"Loading LTX-2 model: {DEFAULT_MODEL_REPO}")
+        logger.info(f"Loading LTX-2 model: {resolved_repo}")
 
     with tempfile.TemporaryDirectory() as tmpdir:
         output_raw = Path(tmpdir) / "raw_video.mp4"
@@ -308,7 +316,7 @@ def generate_video_ltx2(request: GenerateRequest) -> bytes:
         logger.info(f"MLX generation complete. Raw video: {raw_size:,} bytes — starting H.264 re-encode...")
 
         # Re-encode with h264_videotoolbox for Apple Silicon hardware encoding
-        _encode_with_videotoolbox(str(output_raw), str(output_final), fps)
+        _encode_with_videotoolbox(str(output_raw), str(output_final), fps, has_audio=request.audio)
 
         final_size = output_final.stat().st_size if output_final.exists() else 0
         logger.info(f"Re-encode complete: {final_size:,} bytes — reading into memory...")
@@ -318,15 +326,27 @@ def generate_video_ltx2(request: GenerateRequest) -> bytes:
 
 
 def _generate_with_mlx_video(request: GenerateRequest, num_frames: int, fps: int, output_path: str):
-    """Generate using the mlx-video Python package (CharafChnioune fork)."""
-    from mlx_video.generate import generate_video, PipelineType  # type: ignore[import-untyped]
+    """Generate using the mlx-video Python package (Blaizzy fork)."""
+    try:
+        from mlx_video.models.ltx_2.generate import generate_video, PipelineType  # type: ignore[import-untyped]
+    except ImportError:
+        # Fall back to old import path for backward compatibility
+        from mlx_video.generate import generate_video, PipelineType  # type: ignore[import-untyped]
 
-    use_dev = request.pipeline.lower() == "dev"
-    pipeline_type = PipelineType.DEV if use_dev else PipelineType.DISTILLED
+    pipeline_map = {
+        "distilled": PipelineType.DISTILLED,
+        "dev": PipelineType.DEV,
+        "dev-two-stage": PipelineType.DEV_TWO_STAGE,
+        "dev-two-stage-hq": PipelineType.DEV_TWO_STAGE_HQ,
+    }
+    pipeline_type = pipeline_map.get(request.pipeline.lower(), PipelineType.DISTILLED)
+    use_dev = request.pipeline.lower() in ("dev", "dev-two-stage", "dev-two-stage-hq")
+
+    resolved_model_repo = request.model_repo or DEFAULT_MODEL_REPO
 
     kwargs: dict = {
         "prompt": request.prompt,
-        "model_repo": DEFAULT_MODEL_REPO,
+        "model_repo": resolved_model_repo,
         "text_encoder_repo": DEFAULT_TEXT_ENCODER_REPO,
         "pipeline": pipeline_type,
         "width": request.width,
@@ -334,18 +354,16 @@ def _generate_with_mlx_video(request: GenerateRequest, num_frames: int, fps: int
         "num_frames": num_frames,
         "fps": fps,
         "output_path": output_path,
-        "tiling": "aggressive",
-        "audio": False,
+        "tiling": request.tiling,
+        "audio": request.audio,
         "verbose": True,
-        "video_encoder": "ffmpeg",
-        "mem_log": True,
+        "enhance_prompt": request.enhance_prompt,
         "negative_prompt": request.negative_prompt or "worst quality, inconsistent motion, blurry, jittery, distorted",
     }
 
     if use_dev:
         kwargs["cfg_scale"] = request.cfg_scale if request.cfg_scale is not None else 4.5
         kwargs["num_inference_steps"] = request.num_inference_steps if request.num_inference_steps is not None else 20
-        kwargs["eval_interval"] = 1  # evaluate after every step to keep Metal command buffers small
 
     if request.seed is not None:
         kwargs["seed"] = request.seed
@@ -356,6 +374,7 @@ def _generate_with_mlx_video(request: GenerateRequest, num_frames: int, fps: int
         img_path = output_path.replace(".mp4", "_init.png")
         Path(img_path).write_bytes(img_bytes)
         kwargs["image"] = img_path
+        kwargs["image_strength"] = request.image_strength
 
     generate_video(**kwargs)
 
@@ -394,8 +413,10 @@ def _generate_with_ltx_inference(request: GenerateRequest, num_frames: int, fps:
         )
 
 
-def _encode_with_videotoolbox(input_path: str, output_path: str, fps: int):
-    """Re-encode MP4 using Apple's h264_videotoolbox hardware encoder."""
+def _encode_with_videotoolbox(input_path: str, output_path: str, fps: int, has_audio: bool = False):
+    """Re-encode MP4 using Apple's h264_videotoolbox hardware encoder.
+    When has_audio is True, copies the audio stream from the input."""
+    audio_args = ["-c:a", "aac", "-b:a", "192k"] if has_audio else ["-an"]
     cmd = [
         "ffmpeg", "-y",
         "-i", input_path,
@@ -404,6 +425,7 @@ def _encode_with_videotoolbox(input_path: str, output_path: str, fps: int):
         "-fps_mode", "cfr",
         "-r", str(fps),
         "-pix_fmt", "yuv420p",
+        *audio_args,
         "-movflags", "+faststart",
         output_path,
     ]
@@ -421,10 +443,67 @@ def _encode_with_videotoolbox(input_path: str, output_path: str, fps: int):
             "-fps_mode", "cfr",
             "-r", str(fps),
             "-pix_fmt", "yuv420p",
+            *audio_args,
             "-movflags", "+faststart",
             output_path,
         ]
         subprocess.run(cmd_fallback, capture_output=True, text=True, timeout=120, check=True)
+
+
+# ── Progress Reporting (#762) ────────────────────────────────
+
+_last_progress_time: float = 0.0
+_PROGRESS_THROTTLE_SEC: float = 0.5  # Max 2 POSTs/second
+
+
+def _is_safe_callback_url(url: str) -> bool:
+    """Validate that a callback URL targets a private/loopback host (SSRF guard)."""
+    from urllib.parse import urlparse
+    try:
+        parsed = urlparse(url)
+        if parsed.scheme not in ("http", "https"):
+            return False
+        host = parsed.hostname or ""
+        if host in ("localhost", "127.0.0.1", "::1"):
+            return True
+        try:
+            addr = ipaddress.ip_address(host)
+            return addr.is_private or addr.is_loopback
+        except ValueError:
+            # Hostname, not IP — allow .local mDNS names (common in LAN setups)
+            return host.endswith(".local")
+    except Exception:
+        return False
+
+
+async def _report_progress(
+    job_id: str,
+    progress_url: str | None,
+    stage: str,
+    progress: int,
+    message: str = "",
+) -> None:
+    """POST a progress update to the Node.js server (throttled to 2/sec)."""
+    global _last_progress_time
+    if not progress_url:
+        return
+    if not _is_safe_callback_url(progress_url):
+        logger.warning(f"Rejected progress_url with non-private host: {progress_url}")
+        return
+    now = time.monotonic()
+    if now - _last_progress_time < _PROGRESS_THROTTLE_SEC:
+        return
+    _last_progress_time = now
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            await client.post(progress_url, json={
+                "job_id": job_id,
+                "stage": stage,
+                "progress": progress,
+                "message": message,
+            })
+    except Exception as e:
+        logger.debug(f"Progress report failed (non-fatal): {e}")
 
 
 # ── Async Job Runner ─────────────────────────────────────────
@@ -436,8 +515,12 @@ async def run_generation_job(request: GenerateRequest):
         await state.set_busy(True)
         logger.info(f"Starting job {request.job_id} ({request.type}) callback_url={request.callback_url}")
 
+        # Report initial progress (#762)
+        await _report_progress(request.job_id, request.progress_url, "Initializing", 0, "Loading model…")
+
         # Run CPU/GPU-bound generation in a thread pool
         if request.type in ("txt2video", "img2video"):
+            await _report_progress(request.job_id, request.progress_url, "Generating", 10, "Model loaded, generating video…")
             media_bytes = await asyncio.get_event_loop().run_in_executor(
                 None, generate_video_ltx2, request
             )
@@ -447,6 +530,9 @@ async def run_generation_job(request: GenerateRequest):
 
         elapsed = time.time() - start
         logger.info(f"Job {request.job_id} generation done in {elapsed:.1f}s ({len(media_bytes)} bytes)")
+
+        # Report encoding progress (#762)
+        await _report_progress(request.job_id, request.progress_url, "Encoding", 80, "Re-encoding with H.264…")
 
         # Encode + POST result — this can take several seconds for large videos
         logger.info(f"Job {request.job_id} encoding base64 ({len(media_bytes):,} bytes)...")
@@ -465,9 +551,12 @@ async def run_generation_job(request: GenerateRequest):
                 "height": request.height,
                 "num_frames": min(request.num_frames, MAX_VIDEO_FRAMES),
                 "fps": request.fps,
-                "model": DEFAULT_MODEL_REPO,
+                "model": request.model_repo or DEFAULT_MODEL_REPO,
                 "pipeline": request.pipeline,
                 "duration": round(min(request.num_frames, MAX_VIDEO_FRAMES) / request.fps, 2),
+                "audio": request.audio,
+                "tiling": request.tiling,
+                "enhance_prompt": request.enhance_prompt,
             },
         }
 
@@ -475,6 +564,9 @@ async def run_generation_job(request: GenerateRequest):
         async with httpx.AsyncClient(timeout=60.0) as client:
             resp = await client.post(validated_url, json=payload)
             logger.info(f"Webhook callback: {resp.status_code}")
+
+        # Report completion progress (#762)
+        await _report_progress(request.job_id, request.progress_url, "Complete", 100, "Video delivered")
 
     except Exception as e:
         elapsed = time.time() - start
@@ -574,6 +666,40 @@ async def memory_info():
         "within_budget": ok,
         "budget_status": reason,
         "model_loaded": state._model_name,
+    }
+
+
+@app.get("/models")
+async def list_models():
+    """List available LTX model catalog with memory requirements."""
+    return {
+        "models": [
+            {
+                "id": "ltx-2-distilled-q4",
+                "repo": "AITRADER/ltx2-distilled-4bit-mlx",
+                "name": "LTX-2 Distilled Q4",
+                "memory_gb": 19,
+                "download_gb": 19,
+                "version": "2.0",
+                "audio": True,
+                "pipelines": ["distilled", "dev"],
+            },
+            {
+                "id": "ltx-2.3-distilled-q4",
+                "repo": "dgrauet/ltx-2.3-mlx-distilled-q4",
+                "name": "LTX-2.3 Distilled Q4",
+                "memory_gb": 20,
+                "download_gb": 41,
+                "version": "2.3",
+                "audio": True,
+                "pipelines": ["distilled", "dev", "dev-two-stage", "dev-two-stage-hq"],
+                "warning": "Large download (~41 GB). Ensure sufficient disk space before selecting.",
+            },
+        ],
+        "default_repo": DEFAULT_MODEL_REPO,
+        "memory_limit_gb": MEMORY_LIMIT_GB,
+        "valid_pipelines": ["distilled", "dev", "dev-two-stage", "dev-two-stage-hq"],
+        "valid_tiling_modes": ["auto", "none", "default", "aggressive", "conservative"],
     }
 
 

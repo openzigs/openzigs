@@ -47,14 +47,32 @@ interface CharacterProfile {
 
 function statusBadge(status: CharacterProfile["status"]) {
   const map = {
-    pending: { icon: <Clock className="h-3 w-3" />, label: "Pending", classes: "bg-yellow-500/10 text-yellow-600 dark:text-yellow-400" },
-    training: { icon: <Loader2 className="h-3 w-3 animate-spin" />, label: "Training", classes: "bg-blue-500/10 text-blue-600 dark:text-blue-400" },
-    ready: { icon: <CheckCircle className="h-3 w-3" />, label: "Ready", classes: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" },
-    failed: { icon: <AlertCircle className="h-3 w-3" />, label: "Failed", classes: "bg-red-500/10 text-red-600 dark:text-red-400" },
+    pending: {
+      icon: <Clock className="h-3 w-3" />,
+      label: "Pending",
+      classes: "bg-yellow-500/10 text-yellow-600 dark:text-yellow-400",
+    },
+    training: {
+      icon: <Loader2 className="h-3 w-3 animate-spin" />,
+      label: "Training",
+      classes: "bg-blue-500/10 text-blue-600 dark:text-blue-400",
+    },
+    ready: {
+      icon: <CheckCircle className="h-3 w-3" />,
+      label: "Ready",
+      classes: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
+    },
+    failed: {
+      icon: <AlertCircle className="h-3 w-3" />,
+      label: "Failed",
+      classes: "bg-red-500/10 text-red-600 dark:text-red-400",
+    },
   };
   const b = map[status];
   return (
-    <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold ${b.classes}`}>
+    <span
+      className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold ${b.classes}`}
+    >
       {b.icon} {b.label}
     </span>
   );
@@ -62,7 +80,9 @@ function statusBadge(status: CharacterProfile["status"]) {
 
 function photoUrl(characterId: string, photoPath: string): string {
   const filename = photoPath.split("/").pop() ?? "";
-  return buildMediaUrl(`/api/characters/${characterId}/photos/${encodeURIComponent(filename)}`);
+  return buildMediaUrl(
+    `/api/characters/${characterId}/photos/${encodeURIComponent(filename)}`,
+  );
 }
 
 // ── Page ────────────────────────────────────────────────────
@@ -78,14 +98,16 @@ export default function CharactersPage() {
   const [createDescription, setCreateDescription] = useState("");
   const [createScale, setCreateScale] = useState(0.8);
   const [selectedChar, setSelectedChar] = useState<string | null>(null);
-  const [deleteTarget, setDeleteTarget] = useState<CharacterProfile | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<CharacterProfile | null>(
+    null,
+  );
   const [isDragging, setIsDragging] = useState(false);
   const [dragFileCount, setDragFileCount] = useState(0);
 
   // Training config
-  const [trainSteps, setTrainSteps] = useState(9);
+  const [trainSteps, setTrainSteps] = useState(25);
   const [trainLR, setTrainLR] = useState(0.0001);
-  const [trainRank, setTrainRank] = useState(16);
+  const [trainRank, setTrainRank] = useState(8);
   const [trainEpochs, setTrainEpochs] = useState(50);
   const [trainNotifyViaTelegram, setTrainNotifyViaTelegram] = useState(false);
 
@@ -101,7 +123,8 @@ export default function CharactersPage() {
   // ── Queries ───────────────────────────────────────────
   const charactersQuery = useQuery({
     queryKey: ["characters"],
-    queryFn: () => fetchJson<{ characters: CharacterProfile[] }>("/api/characters"),
+    queryFn: () =>
+      fetchJson<{ characters: CharacterProfile[] }>("/api/characters"),
     refetchInterval: 5000,
   });
 
@@ -111,14 +134,22 @@ export default function CharactersPage() {
   // Fetch available models for AI Enhance model picker
   const modelsQuery = useQuery({
     queryKey: ["models"],
-    queryFn: () => fetchJson<{ models: { id: string }[]; selectedModel?: string | null }>("/api/models"),
+    queryFn: () =>
+      fetchJson<{ models: { id: string }[]; selectedModel?: string | null }>(
+        "/api/models",
+      ),
     enabled: showEnhanceDialog,
     staleTime: 30_000,
   });
 
   // ── Mutations ─────────────────────────────────────────
   const createMutation = useMutation({
-    mutationFn: (data: { name: string; description: string; triggerWord: string; loraScale: number }) =>
+    mutationFn: (data: {
+      name: string;
+      description: string;
+      triggerWord: string;
+      loraScale: number;
+    }) =>
       fetchJson<CharacterProfile>("/api/characters", {
         method: "POST",
         body: JSON.stringify(data),
@@ -173,11 +204,27 @@ export default function CharactersPage() {
   });
 
   const trainMutation = useMutation({
-    mutationFn: (data: { id: string; steps: number; learningRate: number; loraRank: number; numEpochs: number; notifyViaTelegram?: boolean }) =>
-      fetchJson<{ ok: boolean; message: string }>(`/api/characters/${data.id}/train`, {
-        method: "POST",
-        body: JSON.stringify({ steps: data.steps, learningRate: data.learningRate, loraRank: data.loraRank, numEpochs: data.numEpochs, notifyViaTelegram: data.notifyViaTelegram }),
-      }),
+    mutationFn: (data: {
+      id: string;
+      steps: number;
+      learningRate: number;
+      loraRank: number;
+      numEpochs: number;
+      notifyViaTelegram?: boolean;
+    }) =>
+      fetchJson<{ ok: boolean; message: string }>(
+        `/api/characters/${data.id}/train`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            steps: data.steps,
+            learningRate: data.learningRate,
+            loraRank: data.loraRank,
+            numEpochs: data.numEpochs,
+            notifyViaTelegram: data.notifyViaTelegram,
+          }),
+        },
+      ),
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["characters"] });
       showToast(data.message, "success");
@@ -186,11 +233,20 @@ export default function CharactersPage() {
   });
 
   const resumeMutation = useMutation({
-    mutationFn: ({ id, checkpoint_path }: { id: string; checkpoint_path: string }) =>
-      fetchJson<{ ok: boolean; message: string }>(`/api/characters/${id}/resume-training`, {
-        method: "POST",
-        body: JSON.stringify({ checkpoint_path }),
-      }),
+    mutationFn: ({
+      id,
+      checkpoint_path,
+    }: {
+      id: string;
+      checkpoint_path: string;
+    }) =>
+      fetchJson<{ ok: boolean; message: string }>(
+        `/api/characters/${id}/resume-training`,
+        {
+          method: "POST",
+          body: JSON.stringify({ checkpoint_path }),
+        },
+      ),
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["characters"] });
       setShowResumeDialog(false);
@@ -214,10 +270,12 @@ export default function CharactersPage() {
 
   const recoverMutation = useMutation({
     mutationFn: (id: string) =>
-      fetchJson<{ ok: boolean; recovered: boolean; message: string; loraPath?: string }>(
-        `/api/characters/${id}/recover-training`,
-        { method: "POST" },
-      ),
+      fetchJson<{
+        ok: boolean;
+        recovered: boolean;
+        message: string;
+        loraPath?: string;
+      }>(`/api/characters/${id}/recover-training`, { method: "POST" }),
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["characters"] });
       showToast(data.message, data.recovered ? "success" : "info");
@@ -227,15 +285,30 @@ export default function CharactersPage() {
 
   const checkpointsQuery = useQuery({
     queryKey: ["train-checkpoints", resumeCharId],
-    queryFn: () => fetchJson<{ character_id: string; checkpoints: Array<{ path: string; name: string; size: number }>; train_dir: string }>(
-      `/api/characters/${resumeCharId}/checkpoints`,
-    ),
+    queryFn: () =>
+      fetchJson<{
+        character_id: string;
+        checkpoints: Array<{ path: string; name: string; size: number }>;
+        train_dir: string;
+      }>(`/api/characters/${resumeCharId}/checkpoints`),
     enabled: showResumeDialog && !!resumeCharId,
     staleTime: 30_000,
   });
 
   const updateMutation = useMutation({
-    mutationFn: ({ id, silent: _silent, ...data }: { id: string; silent?: boolean; loraScale?: number; name?: string; triggerWord?: string; description?: string; photoCaptions?: Record<string, string> }) =>
+    mutationFn: ({
+      id,
+      silent: _silent,
+      ...data
+    }: {
+      id: string;
+      silent?: boolean;
+      loraScale?: number;
+      name?: string;
+      triggerWord?: string;
+      description?: string;
+      photoCaptions?: Record<string, string>;
+    }) =>
       fetchJson<CharacterProfile>(`/api/characters/${id}`, {
         method: "PUT",
         body: JSON.stringify(data),
@@ -251,14 +324,21 @@ export default function CharactersPage() {
 
   const aiEnhanceMutation = useMutation({
     mutationFn: ({ id, model }: { id: string; model?: string }) =>
-      fetchJson<{ captions: Record<string, string>; totalSteps: number; model?: string }>(
-        `/api/characters/${id}/ai-enhance`,
-        { method: "POST", body: JSON.stringify(model ? { model } : {}) },
-      ),
+      fetchJson<{
+        captions: Record<string, string>;
+        totalSteps: number;
+        model?: string;
+      }>(`/api/characters/${id}/ai-enhance`, {
+        method: "POST",
+        body: JSON.stringify(model ? { model } : {}),
+      }),
     onSuccess: (data, { id }) => {
       // Apply captions only — training params are intentionally not changed by AI Enhance
       updateMutation.mutate({ id, photoCaptions: data.captions, silent: true });
-      showToast(`AI enhanced: ${Object.keys(data.captions).length} captions generated (${data.model ?? "default"})`, "success");
+      showToast(
+        `AI enhanced: ${Object.keys(data.captions).length} captions generated (${data.model ?? "default"})`,
+        "success",
+      );
     },
     onError: (err) => showToast(err.message, "error"),
   });
@@ -323,7 +403,8 @@ export default function CharactersPage() {
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Character Lab</h1>
           <p className="text-sm text-muted-foreground">
-            Create characters with LoRA training for consistent identity across generations
+            Create characters with LoRA training for consistent identity across
+            generations
           </p>
         </div>
         <button
@@ -375,11 +456,14 @@ export default function CharactersPage() {
                 className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
               />
               <p className="mt-1 text-xs text-muted-foreground">
-                Describes what the character looks like — used in training prompts for better LoRA quality
+                Describes what the character looks like — used in training
+                prompts for better LoRA quality
               </p>
             </div>
             <div>
-              <label className="text-sm font-medium">LoRA Scale: {createScale}</label>
+              <label className="text-sm font-medium">
+                LoRA Scale: {createScale}
+              </label>
               <input
                 type="range"
                 min={0.1}
@@ -396,7 +480,11 @@ export default function CharactersPage() {
                 disabled={createMutation.isPending}
                 className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
               >
-                {createMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : "Create"}
+                {createMutation.isPending ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  "Create"
+                )}
               </button>
               <button
                 type="button"
@@ -445,12 +533,16 @@ export default function CharactersPage() {
                     <span className="truncate font-medium">{char.name}</span>
                   </div>
                   <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
-                    <code className="rounded bg-muted px-1 py-0.5 font-mono text-[10px]">{char.triggerWord}</code>
+                    <code className="rounded bg-muted px-1 py-0.5 font-mono text-[10px]">
+                      {char.triggerWord}
+                    </code>
                     {statusBadge(char.status)}
                   </div>
                   <div className="mt-1 text-xs text-muted-foreground">
-                    {char.referencePhotos.length} photo{char.referencePhotos.length !== 1 ? "s" : ""}
-                    {" · LoRA "}{char.loraScale}
+                    {char.referencePhotos.length} photo
+                    {char.referencePhotos.length !== 1 ? "s" : ""}
+                    {" · LoRA "}
+                    {char.loraScale}
                   </div>
                 </div>
                 <button
@@ -481,25 +573,37 @@ export default function CharactersPage() {
                 <div className="space-y-4">
                   <div className="grid grid-cols-2 gap-4 text-sm">
                     <div>
-                      <span className="text-muted-foreground">Trigger Word:</span>{" "}
-                      <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">{selected.triggerWord}</code>
+                      <span className="text-muted-foreground">
+                        Trigger Word:
+                      </span>{" "}
+                      <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">
+                        {selected.triggerWord}
+                      </code>
                     </div>
                     <div>
-                      <span className="text-muted-foreground">Status:</span> {statusBadge(selected.status)}
+                      <span className="text-muted-foreground">Status:</span>{" "}
+                      {statusBadge(selected.status)}
                     </div>
                     <div className="col-span-2">
-                      <span className="text-muted-foreground">Description:</span>{" "}
+                      <span className="text-muted-foreground">
+                        Description:
+                      </span>{" "}
                       <input
                         type="text"
                         value={selected.description}
                         onChange={(e) =>
-                          updateMutation.mutate({ id: selected.id, description: e.target.value, silent: true })
+                          updateMutation.mutate({
+                            id: selected.id,
+                            description: e.target.value,
+                            silent: true,
+                          })
                         }
                         placeholder="e.g. a husky dog with blue eyes"
                         className="w-full rounded border border-border bg-background px-2 py-0.5 text-xs"
                       />
                       <p className="mt-0.5 text-[10px] text-muted-foreground">
-                        Used in training prompts so the LoRA learns what the trigger word represents
+                        Used in training prompts so the LoRA learns what the
+                        trigger word represents
                       </p>
                     </div>
                     <div>
@@ -511,17 +615,23 @@ export default function CharactersPage() {
                         step={0.05}
                         value={selected.loraScale}
                         onChange={(e) =>
-                          updateMutation.mutate({ id: selected.id, loraScale: parseFloat(e.target.value) })
+                          updateMutation.mutate({
+                            id: selected.id,
+                            loraScale: parseFloat(e.target.value),
+                          })
                         }
                         className="w-20 rounded border border-border bg-background px-2 py-0.5 text-xs"
                       />
                     </div>
                     <div>
-                      <span className="text-muted-foreground">Photos:</span> {selected.referencePhotos.length}
+                      <span className="text-muted-foreground">Photos:</span>{" "}
+                      {selected.referencePhotos.length}
                     </div>
                     {selected.trainedLoraPath && (
                       <div className="col-span-2">
-                        <span className="text-muted-foreground">LoRA Path:</span>{" "}
+                        <span className="text-muted-foreground">
+                          LoRA Path:
+                        </span>{" "}
                         <code className="break-all rounded bg-muted px-1.5 py-0.5 font-mono text-[10px]">
                           {selected.trainedLoraPath}
                         </code>
@@ -538,13 +648,16 @@ export default function CharactersPage() {
               </SectionCard>
 
               {/* Reference Photos with Captions */}
-              <SectionCard title={`Reference Photos (${selected.referencePhotos.length})`}>
+              <SectionCard
+                title={`Reference Photos (${selected.referencePhotos.length})`}
+              >
                 <div className="space-y-4">
                   {selected.referencePhotos.length > 0 && (
                     <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4">
                       {selected.referencePhotos.map((photo, i) => {
                         const filename = photo.split("/").pop() ?? "";
-                        const caption = selected.photoCaptions?.[filename] ?? "";
+                        const caption =
+                          selected.photoCaptions?.[filename] ?? "";
                         return (
                           <div key={i} className="space-y-1">
                             <div className="group relative aspect-square overflow-hidden rounded-lg border border-border bg-muted">
@@ -561,8 +674,15 @@ export default function CharactersPage() {
                               type="text"
                               value={caption}
                               onChange={(e) => {
-                                const updated = { ...selected.photoCaptions, [filename]: e.target.value };
-                                updateMutation.mutate({ id: selected.id, photoCaptions: updated, silent: true });
+                                const updated = {
+                                  ...selected.photoCaptions,
+                                  [filename]: e.target.value,
+                                };
+                                updateMutation.mutate({
+                                  id: selected.id,
+                                  photoCaptions: updated,
+                                  silent: true,
+                                });
                               }}
                               placeholder="Caption for training..."
                               className="w-full rounded border border-border bg-background px-1.5 py-0.5 text-[10px] placeholder:text-muted-foreground/50"
@@ -582,7 +702,9 @@ export default function CharactersPage() {
                     role="button"
                     tabIndex={0}
                     aria-label="Upload reference photos"
-                    onKeyDown={(e) => e.key === "Enter" && fileInputRef.current?.click()}
+                    onKeyDown={(e) =>
+                      e.key === "Enter" && fileInputRef.current?.click()
+                    }
                     className={`flex cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed p-8 transition-colors ${
                       isDragging
                         ? "border-primary bg-primary/10"
@@ -591,7 +713,8 @@ export default function CharactersPage() {
                   >
                     {uploadMutation.isPending ? (
                       <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                        <Loader2 className="h-5 w-5 animate-spin" /> Uploading...
+                        <Loader2 className="h-5 w-5 animate-spin" />{" "}
+                        Uploading...
                       </div>
                     ) : isDragging ? (
                       <div className="text-center">
@@ -605,7 +728,9 @@ export default function CharactersPage() {
                     ) : (
                       <div className="text-center">
                         <Upload className="mx-auto h-8 w-8 text-muted-foreground" />
-                        <p className="mt-2 text-sm font-medium">Drop photos here or click to browse</p>
+                        <p className="mt-2 text-sm font-medium">
+                          Drop photos here or click to browse
+                        </p>
                         <p className="mt-1 text-xs text-muted-foreground">
                           JPEG, PNG, WebP, HEIC · up to 20 files · 20 MB each
                         </p>
@@ -613,8 +738,8 @@ export default function CharactersPage() {
                     )}
                   </div>
                   <p className="text-xs text-muted-foreground">
-                    Upload 10–20 reference photos from various angles and lighting conditions.
-                    Minimum 5 photos required for training.
+                    Upload 10–20 reference photos from various angles and
+                    lighting conditions. Minimum 5 photos required for training.
                   </p>
                 </div>
               </SectionCard>
@@ -629,7 +754,11 @@ export default function CharactersPage() {
                         setEnhanceModel("");
                         setShowEnhanceDialog(true);
                       }}
-                      disabled={aiEnhanceMutation.isPending || !selected.description || selected.referencePhotos.length === 0}
+                      disabled={
+                        aiEnhanceMutation.isPending ||
+                        !selected.description ||
+                        selected.referencePhotos.length === 0
+                      }
                       className="inline-flex items-center gap-2 rounded-md border border-purple-500/30 bg-purple-500/10 px-3 py-1.5 text-xs font-medium text-purple-700 hover:bg-purple-500/20 disabled:opacity-50 dark:text-purple-300"
                     >
                       {aiEnhanceMutation.isPending ? (
@@ -653,7 +782,10 @@ export default function CharactersPage() {
                         <span className="group relative cursor-help">
                           <Info className="h-3 w-3 opacity-50" />
                           <span className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-1 w-56 -translate-x-1/2 rounded-md bg-popover px-3 py-2 text-[10px] leading-snug text-popover-foreground shadow-md border border-border opacity-0 transition-opacity group-hover:opacity-100">
-                            Number of full passes over all reference photos. Total training steps = epochs × photo count. Recommended: 10–20 for most subjects, more for complex characters.
+                            Number of full passes over all reference photos.
+                            Total training steps = epochs × photo count.
+                            Recommended: 10–20 for most subjects, more for
+                            complex characters.
                           </span>
                         </span>
                       </label>
@@ -663,11 +795,14 @@ export default function CharactersPage() {
                         max={100}
                         step={1}
                         value={trainEpochs}
-                        onChange={(e) => setTrainEpochs(parseInt(e.target.value))}
+                        onChange={(e) =>
+                          setTrainEpochs(parseInt(e.target.value))
+                        }
                         className="mt-1 w-full rounded-md border border-border bg-background px-3 py-1.5 text-sm"
                       />
                       <p className="mt-0.5 text-[10px] text-muted-foreground">
-                        ~{trainEpochs * (selected.referencePhotos.length || 1)} total steps
+                        ~{trainEpochs * (selected.referencePhotos.length || 1)}{" "}
+                        total steps
                       </p>
                     </div>
                     <div>
@@ -676,7 +811,9 @@ export default function CharactersPage() {
                         <span className="group relative cursor-help">
                           <Info className="h-3 w-3 opacity-50" />
                           <span className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-1 w-56 -translate-x-1/2 rounded-md bg-popover px-3 py-2 text-[10px] leading-snug text-popover-foreground shadow-md border border-border opacity-0 transition-opacity group-hover:opacity-100">
-                            Denoising steps during training&apos;s internal image generation. For z-image-turbo (distilled model), 4–9 steps is ideal. Higher values are slower with diminishing returns.
+                            Denoising steps during training&apos;s internal
+                            image generation. For Flux Dev, 20–30 steps is
+                            ideal. Higher values improve quality but are slower.
                           </span>
                         </span>
                       </label>
@@ -686,7 +823,9 @@ export default function CharactersPage() {
                         max={50}
                         step={1}
                         value={trainSteps}
-                        onChange={(e) => setTrainSteps(parseInt(e.target.value))}
+                        onChange={(e) =>
+                          setTrainSteps(parseInt(e.target.value))
+                        }
                         className="mt-1 w-full rounded-md border border-border bg-background px-3 py-1.5 text-sm"
                       />
                     </div>
@@ -696,7 +835,10 @@ export default function CharactersPage() {
                         <span className="group relative cursor-help">
                           <Info className="h-3 w-3 opacity-50" />
                           <span className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-1 w-56 -translate-x-1/2 rounded-md bg-popover px-3 py-2 text-[10px] leading-snug text-popover-foreground shadow-md border border-border opacity-0 transition-opacity group-hover:opacity-100">
-                            How aggressively LoRA weights update per step. 1e-4 (0.0001) is standard. Too high → artifacts/overfitting. Too low → LoRA learns nothing.
+                            How aggressively LoRA weights update per step. 1e-4
+                            (0.0001) is standard. Too high →
+                            artifacts/overfitting. Too low → LoRA learns
+                            nothing.
                           </span>
                         </span>
                       </label>
@@ -716,7 +858,10 @@ export default function CharactersPage() {
                         <span className="group relative cursor-help">
                           <Info className="h-3 w-3 opacity-50" />
                           <span className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-1 w-56 -translate-x-1/2 rounded-md bg-popover px-3 py-2 text-[10px] leading-snug text-popover-foreground shadow-md border border-border opacity-0 transition-opacity group-hover:opacity-100">
-                            Dimensionality of LoRA adapter. Higher → more expressive but uses more memory. 8 is recommended for subjects (faces/animals) per the mflux Z-Image spec. Use 4 for simple styles, 16–32 for very complex subjects.
+                            Dimensionality of LoRA adapter. Higher → more
+                            expressive but uses more memory. 8 is recommended
+                            for subjects (faces/animals) on 32GB Macs using
+                            Flux Dev. Use 4 for simple styles.
                           </span>
                         </span>
                       </label>
@@ -728,7 +873,6 @@ export default function CharactersPage() {
                         <option value={4}>4</option>
                         <option value={8}>8 (default)</option>
                         <option value={16}>16</option>
-                        <option value={32}>32</option>
                       </select>
                     </div>
                   </div>
@@ -750,27 +894,37 @@ export default function CharactersPage() {
                     }
                     className="inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
                   >
-                    {trainMutation.isPending || selected.status === "training" ? (
+                    {trainMutation.isPending ||
+                    selected.status === "training" ? (
                       <Loader2 className="h-4 w-4 animate-spin" />
                     ) : (
                       <Zap className="h-4 w-4" />
                     )}
-                    {selected.status === "training" ? "Training in Progress..." : "Start Training"}
+                    {selected.status === "training"
+                      ? "Training in Progress..."
+                      : "Start Training"}
                   </button>
                   <TelegramNotifyToggle
                     compact
                     checked={trainNotifyViaTelegram}
                     onChange={setTrainNotifyViaTelegram}
-                    disabled={trainMutation.isPending || selected.status === "training"}
+                    disabled={
+                      trainMutation.isPending || selected.status === "training"
+                    }
                   />
                   {selected.status === "training" && (
                     <button
                       onClick={() =>
-                        pauseMutation.mutate({ id: selected.id, paused: !trainingPaused })
+                        pauseMutation.mutate({
+                          id: selected.id,
+                          paused: !trainingPaused,
+                        })
                       }
                       disabled={pauseMutation.isPending}
                       className="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-2 text-sm font-medium text-foreground hover:bg-muted disabled:opacity-50"
-                      title={trainingPaused ? "Resume training" : "Pause training"}
+                      title={
+                        trainingPaused ? "Resume training" : "Pause training"
+                      }
                     >
                       {pauseMutation.isPending ? (
                         <Loader2 className="h-4 w-4 animate-spin" />
@@ -784,10 +938,12 @@ export default function CharactersPage() {
                   )}
                   {selected.referencePhotos.length < 5 && (
                     <p className="text-xs text-amber-600 dark:text-amber-400">
-                      ⚠ Need at least 5 reference photos ({selected.referencePhotos.length}/5 uploaded)
+                      ⚠ Need at least 5 reference photos (
+                      {selected.referencePhotos.length}/5 uploaded)
                     </p>
                   )}
-                  {(selected.status === "failed" || selected.status === "training") && (
+                  {(selected.status === "failed" ||
+                    selected.status === "training") && (
                     <button
                       onClick={() => recoverMutation.mutate(selected.id)}
                       disabled={recoverMutation.isPending}
@@ -804,7 +960,10 @@ export default function CharactersPage() {
                   )}
                   {selected.status === "failed" && (
                     <button
-                      onClick={() => { setResumeCharId(selected.id); setShowResumeDialog(true); }}
+                      onClick={() => {
+                        setResumeCharId(selected.id);
+                        setShowResumeDialog(true);
+                      }}
                       className="flex items-center gap-1.5 text-xs font-medium text-amber-700 underline underline-offset-2 hover:text-amber-900 dark:text-amber-300 dark:hover:text-amber-100"
                     >
                       <RotateCcw className="h-3 w-3" />
@@ -813,7 +972,8 @@ export default function CharactersPage() {
                   )}
                   {selected.status === "ready" && (
                     <p className="text-xs text-emerald-600 dark:text-emerald-400">
-                      ✓ LoRA adapter trained and ready. Use trigger word &quot;{selected.triggerWord}&quot; in your prompts.
+                      ✓ LoRA adapter trained and ready. Use trigger word &quot;
+                      {selected.triggerWord}&quot; in your prompts.
                     </p>
                   )}
                 </div>
@@ -847,30 +1007,45 @@ export default function CharactersPage() {
 
       {/* Resume Training Dialog */}
       {showResumeDialog && resumeCharId && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50" onClick={() => setShowResumeDialog(false)}>
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50"
+          onClick={() => setShowResumeDialog(false)}
+        >
           <div
             className="relative w-full max-w-sm rounded-2xl border border-border bg-card p-6 shadow-xl"
             onClick={(e) => e.stopPropagation()}
             role="dialog"
             aria-label="Resume Training"
           >
-            <h3 className="mb-1 text-sm font-semibold text-foreground">Resume Training</h3>
+            <h3 className="mb-1 text-sm font-semibold text-foreground">
+              Resume Training
+            </h3>
             <p className="mb-4 text-xs text-muted-foreground">
-              Select a checkpoint to resume from. Training will continue from that point.
+              Select a checkpoint to resume from. Training will continue from
+              that point.
             </p>
 
             {checkpointsQuery.isLoading && (
-              <p className="mb-4 text-xs text-muted-foreground">Loading checkpoints…</p>
+              <p className="mb-4 text-xs text-muted-foreground">
+                Loading checkpoints…
+              </p>
             )}
             {checkpointsQuery.isError && (
-              <p className="mb-4 text-xs text-red-500">Failed to load checkpoints. Is the image-gen sidecar running?</p>
+              <p className="mb-4 text-xs text-red-500">
+                Failed to load checkpoints. Is the image-gen sidecar running?
+              </p>
             )}
-            {checkpointsQuery.data && (
-              checkpointsQuery.data.checkpoints.length === 0 ? (
-                <p className="mb-4 text-xs text-amber-600">No checkpoints found on the sidecar. The training data may have been cleaned up.</p>
+            {checkpointsQuery.data &&
+              (checkpointsQuery.data.checkpoints.length === 0 ? (
+                <p className="mb-4 text-xs text-amber-600">
+                  No checkpoints found on the sidecar. The training data may
+                  have been cleaned up.
+                </p>
               ) : (
                 <>
-                  <label className="mb-1.5 block text-xs font-medium text-muted-foreground">Checkpoint</label>
+                  <label className="mb-1.5 block text-xs font-medium text-muted-foreground">
+                    Checkpoint
+                  </label>
                   <select
                     id="resume-checkpoint-select"
                     className="mb-4 w-full rounded-lg border border-border bg-background px-3 py-2 text-xs text-foreground"
@@ -883,8 +1058,7 @@ export default function CharactersPage() {
                     ))}
                   </select>
                 </>
-              )
-            )}
+              ))}
 
             <div className="flex justify-end gap-2">
               <button
@@ -894,16 +1068,28 @@ export default function CharactersPage() {
                 Cancel
               </button>
               <button
-                disabled={resumeMutation.isPending || !checkpointsQuery.data?.checkpoints.length}
+                disabled={
+                  resumeMutation.isPending ||
+                  !checkpointsQuery.data?.checkpoints.length
+                }
                 onClick={() => {
-                  const sel = document.getElementById("resume-checkpoint-select") as HTMLSelectElement | null;
-                  const checkpoint_path = sel?.value ?? checkpointsQuery.data?.checkpoints[0]?.path ?? "";
+                  const sel = document.getElementById(
+                    "resume-checkpoint-select",
+                  ) as HTMLSelectElement | null;
+                  const checkpoint_path =
+                    sel?.value ??
+                    checkpointsQuery.data?.checkpoints[0]?.path ??
+                    "";
                   if (!checkpoint_path) return;
                   resumeMutation.mutate({ id: resumeCharId, checkpoint_path });
                 }}
                 className="flex items-center gap-1.5 rounded-lg bg-amber-600 px-4 py-2 text-xs font-semibold text-white hover:bg-amber-700 disabled:opacity-50"
               >
-                {resumeMutation.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <RotateCcw className="h-3 w-3" />}
+                {resumeMutation.isPending ? (
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                ) : (
+                  <RotateCcw className="h-3 w-3" />
+                )}
                 Resume
               </button>
             </div>
@@ -913,29 +1099,43 @@ export default function CharactersPage() {
 
       {/* AI Enhance Model Confirmation */}
       {showEnhanceDialog && selected && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50" onClick={() => setShowEnhanceDialog(false)}>
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50"
+          onClick={() => setShowEnhanceDialog(false)}
+        >
           <div
             className="relative w-full max-w-sm rounded-2xl border border-border bg-card p-6 shadow-xl"
             onClick={(e) => e.stopPropagation()}
             role="dialog"
             aria-label="AI Enhance Settings"
           >
-            <h3 className="mb-1 text-sm font-semibold text-foreground">AI Enhance</h3>
+            <h3 className="mb-1 text-sm font-semibold text-foreground">
+              AI Enhance
+            </h3>
             <p className="mb-4 text-xs text-muted-foreground">
-              Each photo will be analyzed individually using vision. This will make {selected.referencePhotos.length} model request{selected.referencePhotos.length !== 1 ? "s" : ""}.
+              Each photo will be analyzed individually using vision. This will
+              make {selected.referencePhotos.length} model request
+              {selected.referencePhotos.length !== 1 ? "s" : ""}.
             </p>
 
-            <label className="mb-1.5 block text-xs font-medium text-muted-foreground">Model</label>
+            <label className="mb-1.5 block text-xs font-medium text-muted-foreground">
+              Model
+            </label>
             <select
               value={enhanceModel}
               onChange={(e) => setEnhanceModel(e.target.value)}
               className="mb-4 w-full rounded-lg border border-border bg-background px-3 py-2 text-xs text-foreground"
             >
               <option value="">
-                Default{modelsQuery.data?.selectedModel ? ` (${modelsQuery.data.selectedModel})` : ""}
+                Default
+                {modelsQuery.data?.selectedModel
+                  ? ` (${modelsQuery.data.selectedModel})`
+                  : ""}
               </option>
               {(modelsQuery.data?.models ?? []).map((m) => (
-                <option key={m.id} value={m.id}>{m.id}</option>
+                <option key={m.id} value={m.id}>
+                  {m.id}
+                </option>
               ))}
             </select>
 

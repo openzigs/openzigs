@@ -90,9 +90,9 @@ The Gallery is the central asset library and creation studio for all generated m
 The gallery includes inline creation tools accessible via the "+ Create" button:
 
 ### Text to Image (txt2img)
-- **Models**: Flux.1 (Schnell for speed, Dev for quality), Flux PuLID (face-preserving generation)
+- **Models**: Flux.1 (Schnell for speed, Dev for quality), Z-Image Turbo (fast distilled), Flux Kontext (semantic editing)
 - **Settings**: Steps (1-50, more = higher quality but slower), guidance scale (1-20, higher = more prompt adherence), dimensions
-- **Tips**: Be specific in prompts. Flux Schnell can produce good results in 2-4 steps. Dev needs 20-30 steps. Use negative prompts to exclude unwanted elements.
+- **Tips**: Be specific in prompts. Flux Schnell can produce good results in 2-4 steps. Dev needs 20-30 steps. Z-Image Turbo uses 4 steps. Use negative prompts to exclude unwanted elements.
 
 ### Image to Image (img2img)
 - **Strength** (0-1): How much to transform the input. 0.3 = subtle changes, 0.7 = major transformation, 1.0 = ignore input entirely
@@ -100,13 +100,18 @@ The gallery includes inline creation tools accessible via the "+ Create" button:
 - Upload or pick from gallery as the source image
 
 ### Text to Video (txt2video)
-- **Model**: LTX-Video (Lightricks), optimized for Apple Silicon
+- **Model**: LTX-2 (Lightricks) Q4, optimized for Apple Silicon via MLX
 - **Duration**: 2-8 seconds per generation
+- **Audio**: Optional synchronized audio generation (enable "Audio" toggle)
+- **Pipelines**: distilled (fast), dev (quality), dev-two-stage, dev-two-stage-hq
+- **Tiling**: auto, none, default, aggressive, conservative — controls memory usage for higher resolutions
 - **Tips**: Short, descriptive prompts work best. Camera movement instructions help (e.g., "slow zoom in", "tracking shot")
 
 ### Image to Video (img2video)
 - Start from any image in the gallery to animate it
-- Same LTX-Video model with image conditioning
+- Same LTX-2 model with image conditioning — no LoRA required
+- **Image Strength** (0-1): Controls how closely the video follows the input image. 1.0 = faithful to source, 0.5 = more creative motion
+- Supports audio generation on animated images too
 
 ### Text to Music (txt2music)
 - **Models**: MusicGen by Meta, Stable Audio
@@ -121,10 +126,10 @@ The gallery includes inline creation tools accessible via the "+ Create" button:
 - **Filtering**: Filter by type (image/video/audio), search by filename, filter by tags
 
 ## Underlying Technologies
-- Flux.1 (Black Forest Labs) for image generation
-- LTX-Video (Lightricks) for video generation
-- MusicGen (Meta) for music generation
-- All run on local GPU (MPS on Apple Silicon) via sidecar processes
+- Flux.1 (Black Forest Labs) for image generation — Schnell (fast), Dev (quality + LoRA training base), Z-Image Turbo (fast distilled)
+- LTX-2 (Lightricks) Q4 for video generation with optional audio via MLX on Apple Silicon
+- Character LoRA training uses Flux Dev as the base model (25 steps, 8-bit quantized, rank 8) for best identity capture on 32GB Macs
+- All run on local GPU (MPS/MLX on Apple Silicon) via sidecar processes
 
 If you don't know the answer, say so honestly. Use the web-search tool for prompt engineering techniques, AI art concepts, or model-specific details.`,
     starters: [
@@ -581,8 +586,9 @@ In short: Skills make the AI smarter about a domain. Users just describe what th
 ## Available Skills
 
 ### Media Director
-- Creates images (Flux), videos (LTX-2), audio (F5-TTS), music (ACE-Step)
-- Handles character LoRA identity (trigger words auto-injected)
+- Creates images (Flux), videos with audio (LTX-2), audio (F5-TTS), music (ACE-Step)
+- Handles character LoRA identity (trigger words auto-injected). LoRA training uses Flux Dev as base model.
+- Image-to-video (img2video) is a native LTX-2 pipeline feature — no LoRA required, just provide an image
 - Tools: query-gallery-assets, submit-media-job, get-job-status, manage-characters, schedule-job
 
 ### Remix Engineer

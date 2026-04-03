@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- LTX Video Engine v2: audio-video joint generation toggle (`audio` param) for synchronized sound (#760)
+- LTX Video Engine v2: 2-stage pipeline support — `dev-two-stage` and `dev-two-stage-hq` pipeline types (#759)
+- LTX Video Engine v2: model catalog with memory requirements and `GET /models` endpoint on sidecar (#761)
+- LTX Video Engine v2: Gemma prompt enhancement via `enhance_prompt` parameter (#758)
+- LTX Video Engine v2: configurable VAE tiling — `auto`, `none`, `default`, `aggressive`, `conservative` (#763)
+- LTX Video Engine v2: image-to-video `image_strength` parameter (0.0–1.0) for conditioning control (#758)
+- LTX Video Engine v2: `model_repo` override field for selecting different LTX model checkpoints (#758)
 - **Airtable MCP Integration** — Full Airtable API client with per-base rate limiting and read/write MCP tools (#738, #743, #745, #746)
   - `AirtableClient` with automatic exponential backoff, non-retryable error detection, and `RateLimiter` (≤5 req/sec per base)
   - Read tools: `airtable-list-bases`, `airtable-list-tables`, `airtable-read-records`, `airtable-list-views`, `airtable-get-fields`

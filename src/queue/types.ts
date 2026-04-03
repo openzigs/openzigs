@@ -5,20 +5,80 @@
 
 // ── Job Types ─────────────────────────────────────────────────
 
-export type MediaJobType = "txt2img" | "img2img" | "txt2video" | "img2video" | "tts" | "txt2music" | "voice2voice" | "remix_analyze" | "remix_replace" | "remix_master";
+export type MediaJobType =
+  | "txt2img"
+  | "img2img"
+  | "txt2video"
+  | "img2video"
+  | "tts"
+  | "txt2music"
+  | "voice2voice"
+  | "remix_analyze"
+  | "remix_replace"
+  | "remix_master";
 
-export type MediaJobStatus = "pending" | "dispatched" | "processing" | "complete" | "failed";
+export type MediaJobStatus =
+  | "pending"
+  | "dispatched"
+  | "processing"
+  | "complete"
+  | "failed";
 
 export type TargetNode = "mac-mini" | "m2-pro" | "local";
 
+/** Valid LTX video pipeline types. */
+export const VALID_PIPELINE_TYPES = [
+  "distilled",
+  "dev",
+  "dev-two-stage",
+  "dev-two-stage-hq",
+] as const;
+export type PipelineType = (typeof VALID_PIPELINE_TYPES)[number];
+
+/** Valid VAE tiling modes for video decoding. */
+export const VALID_TILING_MODES = [
+  "auto",
+  "none",
+  "default",
+  "aggressive",
+  "conservative",
+] as const;
+export type TilingMode = (typeof VALID_TILING_MODES)[number];
+
+/** Known LTX model catalog entries with memory and disk requirements. */
+export const LTX_MODEL_CATALOG = [
+  {
+    id: "ltx-2-distilled-q4",
+    repo: "AITRADER/ltx2-distilled-4bit-mlx",
+    name: "LTX-2 Distilled Q4",
+    memoryGB: 19,
+    downloadGB: 19,
+    version: "2.0",
+    audio: true,
+  },
+  {
+    id: "ltx-2.3-distilled-q4",
+    repo: "dgrauet/ltx-2.3-mlx-distilled-q4",
+    name: "LTX-2.3 Distilled Q4",
+    memoryGB: 20,
+    downloadGB: 41,
+    version: "2.3",
+    audio: true,
+    warning:
+      "Large download (~41 GB). Ensure sufficient disk space before selecting.",
+  },
+] as const;
+
 /** Audio/music job types that have dedicated dispatch handlers and must NOT be dispatched via the video worker. */
-export const AUDIO_JOB_TYPES: ReadonlySet<MediaJobType> = new Set<MediaJobType>([
-  "txt2music",
-  "voice2voice",
-  "remix_analyze",
-  "remix_replace",
-  "remix_master",
-]);
+export const AUDIO_JOB_TYPES: ReadonlySet<MediaJobType> = new Set<MediaJobType>(
+  [
+    "txt2music",
+    "voice2voice",
+    "remix_analyze",
+    "remix_replace",
+    "remix_master",
+  ],
+);
 
 /** Determine which worker node handles a given job type. */
 export function targetNodeForJobType(type: MediaJobType): TargetNode {
@@ -147,6 +207,20 @@ export interface MediaJobPayload {
   skip_mastering?: boolean;
   /** Device to use for analysis (cpu / mps / cuda) */
   device?: string;
+
+  // ── LTX Video Engine v2 fields ─────────────────────────────
+  /** Enable synchronized audio generation (LTX-2.3+) */
+  audio?: boolean;
+  /** VAE tiling mode: auto, none, default, aggressive, conservative */
+  tiling?: string;
+  /** Override model repository for video generation */
+  model_repo?: string;
+  /** Enable Gemma-based prompt enhancement before generation */
+  enhance_prompt?: boolean;
+  /** Image conditioning strength for img2video (0.0–1.0, default 1.0) */
+  image_strength?: number;
+  /** URL for the sidecar to POST real-time progress updates */
+  progress_url?: string;
 }
 
 // ── Stored Job ────────────────────────────────────────────────
@@ -170,7 +244,7 @@ export interface StoredMediaJob {
   created_at: string;
   dispatched_at: string | null;
   completed_at: string | null;
-  notify_via_telegram: number;  // 0 or 1 (SQLite boolean)
+  notify_via_telegram: number; // 0 or 1 (SQLite boolean)
   telegram_chat_id: string | null;
 }
 

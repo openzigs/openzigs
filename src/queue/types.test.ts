@@ -4,7 +4,14 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { targetNodeForJobType, defaultModelForJobType, AUDIO_JOB_TYPES } from "./types.js";
+import {
+  targetNodeForJobType,
+  defaultModelForJobType,
+  AUDIO_JOB_TYPES,
+  VALID_PIPELINE_TYPES,
+  VALID_TILING_MODES,
+  LTX_MODEL_CATALOG,
+} from "./types.js";
 
 describe("targetNodeForJobType", () => {
   it("routes image jobs to mac-mini", () => {
@@ -57,5 +64,56 @@ describe("AUDIO_JOB_TYPES", () => {
     expect(AUDIO_JOB_TYPES.has("img2video")).toBe(false);
     expect(AUDIO_JOB_TYPES.has("txt2img")).toBe(false);
     expect(AUDIO_JOB_TYPES.has("img2img")).toBe(false);
+  });
+});
+
+describe("VALID_PIPELINE_TYPES", () => {
+  it("contains the four LTX pipeline types", () => {
+    expect(VALID_PIPELINE_TYPES).toContain("distilled");
+    expect(VALID_PIPELINE_TYPES).toContain("dev");
+    expect(VALID_PIPELINE_TYPES).toContain("dev-two-stage");
+    expect(VALID_PIPELINE_TYPES).toContain("dev-two-stage-hq");
+    expect(VALID_PIPELINE_TYPES).toHaveLength(4);
+  });
+});
+
+describe("VALID_TILING_MODES", () => {
+  it("contains the five tiling modes", () => {
+    expect(VALID_TILING_MODES).toContain("auto");
+    expect(VALID_TILING_MODES).toContain("none");
+    expect(VALID_TILING_MODES).toContain("default");
+    expect(VALID_TILING_MODES).toContain("aggressive");
+    expect(VALID_TILING_MODES).toContain("conservative");
+    expect(VALID_TILING_MODES).toHaveLength(5);
+  });
+});
+
+describe("LTX_MODEL_CATALOG", () => {
+  it("contains at least one model entry", () => {
+    expect(LTX_MODEL_CATALOG.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("every entry has required fields", () => {
+    for (const model of LTX_MODEL_CATALOG) {
+      expect(model.id).toBeTruthy();
+      expect(model.repo).toBeTruthy();
+      expect(model.name).toBeTruthy();
+      expect(model.memoryGB).toBeGreaterThan(0);
+      expect(model.downloadGB).toBeGreaterThan(0);
+      expect(model.version).toBeTruthy();
+    }
+  });
+
+  it("includes the default LTX-2 distilled Q4 model", () => {
+    const defaultModel = LTX_MODEL_CATALOG.find(
+      (m) => m.id === "ltx-2-distilled-q4",
+    );
+    expect(defaultModel).toBeDefined();
+    expect(defaultModel!.repo).toBe("AITRADER/ltx2-distilled-4bit-mlx");
+  });
+
+  it("includes LTX-2.3 models", () => {
+    const v23Models = LTX_MODEL_CATALOG.filter((m) => m.version === "2.3");
+    expect(v23Models.length).toBeGreaterThanOrEqual(1);
   });
 });

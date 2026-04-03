@@ -465,7 +465,7 @@ Sidecars are selected at install time and can be added later by re-running `inst
 | **image-gen** | 5005 | MFLUX ≥ 0.16.1, Flux.1 Schnell / Dev | ~20–23 GB per model | 3.10+ | AI image generation, LoRA (DreamBooth), ControlNet (Canny/Depth) |
 | **music** | 5009 | ACE-Step 1.5 (Apple Silicon fork) via `uv` | ~10–15 GB | **3.11.x only** | AI music generation from text + lyrics |
 | **music-studio** | 5010 | PyTorch (MPS), Demucs v4, Seed-VC, matchering | ~5 GB | 3.10+ | Stem separation, Voice-to-Voice, AI Remix Lab, mastering |
-| **worker** | 5007 | mlx, mlx-video (GitHub) | ~10 GB | 3.10+ | LTX-Video generation (M2 Pro+ recommended, 32+ GB RAM) |
+| **worker** | 5007 | mlx, mlx-video (GitHub), LTX-2 Q4 (audio+video) | ~19–41 GB | 3.10+ | LTX-Video generation with audio, 4 pipeline modes, tiling (M2 Pro+ recommended, 32+ GB RAM) |
 | **GPT-SoVITS** | dynamic | GPT-SoVITS (via `scripts/setup-gptsovits.sh`) | ~4 GB | bundled | Voice cloning Engine B — custom voice models from short clips |
 
 > **Note:** `music` requires Python **3.11.x exactly** plus the `uv` package manager and a separate clone of [`clockworksquirrel/ace-step-apple-silicon`](https://github.com/clockworksquirrel/ace-step-apple-silicon). `music-studio` requires system packages `ffmpeg` and `fluidsynth` (`brew install ffmpeg fluidsynth`).
@@ -501,7 +501,8 @@ Sidecars are selected at install time and can be added later by re-running `inst
 │  │ audio :5006 │ │ image-gen   │ │ worker :5007│                    │
 │  │ Whisper STT │ │ :5005       │ │ LTX-Video   │                    │
 │  │ Kokoro TTS  │ │ MFLUX/Flux.1│ │ MLX-Video   │                    │
-│  └─────────────┘ └─────────────┘ └─────────────┘                    │
+│  └─────────────┘ └─────────────┘ │ Audio+Video  │                    │
+│                                   └─────────────┘                    │
 │                                                                        │
 │  ┌─────────────────────┐   ┌─────────────────────┐                   │
 │  │ music :5009         │   │ music-studio :5010   │                   │

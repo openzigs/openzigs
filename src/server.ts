@@ -272,6 +272,11 @@ orchTemplateService.seedBuiltIns();
 const mediaQueueRepo = new MediaQueueRepository(db);
 mediaQueueRepo.migrate();
 
+// ── Video Generation Presets (#757) ──
+const { VideoPresetsRepository } = await import("./queue/video-presets.js");
+const videoPresetsRepo = new VideoPresetsRepository(db);
+videoPresetsRepo.migrate();
+
 // ── Outbox Publishing Queue (Epic #458) ──
 const outboxRepo = new OutboxRepository(db);
 outboxRepo.migrate();
@@ -1111,6 +1116,7 @@ const adminRouter = createAdminRouter({
   brandVoiceService,
   pipelineTemplateManager,
   socialBrain,
+  videoPresetsRepo,
 });
 app.use("/api/admin", authMiddleware, adminRouter);
 

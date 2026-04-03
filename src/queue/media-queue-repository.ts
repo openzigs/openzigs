@@ -91,9 +91,11 @@ export class MediaQueueRepository {
 
     // ── media_jobs CHECK constraint migration: add 'txt2music' ──
     const needsJobsRebuild = (() => {
-      const row = this.db.prepare(
-        "SELECT sql FROM sqlite_master WHERE type='table' AND name='media_jobs'"
-      ).get() as { sql: string } | undefined;
+      const row = this.db
+        .prepare(
+          "SELECT sql FROM sqlite_master WHERE type='table' AND name='media_jobs'",
+        )
+        .get() as { sql: string } | undefined;
       if (!row) return false;
       return !row.sql.includes("'txt2music'");
     })();
@@ -144,9 +146,11 @@ export class MediaQueueRepository {
 
     // ── media_jobs CHECK constraint migration: add remix + v2v types ──
     const needsRemixRebuild = (() => {
-      const row = this.db.prepare(
-        "SELECT sql FROM sqlite_master WHERE type='table' AND name='media_jobs'"
-      ).get() as { sql: string } | undefined;
+      const row = this.db
+        .prepare(
+          "SELECT sql FROM sqlite_master WHERE type='table' AND name='media_jobs'",
+        )
+        .get() as { sql: string } | undefined;
       if (!row) return false;
       return !row.sql.includes("'remix_analyze'");
     })();
@@ -197,9 +201,11 @@ export class MediaQueueRepository {
 
     // ── media_jobs CHECK constraint migration: add 'local' target_node ──
     const needsLocalNodeRebuild = (() => {
-      const row = this.db.prepare(
-        "SELECT sql FROM sqlite_master WHERE type='table' AND name='media_jobs'"
-      ).get() as { sql: string } | undefined;
+      const row = this.db
+        .prepare(
+          "SELECT sql FROM sqlite_master WHERE type='table' AND name='media_jobs'",
+        )
+        .get() as { sql: string } | undefined;
       if (!row) return false;
       return !row.sql.includes("'local'");
     })();
@@ -283,12 +289,19 @@ export class MediaQueueRepository {
     // and add source_url/artist columns on existing databases, we use the
     // rename-copy-drop strategy inside a transaction.
     const needsRebuild = (() => {
-      const row = this.db.prepare(
-        "SELECT sql FROM sqlite_master WHERE type='table' AND name='media_assets'"
-      ).get() as { sql: string } | undefined;
+      const row = this.db
+        .prepare(
+          "SELECT sql FROM sqlite_master WHERE type='table' AND name='media_assets'",
+        )
+        .get() as { sql: string } | undefined;
       if (!row) return false;
       // Rebuild if the old CHECK doesn't include 'ingested' or 'scene', or columns are missing
-      return !row.sql.includes("'ingested'") || !row.sql.includes("source_url") || !row.sql.includes("artist") || !row.sql.includes("'scene'");
+      return (
+        !row.sql.includes("'ingested'") ||
+        !row.sql.includes("source_url") ||
+        !row.sql.includes("artist") ||
+        !row.sql.includes("'scene'")
+      );
     })();
 
     if (needsRebuild) {
@@ -331,24 +344,40 @@ export class MediaQueueRepository {
     }
 
     // ── knowledge metadata columns (additive migration) ──
-    const assetCols = (this.db.prepare("PRAGMA table_info(media_assets)").all() as Array<{ name: string }>).map((c) => c.name);
+    const assetCols = (
+      this.db.prepare("PRAGMA table_info(media_assets)").all() as Array<{
+        name: string;
+      }>
+    ).map((c) => c.name);
     if (!assetCols.includes("knowledge_visibility")) {
-      this.db.exec("ALTER TABLE media_assets ADD COLUMN knowledge_visibility TEXT NOT NULL DEFAULT 'public'");
+      this.db.exec(
+        "ALTER TABLE media_assets ADD COLUMN knowledge_visibility TEXT NOT NULL DEFAULT 'public'",
+      );
     }
     if (!assetCols.includes("knowledge_category")) {
-      this.db.exec("ALTER TABLE media_assets ADD COLUMN knowledge_category TEXT NOT NULL DEFAULT 'media'");
+      this.db.exec(
+        "ALTER TABLE media_assets ADD COLUMN knowledge_category TEXT NOT NULL DEFAULT 'media'",
+      );
     }
 
     // ── folder column (additive migration, sub-folder support) ──
     if (!assetCols.includes("folder")) {
       this.db.exec("ALTER TABLE media_assets ADD COLUMN folder TEXT");
-      this.db.exec("CREATE INDEX IF NOT EXISTS idx_media_assets_folder ON media_assets(folder)");
+      this.db.exec(
+        "CREATE INDEX IF NOT EXISTS idx_media_assets_folder ON media_assets(folder)",
+      );
     }
 
     // ── Telegram notification columns (additive migration, Issue #414) ──
-    const jobCols = (this.db.prepare("PRAGMA table_info(media_jobs)").all() as Array<{ name: string }>).map((c) => c.name);
+    const jobCols = (
+      this.db.prepare("PRAGMA table_info(media_jobs)").all() as Array<{
+        name: string;
+      }>
+    ).map((c) => c.name);
     if (!jobCols.includes("notify_via_telegram")) {
-      this.db.exec("ALTER TABLE media_jobs ADD COLUMN notify_via_telegram INTEGER NOT NULL DEFAULT 0");
+      this.db.exec(
+        "ALTER TABLE media_jobs ADD COLUMN notify_via_telegram INTEGER NOT NULL DEFAULT 0",
+      );
     }
     if (!jobCols.includes("telegram_chat_id")) {
       this.db.exec("ALTER TABLE media_jobs ADD COLUMN telegram_chat_id TEXT");
@@ -360,7 +389,8 @@ export class MediaQueueRepository {
   createJob(input: CreateMediaJobInput): MediaJob {
     const id = randomUUID();
     const now = this.clock().toISOString();
-    const model = input.model ?? input.payload.model ?? defaultModelForJobType(input.type);
+    const model =
+      input.model ?? input.payload.model ?? defaultModelForJobType(input.type);
     const targetNode = targetNodeForJobType(input.type);
 
     const stmt = this.db.prepare(`
@@ -385,13 +415,16 @@ export class MediaQueueRepository {
   }
 
   getJob(id: string): MediaJob | null {
-    const row = this.db.prepare("SELECT * FROM media_jobs WHERE id = ?").get(id) as StoredMediaJob | undefined;
+    const row = this.db
+      .prepare("SELECT * FROM media_jobs WHERE id = ?")
+      .get(id) as StoredMediaJob | undefined;
     return row ? toJob(row) : null;
   }
 
   /** Get pending jobs for a target node, ordered by priority DESC, created_at ASC. */
   getPendingJobs(targetNode?: TargetNode, limit = 10): MediaJob[] {
-    let sql = "SELECT * FROM media_jobs WHERE status = 'pending' AND (retry_after IS NULL OR retry_after <= ?)";
+    let sql =
+      "SELECT * FROM media_jobs WHERE status = 'pending' AND (retry_after IS NULL OR retry_after <= ?)";
     const params: unknown[] = [this.clock().toISOString()];
 
     if (targetNode) {
@@ -407,34 +440,57 @@ export class MediaQueueRepository {
   }
 
   /** Get pending jobs that match a specific model on a target node (VRAM-aware batching). */
-  getPendingJobsForModel(targetNode: TargetNode, model: string, limit = 5): MediaJob[] {
+  getPendingJobsForModel(
+    targetNode: TargetNode,
+    model: string,
+    limit = 5,
+  ): MediaJob[] {
     const now = this.clock().toISOString();
-    const rows = this.db.prepare(
-      `SELECT * FROM media_jobs
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM media_jobs
        WHERE status = 'pending' AND target_node = ? AND required_model = ?
          AND (retry_after IS NULL OR retry_after <= ?)
        ORDER BY priority DESC, created_at ASC LIMIT ?`,
-    ).all(targetNode, model, now, limit) as StoredMediaJob[];
+      )
+      .all(targetNode, model, now, limit) as StoredMediaJob[];
     return rows.map(toJob);
   }
 
   markDispatched(id: string): void {
     const now = this.clock().toISOString();
-    this.db.prepare(
-      "UPDATE media_jobs SET status = 'dispatched', dispatched_at = ? WHERE id = ?",
-    ).run(now, id);
+    this.db
+      .prepare(
+        "UPDATE media_jobs SET status = 'dispatched', dispatched_at = ? WHERE id = ?",
+      )
+      .run(now, id);
   }
 
   markProcessing(id: string): void {
-    this.db.prepare("UPDATE media_jobs SET status = 'processing' WHERE id = ?").run(id);
+    this.db
+      .prepare("UPDATE media_jobs SET status = 'processing' WHERE id = ?")
+      .run(id);
   }
 
-  markComplete(id: string, resultUrl: string, metadata?: Record<string, unknown>, galleryAssetId?: string): void {
+  markComplete(
+    id: string,
+    resultUrl: string,
+    metadata?: Record<string, unknown>,
+    galleryAssetId?: string,
+  ): void {
     const now = this.clock().toISOString();
-    this.db.prepare(
-      `UPDATE media_jobs SET status = 'complete', result_url = ?, result_metadata = ?,
+    this.db
+      .prepare(
+        `UPDATE media_jobs SET status = 'complete', result_url = ?, result_metadata = ?,
        gallery_asset_id = ?, completed_at = ? WHERE id = ?`,
-    ).run(resultUrl, metadata ? JSON.stringify(metadata) : null, galleryAssetId ?? null, now, id);
+      )
+      .run(
+        resultUrl,
+        metadata ? JSON.stringify(metadata) : null,
+        galleryAssetId ?? null,
+        now,
+        id,
+      );
   }
 
   markFailed(id: string, error: string): void {
@@ -446,41 +502,66 @@ export class MediaQueueRepository {
       // Retry with exponential backoff: 60s * (retries + 1) before re-dispatch.
       // Prevents rapid crash-loop storms (e.g. Metal GPU OOM cascades).
       const backoffSecs = 60 * (job.retries + 1);
-      const retryAfter = new Date(Date.now() + backoffSecs * 1000).toISOString();
-      this.db.prepare(
-        "UPDATE media_jobs SET status = 'pending', retries = retries + 1, error = ?, retry_after = ? WHERE id = ?",
-      ).run(error, retryAfter, id);
+      const retryAfter = new Date(
+        Date.now() + backoffSecs * 1000,
+      ).toISOString();
+      this.db
+        .prepare(
+          "UPDATE media_jobs SET status = 'pending', retries = retries + 1, error = ?, retry_after = ? WHERE id = ?",
+        )
+        .run(error, retryAfter, id);
     } else {
-      this.db.prepare(
-        "UPDATE media_jobs SET status = 'failed', error = ?, completed_at = ? WHERE id = ?",
-      ).run(error, now, id);
+      this.db
+        .prepare(
+          "UPDATE media_jobs SET status = 'failed', error = ?, completed_at = ? WHERE id = ?",
+        )
+        .run(error, now, id);
     }
   }
 
   cancelJob(id: string): boolean {
-    const result = this.db.prepare(
-      "UPDATE media_jobs SET status = 'failed', error = 'Cancelled by user' WHERE id = ? AND status = 'pending'",
-    ).run(id);
+    const result = this.db
+      .prepare(
+        "UPDATE media_jobs SET status = 'failed', error = 'Cancelled by user' WHERE id = ? AND status = 'pending'",
+      )
+      .run(id);
     return result.changes > 0;
   }
 
   /** Force-fail a dispatched/processing job (user kill — no retry). */
   killJob(id: string): boolean {
     const now = new Date().toISOString();
-    const result = this.db.prepare(
-      "UPDATE media_jobs SET status = 'failed', error = 'Killed by user', completed_at = ? WHERE id = ? AND status IN ('dispatched', 'processing')",
-    ).run(now, id);
+    const result = this.db
+      .prepare(
+        "UPDATE media_jobs SET status = 'failed', error = 'Killed by user', completed_at = ? WHERE id = ? AND status IN ('dispatched', 'processing')",
+      )
+      .run(now, id);
     return result.changes > 0;
   }
 
   /** List jobs with optional filters. */
-  listJobs(opts: { status?: MediaJobStatus; type?: MediaJobType; projectId?: string; limit?: number; offset?: number }): MediaJob[] {
+  listJobs(opts: {
+    status?: MediaJobStatus;
+    type?: MediaJobType;
+    projectId?: string;
+    limit?: number;
+    offset?: number;
+  }): MediaJob[] {
     let sql = "SELECT * FROM media_jobs WHERE 1=1";
     const params: unknown[] = [];
 
-    if (opts.status) { sql += " AND status = ?"; params.push(opts.status); }
-    if (opts.type) { sql += " AND type = ?"; params.push(opts.type); }
-    if (opts.projectId) { sql += " AND project_id = ?"; params.push(opts.projectId); }
+    if (opts.status) {
+      sql += " AND status = ?";
+      params.push(opts.status);
+    }
+    if (opts.type) {
+      sql += " AND type = ?";
+      params.push(opts.type);
+    }
+    if (opts.projectId) {
+      sql += " AND project_id = ?";
+      params.push(opts.projectId);
+    }
 
     sql += " ORDER BY created_at DESC LIMIT ? OFFSET ?";
     params.push(opts.limit ?? 50, opts.offset ?? 0);
@@ -489,27 +570,60 @@ export class MediaQueueRepository {
   }
 
   /** Count total jobs matching optional filters (for pagination). */
-  countJobs(opts: { status?: MediaJobStatus; type?: MediaJobType; projectId?: string } = {}): number {
+  countJobs(
+    opts: {
+      status?: MediaJobStatus;
+      type?: MediaJobType;
+      projectId?: string;
+    } = {},
+  ): number {
     let sql = "SELECT COUNT(*) as c FROM media_jobs WHERE 1=1";
     const params: unknown[] = [];
-    if (opts.status) { sql += " AND status = ?"; params.push(opts.status); }
-    if (opts.type) { sql += " AND type = ?"; params.push(opts.type); }
-    if (opts.projectId) { sql += " AND project_id = ?"; params.push(opts.projectId); }
+    if (opts.status) {
+      sql += " AND status = ?";
+      params.push(opts.status);
+    }
+    if (opts.type) {
+      sql += " AND type = ?";
+      params.push(opts.type);
+    }
+    if (opts.projectId) {
+      sql += " AND project_id = ?";
+      params.push(opts.projectId);
+    }
     return (this.db.prepare(sql).get(...params) as { c: number }).c;
   }
 
   /** Count total assets matching optional filters (for pagination). */
-  countAssets(opts: { type?: string; source?: string; projectId?: string; folder?: string; q?: string } = {}): number {
+  countAssets(
+    opts: {
+      type?: string;
+      source?: string;
+      projectId?: string;
+      folder?: string;
+      q?: string;
+    } = {},
+  ): number {
     let sql = "SELECT COUNT(*) as c FROM media_assets WHERE 1=1";
     const params: unknown[] = [];
-    if (opts.type) { sql += " AND type = ?"; params.push(opts.type); }
-    if (opts.source) { sql += " AND source = ?"; params.push(opts.source); }
-    if (opts.projectId) { sql += " AND project_id = ?"; params.push(opts.projectId); }
+    if (opts.type) {
+      sql += " AND type = ?";
+      params.push(opts.type);
+    }
+    if (opts.source) {
+      sql += " AND source = ?";
+      params.push(opts.source);
+    }
+    if (opts.projectId) {
+      sql += " AND project_id = ?";
+      params.push(opts.projectId);
+    }
     if (opts.folder !== undefined) {
       if (opts.folder === "") {
         sql += " AND (folder IS NULL OR folder = '')";
       } else {
-        sql += " AND folder = ?"; params.push(opts.folder);
+        sql += " AND folder = ?";
+        params.push(opts.folder);
       }
     }
     if (opts.q) {
@@ -522,24 +636,42 @@ export class MediaQueueRepository {
 
   /** Count jobs by status (for dashboard). */
   countByStatus(): Record<MediaJobStatus, number> {
-    const rows = this.db.prepare(
-      "SELECT status, COUNT(*) as count FROM media_jobs GROUP BY status",
-    ).all() as Array<{ status: string; count: number }>;
+    const rows = this.db
+      .prepare(
+        "SELECT status, COUNT(*) as count FROM media_jobs GROUP BY status",
+      )
+      .all() as Array<{ status: string; count: number }>;
 
-    const counts: Record<string, number> = { pending: 0, dispatched: 0, processing: 0, complete: 0, failed: 0 };
+    const counts: Record<string, number> = {
+      pending: 0,
+      dispatched: 0,
+      processing: 0,
+      complete: 0,
+      failed: 0,
+    };
     for (const r of rows) counts[r.status] = r.count;
     return counts as Record<MediaJobStatus, number>;
   }
 
   /** Check if all jobs for a project are complete. */
-  isProjectComplete(projectId: string): { complete: boolean; total: number; done: number } {
-    const total = (this.db.prepare(
-      "SELECT COUNT(*) as c FROM media_jobs WHERE project_id = ?",
-    ).get(projectId) as { c: number }).c;
+  isProjectComplete(projectId: string): {
+    complete: boolean;
+    total: number;
+    done: number;
+  } {
+    const total = (
+      this.db
+        .prepare("SELECT COUNT(*) as c FROM media_jobs WHERE project_id = ?")
+        .get(projectId) as { c: number }
+    ).c;
 
-    const done = (this.db.prepare(
-      "SELECT COUNT(*) as c FROM media_jobs WHERE project_id = ? AND status IN ('complete', 'failed')",
-    ).get(projectId) as { c: number }).c;
+    const done = (
+      this.db
+        .prepare(
+          "SELECT COUNT(*) as c FROM media_jobs WHERE project_id = ? AND status IN ('complete', 'failed')",
+        )
+        .get(projectId) as { c: number }
+    ).c;
 
     return { complete: total > 0 && done >= total, total, done };
   }
@@ -569,44 +701,85 @@ export class MediaQueueRepository {
     const id = randomUUID();
     const now = this.clock().toISOString();
 
-    this.db.prepare(`
+    this.db
+      .prepare(
+        `
       INSERT INTO media_assets (id, type, filename, file_path, mime_type, file_size_bytes,
         width, height, duration_seconds, prompt, model, generation_params,
         source, source_url, artist, job_id, project_id, tags, folder, created_at, updated_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      id, input.type, input.filename, input.filePath, input.mimeType,
-      input.fileSizeBytes ?? null, input.width ?? null, input.height ?? null,
-      input.durationSeconds ?? null, input.prompt ?? null, input.model ?? null,
-      input.generationParams ? JSON.stringify(input.generationParams) : null,
-      input.source, input.sourceUrl ?? null, input.artist ?? null,
-      input.jobId ?? null, input.projectId ?? null,
-      input.tags ? JSON.stringify(input.tags) : null, input.folder ?? null, now, now,
-    );
+    `,
+      )
+      .run(
+        id,
+        input.type,
+        input.filename,
+        input.filePath,
+        input.mimeType,
+        input.fileSizeBytes ?? null,
+        input.width ?? null,
+        input.height ?? null,
+        input.durationSeconds ?? null,
+        input.prompt ?? null,
+        input.model ?? null,
+        input.generationParams ? JSON.stringify(input.generationParams) : null,
+        input.source,
+        input.sourceUrl ?? null,
+        input.artist ?? null,
+        input.jobId ?? null,
+        input.projectId ?? null,
+        input.tags ? JSON.stringify(input.tags) : null,
+        input.folder ?? null,
+        now,
+        now,
+      );
 
     return id;
   }
 
   getAsset(id: string): Record<string, unknown> | null {
-    const row = this.db.prepare("SELECT * FROM media_assets WHERE id = ?").get(id) as Record<string, unknown> | undefined;
+    const row = this.db
+      .prepare("SELECT * FROM media_assets WHERE id = ?")
+      .get(id) as Record<string, unknown> | undefined;
     if (!row) return null;
-    if (typeof row.generation_params === "string") row.generation_params = JSON.parse(row.generation_params as string);
+    if (typeof row.generation_params === "string")
+      row.generation_params = JSON.parse(row.generation_params as string);
     if (typeof row.tags === "string") row.tags = JSON.parse(row.tags as string);
     return row;
   }
 
-  listAssets(opts: { type?: string; source?: string; projectId?: string; folder?: string; q?: string; limit?: number; offset?: number } = {}): Array<Record<string, unknown>> {
+  listAssets(
+    opts: {
+      type?: string;
+      source?: string;
+      projectId?: string;
+      folder?: string;
+      q?: string;
+      limit?: number;
+      offset?: number;
+    } = {},
+  ): Array<Record<string, unknown>> {
     let sql = "SELECT * FROM media_assets WHERE 1=1";
     const params: unknown[] = [];
 
-    if (opts.type) { sql += " AND type = ?"; params.push(opts.type); }
-    if (opts.source) { sql += " AND source = ?"; params.push(opts.source); }
-    if (opts.projectId) { sql += " AND project_id = ?"; params.push(opts.projectId); }
+    if (opts.type) {
+      sql += " AND type = ?";
+      params.push(opts.type);
+    }
+    if (opts.source) {
+      sql += " AND source = ?";
+      params.push(opts.source);
+    }
+    if (opts.projectId) {
+      sql += " AND project_id = ?";
+      params.push(opts.projectId);
+    }
     if (opts.folder !== undefined) {
       if (opts.folder === "") {
         sql += " AND (folder IS NULL OR folder = '')";
       } else {
-        sql += " AND folder = ?"; params.push(opts.folder);
+        sql += " AND folder = ?";
+        params.push(opts.folder);
       }
     }
     if (opts.q) {
@@ -618,52 +791,84 @@ export class MediaQueueRepository {
     sql += " ORDER BY created_at DESC LIMIT ? OFFSET ?";
     params.push(opts.limit ?? 50, opts.offset ?? 0);
 
-    return (this.db.prepare(sql).all(...params) as Array<Record<string, unknown>>).map((row) => {
-      if (typeof row.generation_params === "string") row.generation_params = JSON.parse(row.generation_params as string);
-      if (typeof row.tags === "string") row.tags = JSON.parse(row.tags as string);
+    return (
+      this.db.prepare(sql).all(...params) as Array<Record<string, unknown>>
+    ).map((row) => {
+      if (typeof row.generation_params === "string")
+        row.generation_params = JSON.parse(row.generation_params as string);
+      if (typeof row.tags === "string")
+        row.tags = JSON.parse(row.tags as string);
       return row;
     });
   }
 
   deleteAsset(id: string): boolean {
-    return this.db.prepare("DELETE FROM media_assets WHERE id = ?").run(id).changes > 0;
+    return (
+      this.db.prepare("DELETE FROM media_assets WHERE id = ?").run(id).changes >
+      0
+    );
   }
 
   updateAssetTags(id: string, tags: string[]): void {
     const now = this.clock().toISOString();
-    this.db.prepare("UPDATE media_assets SET tags = ?, updated_at = ? WHERE id = ?")
+    this.db
+      .prepare("UPDATE media_assets SET tags = ?, updated_at = ? WHERE id = ?")
       .run(JSON.stringify(tags), now, id);
   }
 
   renameAsset(id: string, newFilename: string): boolean {
     const now = this.clock().toISOString();
-    return this.db.prepare("UPDATE media_assets SET filename = ?, updated_at = ? WHERE id = ?")
-      .run(newFilename, now, id).changes > 0;
+    return (
+      this.db
+        .prepare(
+          "UPDATE media_assets SET filename = ?, updated_at = ? WHERE id = ?",
+        )
+        .run(newFilename, now, id).changes > 0
+    );
   }
 
   updateAssetDescription(id: string, prompt: string): boolean {
     const now = this.clock().toISOString();
-    return this.db.prepare("UPDATE media_assets SET prompt = ?, updated_at = ? WHERE id = ?")
-      .run(prompt, now, id).changes > 0;
+    return (
+      this.db
+        .prepare(
+          "UPDATE media_assets SET prompt = ?, updated_at = ? WHERE id = ?",
+        )
+        .run(prompt, now, id).changes > 0
+    );
   }
 
-  updateAssetKnowledgeMeta(id: string, visibility: string, category: string): boolean {
+  updateAssetKnowledgeMeta(
+    id: string,
+    visibility: string,
+    category: string,
+  ): boolean {
     const now = this.clock().toISOString();
-    return this.db.prepare(
-      "UPDATE media_assets SET knowledge_visibility = ?, knowledge_category = ?, updated_at = ? WHERE id = ?",
-    ).run(visibility, category, now, id).changes > 0;
+    return (
+      this.db
+        .prepare(
+          "UPDATE media_assets SET knowledge_visibility = ?, knowledge_category = ?, updated_at = ? WHERE id = ?",
+        )
+        .run(visibility, category, now, id).changes > 0
+    );
   }
 
   updateAssetFolder(id: string, folder: string | null): boolean {
     const now = this.clock().toISOString();
-    return this.db.prepare(
-      "UPDATE media_assets SET folder = ?, updated_at = ? WHERE id = ?",
-    ).run(folder, now, id).changes > 0;
+    return (
+      this.db
+        .prepare(
+          "UPDATE media_assets SET folder = ?, updated_at = ? WHERE id = ?",
+        )
+        .run(folder, now, id).changes > 0
+    );
   }
 
   listFolders(): Array<{ folder: string; count: number }> {
-    return (this.db.prepare(
-      "SELECT folder, COUNT(*) as count FROM media_assets WHERE folder IS NOT NULL AND folder != '' GROUP BY folder ORDER BY folder ASC"
-    ).all() as Array<{ folder: string; count: number }>);
+    return this.db
+      .prepare(
+        "SELECT folder, COUNT(*) as count FROM media_assets WHERE folder IS NOT NULL AND folder != '' GROUP BY folder ORDER BY folder ASC",
+      )
+      .all() as Array<{ folder: string; count: number }>;
   }
 }

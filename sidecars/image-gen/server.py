@@ -1503,10 +1503,10 @@ def _materialize_network_training(req: TrainRequest) -> str:
     cfg = req.train_config or {}
     trigger_word = cfg.get("trigger_word", "TOK")
     lora_rank = int(cfg.get("lora_rank", 8))
-    steps = int(cfg.get("steps", 9))
+    steps = int(cfg.get("steps", 25))
 
     # Max training image dimension — larger images cause OOM on 32GB Macs.
-    # Z-Image Turbo native res is 1280x720; we cap at 720px longest edge
+    # Flux Dev native res is 1024x576; we cap at 720px longest edge
     # to keep VAE encoding within Metal buffer limits.
     max_dim = int(cfg.get("max_image_dim", 720))
 
@@ -1551,25 +1551,28 @@ def _materialize_network_training(req: TrainRequest) -> str:
         import shutil as _sh
         _sh.rmtree(lora_output)
 
-    # Resolve training model — Flux1 is no longer supported, default to z-image-turbo
-    model = cfg.get("model", "z-image-turbo")
+    # Resolve training model — default to flux-dev for best LoRA quality
+    # Flux Dev (25-step guidance-distilled) provides richer gradient signal
+    # than turbo/distilled models, producing stronger identity capture.
+    model = cfg.get("model", "flux-dev")
     num_epochs = int(cfg.get("num_epochs", 1))
 
     # Build the correct mflux training config format
-    # Based on official z-image-turbo example config from mflux repo (2026):
+    # Flux Dev LoRA training on 32GB Apple Silicon:
     #   - quantize=8 is REQUIRED for 32GB Macs (model is ~31GB unquantized)
-    #   - Train ALL blocks (0-30), not just upper — lower blocks encode structure/identity
+    #   - Train upper blocks (15-30) only — reduces memory by ~50% vs all blocks
+    #     while still capturing identity/structure (lower blocks encode base features)
     #   - Include cap_embedder (text→trigger word association) and feed_forward layers
     #   - all_final_layer is needed so the generation pipeline can reproduce the subject
-    #   - timestep_low/high constrain noise schedule for turbo model
+    #   - guidance=3.5 matches Flux Dev's default inference guidance
     #   - MUST satisfy: timestep_high <= steps (mflux validation)
-    ts_high = min(9, steps)
-    ts_low = min(4, ts_high)
+    ts_high = min(20, steps)
+    ts_low = min(8, ts_high)
     config: dict[str, Any] = {
         "model": model,
         "seed": 42,
         "steps": steps,
-        "guidance": 0.0,
+        "guidance": 3.5,
         "quantize": int(cfg.get("quantize", 8)),
         "max_resolution": 1024,
         "data": data_dir,
@@ -1589,13 +1592,13 @@ def _materialize_network_training(req: TrainRequest) -> str:
         },
         "lora_layers": {
             "targets": [
-                {"module_path": "layers.{block}.attention.to_q", "blocks": {"start": 0, "end": 30}, "rank": lora_rank},
-                {"module_path": "layers.{block}.attention.to_k", "blocks": {"start": 0, "end": 30}, "rank": lora_rank},
-                {"module_path": "layers.{block}.attention.to_v", "blocks": {"start": 0, "end": 30}, "rank": lora_rank},
-                {"module_path": "layers.{block}.attention.to_out.0", "blocks": {"start": 0, "end": 30}, "rank": lora_rank},
-                {"module_path": "layers.{block}.feed_forward.w1", "blocks": {"start": 0, "end": 30}, "rank": lora_rank},
-                {"module_path": "layers.{block}.feed_forward.w2", "blocks": {"start": 0, "end": 30}, "rank": lora_rank},
-                {"module_path": "layers.{block}.feed_forward.w3", "blocks": {"start": 0, "end": 30}, "rank": lora_rank},
+                {"module_path": "layers.{block}.attention.to_q", "blocks": {"start": 15, "end": 30}, "rank": lora_rank},
+                {"module_path": "layers.{block}.attention.to_k", "blocks": {"start": 15, "end": 30}, "rank": lora_rank},
+                {"module_path": "layers.{block}.attention.to_v", "blocks": {"start": 15, "end": 30}, "rank": lora_rank},
+                {"module_path": "layers.{block}.attention.to_out.0", "blocks": {"start": 15, "end": 30}, "rank": lora_rank},
+                {"module_path": "layers.{block}.feed_forward.w1", "blocks": {"start": 15, "end": 30}, "rank": lora_rank},
+                {"module_path": "layers.{block}.feed_forward.w2", "blocks": {"start": 15, "end": 30}, "rank": lora_rank},
+                {"module_path": "layers.{block}.feed_forward.w3", "blocks": {"start": 15, "end": 30}, "rank": lora_rank},
                 {"module_path": "cap_embedder.1", "rank": lora_rank},
                 {"module_path": "all_final_layer.2-1.linear", "rank": lora_rank},
             ]

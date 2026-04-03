@@ -4,6 +4,7 @@ uvicorn[standard]>=0.30.0
 httpx>=0.27.0
 pydantic>=2.0
 mlx>=0.18.0
-# mlx-video is not on PyPI — install manually if needed:
+# mlx-video (Blaizzy fork) — supports LTX-2/2.3, audio-video, 2-stage pipelines.
+# Install from git (not on PyPI):
 #   pip install git+https://github.com/Blaizzy/mlx-video.git
 # The worker falls back to ltx_video if mlx-video is not installed.

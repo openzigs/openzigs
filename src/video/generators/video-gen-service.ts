@@ -7,7 +7,11 @@
 import { logger } from "../../logging/logger.js";
 import type { MediaQueueRepository } from "../../queue/media-queue-repository.js";
 import type { MediaJob } from "../../queue/types.js";
-import { MAX_VIDEO_FRAMES, MAX_VIDEO_DURATION_SEC, DEFAULT_VIDEO_FPS } from "../../queue/types.js";
+import {
+  MAX_VIDEO_FRAMES,
+  MAX_VIDEO_DURATION_SEC,
+  DEFAULT_VIDEO_FPS,
+} from "../../queue/types.js";
 
 // ── Types ─────────────────────────────────────────────────────
 
@@ -30,6 +34,20 @@ export interface VideoGenOptions {
   projectId?: string;
   /** Priority (higher = processed first) */
   priority?: number;
+  /** Enable synchronized audio generation (LTX-2.3+) */
+  audio?: boolean;
+  /** VAE tiling mode */
+  tiling?: string;
+  /** Override model repository */
+  modelRepo?: string;
+  /** Pipeline type: distilled, dev, dev-two-stage, dev-two-stage-hq */
+  pipeline?: string;
+  /** Enable Gemma prompt enhancement */
+  enhancePrompt?: boolean;
+  /** Image conditioning strength for img2video (0.0–1.0) */
+  imageStrength?: number;
+  /** Negative prompt for quality control */
+  negativePrompt?: string;
 }
 
 export interface VideoGenResult {
@@ -53,12 +71,15 @@ export class VideoGenService {
    * Returns immediately with the job ID — actual generation is async.
    */
   async submitTextToVideo(options: VideoGenOptions): Promise<VideoGenResult> {
-    const numFrames = Math.min(options.numFrames ?? MAX_VIDEO_FRAMES, MAX_VIDEO_FRAMES);
+    const numFrames = Math.min(
+      options.numFrames ?? MAX_VIDEO_FRAMES,
+      MAX_VIDEO_FRAMES,
+    );
     const fps = options.fps ?? DEFAULT_VIDEO_FPS;
 
     logger.info(
       `[VideoGenService] Submitting txt2video: ${numFrames} frames, ${fps}fps, ` +
-      `${(numFrames / fps).toFixed(1)}s`,
+        `${(numFrames / fps).toFixed(1)}s`,
     );
 
     const job = this.repo.createJob({
@@ -70,6 +91,12 @@ export class VideoGenService {
         num_frames: numFrames,
         fps,
         seed: options.seed,
+        audio: options.audio,
+        tiling: options.tiling,
+        model_repo: options.modelRepo,
+        pipeline: options.pipeline,
+        enhance_prompt: options.enhancePrompt,
+        negative_prompt: options.negativePrompt,
       },
       projectId: options.projectId,
       priority: options.priority ?? 0,
@@ -87,7 +114,10 @@ export class VideoGenService {
       throw new Error("initImage (base64) is required for img2video");
     }
 
-    const numFrames = Math.min(options.numFrames ?? MAX_VIDEO_FRAMES, MAX_VIDEO_FRAMES);
+    const numFrames = Math.min(
+      options.numFrames ?? MAX_VIDEO_FRAMES,
+      MAX_VIDEO_FRAMES,
+    );
     const fps = options.fps ?? DEFAULT_VIDEO_FPS;
 
     logger.info(
@@ -104,6 +134,13 @@ export class VideoGenService {
         fps,
         seed: options.seed,
         init_image: options.initImage,
+        image_strength: options.imageStrength,
+        audio: options.audio,
+        tiling: options.tiling,
+        model_repo: options.modelRepo,
+        pipeline: options.pipeline,
+        enhance_prompt: options.enhancePrompt,
+        negative_prompt: options.negativePrompt,
       },
       projectId: options.projectId,
       priority: options.priority ?? 0,
@@ -116,7 +153,11 @@ export class VideoGenService {
    * Poll a job until complete or timeout.
    * Useful for blocking Director pipeline stages.
    */
-  async waitForJob(jobId: string, timeoutMs = 300_000, pollIntervalMs = 2000): Promise<VideoGenResult> {
+  async waitForJob(
+    jobId: string,
+    timeoutMs = 300_000,
+    pollIntervalMs = 2000,
+  ): Promise<VideoGenResult> {
     const deadline = Date.now() + timeoutMs;
 
     while (Date.now() < deadline) {
@@ -128,7 +169,9 @@ export class VideoGenService {
       }
 
       if (job.status === "failed") {
-        throw new Error(`Video generation failed: ${job.error ?? "Unknown error"}`);
+        throw new Error(
+          `Video generation failed: ${job.error ?? "Unknown error"}`,
+        );
       }
 
       await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
