@@ -1035,7 +1035,7 @@ describe("QueueMaster", () => {
       expect(generateCall).toBeDefined();
       const body = JSON.parse(generateCall![1]?.body as string);
       expect(body.audio).toBe(false);
-      expect(body.tiling).toBe("aggressive");
+      expect(body.tiling).toBe("auto");
       expect(body.enhance_prompt).toBe(false);
       expect(body.model_repo).toBeUndefined();
     });

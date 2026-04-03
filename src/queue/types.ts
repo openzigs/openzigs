@@ -221,6 +221,16 @@ export interface MediaJobPayload {
   image_strength?: number;
   /** URL for the sidecar to POST real-time progress updates */
   progress_url?: string;
+
+  // ── Multi-Segment Video fields ─────────────────────────────
+  /** Total desired video duration in seconds (multi-segment when > 4) */
+  video_duration?: number;
+  /** Zero-based segment index within a multi-segment job */
+  segmentIndex?: number;
+  /** Total number of segments in the parent multi-segment job */
+  totalSegments?: number;
+  /** Parent job ID that this segment belongs to */
+  parentJobId?: string;
 }
 
 // ── Stored Job ────────────────────────────────────────────────
@@ -335,3 +345,7 @@ export const MAX_VIDEO_DURATION_SEC = 4;
 
 /** Default video FPS. */
 export const DEFAULT_VIDEO_FPS = 24;
+
+/** Valid multi-segment video durations in seconds. */
+export const VALID_VIDEO_DURATIONS = [4, 8, 12, 16] as const;
+export type VideoDuration = (typeof VALID_VIDEO_DURATIONS)[number];

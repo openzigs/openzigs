@@ -2147,7 +2147,7 @@ const DEFAULT_FORM: StudioFormState = {
   controlnetStrength: 0.4,
   pipeline: "distilled",
   audio: false,
-  tiling: "aggressive",
+  tiling: "auto",
   enhance_prompt: false,
   model_repo: "",
   preset_id: "",

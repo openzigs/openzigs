@@ -11,6 +11,7 @@ import {
   VALID_PIPELINE_TYPES,
   VALID_TILING_MODES,
   LTX_MODEL_CATALOG,
+  VALID_VIDEO_DURATIONS,
 } from "./types.js";
 
 describe("targetNodeForJobType", () => {
@@ -115,5 +116,19 @@ describe("LTX_MODEL_CATALOG", () => {
   it("includes LTX-2.3 models", () => {
     const v23Models = LTX_MODEL_CATALOG.filter((m) => m.version === "2.3");
     expect(v23Models.length).toBeGreaterThanOrEqual(1);
+  });
+});
+
+describe("VALID_VIDEO_DURATIONS", () => {
+  it("contains the four valid durations", () => {
+    expect(VALID_VIDEO_DURATIONS).toEqual([4, 8, 12, 16]);
+  });
+
+  it("includes 4s (single segment)", () => {
+    expect(VALID_VIDEO_DURATIONS).toContain(4);
+  });
+
+  it("includes 16s (maximum multi-segment)", () => {
+    expect(VALID_VIDEO_DURATIONS).toContain(16);
   });
 });
