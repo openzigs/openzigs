@@ -223,7 +223,7 @@ if [[ ! -f "$ENV_FILE" ]]; then
 LTX_SECRET_TOKEN=$TOKEN
 M2_PRO_HOST=0.0.0.0
 M2_PRO_PORT=5007
-LTX_MODEL_REPO=AITRADER/ltx2-distilled-8bit-mlx
+LTX_MODEL_REPO=AITRADER/ltx2-distilled-4bit-mlx
 EOF
   chmod 600 "$ENV_FILE"
   ok "Created .env file"
