@@ -3473,11 +3473,72 @@ This mounts the source directory for live-reload inside the container.
 
 ## Cloudflare Tunnel
 
-The Cloudflare Tunnel provides a public HTTPS URL to reach your local agent. This is required for Telegram webhooks, Discord OAuth redirects, and **Social Brain platform webhooks** (Instagram, Facebook, Twitter, TikTok). All services share the same tunnel — no separate endpoints or ingress rules are needed.
+The Cloudflare Tunnel provides a public HTTPS URL to reach your local agent. This is required for Telegram webhooks, Discord OAuth redirects, worker node callbacks (LTX video / FluxQ images), and **Social Brain platform webhooks** (Instagram, Facebook, Twitter, TikTok). All services share the same tunnel — no separate endpoints or ingress rules are needed.
 
-### Docker Sidecar (Recommended)
+> **Security requirement:** Once a tunnel exposes your agent to the internet, you **must** add Cloudflare Access policies to lock it down. Without Access, anyone can reach your admin UI and API. See [Securing the Tunnel with Cloudflare Access](#securing-the-tunnel-with-cloudflare-access) below.
 
-In the recommended deployment, `cloudflared` runs as a separate container defined in `docker-compose.yml`. The agent does **not** manage the tunnel process — Docker Compose does.
+### System LaunchDaemon (Recommended for macOS)
+
+The most reliable production setup uses `cloudflared` installed via Homebrew and managed by macOS `launchd` as a **system daemon** — it starts at boot, runs as root, and restarts automatically on crash.
+
+```bash
+# Install cloudflared
+brew install cloudflare/cloudflare/cloudflared
+
+# Authenticate and create a named tunnel
+cloudflared tunnel login
+cloudflared tunnel create openzigs-home
+
+# Add DNS routes (one per subdomain)
+cloudflared tunnel route dns openzigs-home agent.example.com
+cloudflared tunnel route dns openzigs-home presenter.example.com
+
+# Install as a system daemon (prompts for sudo)
+sudo cloudflared service install --token <your-tunnel-token>
+```
+
+This creates `/Library/LaunchDaemons/com.cloudflare.cloudflared.plist` with:
+- `RunAtLoad: true` — starts at boot
+- `KeepAlive: true` — restarts on crash
+- Logs to `/Library/Logs/com.cloudflare.cloudflared.{out,err}.log`
+
+**Tunnel management commands:**
+
+```bash
+# Start
+sudo launchctl bootstrap system /Library/LaunchDaemons/com.cloudflare.cloudflared.plist
+
+# Stop
+sudo launchctl bootout system/com.cloudflare.cloudflared
+
+# Status
+pgrep -la cloudflared
+
+# Logs
+tail -f /Library/Logs/com.cloudflare.cloudflared.err.log
+```
+
+Disable the agent's built-in quick tunnel to prevent orphaned processes:
+
+```json
+// ~/.openzigs/config.json
+{
+  "tunnel": {
+    "enabled": false
+  }
+}
+```
+
+Set the tunnel callback URL so worker nodes can reach the agent:
+
+```bash
+# .env
+QUEUE_CALLBACK_URL=https://agent.example.com/api/queue/complete
+```
+
+### Docker Sidecar
+
+In the Docker deployment, `cloudflared` runs as a separate container defined in `docker-compose.yml`.
 
 1. Create a Cloudflare Tunnel in the [Cloudflare Zero Trust dashboard](https://one.dash.cloudflare.com/) and copy the tunnel token.
 
@@ -3487,27 +3548,17 @@ In the recommended deployment, `cloudflared` runs as a separate container define
    TUNNEL_TOKEN=your-cloudflare-tunnel-token
    ```
 
-3. Ensure the agent's internal tunnel is **disabled** (this is the default):
+3. Ensure the agent's internal tunnel is **disabled**:
 
    ```json
-   {
-     "tunnel": {
-       "enabled": false
-     }
-   }
+   { "tunnel": { "enabled": false } }
    ```
 
-4. Start the stack:
-
-   ```bash
-   docker compose up -d
-   ```
-
-The `tunnel` service proxies public HTTPS traffic to `http://agent:3000` inside the Docker network. Set your Telegram `webhookUrl` to your Cloudflare hostname (e.g., `https://agent.example.com/telegram/webhook`). Social Brain webhooks use the same hostname (e.g., `https://agent.example.com/api/social/webhooks/instagram`).
+4. Start the stack: `docker compose up -d`
 
 ### Embedded Quick Mode (Development)
 
-For local development without Docker, the agent can spawn `cloudflared` as a child process:
+For local development without Docker, the agent can spawn `cloudflared` as a child process — generates a temporary `https://xxx.trycloudflare.com` URL. No Cloudflare account required.
 
 ```json
 {
@@ -3518,24 +3569,106 @@ For local development without Docker, the agent can spawn `cloudflared` as a chi
 }
 ```
 
-Generates a temporary `https://xxx.trycloudflare.com` URL. No Cloudflare account required.
+> **Warning:** Never use Quick Mode in production — it creates ephemeral tunnels with no access control.
 
-### Embedded Named Mode (Production without Docker)
+---
 
-```json
-{
-  "tunnel": {
-    "enabled": true,
-    "mode": "named",
-    "namedTunnel": {
-      "credentialsFile": "~/.cloudflared/credentials.json",
-      "hostname": "agent.example.com"
-    }
-  }
-}
+## Securing the Tunnel with Cloudflare Access
+
+Cloudflare Access acts as an authentication gateway in front of your tunnel — **every request** is intercepted and must pass an Access policy before reaching your server. Without this, anyone who discovers your `*.openzigs.com` URLs can reach your full admin UI and API.
+
+### How it works
+
+Access uses **path-based application separation**. You create one Access application per path you want to protect or bypass. More specific paths take precedence over broader ones:
+
+| Application | Path | Policy | Why |
+|---|---|---|---|
+| Agent: Worker Callbacks | `agent.example.com/api/queue/complete` | Bypass (Everyone) | Worker nodes can't do email OTP; secured by `workerSecret` at app level |
+| Agent: Telegram Webhook | `agent.example.com/telegram/webhook` | Bypass (Everyone) | Telegram servers can't authenticate; secured by `X-Telegram-Bot-Api-Secret-Token` |
+| Agent: Social Webhooks | `agent.example.com/api/social/webhooks/*` | Bypass (Everyone) | Platform HMAC-SHA256 verified at app level |
+| Agent: Health Check | `agent.example.com/health` | Bypass (Everyone) | No sensitive data |
+| Agent: OAuth Callbacks | `agent.example.com/api/*/oauth/callback` | Bypass (Everyone) | OAuth provider redirect; CSRF state validated at app level |
+| **OpenZigs Agent API** | `agent.example.com` *(catch-all)* | Allow (`you@gmail.com`) | All other routes require email OTP |
+| Presenter: Invite Redeem | `presenter.example.com/api/invite/redeem` | Bypass (Everyone) | JWT verified at app level |
+| Presenter: Viewer Pages | `presenter.example.com/presenter/*` | Bypass (Everyone) | Guest cookie auth at app level |
+| Presenter: Socket.IO | `presenter.example.com/socket.io/*` | Bypass (Everyone) | Guests need real-time sync |
+| Presenter: PeerJS | `presenter.example.com/peerjs/*` | Bypass (Everyone) | WebRTC signaling for voice rooms |
+| **OpenZigs Presenter** | `presenter.example.com` *(catch-all)* | Allow (`you@gmail.com`) | All other routes require email OTP |
+
+> **Key principle:** Bypass does not mean unprotected — each bypassed route still enforces its own application-level secret (HMAC, workerSecret, JWT, OAuth state). Cloudflare Access just doesn't add an *additional* OTP layer on top.
+
+### Step 1: Create a Cloudflare API token
+
+1. Go to [Cloudflare Dashboard → Profile → API Tokens](https://dash.cloudflare.com/profile/api-tokens)
+2. Click **Create Token** → use the **Zero Trust** template, or create custom with:
+   - `Account > Cloudflare Zero Trust > Edit`
+   - `Account > Access: Apps and Policies > Edit`
+3. Copy the token — it's shown only once.
+
+### Step 2: Find your Account ID
+
+In the Cloudflare dashboard, select your account. The URL contains your Account ID:
+`https://dash.cloudflare.com/<ACCOUNT_ID>/...`
+
+Or find it in the right sidebar on any zone overview page.
+
+### Step 3: Run the setup script
+
+```bash
+# Option A — environment variables
+export CF_API_TOKEN="cfut_your_token_here"
+export CF_ACCOUNT_ID="your_account_id_here"
+export ALLOWED_EMAIL="you@example.com"
+export AGENT_DOMAIN="agent.example.com"
+export PRESENTER_DOMAIN="presenter.example.com"
+bash scripts/setup-cloudflare-access.sh
+
+# Option B — interactive prompts
+bash scripts/setup-cloudflare-access.sh
 ```
 
-Requires a Cloudflare account with a configured tunnel and DNS record.
+The script creates all bypass and protected applications via the Cloudflare API and prints verification commands.
+
+### Step 4: Verify
+
+```bash
+# Protected route — must get 302 (redirect to Cloudflare login)
+curl -s -o /dev/null -w '%{http_code}' https://agent.example.com/
+
+# Bypass route — must NOT get 302 (passes through to app)
+curl -s -o /dev/null -w '%{http_code}' https://agent.example.com/health
+
+# Worker callback — gets 401 (app-level workerSecret missing, not 302)
+curl -s -o /dev/null -w '%{http_code}' -X POST https://agent.example.com/api/queue/complete
+```
+
+Open an incognito window and navigate to your domain — you should see the Cloudflare login page, not your admin UI.
+
+### Credential rotation
+
+If your `auth.token` is ever exposed (e.g., accidentally committed or visible in browser DevTools):
+
+```bash
+# Generate new token
+python3 -c "import secrets; print(secrets.token_hex(32))"
+
+# Update config
+# Edit ~/.openzigs/config.json → auth.token
+# Edit ui/.env.local → NEXT_PUBLIC_OPENZIGS_TOKEN
+
+# Restart server
+pnpm dev
+```
+
+Rotate the Telegram webhook secret similarly, then re-register:
+
+```bash
+NEW_SECRET=$(python3 -c "import secrets; print(secrets.token_hex(32))")
+# Update ~/.openzigs/config.json → channels.telegram.webhookSecret
+curl -s -X POST "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/setWebhook" \
+  -H "Content-Type: application/json" \
+  -d "{\"url\":\"https://agent.example.com/telegram/webhook\",\"secret_token\":\"$NEW_SECRET\"}"
+```
 
 ---
 
@@ -7228,6 +7361,21 @@ The Chrome profile is now persistent at `~/.openzigs/chrome-profile/` (previousl
 ## Security Hardening
 
 OpenZigs includes multiple layers of security controls to protect against the OWASP Top 10 threats.
+
+### Cloudflare Access (Edge Authentication)
+
+When running behind a Cloudflare Tunnel, **Cloudflare Access is mandatory**. Without it, your admin UI and every API endpoint are reachable by anyone who discovers your hostname.
+
+Access must be configured before the tunnel is brought online. See [Securing the Tunnel with Cloudflare Access](#securing-the-tunnel-with-cloudflare-access) for the full setup. The short version:
+
+```bash
+# Automated setup via script (no hardcoded credentials — prompts interactively)
+bash scripts/setup-cloudflare-access.sh
+```
+
+**What Access protects:** All routes except explicitly bypassed paths (webhooks, OAuth callbacks, health check, worker callbacks). The bypass paths are still secured by app-level mechanisms (HMAC, workerSecret, JWT).
+
+**What the authenticated browser experience looks like:** Navigate to your domain → Cloudflare login page → enter your email → receive one-time PIN → access granted for 24 h.
 
 ### API Authentication
 

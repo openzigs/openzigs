@@ -3,7 +3,12 @@
  * Issue #276 (SI-1): Express router mounted at /api/presentations.
  */
 
-import { Router, type Request, type Response, type NextFunction } from "express";
+import {
+  Router,
+  type Request,
+  type Response,
+  type NextFunction,
+} from "express";
 import fs from "node:fs";
 import path from "node:path";
 import { SignJWT } from "jose";
@@ -27,8 +32,19 @@ export interface PresenterRouterDeps {
   baseUrl?: string;
 }
 
-export function createPresenterRouter({ presentationRepo, teacherAgent, quizGenerator, voiceService, copilotWrapper, knowledgeService, inviteSecret, baseUrl }: PresenterRouterDeps): Router {
-  const transcriptClassifier = copilotWrapper ? new TranscriptClassifier(copilotWrapper) : null;
+export function createPresenterRouter({
+  presentationRepo,
+  teacherAgent,
+  quizGenerator,
+  voiceService,
+  copilotWrapper,
+  knowledgeService,
+  inviteSecret,
+  baseUrl,
+}: PresenterRouterDeps): Router {
+  const transcriptClassifier = copilotWrapper
+    ? new TranscriptClassifier(copilotWrapper)
+    : null;
   const router = Router();
 
   // Reject requests that carry a guest_token cookie — guests may not write/delete presentations.
@@ -94,11 +110,34 @@ export function createPresenterRouter({ presentationRepo, teacherAgent, quizGene
 
     // Parse JSON fields for the response
     let chapters = [];
-    try { chapters = JSON.parse(presentation.chapters); } catch (e) { logger.warn(`[PresenterRouter] Failed to parse chapters for ${req.params.id}:`, e); }
+    try {
+      chapters = JSON.parse(presentation.chapters);
+    } catch (e) {
+      logger.warn(
+        `[PresenterRouter] Failed to parse chapters for ${req.params.id}:`,
+        e,
+      );
+    }
     let scriptJson = [];
-    try { scriptJson = JSON.parse(presentation.script_json); } catch (e) { logger.warn(`[PresenterRouter] Failed to parse script_json for ${req.params.id}:`, e); }
+    try {
+      scriptJson = JSON.parse(presentation.script_json);
+    } catch (e) {
+      logger.warn(
+        `[PresenterRouter] Failed to parse script_json for ${req.params.id}:`,
+        e,
+      );
+    }
     let quizConfig = null;
-    try { quizConfig = presentation.quiz_config ? JSON.parse(presentation.quiz_config) : null; } catch (e) { logger.warn(`[PresenterRouter] Failed to parse quiz_config for ${req.params.id}:`, e); }
+    try {
+      quizConfig = presentation.quiz_config
+        ? JSON.parse(presentation.quiz_config)
+        : null;
+    } catch (e) {
+      logger.warn(
+        `[PresenterRouter] Failed to parse quiz_config for ${req.params.id}:`,
+        e,
+      );
+    }
 
     const userChapters = presentationRepo.getUserChapters(req.params.id);
 
@@ -120,10 +159,14 @@ export function createPresenterRouter({ presentationRepo, teacherAgent, quizGene
       return;
     }
     if (knowledgeService) {
-      void knowledgeService.deleteDocument(req.params.id).catch((err: unknown) => {
-        const msg = err instanceof Error ? err.message : String(err);
-        logger.warn(`[PresenterRouter] Failed to remove knowledge doc for ${req.params.id}: ${msg}`);
-      });
+      void knowledgeService
+        .deleteDocument(req.params.id)
+        .catch((err: unknown) => {
+          const msg = err instanceof Error ? err.message : String(err);
+          logger.warn(
+            `[PresenterRouter] Failed to remove knowledge doc for ${req.params.id}: ${msg}`,
+          );
+        });
     }
     res.json({ success: true });
   });
@@ -147,12 +190,19 @@ export function createPresenterRouter({ presentationRepo, teacherAgent, quizGene
       return;
     }
     if (quiz_config != null) {
-      if (!Array.isArray(quiz_config.timestamps) || quiz_config.timestamps.some((t) => typeof t !== "number")) {
-        res.status(400).json({ error: "quiz_config.timestamps must be an array of numbers" });
+      if (
+        !Array.isArray(quiz_config.timestamps) ||
+        quiz_config.timestamps.some((t) => typeof t !== "number")
+      ) {
+        res.status(400).json({
+          error: "quiz_config.timestamps must be an array of numbers",
+        });
         return;
       }
       if (typeof quiz_config.difficulty !== "string") {
-        res.status(400).json({ error: "quiz_config.difficulty must be a string" });
+        res
+          .status(400)
+          .json({ error: "quiz_config.difficulty must be a string" });
         return;
       }
     }
@@ -160,10 +210,15 @@ export function createPresenterRouter({ presentationRepo, teacherAgent, quizGene
     presentationRepo.update(req.params.id, {
       title,
       quiz_enabled,
-      quiz_config: quiz_config as Parameters<typeof presentationRepo.update>[1]["quiz_config"],
+      quiz_config: quiz_config as Parameters<
+        typeof presentationRepo.update
+      >[1]["quiz_config"],
     });
 
-    res.json({ success: true, presentation: presentationRepo.findById(req.params.id) });
+    res.json({
+      success: true,
+      presentation: presentationRepo.findById(req.params.id),
+    });
   });
 
   // GET /api/presentations/:id/quiz — Get cached quiz questions
@@ -176,7 +231,11 @@ export function createPresenterRouter({ presentationRepo, teacherAgent, quizGene
 
     let quizzes = presentationRepo.getQuizzes(req.params.id);
 
-    if (quizzes.length === 0 && presentation.quiz_enabled === 1 && quizGenerator) {
+    if (
+      quizzes.length === 0 &&
+      presentation.quiz_enabled === 1 &&
+      quizGenerator
+    ) {
       try {
         quizzes = await quizGenerator.generate(req.params.id);
       } catch (err) {
@@ -320,8 +379,12 @@ export function createPresenterRouter({ presentationRepo, teacherAgent, quizGene
     const inputs = body.chapters.map((ch, i) => ({
       title: String(ch.title ?? "").trim() || `Chapter ${i + 1}`,
       description: String(ch.description ?? "").trim(),
-      start_seconds: typeof ch.start_seconds === "number" ? ch.start_seconds : 0,
-      end_seconds: typeof ch.end_seconds === "number" ? ch.end_seconds : presentation.duration_seconds,
+      start_seconds:
+        typeof ch.start_seconds === "number" ? ch.start_seconds : 0,
+      end_seconds:
+        typeof ch.end_seconds === "number"
+          ? ch.end_seconds
+          : presentation.duration_seconds,
       order_index: typeof ch.order_index === "number" ? ch.order_index : i,
     }));
 
@@ -345,14 +408,19 @@ export function createPresenterRouter({ presentationRepo, teacherAgent, quizGene
 
     const userChapters = presentationRepo.getUserChapters(req.params.id);
     if (userChapters.length === 0) {
-      res.status(400).json({ error: "No user-defined chapters to classify. Save chapters first." });
+      res.status(400).json({
+        error: "No user-defined chapters to classify. Save chapters first.",
+      });
       return;
     }
 
     try {
       const classified = await transcriptClassifier.classify(
         presentation,
-        userChapters.map((ch) => ({ title: ch.title, description: ch.description })),
+        userChapters.map((ch) => ({
+          title: ch.title,
+          description: ch.description,
+        })),
       );
 
       // Write the AI-computed time ranges back to the user chapters
@@ -407,12 +475,18 @@ export function createPresenterRouter({ presentationRepo, teacherAgent, quizGene
 
     const secret = inviteSecret || "";
     if (!secret) {
-      res.status(503).json({ error: "Invite secret not configured. Set presenter.inviteSecret in config." });
+      res.status(503).json({
+        error:
+          "Invite secret not configured. Set presenter.inviteSecret in config.",
+      });
       return;
     }
 
     const requestedTtlHours = (req.body as Record<string, unknown>)?.ttlHours;
-    if (requestedTtlHours !== undefined && typeof requestedTtlHours !== "number") {
+    if (
+      requestedTtlHours !== undefined &&
+      typeof requestedTtlHours !== "number"
+    ) {
       res.status(400).json({ error: "ttlHours must be a number" });
       return;
     }
@@ -452,14 +526,22 @@ export function createPresenterRouter({ presentationRepo, teacherAgent, quizGene
         return;
       }
 
-      let chapters: Array<{ title: string; startSeconds: number; endSeconds: number }>;
+      let chapters: Array<{
+        title: string;
+        startSeconds: number;
+        endSeconds: number;
+      }>;
       try {
         chapters = JSON.parse(presentation.chapters);
       } catch {
         chapters = [];
       }
 
-      let scriptSegments: Array<{ text: string; startTime: number; endTime: number }>;
+      let scriptSegments: Array<{
+        text: string;
+        startTime: number;
+        endTime: number;
+      }>;
       try {
         scriptSegments = JSON.parse(presentation.script_json);
       } catch {
@@ -468,7 +550,8 @@ export function createPresenterRouter({ presentationRepo, teacherAgent, quizGene
 
       const quizQuestions = presentationRepo.getQuizzes(presentation.id);
 
-      const { buildScormPackage } = await import("../presenter/scorm-packager.js");
+      const { buildScormPackage } =
+        await import("../presenter/scorm-packager.js");
       const result = await buildScormPackage({
         id: presentation.id,
         title: presentation.title,

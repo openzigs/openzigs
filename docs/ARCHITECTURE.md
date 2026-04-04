@@ -2174,6 +2174,34 @@ admin/page.tsx
 
 ## Security Model
 
+### Cloudflare Access (Edge Layer)
+
+All public hostnames are gated by **Cloudflare Access** before requests reach the Express server. This is the first and outermost security layer.
+
+Access uses path-based application separation: more-specific paths take precedence over broader ones. The deployment creates two categories of Access applications:
+
+**Bypass apps** (path-specific, no Cloudflare auth — secured by app-level mechanisms):
+
+| Path | App-level security |
+|---|---|
+| `/api/queue/complete` | `Authorization: Bearer <workerSecret>` |
+| `/telegram/webhook` | `X-Telegram-Bot-Api-Secret-Token` header |
+| `/api/social/webhooks/*` | HMAC-SHA256 per platform |
+| `/api/*/oauth/callback` | OAuth CSRF `state` parameter |
+| `/health` | None (read-only status) |
+| `/presenter/*`, `/socket.io/*`, `/peerjs/*` | `guest_token` cookie / JWT invite |
+
+**Protected catch-all apps** (email OTP via Cloudflare Access):
+
+| Domain | Catch-all protects |
+|---|---|
+| `agent.example.com` | All admin, chat, gallery, scheduler, task, knowledge routes |
+| `presenter.example.com` | All admin and room management routes |
+
+The setup script at `scripts/setup-cloudflare-access.sh` creates all applications via the Cloudflare API. It reads credentials from environment variables or interactive prompts — **no credentials are hardcoded in the script**.
+
+The `cloudflared` process runs as a macOS **system LaunchDaemon** (`/Library/LaunchDaemons/com.cloudflare.cloudflared.plist`) with `RunAtLoad=true` and `KeepAlive=true`, ensuring the tunnel persists across reboots and restarts automatically on crash.
+
 ### Risk Classification
 
 Every tool is classified at registration time:
@@ -2197,6 +2225,7 @@ Every tool is classified at registration time:
 
 ### Transport Security
 
+- **Cloudflare Access (edge):** All public hostnames behind the tunnel are gated by Access before reaching Express. See the Cloudflare Access section above.
 - **CORS:** Restricted to explicit origin allowlist (UI origin + localhost + `OPENZIGS_CORS_ORIGINS` env var). Credentials enabled.
 - **CSP:** Helmet enforces strict Content-Security-Policy: `frame-ancestors: 'none'` (anti-clickjacking), `script-src: 'self'`, `object-src: 'none'`, `base-uri: 'self'`.
 - **Trust Proxy:** Disabled by default; configurable via `server.trustProxy` in config. Prevents IP spoofing when not behind a reverse proxy.
