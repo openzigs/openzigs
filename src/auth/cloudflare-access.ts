@@ -105,9 +105,7 @@ const fetchJwks = async (teamDomain: string): Promise<JwksKey[]> => {
 
 // ── RSA Signature Verification (Web Crypto) ─────────────────
 
-const importRsaKey = async (
-  jwk: JwksKey,
-): Promise<webcrypto.CryptoKey> => {
+const importRsaKey = async (jwk: JwksKey): Promise<webcrypto.CryptoKey> => {
   return globalThis.crypto.subtle.importKey(
     "jwk",
     {
