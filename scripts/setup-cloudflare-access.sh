@@ -35,6 +35,7 @@ set -euo pipefail
 #   export CF_API_TOKEN="cfut_..."
 #   export CF_ACCOUNT_ID="4bb2e897..."
 #   export ALLOWED_EMAIL="you@example.com"    # defaults to prompt if unset
+#   export CF_ACCESS_TEAM_DOMAIN="openzigs"   # your *.cloudflareaccess.com subdomain
 #   bash scripts/setup-cloudflare-access.sh
 #
 # Option B — interactive prompts (handy for one-time setup):
@@ -50,7 +51,13 @@ set -euo pipefail
 #
 # AFTER RUNNING
 # ─────────────
-# 1. Verify protected routes return 302:
+# The script automatically updates ~/.openzigs/config.json with:
+#   tunnel.cfAccessTeamDomain  — enables server-side JWT validation
+#   tunnel.cfAccessAudience    — the Application Audience Tags from your Access apps
+# This provides defense-in-depth: the server validates CF Access JWTs even if
+# Access policies are later misconfigured at the Cloudflare dashboard level.
+#
+# Verification steps:
 #      curl -s -o /dev/null -w '%{http_code}' https://yourhost.com/admin
 # 2. Verify bypass routes pass through (without auth redirect):
 #      curl -s -o /dev/null -w '%{http_code}' https://yourhost.com/health
@@ -71,6 +78,12 @@ fi
 
 if [[ -z "${ALLOWED_EMAIL:-}" ]]; then
   read -rp "Admin email address to allow (e.g. you@example.com): " ALLOWED_EMAIL
+fi
+
+# The Cloudflare Access team name (subdomain of cloudflareaccess.com).
+# e.g. if your login page is openzigs.cloudflareaccess.com, set this to "openzigs".
+if [[ -z "${CF_ACCESS_TEAM_DOMAIN:-}" ]]; then
+  read -rp "Cloudflare Access team name (e.g. 'openzigs' for openzigs.cloudflareaccess.com): " CF_ACCESS_TEAM_DOMAIN
 fi
 
 # ── Domain configuration ──
@@ -132,6 +145,9 @@ print(json.dumps({
   echo "    ✓ $app_id"
 }
 
+# Collect audience tags from protected apps for config update
+PROTECTED_APP_AUDS=()
+
 # Helper: Create the main catch-all app with email-based Allow policy
 create_protected_app() {
   local name="$1"
@@ -154,6 +170,9 @@ print(json.dumps({
   app_resp=$(cf_post "/accounts/$CF_ACCOUNT_ID/access/apps" "$app_body")
   local app_id
   app_id=$(echo "$app_resp" | python3 -c "import sys,json; print(json.load(sys.stdin)['result']['id'])")
+  local app_aud
+  app_aud=$(echo "$app_resp" | python3 -c "import sys,json; print(json.load(sys.stdin)['result'].get('aud',''))")
+  PROTECTED_APP_AUDS+=("$app_aud")
   # Add Allow policy for admin email
   local policy_body
   policy_body=$(python3 -c "
@@ -166,7 +185,7 @@ print(json.dumps({
 }))
 " "$ALLOWED_EMAIL")
   cf_post "/accounts/$CF_ACCOUNT_ID/access/apps/$app_id/policies" "$policy_body" > /dev/null
-  echo "    ✓ $app_id"
+  echo "    ✓ $app_id (aud: ${app_aud:0:12}...)"
 }
 
 echo "=== Verifying API token ==="
@@ -256,9 +275,53 @@ create_protected_app "OpenZigs Presenter" "$PRESENTER_DOMAIN"
 
 echo "✓ $PRESENTER_DOMAIN fully configured"
 
+# ────────────────────────────────────────────────
+# 3. Update ~/.openzigs/config.json with CF Access JWT validation config
+# ────────────────────────────────────────────────
+echo ""
+echo "=== Updating OpenZigs config for server-side JWT validation ==="
+OPENZIGS_CONFIG="$HOME/.openzigs/config.json"
+if [[ -f "$OPENZIGS_CONFIG" ]]; then
+  python3 -c "
+import json, sys
+
+config_path = sys.argv[1]
+team_domain = sys.argv[2]
+auds = [a for a in sys.argv[3:] if a]  # filter empty strings
+
+with open(config_path, 'r') as f:
+    config = json.load(f)
+
+if 'tunnel' not in config:
+    config['tunnel'] = {}
+
+config['tunnel']['cfAccessTeamDomain'] = team_domain
+if len(auds) == 1:
+    config['tunnel']['cfAccessAudience'] = auds[0]
+elif len(auds) > 1:
+    config['tunnel']['cfAccessAudience'] = auds
+
+with open(config_path, 'w') as f:
+    json.dump(config, f, indent=2)
+    f.write('\\n')
+
+print(f'  ✓ tunnel.cfAccessTeamDomain = {team_domain}')
+if auds:
+    print(f'  ✓ tunnel.cfAccessAudience = {auds if len(auds) > 1 else auds[0]}')
+else:
+    print('  ⚠ No audience tags captured — set tunnel.cfAccessAudience manually')
+" "$OPENZIGS_CONFIG" "$CF_ACCESS_TEAM_DOMAIN" "${PROTECTED_APP_AUDS[@]}"
+  echo "  Config updated: $OPENZIGS_CONFIG"
+else
+  echo "  ⚠ $OPENZIGS_CONFIG not found — set these manually:"
+  echo "    tunnel.cfAccessTeamDomain = $CF_ACCESS_TEAM_DOMAIN"
+  echo "    tunnel.cfAccessAudience = ${PROTECTED_APP_AUDS[*]}"
+fi
+
 echo ""
 echo "=== Done ==="
 echo "Both domains now enforce Cloudflare Access authentication."
+echo "Server-side JWT validation is now configured (defense-in-depth)."
 echo "Specific paths are bypassed for: worker callbacks, webhooks, OAuth, invites, presenter viewer."
 echo "All other routes require email OTP for: $ALLOWED_EMAIL"
 echo ""
