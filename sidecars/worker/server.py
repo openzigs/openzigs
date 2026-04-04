@@ -80,6 +80,17 @@ MODEL_IDLE_TIMEOUT_SEC = int(os.getenv("LTX_MODEL_IDLE_TIMEOUT", "300"))  # 5 mi
 # Authorization: Bearer <token>.  Health/status remain public.
 _secret_token: Optional[str] = os.getenv("LTX_SECRET_TOKEN") or None
 
+# When CALLBACK_SECRET is set, outgoing callback POSTs include
+# Authorization: Bearer <secret> so the openzigs server can verify them.
+_callback_secret: Optional[str] = os.getenv("CALLBACK_SECRET") or None
+
+
+def _callback_auth_headers() -> dict[str, str]:
+    """Build Authorization header for outgoing callback POSTs."""
+    if _callback_secret:
+        return {"Authorization": f"Bearer {_callback_secret}"}
+    return {}
+
 
 def verify_token(authorization: Optional[str] = Header(None)) -> None:
     """Validate Bearer token on protected endpoints."""
@@ -579,7 +590,7 @@ async def run_generation_job(request: GenerateRequest):
 
         validated_url = validate_callback_url(request.callback_url)
         async with httpx.AsyncClient(timeout=60.0) as client:
-            resp = await client.post(validated_url, json=payload)
+            resp = await client.post(validated_url, json=payload, headers=_callback_auth_headers())
             logger.info(f"Webhook callback: {resp.status_code}")
 
         # Store result for polling fallback regardless of callback success
@@ -602,7 +613,7 @@ async def run_generation_job(request: GenerateRequest):
         try:
             validated_url = validate_callback_url(request.callback_url)
             async with httpx.AsyncClient(timeout=30.0) as client:
-                await client.post(validated_url, json=error_payload)
+                await client.post(validated_url, json=error_payload, headers=_callback_auth_headers())
         except Exception as webhook_err:
             logger.error(f"Failed to send error webhook: {webhook_err}")
 
