@@ -327,13 +327,23 @@ try {
 // POST callbacks back to us.  Falls back to localhost when no external
 // interface is found (single-machine dev setup).
 function getLanIp(): string {
+  const candidates: string[] = [];
   for (const addrs of Object.values(os.networkInterfaces())) {
     if (!addrs) continue;
     for (const addr of addrs) {
-      if (addr.family === "IPv4" && !addr.internal) return addr.address;
+      if (addr.family === "IPv4" && !addr.internal)
+        candidates.push(addr.address);
     }
   }
-  return "localhost";
+  if (candidates.length === 0) return "localhost";
+  // Prefer common LAN subnets (192.168.x.x, 10.x.x.x) over virtual interfaces
+  // like Docker bridges (172.x.x.x) or macOS VM networks (192.168.64.x).
+  const preferred = candidates.find(
+    (ip) =>
+      (ip.startsWith("192.168.") && !ip.startsWith("192.168.64.")) ||
+      ip.startsWith("10."),
+  );
+  return preferred ?? candidates[0];
 }
 
 const queueMaster = new QueueMaster(mediaQueueRepo, {
