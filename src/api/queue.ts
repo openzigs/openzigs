@@ -4,6 +4,7 @@
  */
 
 import { Router } from "express";
+import type { Request, Response, NextFunction } from "express";
 import { timingSafeEqual } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -109,10 +110,23 @@ export const createQueueCallbackRouter = ({
 }: QueueRouterOptions): Router => {
   const callbackRouter = Router();
 
-  // Worker secret auth middleware (opt-in via config.auth.workerSecret)
+  // Worker secret auth middleware — scoped to callback routes only (/complete, /progress)
+  // NOT applied as callbackRouter.use() because the callback and main queue routers
+  // are both mounted at /api/queue. A blanket .use() would intercept requests meant
+  // for the main queue router (e.g. /jobs, /dispatch) and reject them.
+  let callbackAuthMiddleware: (
+    req: Request,
+    res: Response,
+    next: NextFunction,
+  ) => void;
+
   if (workerSecret) {
     const expectedBuf = Buffer.from(workerSecret);
-    callbackRouter.use((req, res, next) => {
+    callbackAuthMiddleware = (
+      req: Request,
+      res: Response,
+      next: NextFunction,
+    ) => {
       const authHeader = req.headers.authorization ?? "";
       const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
       const tokenBuf = Buffer.from(token);
@@ -121,20 +135,24 @@ export const createQueueCallbackRouter = ({
         !timingSafeEqual(tokenBuf, expectedBuf)
       ) {
         logger.warn(
-          `[QueueAPI] Rejected callback — invalid worker secret from ${req.ip}`,
+          `[QueueAPI] Rejected callback — invalid worker secret from ${req.ip} ${req.method} ${req.originalUrl}`,
         );
         res.status(401).json({ error: "Invalid worker secret" });
         return;
       }
       next();
-    });
+    };
     logger.info(
       "[QueueAPI] Worker callback auth enabled (workerSecret configured)",
     );
   } else {
     // No workerSecret — only allow localhost requests
     const LOCALHOST_IPS = new Set(["127.0.0.1", "::1", "::ffff:127.0.0.1"]);
-    callbackRouter.use((req, res, next) => {
+    callbackAuthMiddleware = (
+      req: Request,
+      res: Response,
+      next: NextFunction,
+    ) => {
       if (LOCALHOST_IPS.has(req.ip ?? "")) {
         return next();
       }
@@ -146,13 +164,13 @@ export const createQueueCallbackRouter = ({
           "Queue callback requires auth.workerSecret when accessed from non-localhost. Set it in ~/.openzigs/config.json",
       });
       return;
-    });
+    };
     logger.warn(
       "[QueueAPI] auth.workerSecret not configured — queue callbacks will only be accepted from localhost",
     );
   }
 
-  callbackRouter.post("/complete", async (req, res) => {
+  callbackRouter.post("/complete", callbackAuthMiddleware, async (req, res) => {
     try {
       const {
         job_id,
@@ -360,8 +378,8 @@ export const createQueueCallbackRouter = ({
     }
   });
 
-  // ── POST /progress — Granular pipeline progress updates (no auth — called by sidecars) ──
-  callbackRouter.post("/progress", (req, res) => {
+  // ── POST /progress — Granular pipeline progress updates (called by sidecars) ──
+  callbackRouter.post("/progress", callbackAuthMiddleware, (req, res) => {
     try {
       const { job_id, stage, progress, message } = req.body as {
         job_id?: string;
