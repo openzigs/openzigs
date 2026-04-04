@@ -640,6 +640,17 @@ async def lifespan(app: FastAPI):
     mx.set_cache_limit(_cache_mb * 1024 * 1024)
     logger.info(f"MLX cache limit set to {_cache_mb}MB")
 
+    # Wire GPU memory to prevent kIOGPUCommandBufferCallbackErrorImpactingInteractivity
+    # watchdog on M2 (macOS 15+). MLX docs: "useful on macOS 15.0 or higher".
+    # Equivalent to: sudo sysctl iogpu.wired_limit_mb=<mb>
+    _wired_mb = int(os.environ.get("MLX_WIRED_LIMIT_MB", "0"))
+    if _wired_mb > 0:
+        try:
+            old_limit = mx.set_wired_limit(_wired_mb * 1024 * 1024)
+            logger.info(f"MLX wired limit set to {_wired_mb}MB (was {old_limit // (1024*1024)}MB)")
+        except Exception as _e:
+            logger.warning(f"MLX wired limit not set: {_e}")
+
     logger.info("M2 Pro Worker starting up")
     mem = get_system_memory_info()
     logger.info(

@@ -37,6 +37,11 @@
     <dict>
         <key>PYTORCH_MPS_HIGH_WATERMARK_RATIO</key>
         <string>0.0</string>
+        <!-- macOS 26 Tahoe: disable Metal GPU interactivity watchdog that kills
+             long-running command buffers when WindowServer needs GPU time.
+             See: https://github.com/ml-explore/mlx/issues/3267 -->
+        <key>AGX_RELAX_CDM_CTXSTORE_TIMEOUT</key>
+        <string>1</string>
     </dict>
 
     <key>RunAtLoad</key>
