@@ -1,5 +1,7 @@
 import { Router } from "express";
+import type { Request, Response, NextFunction } from "express";
 import { execSync } from "node:child_process";
+import { timingSafeEqual } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import fs from "node:fs/promises";
@@ -8,6 +10,7 @@ import {
   secureWriteOptions,
 } from "../config/file-permissions.js";
 import { getPlatformCapabilities } from "../config/platform.js";
+import { loadConfig } from "../config/index.js";
 import { logger } from "../logging/logger.js";
 
 const router: Router = Router();
@@ -15,6 +18,62 @@ const router: Router = Router();
 const OPENZIGS_DIR = path.join(os.homedir(), ".openzigs");
 const CONFIG_PATH = path.join(OPENZIGS_DIR, "config.json");
 const SETUP_COMPLETE_FLAG = path.join(OPENZIGS_DIR, ".setup-complete");
+
+// Once setup is complete, config changes require authentication to prevent
+// unauthenticated config overwrites via tunnels or exposed ports.
+const setupAuthGate = async (
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> => {
+  const isComplete = await fileExists(SETUP_COMPLETE_FLAG);
+  if (!isComplete) {
+    // First-time setup — allow without auth
+    next();
+    return;
+  }
+
+  // Setup is complete — require auth token
+  let expectedToken = "";
+  try {
+    const config = await loadConfig();
+    expectedToken = config.auth.token ?? "";
+  } catch {
+    // Config couldn't be loaded — reject to be safe
+    res
+      .status(500)
+      .json({ error: "Could not load config for auth validation" });
+    return;
+  }
+
+  if (!expectedToken) {
+    // No token configured but setup is complete — reject
+    res.status(401).json({ error: "Unauthorized" });
+    return;
+  }
+
+  const header = req.headers.authorization ?? "";
+  const token = header.startsWith("Bearer ")
+    ? header.slice("Bearer ".length).trim()
+    : "";
+
+  if (!token) {
+    res.status(401).json({ error: "Unauthorized" });
+    return;
+  }
+
+  const tokenBuf = Buffer.from(token);
+  const expectedBuf = Buffer.from(expectedToken);
+  if (
+    tokenBuf.length !== expectedBuf.length ||
+    !timingSafeEqual(tokenBuf, expectedBuf)
+  ) {
+    res.status(401).json({ error: "Unauthorized" });
+    return;
+  }
+
+  next();
+};
 
 // ── Helpers ────────────────────────────────────────────────
 
@@ -101,7 +160,7 @@ router.get("/prerequisites", async (_req, res) => {
 // Saves wizard selections to ~/.openzigs/config.json
 // Merges with existing config (preserves keys not in the payload)
 
-router.post("/config", async (req, res) => {
+router.post("/config", setupAuthGate, async (req, res) => {
   try {
     const updates = req.body as Record<string, unknown>;
     if (!updates || typeof updates !== "object") {
@@ -156,7 +215,7 @@ router.post("/config", async (req, res) => {
 // ── POST /api/setup/complete ───────────────────────────────
 // Marks setup as complete (writes a flag file)
 
-router.post("/complete", async (_req, res) => {
+router.post("/complete", setupAuthGate, async (_req, res) => {
   try {
     await fs.mkdir(OPENZIGS_DIR, secureDirOptions());
     await fs.writeFile(
@@ -174,7 +233,7 @@ router.post("/complete", async (_req, res) => {
 // ── POST /api/setup/reset ──────────────────────────────────
 // Resets the setup-complete flag (allows re-running the wizard)
 
-router.post("/reset", async (_req, res) => {
+router.post("/reset", setupAuthGate, async (_req, res) => {
   try {
     await fs.unlink(SETUP_COMPLETE_FLAG).catch(() => {});
     res.json({ ok: true });

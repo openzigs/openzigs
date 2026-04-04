@@ -2169,6 +2169,11 @@ app.use("/api/tasks", authMiddleware, tasksRouter);
 // Media Queue API routes (push-based distributed queue + gallery)
 // Callback route is mounted WITHOUT auth — remote workers (Mac Mini, FluxQ)
 // POST results to /api/queue/complete without an Authorization header.
+if (!config.auth.workerSecret) {
+  logger.warn(
+    "⚠ auth.workerSecret is not configured. Queue callbacks will only be accepted from localhost.",
+  );
+}
 const queueCallbackRouter = createQueueCallbackRouter({
   queueMaster,
   repo: mediaQueueRepo,

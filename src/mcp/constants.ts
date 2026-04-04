@@ -38,7 +38,10 @@ export const CONTEXTUAL_TOOLS = new Set([
 ]);
 
 /** Combined set — backward-compatible union of ESSENTIAL + CONTEXTUAL. */
-export const ALWAYS_ON_TOOLS = new Set([...ESSENTIAL_TOOLS, ...CONTEXTUAL_TOOLS]);
+export const ALWAYS_ON_TOOLS = new Set([
+  ...ESSENTIAL_TOOLS,
+  ...CONTEXTUAL_TOOLS,
+]);
 
 /**
  * High-risk tools that are auto-approved during interactive chat sessions.

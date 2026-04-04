@@ -9,6 +9,7 @@ import multer from "multer";
 import * as z from "zod";
 import { getHealth } from "./health.js";
 import { createAuthMiddleware, checkRole } from "./auth/auth.js";
+import { cfAccessGuard } from "./auth/cloudflare-access.js";
 import type { AppConfig } from "./config/index.js";
 import {
   AuditLogger,
@@ -184,6 +185,15 @@ export const createApp = (
 
   const authMiddleware = createAuthMiddleware(config.auth);
 
+  // Cloudflare Access JWT validation — runs before auth middleware on all routes.
+  // Validates CF-Access-JWT-Assertion tokens server-side when configured.
+  app.use(
+    cfAccessGuard({
+      cfAccessTeamDomain: config.tunnel?.cfAccessTeamDomain,
+      cfAccessAudience: config.tunnel?.cfAccessAudience,
+    }),
+  );
+
   const ALLOWED_UPLOAD_MIMES = new Set([
     "text/plain",
     "text/csv",
@@ -248,11 +258,9 @@ export const createApp = (
     async (req, res) => {
       const files = Array.isArray(req.files) ? req.files : [];
       if (files.length === 0) {
-        return res
-          .status(400)
-          .json({
-            error: "No files uploaded. Use multipart form field 'files'.",
-          });
+        return res.status(400).json({
+          error: "No files uploaded. Use multipart form field 'files'.",
+        });
       }
 
       try {
@@ -454,11 +462,9 @@ export const createApp = (
       }
       const MAX_PROMPT_LENGTH = 100_000;
       if (template.length > MAX_PROMPT_LENGTH) {
-        return res
-          .status(400)
-          .json({
-            error: `Prompt template exceeds ${MAX_PROMPT_LENGTH} characters`,
-          });
+        return res.status(400).json({
+          error: `Prompt template exceeds ${MAX_PROMPT_LENGTH} characters`,
+        });
       }
       try {
         const prompt = promptManager.create({

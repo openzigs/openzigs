@@ -132,8 +132,23 @@ export const createQueueCallbackRouter = ({
       "[QueueAPI] Worker callback auth enabled (workerSecret configured)",
     );
   } else {
+    // No workerSecret — only allow localhost requests
+    const LOCALHOST_IPS = new Set(["127.0.0.1", "::1", "::ffff:127.0.0.1"]);
+    callbackRouter.use((req, res, next) => {
+      if (LOCALHOST_IPS.has(req.ip ?? "")) {
+        return next();
+      }
+      logger.warn(
+        `[QueueAPI] Rejected callback from non-localhost ${req.ip} — auth.workerSecret not configured`,
+      );
+      res.status(401).json({
+        error:
+          "Queue callback requires auth.workerSecret when accessed from non-localhost. Set it in ~/.openzigs/config.json",
+      });
+      return;
+    });
     logger.warn(
-      "[QueueAPI] Worker callbacks are UNAUTHENTICATED — set auth.workerSecret to secure them",
+      "[QueueAPI] auth.workerSecret not configured — queue callbacks will only be accepted from localhost",
     );
   }
 

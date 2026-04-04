@@ -2226,6 +2226,9 @@ Every tool is classified at registration time:
 ### Transport Security
 
 - **Cloudflare Access (edge):** All public hostnames behind the tunnel are gated by Access before reaching Express. See the Cloudflare Access section above.
+- **Cloudflare Access JWT validation (server-side):** When `tunnel.cfAccessTeamDomain` is configured, the `cfAccessGuard` middleware validates `CF-Access-JWT-Assertion` JWTs against the Cloudflare JWKS endpoint. This provides defense-in-depth — even if Access is misconfigured, the server independently verifies JWT signature, expiry, and audience. Requests without CF headers (direct/localhost) bypass validation.
+- **Setup route protection:** `POST /api/setup/config`, `/complete`, and `/reset` require Bearer token authentication once the setup wizard has been completed (`.setup-complete` flag exists). This prevents unauthenticated config overwrites via tunnels or exposed ports.
+- **Queue callback localhost-only fallback:** When `auth.workerSecret` is not configured, `POST /api/queue/complete` only accepts requests from localhost (`127.0.0.1`, `::1`). Non-localhost requests are rejected with 401.
 - **CORS:** Restricted to explicit origin allowlist (UI origin + localhost + `OPENZIGS_CORS_ORIGINS` env var). Credentials enabled.
 - **CSP:** Helmet enforces strict Content-Security-Policy: `frame-ancestors: 'none'` (anti-clickjacking), `script-src: 'self'`, `object-src: 'none'`, `base-uri: 'self'`.
 - **Trust Proxy:** Disabled by default; configurable via `server.trustProxy` in config. Prevents IP spoofing when not behind a reverse proxy.

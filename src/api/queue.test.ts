@@ -41,7 +41,12 @@ function createMockRepo() {
     cancelJob: vi.fn((id: string) => jobs.has(id)),
     killJob: vi.fn((id: string) => jobs.has(id)),
     markComplete: vi.fn(),
-    countByStatus: vi.fn(() => ({ pending: 1, dispatched: 0, completed: 2, failed: 0 })),
+    countByStatus: vi.fn(() => ({
+      pending: 1,
+      dispatched: 0,
+      completed: 2,
+      failed: 0,
+    })),
     listAssets: vi.fn(() => Array.from(assets.values())),
     countAssets: vi.fn(() => assets.size),
     getAsset: vi.fn((id: string) => assets.get(id) ?? null),
@@ -52,8 +57,15 @@ function createMockRepo() {
       assets.set(id, { id, ...data });
       return id;
     }),
-    isProjectComplete: vi.fn(() => ({ complete: false, total: 3, completed: 1 })),
-    listFolders: vi.fn(() => [{ folder: "renders", count: 2 }, { folder: "exports", count: 1 }]),
+    isProjectComplete: vi.fn(() => ({
+      complete: false,
+      total: 3,
+      completed: 1,
+    })),
+    listFolders: vi.fn(() => [
+      { folder: "renders", count: 2 },
+      { folder: "exports", count: 1 },
+    ]),
     updateAssetKnowledgeMeta: vi.fn(),
     updateAssetFolder: vi.fn(),
     renameAsset: vi.fn(),
@@ -66,9 +78,9 @@ function createMockRepo() {
 function createMockQueueMaster() {
   return {
     handleJobCompletion: vi.fn().mockResolvedValue(undefined),
-    getNodeStatuses: vi.fn().mockResolvedValue([
-      { node: "m2-pro", online: true, model: null },
-    ]),
+    getNodeStatuses: vi
+      .fn()
+      .mockResolvedValue([{ node: "m2-pro", online: true, model: null }]),
     unloadNode: vi.fn().mockResolvedValue({ ok: true }),
     switchActiveNode: vi.fn().mockResolvedValue({ ok: true }),
     reportProgress: vi.fn(),
@@ -95,20 +107,24 @@ describe("Queue API router", () => {
   describe("POST /jobs", () => {
     it("creates a job", async () => {
       const { app } = buildApp();
-      const res = await request(app).post("/q/jobs").send({
-        type: "txt2img",
-        payload: { prompt: "a cat" },
-      });
+      const res = await request(app)
+        .post("/q/jobs")
+        .send({
+          type: "txt2img",
+          payload: { prompt: "a cat" },
+        });
       expect(res.status).toBe(201);
       expect(res.body.id).toBe("job-1");
     });
 
     it("rejects invalid type", async () => {
       const { app } = buildApp();
-      const res = await request(app).post("/q/jobs").send({
-        type: "invalid",
-        payload: { prompt: "x" },
-      });
+      const res = await request(app)
+        .post("/q/jobs")
+        .send({
+          type: "invalid",
+          payload: { prompt: "x" },
+        });
       expect(res.status).toBe(400);
     });
 
@@ -123,19 +139,23 @@ describe("Queue API router", () => {
 
     it("rejects oversized prompt", async () => {
       const { app } = buildApp();
-      const res = await request(app).post("/q/jobs").send({
-        type: "txt2img",
-        payload: { prompt: "x".repeat(50_001) },
-      });
+      const res = await request(app)
+        .post("/q/jobs")
+        .send({
+          type: "txt2img",
+          payload: { prompt: "x".repeat(50_001) },
+        });
       expect(res.status).toBe(400);
     });
 
     it("rejects video with too many frames", async () => {
       const { app } = buildApp();
-      const res = await request(app).post("/q/jobs").send({
-        type: "txt2video",
-        payload: { prompt: "a cat", num_frames: 999 },
-      });
+      const res = await request(app)
+        .post("/q/jobs")
+        .send({
+          type: "txt2video",
+          payload: { prompt: "a cat", num_frames: 999 },
+        });
       expect(res.status).toBe(400);
     });
   });
@@ -206,13 +226,17 @@ describe("Queue API router", () => {
   describe("PATCH /assets/:id/tags", () => {
     it("rejects non-array tags", async () => {
       const { app } = buildApp();
-      const res = await request(app).patch("/q/assets/a1/tags").send({ tags: "bad" });
+      const res = await request(app)
+        .patch("/q/assets/a1/tags")
+        .send({ tags: "bad" });
       expect(res.status).toBe(400);
     });
 
     it("updates tags", async () => {
       const { app } = buildApp();
-      const res = await request(app).patch("/q/assets/a1/tags").send({ tags: ["nature", "cat"] });
+      const res = await request(app)
+        .patch("/q/assets/a1/tags")
+        .send({ tags: ["nature", "cat"] });
       expect(res.status).toBe(200);
     });
   });
@@ -245,13 +269,17 @@ describe("Queue API router", () => {
   describe("POST /nodes/switch", () => {
     it("rejects invalid target", async () => {
       const { app } = buildApp();
-      const res = await request(app).post("/q/nodes/switch").send({ targetNode: "bad" });
+      const res = await request(app)
+        .post("/q/nodes/switch")
+        .send({ targetNode: "bad" });
       expect(res.status).toBe(400);
     });
 
     it("switches active node", async () => {
       const { app } = buildApp();
-      const res = await request(app).post("/q/nodes/switch").send({ targetNode: "mac-mini" });
+      const res = await request(app)
+        .post("/q/nodes/switch")
+        .send({ targetNode: "mac-mini" });
       expect(res.status).toBe(200);
     });
   });
@@ -272,7 +300,9 @@ describe("Queue API router", () => {
   describe("POST /callback/complete", () => {
     it("rejects missing job_id", async () => {
       const { app } = buildApp();
-      const res = await request(app).post("/q/callback/complete").send({ status: "completed" });
+      const res = await request(app)
+        .post("/q/callback/complete")
+        .send({ status: "completed" });
       expect(res.status).toBe(400);
     });
 
@@ -312,7 +342,11 @@ describe("Queue API router", () => {
   describe("POST /jobs/:id/kill", () => {
     it("kills a dispatched job", async () => {
       const { app, repo, queueMaster } = buildApp();
-      repo._jobs.set("j1", { id: "j1", status: "dispatched", targetNode: "m2-pro" });
+      repo._jobs.set("j1", {
+        id: "j1",
+        status: "dispatched",
+        targetNode: "m2-pro",
+      });
       repo.killJob.mockReturnValue(true);
       const res = await request(app).post("/q/jobs/j1/kill");
       expect(res.status).toBe(200);
@@ -322,7 +356,11 @@ describe("Queue API router", () => {
 
     it("returns 404 for non-killable job status", async () => {
       const { app, repo } = buildApp();
-      repo._jobs.set("j1", { id: "j1", status: "completed", targetNode: "m2-pro" });
+      repo._jobs.set("j1", {
+        id: "j1",
+        status: "completed",
+        targetNode: "m2-pro",
+      });
       const res = await request(app).post("/q/jobs/j1/kill");
       expect(res.status).toBe(404);
     });
@@ -335,7 +373,11 @@ describe("Queue API router", () => {
 
     it("returns 409 when killJob returns false", async () => {
       const { app, repo } = buildApp();
-      repo._jobs.set("j1", { id: "j1", status: "dispatched", targetNode: "m2-pro" });
+      repo._jobs.set("j1", {
+        id: "j1",
+        status: "dispatched",
+        targetNode: "m2-pro",
+      });
       repo.killJob.mockReturnValue(false);
       const res = await request(app).post("/q/jobs/j1/kill");
       expect(res.status).toBe(409);
@@ -361,18 +403,22 @@ describe("Queue API router", () => {
   describe("POST /assets/upload", () => {
     it("uploads a file to gallery", async () => {
       const { app } = buildApp();
-      const res = await request(app).post("/q/assets/upload").send({
-        filename: "test.png",
-        data_base64: Buffer.from("fake-png").toString("base64"),
-        mime_type: "image/png",
-      });
+      const res = await request(app)
+        .post("/q/assets/upload")
+        .send({
+          filename: "test.png",
+          data_base64: Buffer.from("fake-png").toString("base64"),
+          mime_type: "image/png",
+        });
       expect(res.status).toBe(201);
       expect(res.body).toHaveProperty("id");
     });
 
     it("rejects missing required fields", async () => {
       const { app } = buildApp();
-      const res = await request(app).post("/q/assets/upload").send({ filename: "test.png" });
+      const res = await request(app)
+        .post("/q/assets/upload")
+        .send({ filename: "test.png" });
       expect(res.status).toBe(400);
     });
   });
@@ -380,14 +426,22 @@ describe("Queue API router", () => {
   describe("POST /callback/complete (media)", () => {
     it("saves media and completes the job", async () => {
       const { app, repo, queueMaster } = buildApp();
-      repo._jobs.set("j1", { id: "j1", type: "txt2img", status: "dispatched", payload: { prompt: "cat" }, requiredModel: "flux" });
-      const res = await request(app).post("/q/callback/complete").send({
-        job_id: "j1",
-        status: "completed",
-        media_base64: Buffer.from("fake-image").toString("base64"),
-        media_type: "image/png",
-        metadata: { width: 512, height: 512 },
+      repo._jobs.set("j1", {
+        id: "j1",
+        type: "txt2img",
+        status: "dispatched",
+        payload: { prompt: "cat" },
+        requiredModel: "flux",
       });
+      const res = await request(app)
+        .post("/q/callback/complete")
+        .send({
+          job_id: "j1",
+          status: "completed",
+          media_base64: Buffer.from("fake-image").toString("base64"),
+          media_type: "image/png",
+          metadata: { width: 512, height: 512 },
+        });
       expect(res.status).toBe(200);
       expect(res.body.ok).toBe(true);
       expect(res.body.asset_id).toBeDefined();
@@ -402,7 +456,9 @@ describe("Queue API router", () => {
   describe("POST /callback/complete — edge cases", () => {
     it("rejects missing status", async () => {
       const { app } = buildApp();
-      const res = await request(app).post("/q/callback/complete").send({ job_id: "j1" });
+      const res = await request(app)
+        .post("/q/callback/complete")
+        .send({ job_id: "j1" });
       expect(res.status).toBe(400);
       expect(res.body.error).toContain("required");
     });
@@ -414,7 +470,9 @@ describe("Queue API router", () => {
         status: "failed",
       });
       expect(res.status).toBe(200);
-      expect(queueMaster.handleJobCompletion).toHaveBeenCalledWith("j1", { error: "Unknown worker error" });
+      expect(queueMaster.handleJobCompletion).toHaveBeenCalledWith("j1", {
+        error: "Unknown worker error",
+      });
     });
 
     it("handles completion without media_base64", async () => {
@@ -431,7 +489,9 @@ describe("Queue API router", () => {
 
     it("returns 500 when handleJobCompletion throws", async () => {
       const { app, queueMaster } = buildApp();
-      queueMaster.handleJobCompletion.mockRejectedValueOnce(new Error("DB error"));
+      queueMaster.handleJobCompletion.mockRejectedValueOnce(
+        new Error("DB error"),
+      );
       const res = await request(app).post("/q/callback/complete").send({
         job_id: "j1",
         status: "failed",
@@ -443,27 +503,41 @@ describe("Queue API router", () => {
 
     it("saves video media type correctly", async () => {
       const { app, repo } = buildApp();
-      repo._jobs.set("j1", { id: "j1", type: "txt2video", status: "dispatched", payload: { prompt: "cat" } });
-      const res = await request(app).post("/q/callback/complete").send({
-        job_id: "j1",
-        status: "completed",
-        media_base64: Buffer.from("fake-video").toString("base64"),
-        media_type: "video/mp4",
-        metadata: { duration: 5 },
+      repo._jobs.set("j1", {
+        id: "j1",
+        type: "txt2video",
+        status: "dispatched",
+        payload: { prompt: "cat" },
       });
+      const res = await request(app)
+        .post("/q/callback/complete")
+        .send({
+          job_id: "j1",
+          status: "completed",
+          media_base64: Buffer.from("fake-video").toString("base64"),
+          media_type: "video/mp4",
+          metadata: { duration: 5 },
+        });
       expect(res.status).toBe(200);
       expect(res.body.result_url).toContain(".mp4");
     });
 
     it("saves audio media type correctly", async () => {
       const { app, repo } = buildApp();
-      repo._jobs.set("j1", { id: "j1", type: "tts", status: "dispatched", payload: { prompt: "hello" } });
-      const res = await request(app).post("/q/callback/complete").send({
-        job_id: "j1",
-        status: "completed",
-        media_base64: Buffer.from("fake-audio").toString("base64"),
-        media_type: "audio/wav",
+      repo._jobs.set("j1", {
+        id: "j1",
+        type: "tts",
+        status: "dispatched",
+        payload: { prompt: "hello" },
       });
+      const res = await request(app)
+        .post("/q/callback/complete")
+        .send({
+          job_id: "j1",
+          status: "completed",
+          media_base64: Buffer.from("fake-audio").toString("base64"),
+          media_type: "audio/wav",
+        });
       expect(res.status).toBe(200);
       expect(res.body.result_url).toContain(".wav");
     });
@@ -479,42 +553,52 @@ describe("Queue API router", () => {
 
     it("accepts img2video with valid frame count", async () => {
       const { app } = buildApp();
-      const res = await request(app).post("/q/jobs").send({
-        type: "img2video",
-        payload: { prompt: "a dog", num_frames: 100 },
-      });
+      const res = await request(app)
+        .post("/q/jobs")
+        .send({
+          type: "img2video",
+          payload: { prompt: "a dog", num_frames: 100 },
+        });
       expect(res.status).toBe(201);
     });
 
     it("rejects img2video with too many frames", async () => {
       const { app } = buildApp();
-      const res = await request(app).post("/q/jobs").send({
-        type: "img2video",
-        payload: { prompt: "a dog", num_frames: 999 },
-      });
+      const res = await request(app)
+        .post("/q/jobs")
+        .send({
+          type: "img2video",
+          payload: { prompt: "a dog", num_frames: 999 },
+        });
       expect(res.status).toBe(400);
       expect(res.body.error).toContain("exceeds maximum");
     });
 
     it("returns 500 when repo.createJob throws", async () => {
       const { app, repo } = buildApp();
-      repo.createJob.mockImplementation(() => { throw new Error("DB insert error"); });
-      const res = await request(app).post("/q/jobs").send({
-        type: "txt2img",
-        payload: { prompt: "a cat" },
+      repo.createJob.mockImplementation(() => {
+        throw new Error("DB insert error");
       });
+      const res = await request(app)
+        .post("/q/jobs")
+        .send({
+          type: "txt2img",
+          payload: { prompt: "a cat" },
+        });
       expect(res.status).toBe(500);
       expect(res.body.error).toContain("DB insert error");
     });
 
     it("passes priority and projectId to repo", async () => {
       const { app, repo } = buildApp();
-      await request(app).post("/q/jobs").send({
-        type: "txt2img",
-        payload: { prompt: "a cat" },
-        priority: 5,
-        projectId: "proj-99",
-      });
+      await request(app)
+        .post("/q/jobs")
+        .send({
+          type: "txt2img",
+          payload: { prompt: "a cat" },
+          priority: 5,
+          projectId: "proj-99",
+        });
       expect(repo.createJob).toHaveBeenCalledWith(
         expect.objectContaining({ priority: 5, projectId: "proj-99" }),
       );
@@ -524,15 +608,25 @@ describe("Queue API router", () => {
   describe("GET /jobs — with filters", () => {
     it("passes query filters to repo", async () => {
       const { app, repo } = buildApp();
-      await request(app).get("/q/jobs?status=pending&type=txt2img&projectId=proj-1&limit=10&offset=5");
+      await request(app).get(
+        "/q/jobs?status=pending&type=txt2img&projectId=proj-1&limit=10&offset=5",
+      );
       expect(repo.listJobs).toHaveBeenCalledWith(
-        expect.objectContaining({ status: "pending", type: "txt2img", projectId: "proj-1", limit: 10, offset: 5 }),
+        expect.objectContaining({
+          status: "pending",
+          type: "txt2img",
+          projectId: "proj-1",
+          limit: 10,
+          offset: 5,
+        }),
       );
     });
 
     it("returns 500 when repo.listJobs throws", async () => {
       const { app, repo } = buildApp();
-      repo.listJobs.mockImplementation(() => { throw new Error("SQL error"); });
+      repo.listJobs.mockImplementation(() => {
+        throw new Error("SQL error");
+      });
       const res = await request(app).get("/q/jobs");
       expect(res.status).toBe(500);
     });
@@ -541,7 +635,9 @@ describe("Queue API router", () => {
   describe("GET /jobs/stats — error path", () => {
     it("returns 500 when countByStatus throws", async () => {
       const { app, repo } = buildApp();
-      repo.countByStatus.mockImplementation(() => { throw new Error("DB error"); });
+      repo.countByStatus.mockImplementation(() => {
+        throw new Error("DB error");
+      });
       const res = await request(app).get("/q/jobs/stats");
       expect(res.status).toBe(500);
     });
@@ -550,7 +646,11 @@ describe("Queue API router", () => {
   describe("POST /jobs/:id/kill — unloadNode failure tolerated", () => {
     it("succeeds even when unloadNode throws", async () => {
       const { app, repo, queueMaster } = buildApp();
-      repo._jobs.set("j1", { id: "j1", status: "processing", targetNode: "m2-pro" });
+      repo._jobs.set("j1", {
+        id: "j1",
+        status: "processing",
+        targetNode: "m2-pro",
+      });
       repo.killJob.mockReturnValue(true);
       queueMaster.unloadNode.mockRejectedValueOnce(new Error("ECONNREFUSED"));
       const res = await request(app).post("/q/jobs/j1/kill");
@@ -561,7 +661,9 @@ describe("Queue API router", () => {
   describe("GET /assets — error path", () => {
     it("returns 500 when listAssets throws", async () => {
       const { app, repo } = buildApp();
-      repo.listAssets.mockImplementation(() => { throw new Error("DB error"); });
+      repo.listAssets.mockImplementation(() => {
+        throw new Error("DB error");
+      });
       const res = await request(app).get("/q/assets");
       expect(res.status).toBe(500);
     });
@@ -570,8 +672,12 @@ describe("Queue API router", () => {
   describe("PATCH /assets/:id/tags — error path", () => {
     it("returns 500 when updateAssetTags throws", async () => {
       const { app, repo } = buildApp();
-      repo.updateAssetTags.mockImplementation(() => { throw new Error("DB error"); });
-      const res = await request(app).patch("/q/assets/a1/tags").send({ tags: ["t1"] });
+      repo.updateAssetTags.mockImplementation(() => {
+        throw new Error("DB error");
+      });
+      const res = await request(app)
+        .patch("/q/assets/a1/tags")
+        .send({ tags: ["t1"] });
       expect(res.status).toBe(500);
     });
   });
@@ -588,7 +694,9 @@ describe("Queue API router", () => {
   describe("GET /nodes — error path", () => {
     it("returns 500 when getNodeStatuses throws", async () => {
       const { app, queueMaster } = buildApp();
-      queueMaster.getNodeStatuses.mockRejectedValueOnce(new Error("ECONNREFUSED"));
+      queueMaster.getNodeStatuses.mockRejectedValueOnce(
+        new Error("ECONNREFUSED"),
+      );
       const res = await request(app).get("/q/nodes");
       expect(res.status).toBe(500);
     });
@@ -598,7 +706,9 @@ describe("Queue API router", () => {
     it("returns 500 when switchActiveNode throws", async () => {
       const { app, queueMaster } = buildApp();
       queueMaster.switchActiveNode.mockRejectedValueOnce(new Error("fail"));
-      const res = await request(app).post("/q/nodes/switch").send({ targetNode: "mac-mini" });
+      const res = await request(app)
+        .post("/q/nodes/switch")
+        .send({ targetNode: "mac-mini" });
       expect(res.status).toBe(500);
     });
 
@@ -612,12 +722,16 @@ describe("Queue API router", () => {
   describe("POST /assets/upload — error path", () => {
     it("returns 500 when write fails", async () => {
       const { app, repo } = buildApp();
-      repo.createAsset.mockImplementation(() => { throw new Error("disk full"); });
-      const res = await request(app).post("/q/assets/upload").send({
-        filename: "test.png",
-        data_base64: Buffer.from("data").toString("base64"),
-        mime_type: "image/png",
+      repo.createAsset.mockImplementation(() => {
+        throw new Error("disk full");
       });
+      const res = await request(app)
+        .post("/q/assets/upload")
+        .send({
+          filename: "test.png",
+          data_base64: Buffer.from("data").toString("base64"),
+          mime_type: "image/png",
+        });
       expect(res.status).toBe(500);
     });
   });
@@ -626,7 +740,9 @@ describe("Queue API router", () => {
     it("returns 500 when deleteAsset throws", async () => {
       const { app, repo } = buildApp();
       repo._assets.set("a1", { id: "a1", file_path: "/tmp/test.png" });
-      repo.deleteAsset.mockImplementation(() => { throw new Error("DB error"); });
+      repo.deleteAsset.mockImplementation(() => {
+        throw new Error("DB error");
+      });
       const res = await request(app).delete("/q/assets/a1");
       expect(res.status).toBe(500);
     });
@@ -635,7 +751,9 @@ describe("Queue API router", () => {
   describe("GET /assets/file/:filename", () => {
     it("returns 404 for missing file", async () => {
       const fsModule = await import("node:fs/promises");
-      (fsModule.default.access as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("ENOENT"));
+      (
+        fsModule.default.access as ReturnType<typeof vi.fn>
+      ).mockRejectedValueOnce(new Error("ENOENT"));
       const { app } = buildApp();
       const res = await request(app).get("/q/assets/file/missing.png");
       expect(res.status).toBe(404);
@@ -659,14 +777,18 @@ describe("Queue API router", () => {
   describe("PATCH /assets/:id/knowledge", () => {
     it("returns 404 for unknown asset", async () => {
       const { app } = buildApp();
-      const res = await request(app).patch("/q/assets/missing/knowledge").send({ visibility: "public" });
+      const res = await request(app)
+        .patch("/q/assets/missing/knowledge")
+        .send({ visibility: "public" });
       expect(res.status).toBe(404);
     });
 
     it("returns 400 for invalid visibility", async () => {
       const { app, repo } = buildApp();
       repo._assets.set("a1", { id: "a1", type: "image", filename: "test.png" });
-      const res = await request(app).patch("/q/assets/a1/knowledge").send({ visibility: "bogus" });
+      const res = await request(app)
+        .patch("/q/assets/a1/knowledge")
+        .send({ visibility: "bogus" });
       expect(res.status).toBe(400);
       expect(res.body.error).toContain("visibility");
     });
@@ -674,7 +796,9 @@ describe("Queue API router", () => {
     it("returns 400 for invalid category", async () => {
       const { app, repo } = buildApp();
       repo._assets.set("a1", { id: "a1", type: "image", filename: "test.png" });
-      const res = await request(app).patch("/q/assets/a1/knowledge").send({ category: "bogus" });
+      const res = await request(app)
+        .patch("/q/assets/a1/knowledge")
+        .send({ category: "bogus" });
       expect(res.status).toBe(400);
       expect(res.body.error).toContain("category");
     });
@@ -682,12 +806,18 @@ describe("Queue API router", () => {
     it("updates knowledge metadata", async () => {
       const { app, repo } = buildApp();
       repo._assets.set("a1", { id: "a1", type: "image", filename: "test.png" });
-      const res = await request(app).patch("/q/assets/a1/knowledge").send({ visibility: "internal", category: "document" });
+      const res = await request(app)
+        .patch("/q/assets/a1/knowledge")
+        .send({ visibility: "internal", category: "document" });
       expect(res.status).toBe(200);
       expect(res.body.ok).toBe(true);
       expect(res.body.visibility).toBe("internal");
       expect(res.body.category).toBe("document");
-      expect(repo.updateAssetKnowledgeMeta).toHaveBeenCalledWith("a1", "internal", "document");
+      expect(repo.updateAssetKnowledgeMeta).toHaveBeenCalledWith(
+        "a1",
+        "internal",
+        "document",
+      );
     });
   });
 
@@ -696,14 +826,18 @@ describe("Queue API router", () => {
   describe("PATCH /assets/:id/folder", () => {
     it("returns 404 for unknown asset", async () => {
       const { app } = buildApp();
-      const res = await request(app).patch("/q/assets/missing/folder").send({ folder: "test" });
+      const res = await request(app)
+        .patch("/q/assets/missing/folder")
+        .send({ folder: "test" });
       expect(res.status).toBe(404);
     });
 
     it("moves asset to folder", async () => {
       const { app, repo } = buildApp();
       repo._assets.set("a1", { id: "a1", type: "image", filename: "test.png" });
-      const res = await request(app).patch("/q/assets/a1/folder").send({ folder: "renders" });
+      const res = await request(app)
+        .patch("/q/assets/a1/folder")
+        .send({ folder: "renders" });
       expect(res.status).toBe(200);
       expect(res.body.folder).toBe("renders");
       expect(repo.updateAssetFolder).toHaveBeenCalledWith("a1", "renders");
@@ -712,7 +846,9 @@ describe("Queue API router", () => {
     it("clears folder with null", async () => {
       const { app, repo } = buildApp();
       repo._assets.set("a1", { id: "a1", type: "image", filename: "test.png" });
-      const res = await request(app).patch("/q/assets/a1/folder").send({ folder: null });
+      const res = await request(app)
+        .patch("/q/assets/a1/folder")
+        .send({ folder: null });
       expect(res.status).toBe(200);
       expect(res.body.folder).toBeNull();
     });
@@ -730,14 +866,18 @@ describe("Queue API router", () => {
 
     it("returns 404 for unknown asset", async () => {
       const { app } = buildApp();
-      const res = await request(app).patch("/q/assets/missing/rename").send({ filename: "new.png" });
+      const res = await request(app)
+        .patch("/q/assets/missing/rename")
+        .send({ filename: "new.png" });
       expect(res.status).toBe(404);
     });
 
     it("renames asset with sanitized basename", async () => {
       const { app, repo } = buildApp();
       repo._assets.set("a1", { id: "a1", type: "image", filename: "old.png" });
-      const res = await request(app).patch("/q/assets/a1/rename").send({ filename: "/dodgy/path/new.png" });
+      const res = await request(app)
+        .patch("/q/assets/a1/rename")
+        .send({ filename: "/dodgy/path/new.png" });
       expect(res.status).toBe(200);
       expect(res.body.filename).toBe("new.png");
       expect(repo.renameAsset).toHaveBeenCalledWith("a1", "new.png");
@@ -756,17 +896,24 @@ describe("Queue API router", () => {
 
     it("returns 404 for unknown asset", async () => {
       const { app } = buildApp();
-      const res = await request(app).patch("/q/assets/missing/description").send({ prompt: "A cat" });
+      const res = await request(app)
+        .patch("/q/assets/missing/description")
+        .send({ prompt: "A cat" });
       expect(res.status).toBe(404);
     });
 
     it("updates description", async () => {
       const { app, repo } = buildApp();
       repo._assets.set("a1", { id: "a1", type: "image", filename: "test.png" });
-      const res = await request(app).patch("/q/assets/a1/description").send({ prompt: "Updated description" });
+      const res = await request(app)
+        .patch("/q/assets/a1/description")
+        .send({ prompt: "Updated description" });
       expect(res.status).toBe(200);
       expect(res.body.prompt).toBe("Updated description");
-      expect(repo.updateAssetDescription).toHaveBeenCalledWith("a1", "Updated description");
+      expect(repo.updateAssetDescription).toHaveBeenCalledWith(
+        "a1",
+        "Updated description",
+      );
     });
   });
 
@@ -782,10 +929,12 @@ describe("Queue API router", () => {
 
     it("saves scene asset", async () => {
       const { app, repo } = buildApp();
-      const res = await request(app).post("/q/assets/scenes").send({
-        scene: { title: "Test Scene", scriptText: "Hello world" },
-        title: "My Scene",
-      });
+      const res = await request(app)
+        .post("/q/assets/scenes")
+        .send({
+          scene: { title: "Test Scene", scriptText: "Hello world" },
+          title: "My Scene",
+        });
       expect(res.status).toBe(200);
       expect(res.body.id).toBeDefined();
       expect(repo.createAsset).toHaveBeenCalled();
@@ -820,7 +969,12 @@ describe("Queue API router", () => {
 
     it("returns 403 for file outside home dir", async () => {
       const { app, repo } = buildApp();
-      repo._assets.set("a1", { id: "a1", type: "image", filename: "evil.png", file_path: "/etc/passwd" });
+      repo._assets.set("a1", {
+        id: "a1",
+        type: "image",
+        filename: "evil.png",
+        file_path: "/etc/passwd",
+      });
       const res = await request(app).get("/q/assets/a1/file");
       expect(res.status).toBe(403);
     });
@@ -866,8 +1020,85 @@ describe("Queue API router", () => {
 
     it("returns 400 for empty prompt", async () => {
       const { app } = buildApp();
-      const res = await request(app).post("/q/image/generate").send({ prompt: "   " });
+      const res = await request(app)
+        .post("/q/image/generate")
+        .send({ prompt: "   " });
       expect(res.status).toBe(400);
+    });
+  });
+
+  // ── Callback auth: workerSecret ────────────────────────────
+
+  describe("Callback auth with workerSecret", () => {
+    function buildSecuredApp() {
+      const app = express();
+      app.use(express.json());
+      const repo = createMockRepo();
+      const queueMaster = createMockQueueMaster();
+      const opts = {
+        queueMaster,
+        repo,
+        workerSecret: "s3cret",
+      } as unknown as QueueRouterOptions;
+      app.use("/q/callback", createQueueCallbackRouter(opts));
+      return { app, repo, queueMaster };
+    }
+
+    it("rejects callback without correct Bearer token", async () => {
+      const { app } = buildSecuredApp();
+      const res = await request(app)
+        .post("/q/callback/complete")
+        .send({ job_id: "j1", status: "failed", error: "x" });
+      expect(res.status).toBe(401);
+    });
+
+    it("rejects callback with wrong Bearer token", async () => {
+      const { app } = buildSecuredApp();
+      const res = await request(app)
+        .post("/q/callback/complete")
+        .set("Authorization", "Bearer wrong")
+        .send({ job_id: "j1", status: "failed", error: "x" });
+      expect(res.status).toBe(401);
+    });
+
+    it("accepts callback with correct Bearer token", async () => {
+      const { app } = buildSecuredApp();
+      const res = await request(app)
+        .post("/q/callback/complete")
+        .set("Authorization", "Bearer s3cret")
+        .send({ job_id: "j1", status: "failed", error: "x" });
+      expect(res.status).toBe(200);
+    });
+  });
+
+  // ── Callback auth: no workerSecret (localhost-only) ────────
+
+  describe("Callback auth without workerSecret (localhost fallback)", () => {
+    it("allows localhost requests", async () => {
+      // The default buildApp() has no workerSecret and supertest uses 127.0.0.1
+      const { app } = buildApp();
+      const res = await request(app)
+        .post("/q/callback/complete")
+        .send({ job_id: "j1", status: "failed", error: "x" });
+      expect(res.status).toBe(200);
+    });
+
+    it("rejects non-localhost requests", async () => {
+      const app = express();
+      // Simulate trust proxy so we can inject a non-localhost IP
+      app.set("trust proxy", true);
+      app.use(express.json());
+      const repo = createMockRepo();
+      const queueMaster = createMockQueueMaster();
+      const opts = { queueMaster, repo } as unknown as QueueRouterOptions;
+      app.use("/q/callback", createQueueCallbackRouter(opts));
+
+      const res = await request(app)
+        .post("/q/callback/complete")
+        .set("X-Forwarded-For", "192.168.1.50")
+        .send({ job_id: "j1", status: "failed", error: "x" });
+      expect(res.status).toBe(401);
+      expect(res.body.error).toContain("workerSecret");
     });
   });
 });

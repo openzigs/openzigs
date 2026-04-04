@@ -3583,7 +3583,7 @@ Access uses **path-based application separation**. You create one Access applica
 
 | Application | Path | Policy | Why |
 |---|---|---|---|
-| Agent: Worker Callbacks | `agent.example.com/api/queue/complete` | Bypass (Everyone) | Worker nodes can't do email OTP; secured by `workerSecret` at app level |
+| Agent: Worker Callbacks | `agent.example.com/api/queue/complete` | Bypass (Everyone) | Worker nodes can't do email OTP; secured by `workerSecret` at app level. When `workerSecret` is not configured, server only accepts localhost requests |
 | Agent: Telegram Webhook | `agent.example.com/telegram/webhook` | Bypass (Everyone) | Telegram servers can't authenticate; secured by `X-Telegram-Bot-Api-Secret-Token` |
 | Agent: Social Webhooks | `agent.example.com/api/social/webhooks/*` | Bypass (Everyone) | Platform HMAC-SHA256 verified at app level |
 | Agent: Health Check | `agent.example.com/health` | Bypass (Everyone) | No sensitive data |
@@ -7376,6 +7376,26 @@ bash scripts/setup-cloudflare-access.sh
 **What Access protects:** All routes except explicitly bypassed paths (webhooks, OAuth callbacks, health check, worker callbacks). The bypass paths are still secured by app-level mechanisms (HMAC, workerSecret, JWT).
 
 **What the authenticated browser experience looks like:** Navigate to your domain → Cloudflare login page → enter your email → receive one-time PIN → access granted for 24 h.
+
+### Cloudflare Access JWT Validation (Defense-in-Depth)
+
+In addition to the edge-level Cloudflare Access policies, the server can validate `CF-Access-JWT-Assertion` tokens server-side. This provides defense-in-depth: even if Access policies are misconfigured at the Cloudflare dashboard level, the server independently verifies JWT signatures, expiry, and audience claims.
+
+To enable, add these fields to `~/.openzigs/config.json`:
+
+```json
+{
+  "tunnel": {
+    "cfAccessTeamDomain": "openzigs",
+    "cfAccessAudience": "your-application-audience-tag"
+  }
+}
+```
+
+- `cfAccessTeamDomain` — Your Cloudflare Access team name (the subdomain of `cloudflareaccess.com`). If not set, JWT validation is skipped (existing behavior preserved).
+- `cfAccessAudience` — The Application Audience Tag from your CF Access dashboard. Can be a string or an array of strings for multiple applications.
+
+Direct/localhost requests (without CF headers) bypass this validation entirely, so local development is unaffected.
 
 ### API Authentication
 
