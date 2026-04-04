@@ -5440,6 +5440,8 @@ Push-based orchestrator that polls pending jobs on a configurable tick interval 
 
 **Voice2Voice jobs** use the Music Studio sidecar (port 5010) — a FastAPI service that orchestrates a 3-stage pipeline: (1) Demucs v4 stem separation, (2) RVC v2 voice conversion, (3) pydub mixdown. The sidecar reports granular progress via `POST /api/queue/progress`, which the QueueMaster re-emits as `job:progress` Socket.IO events for real-time UI updates. The sidecar has its own `processMusicStudioJobs()` tick and independent busy state.
 
+**Tunnel-aware callbacks:** When a Cloudflare Tunnel is enabled (`tunnel.enabled: true`), the `QueueMaster.setCallbackUrl()` method is called automatically when the tunnel connects. This replaces the LAN-based callback URL (e.g., `http://192.168.x.x:3000/api/queue/complete`) with the tunnel URL (e.g., `https://xxx.trycloudflare.com/api/queue/complete`). This ensures remote worker nodes can POST results back even when LAN connectivity is blocked by WiFi AP isolation, firewalls, or when the worker is on a completely different network. If the tunnel disconnects, the callback URL falls back to the LAN IP automatically.
+
 **Stale result recovery:** `pollForStaleResults()` runs every tick and checks dispatched jobs older than 3 minutes. For each stale job, it polls the worker's `/job-result/<id>` endpoint. If the result is available, it's processed as if the callback had arrived — this recovers jobs where the callback POST failed.
 
 **Events:** `job:dispatched`, `job:complete`, `job:failed`, `job:progress`, `project:complete`

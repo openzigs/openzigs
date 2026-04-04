@@ -194,10 +194,16 @@ def get_system_memory_info() -> dict:
         inactive = stats.get("Pages inactive", 0)
         wired = stats.get("Pages wired down", 0)
         compressed = stats.get("Pages occupied by compressor", 0)
+        purgeable = stats.get("Pages purgeable", 0)
         used = active + wired + compressed
+        # macOS keeps "free" near zero; inactive + purgeable pages are
+        # instantly reclaimable so include them in available memory.
+        available = free + inactive + purgeable
         return {
             "free_gb": round(free / 1024**3, 2),
+            "available_gb": round(available / 1024**3, 2),
             "active_gb": round(active / 1024**3, 2),
+            "inactive_gb": round(inactive / 1024**3, 2),
             "wired_gb": round(wired / 1024**3, 2),
             "compressed_gb": round(compressed / 1024**3, 2),
             "used_gb": round(used / 1024**3, 2),
@@ -217,9 +223,9 @@ def check_memory_budget() -> tuple[bool, str]:
             f"{MEMORY_LIMIT_GB:.0f} GB"
         )
     info = get_system_memory_info()
-    free_gb = info.get("free_gb", 999)
-    if free_gb < 2.0:
-        return False, f"System free memory dangerously low ({free_gb:.1f} GB)"
+    available_gb = info.get("available_gb", info.get("free_gb", 999))
+    if available_gb < 2.0:
+        return False, f"System available memory dangerously low ({available_gb:.1f} GB)"
     return True, "ok"
 
 

@@ -8238,6 +8238,43 @@ QUEUE_CALLBACK_URL=http://192.168.1.50:3000/api/queue/complete
 
 If unset, the server auto-detects the first non-loopback IPv4 via `os.networkInterfaces()` and logs the resolved URL at startup. **Note:** For local sidecars (music sidecar on `localhost`), `QueueMaster` automatically rewrites the callback URL to use `localhost` so the sidecar can reach back without relying on the LAN IP.
 
+#### Tunnel-Aware Callbacks (Recommended for Multi-Mac)
+
+If LAN connectivity between your server and worker nodes is unreliable (WiFi AP isolation, firewalls, or cross-network setups), enable the embedded Cloudflare Tunnel. When the tunnel connects, the QueueMaster **automatically switches** its callback URL to the public tunnel URL — no manual `QUEUE_CALLBACK_URL` override needed.
+
+1. Install `cloudflared` on the **server machine** (where openzigs runs):
+
+   ```bash
+   brew install cloudflared
+   ```
+
+2. Enable quick tunnel mode in `~/.openzigs/config.json`:
+
+   ```json
+   {
+     "tunnel": {
+       "enabled": true,
+       "mode": "quick"
+     }
+   }
+   ```
+
+3. Restart the openzigs server. On startup, the tunnel connects and logs the public URL:
+
+   ```
+   Public URL: https://xxx-yyy-zzz.trycloudflare.com
+   [QueueMaster] Callback URL changed: http://192.168.x.x:3000/api/queue/complete → https://xxx-yyy-zzz.trycloudflare.com/api/queue/complete
+   ```
+
+Worker nodes (image-gen, LTX video, music) will now POST completion callbacks through Cloudflare's edge network instead of through the LAN. This means:
+
+- **Workers don't need to be on the same network** as the server
+- **WiFi AP isolation** is completely bypassed
+- **Firewall rules** between machines are irrelevant
+- If the tunnel disconnects, callbacks automatically fall back to the LAN IP
+
+> **Note:** Quick mode generates a random `trycloudflare.com` URL on each restart. For persistent URLs, use named mode with a Cloudflare account (see [Cloudflare Tunnel](#cloudflare-tunnel)).
+
 ### Music Studio
 
 Navigate to **http://localhost:3001/music-studio** to access the AI Music Studio.

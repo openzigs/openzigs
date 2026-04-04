@@ -3680,10 +3680,16 @@ httpServer.listen(port, "0.0.0.0", () => {
     tunnel.on("connected", (publicUrl) => {
       logger.info(`Public URL: ${publicUrl}`);
       setTunnelPublicUrl(publicUrl);
+      // Route worker callbacks through the tunnel so they bypass LAN/AP isolation
+      queueMaster.setCallbackUrl(`${publicUrl}/api/queue/complete`);
     });
     tunnel.on("disconnected", () => {
       logger.warn("Cloudflare tunnel disconnected");
       setTunnelPublicUrl(null);
+      // Fall back to LAN IP for callbacks
+      queueMaster.setCallbackUrl(
+        `http://${getLanIp()}:${port}/api/queue/complete`,
+      );
     });
     void tunnel.start(port).catch((error) => {
       const details = error instanceof Error ? error.message : String(error);

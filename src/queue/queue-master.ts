@@ -98,6 +98,13 @@ export class QueueMaster extends EventEmitter {
     logger.info("[QueueMaster] Stopped");
   }
 
+  /** Dynamically update the callback URL (e.g. when a Cloudflare Tunnel connects). */
+  setCallbackUrl(url: string): void {
+    const prev = this.config.callbackUrl;
+    this.config.callbackUrl = url;
+    logger.info(`[QueueMaster] Callback URL changed: ${prev} → ${url}`);
+  }
+
   // ── Node Status ───────────────────────────────────────────
 
   /**
