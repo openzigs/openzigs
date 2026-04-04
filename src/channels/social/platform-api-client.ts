@@ -35,7 +35,10 @@ export class PostContextService {
    * Get post context — cache-first, then API fallback.
    * Returns null if the platform has no API client or the fetch fails.
    */
-  async getPostContext(platform: SocialPlatform, postId: string): Promise<PostContext | null> {
+  async getPostContext(
+    platform: SocialPlatform,
+    postId: string,
+  ): Promise<PostContext | null> {
     // 1. Check cache
     const cached = this.repository.getPostContext(postId);
     if (cached) {
@@ -55,7 +58,9 @@ export class PostContextService {
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      logger.warn(`[PostContextService] Failed to fetch post ${postId} from ${platform}: ${msg}`);
+      logger.warn(
+        `[PostContextService] Failed to fetch post ${postId} from ${platform}: ${msg}`,
+      );
     }
 
     return cached ?? null;
@@ -78,13 +83,18 @@ export class TwitterApiClient implements PlatformApiClient {
     const url = `${this.baseUrl}/tweets/${encodeURIComponent(postId)}?tweet.fields=created_at,public_metrics,text,author_id`;
 
     const res = await fetch(url, {
-      headers: { Authorization: `Bearer ${this.bearerToken}`, "User-Agent": "OpenZigs-SocialBrain/1.0" },
+      headers: {
+        Authorization: `Bearer ${this.bearerToken}`,
+        "User-Agent": "OpenZigs-SocialBrain/1.0",
+      },
       signal: AbortSignal.timeout(10_000),
     });
 
     if (!res.ok) {
       const body = await res.text().catch(() => "");
-      logger.warn(`[TwitterApiClient] GET /tweets/${postId} returned ${res.status}: ${body.slice(0, 200)}`);
+      logger.warn(
+        `[TwitterApiClient] GET /tweets/${postId} returned ${res.status}: ${body.slice(0, 200)}`,
+      );
       return null;
     }
 
@@ -112,7 +122,10 @@ export class YouTubeApiClient implements PlatformApiClient {
   private apiKey: string;
   private baseUrl: string;
 
-  constructor(apiKey: string, baseUrl = "https://www.googleapis.com/youtube/v3") {
+  constructor(
+    apiKey: string,
+    baseUrl = "https://www.googleapis.com/youtube/v3",
+  ) {
     this.apiKey = apiKey;
     this.baseUrl = baseUrl;
   }
@@ -127,11 +140,15 @@ export class YouTubeApiClient implements PlatformApiClient {
 
     if (!res.ok) {
       const body = await res.text().catch(() => "");
-      logger.warn(`[YouTubeApiClient] GET /videos/${postId} returned ${res.status}: ${body.slice(0, 200)}`);
+      logger.warn(
+        `[YouTubeApiClient] GET /videos/${postId} returned ${res.status}: ${body.slice(0, 200)}`,
+      );
       return null;
     }
 
-    const json = (await res.json()) as { items?: Array<{ snippet?: Record<string, string> }> };
+    const json = (await res.json()) as {
+      items?: Array<{ snippet?: Record<string, string> }>;
+    };
     const item = json.items?.[0];
     if (!item?.snippet) return null;
     const snippet = item.snippet;
@@ -175,14 +192,22 @@ export class LinkedInApiClient implements PlatformApiClient {
 
     if (!res.ok) {
       const body = await res.text().catch(() => "");
-      logger.warn(`[LinkedInApiClient] GET /ugcPosts/${postId} returned ${res.status}: ${body.slice(0, 200)}`);
+      logger.warn(
+        `[LinkedInApiClient] GET /ugcPosts/${postId} returned ${res.status}: ${body.slice(0, 200)}`,
+      );
       return null;
     }
 
     const data = (await res.json()) as Record<string, unknown>;
-    const specificContent = data.specificContent as Record<string, unknown> | undefined;
-    const shareContent = specificContent?.["com.linkedin.ugc.ShareContent"] as Record<string, unknown> | undefined;
-    const commentary = shareContent?.shareCommentary as Record<string, string> | undefined;
+    const specificContent = data.specificContent as
+      | Record<string, unknown>
+      | undefined;
+    const shareContent = specificContent?.["com.linkedin.ugc.ShareContent"] as
+      | Record<string, unknown>
+      | undefined;
+    const commentary = shareContent?.shareCommentary as
+      | Record<string, string>
+      | undefined;
     return {
       postId,
       platform: "linkedin",
@@ -191,7 +216,9 @@ export class LinkedInApiClient implements PlatformApiClient {
       mediaType: "post",
       mediaUrl: "",
       authorUsername: (data.author as string) ?? "",
-      publishedAt: data.created ? new Date(data.created as number).toISOString() : "",
+      publishedAt: data.created
+        ? new Date(data.created as number).toISOString()
+        : "",
       cachedAt: new Date().toISOString(),
     };
   }
@@ -223,7 +250,9 @@ export class TikTokApiClient implements PlatformApiClient {
 
     if (!res.ok) {
       const body = await res.text().catch(() => "");
-      logger.warn(`[TikTokApiClient] GET /post-detail/${postId} returned ${res.status}: ${body.slice(0, 200)}`);
+      logger.warn(
+        `[TikTokApiClient] GET /post-detail/${postId} returned ${res.status}: ${body.slice(0, 200)}`,
+      );
       return null;
     }
 
@@ -269,14 +298,20 @@ export class RedditApiClient implements PlatformApiClient {
     // postId may be a fullname like "t3_abc123" or just "abc123"
     const rawId = postId.startsWith("t3_") ? postId.slice(3) : postId;
 
-    const result = await this.serverManager.callTool("reddit", "reddit_get_post_comments", {
-      subreddit: "all",
-      post_id: rawId,
-      limit: 1,
-    });
+    const result = await this.serverManager.callTool(
+      "reddit",
+      "reddit_get_post_comments",
+      {
+        subreddit: "all",
+        post_id: rawId,
+        limit: 1,
+      },
+    );
 
     if (result.isError) {
-      logger.warn(`[RedditApiClient] reddit_get_post_comments failed for ${postId}: ${result.text.slice(0, 200)}`);
+      logger.warn(
+        `[RedditApiClient] reddit_get_post_comments failed for ${postId}: ${result.text.slice(0, 200)}`,
+      );
       return null;
     }
 
@@ -322,7 +357,9 @@ export class RedditApiClient implements PlatformApiClient {
         cachedAt: new Date().toISOString(),
       };
     } catch (error) {
-      logger.warn(`[RedditApiClient] Failed to parse reddit response for ${postId}: ${error instanceof Error ? error.message : String(error)}`);
+      logger.warn(
+        `[RedditApiClient] Failed to parse reddit response for ${postId}: ${error instanceof Error ? error.message : String(error)}`,
+      );
       return null;
     }
   }
@@ -335,7 +372,10 @@ export class InstagramApiClient implements PlatformApiClient {
   private accessToken: string;
   private baseUrl: string;
 
-  constructor(accessToken: string, baseUrl = "https://graph.instagram.com/v19.0") {
+  constructor(
+    accessToken: string,
+    baseUrl = "https://graph.instagram.com/v19.0",
+  ) {
     this.accessToken = accessToken;
     this.baseUrl = baseUrl;
   }
@@ -350,7 +390,9 @@ export class InstagramApiClient implements PlatformApiClient {
 
     if (!res.ok) {
       const body = await res.text().catch(() => "");
-      logger.warn(`[InstagramApiClient] GET /${postId} returned ${res.status}: ${body.slice(0, 200)}`);
+      logger.warn(
+        `[InstagramApiClient] GET /${postId} returned ${res.status}: ${body.slice(0, 200)}`,
+      );
       return null;
     }
 
@@ -386,7 +428,10 @@ export class FacebookApiClient implements PlatformApiClient {
   private accessToken: string;
   private baseUrl: string;
 
-  constructor(accessToken: string, baseUrl = "https://graph.facebook.com/v19.0") {
+  constructor(
+    accessToken: string,
+    baseUrl = "https://graph.facebook.com/v19.0",
+  ) {
     this.accessToken = accessToken;
     this.baseUrl = baseUrl;
   }
@@ -401,7 +446,9 @@ export class FacebookApiClient implements PlatformApiClient {
 
     if (!res.ok) {
       const body = await res.text().catch(() => "");
-      logger.warn(`[FacebookApiClient] GET /${postId} returned ${res.status}: ${body.slice(0, 200)}`);
+      logger.warn(
+        `[FacebookApiClient] GET /${postId} returned ${res.status}: ${body.slice(0, 200)}`,
+      );
       return null;
     }
 

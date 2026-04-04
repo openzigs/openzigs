@@ -51,7 +51,11 @@ export class FollowerWelcomeService extends EventEmitter {
   /**
    * Handle a new follower event. Sends the platform-specific welcome after the configured delay.
    */
-  handleNewFollower(platform: SocialPlatform, userId: string, username: string): void {
+  handleNewFollower(
+    platform: SocialPlatform,
+    userId: string,
+    username: string,
+  ): void {
     if (!this.enabled || !this.sendDm) return;
 
     const template = this.messages[platform];
@@ -64,21 +68,33 @@ export class FollowerWelcomeService extends EventEmitter {
     const message = template.replace(/\{\{username\}\}/g, username);
 
     if (this.delaySeconds > 0) {
-      setTimeout(() => void this.send(platform, userId, username, message), this.delaySeconds * 1000);
+      setTimeout(
+        () => void this.send(platform, userId, username, message),
+        this.delaySeconds * 1000,
+      );
     } else {
       void this.send(platform, userId, username, message);
     }
   }
 
-  private async send(platform: SocialPlatform, userId: string, username: string, message: string): Promise<void> {
+  private async send(
+    platform: SocialPlatform,
+    userId: string,
+    username: string,
+    message: string,
+  ): Promise<void> {
     try {
       await this.sendDm!(platform, userId, message);
       this.emit("welcome_sent", { platform, userId, username });
-      logger.info(`[FollowerWelcome] Sent welcome to @${username} on ${platform}`);
+      logger.info(
+        `[FollowerWelcome] Sent welcome to @${username} on ${platform}`,
+      );
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       this.emit("welcome_error", { platform, userId, error: msg });
-      logger.error(`[FollowerWelcome] Failed to send welcome to @${username}: ${msg}`);
+      logger.error(
+        `[FollowerWelcome] Failed to send welcome to @${username}: ${msg}`,
+      );
     }
   }
 }

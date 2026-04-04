@@ -9,15 +9,15 @@ import type { IncomingSocialMessage, IncomingComment } from "./types.js";
 
 /** Shape of a Reddit inbox item from the API */
 interface RedditInboxItem {
-  name?: string;      // fullname, e.g. "t4_abc123" (message) or "t1_xyz" (comment reply)
+  name?: string; // fullname, e.g. "t4_abc123" (message) or "t1_xyz" (comment reply)
   author?: string;
   dest?: string;
   subject?: string;
   body?: string;
   created_utc?: number;
   was_comment?: boolean;
-  link_id?: string;    // parent post fullname for comment replies (t3_xxx)
-  context?: string;    // permalink context
+  link_id?: string; // parent post fullname for comment replies (t3_xxx)
+  context?: string; // permalink context
 }
 
 /**
@@ -30,10 +30,16 @@ export function createRedditPollFn(
     const sinceDate = new Date(since);
     const results: (IncomingSocialMessage | IncomingComment)[] = [];
 
-    const response = await serverManager.callTool("reddit", "reddit_get_inbox", { limit: 50 });
+    const response = await serverManager.callTool(
+      "reddit",
+      "reddit_get_inbox",
+      { limit: 50 },
+    );
 
     if (response.isError) {
-      logger.warn(`[RedditPoll] Failed to fetch inbox: ${response.text.slice(0, 200)}`);
+      logger.warn(
+        `[RedditPoll] Failed to fetch inbox: ${response.text.slice(0, 200)}`,
+      );
       return results;
     }
 
@@ -54,7 +60,9 @@ export function createRedditPollFn(
         .map((c) => c.data)
         .filter((d): d is RedditInboxItem => d != null);
     } catch (error) {
-      logger.warn(`[RedditPoll] Failed to parse inbox response: ${error instanceof Error ? error.message : String(error)}`);
+      logger.warn(
+        `[RedditPoll] Failed to parse inbox response: ${error instanceof Error ? error.message : String(error)}`,
+      );
       return results;
     }
 

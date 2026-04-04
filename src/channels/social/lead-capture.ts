@@ -9,10 +9,12 @@ import type { SocialRepository } from "./social-repository.js";
 import type { SocialPlatform } from "./types.js";
 
 /** Matches common email patterns. */
-const EMAIL_RE = /\b[A-Za-z0-9._%+!#$&'*/=?^`{|}~-]+@[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z]{2,})+\b/;
+const EMAIL_RE =
+  /\b[A-Za-z0-9._%+!#$&'*/=?^`{|}~-]+@[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z]{2,})+\b/;
 
 /** Matches common phone number patterns (international and US). */
-const PHONE_RE = /(?:\+?\d{1,3}[-.\s]?)?\(?\d{2,4}\)?[-.\s]?\d{3,4}[-.\s]?\d{3,4}\b/;
+const PHONE_RE =
+  /(?:\+?\d{1,3}[-.\s]?)?\(?\d{2,4}\)?[-.\s]?\d{3,4}[-.\s]?\d{3,4}\b/;
 
 export type LeadCaptureOptions = {
   repository: SocialRepository;
@@ -53,8 +55,12 @@ export class LeadCaptureService extends EventEmitter {
     const contact = this.repository.getContact(contactId);
     if (!contact) return false;
 
-    const existingEmail = (contact as Record<string, unknown>).email as string | null;
-    const existingPhone = (contact as Record<string, unknown>).phone as string | null;
+    const existingEmail = (contact as Record<string, unknown>).email as
+      | string
+      | null;
+    const existingPhone = (contact as Record<string, unknown>).phone as
+      | string
+      | null;
     const newEmail = email && !existingEmail ? email : undefined;
     const newPhone = phone && !existingPhone ? phone : undefined;
 
@@ -78,7 +84,7 @@ export class LeadCaptureService extends EventEmitter {
 
     logger.info(
       `[LeadCapture] Captured lead for contact ${contactId}: ` +
-      `email=${newEmail ?? "none"}, phone=${newPhone ?? "none"}`
+        `email=${newEmail ?? "none"}, phone=${newPhone ?? "none"}`,
     );
 
     return true;

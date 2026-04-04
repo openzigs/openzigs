@@ -1,10 +1,23 @@
 /** Shared types for the Social Brain subsystem. */
 
-export type SocialPlatform = "reddit" | "youtube" | "tiktok" | "twitter" | "linkedin" | "instagram" | "facebook";
+export type SocialPlatform =
+  | "reddit"
+  | "youtube"
+  | "tiktok"
+  | "twitter"
+  | "linkedin"
+  | "instagram"
+  | "facebook";
 
 export type MessageDirection = "inbound" | "outbound";
 
-export type MessageStatus = "received" | "auto_replied" | "escalated" | "failed" | "pending_approval" | "rejected";
+export type MessageStatus =
+  | "received"
+  | "auto_replied"
+  | "escalated"
+  | "failed"
+  | "pending_approval"
+  | "rejected";
 
 /** Normalised inbound social message — platform adapters produce this. */
 export type IncomingSocialMessage = {
@@ -214,10 +227,13 @@ export type SocialBrainConfig = {
     discord?: boolean;
     web?: boolean;
   };
-  connections?: Record<string, {
-    enabled?: boolean;
-    mode?: "webhook" | "polling" | "browser";
-    pollIntervalSeconds?: number;
-    accessToken?: string;
-  }>;
+  connections?: Record<
+    string,
+    {
+      enabled?: boolean;
+      mode?: "webhook" | "polling" | "browser";
+      pollIntervalSeconds?: number;
+      accessToken?: string;
+    }
+  >;
 };
