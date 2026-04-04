@@ -116,6 +116,11 @@ UI_ENV="$PROJECT_ROOT/ui/.env.local"
 if [ -f "$CONFIG_FILE" ]; then
   TOKEN=$(python3 -c "import json; print(json.load(open('$CONFIG_FILE'))['auth']['token'])" 2>/dev/null || true)
   INVITE_SECRET=$(python3 -c "import json; d=json.load(open('$CONFIG_FILE')); print(d.get('presenter',{}).get('inviteSecret',''))" 2>/dev/null || true)
+  # Export workerSecret as CALLBACK_SECRET so local sidecars can authenticate callbacks
+  WORKER_SECRET=$(python3 -c "import json; d=json.load(open('$CONFIG_FILE')); print(d.get('auth',{}).get('workerSecret',''))" 2>/dev/null || true)
+  if [ -n "$WORKER_SECRET" ]; then
+    export CALLBACK_SECRET="$WORKER_SECRET"
+  fi
   if [ -n "$TOKEN" ]; then
     echo "NEXT_PUBLIC_OPENZIGS_API_BASE=http://localhost:$BACKEND_PORT" > "$UI_ENV"
     echo "OPENZIGS_INTERNAL_API=http://localhost:$BACKEND_PORT" >> "$UI_ENV"

@@ -90,7 +90,11 @@ def safe_join(base_dir: str, user_path: str) -> str:
 def _safe_urlopen(url: str, data: bytes | None = None, timeout: int = 30) -> None:
     """urlopen wrapper that validates the URL first (SSRF protection)."""
     validate_callback_url(url)
-    req = Request(url, data=data, headers={"Content-Type": "application/json"}, method="POST")
+    headers = {"Content-Type": "application/json"}
+    _cb_secret = os.getenv("CALLBACK_SECRET") or None
+    if _cb_secret:
+        headers["Authorization"] = f"Bearer {_cb_secret}"
+    req = Request(url, data=data, headers=headers, method="POST")
     urlopen(req, timeout=timeout)
 
 
