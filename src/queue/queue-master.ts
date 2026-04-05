@@ -1387,14 +1387,21 @@ export class QueueMaster extends EventEmitter {
         path.join(os.homedir(), ".openzigs", "gallery");
       await fs.mkdir(galleryDir, { recursive: true });
 
-      const ext =
-        result.media_type === "image/png"
-          ? ".png"
-          : result.media_type === "image/jpeg"
-            ? ".jpg"
-            : result.media_type === "image/webp"
-              ? ".webp"
-              : ".bin";
+      const extMap: Record<string, string> = {
+        "image/png": ".png",
+        "image/jpeg": ".jpg",
+        "image/webp": ".webp",
+        "video/mp4": ".mp4",
+        "audio/wav": ".wav",
+        "audio/mp3": ".mp3",
+      };
+      const ext = extMap[result.media_type] ?? ".bin";
+      const assetType: "image" | "video" | "audio" =
+        result.media_type.startsWith("video/")
+          ? "video"
+          : result.media_type.startsWith("audio/")
+            ? "audio"
+            : "image";
       const safeJobId = String(jobId).replace(/[^a-zA-Z0-9_-]/g, "_");
       const filename = `${safeJobId}${ext}`;
       const filePath = path.join(galleryDir, filename);
@@ -1402,7 +1409,7 @@ export class QueueMaster extends EventEmitter {
       await fs.writeFile(filePath, buffer);
 
       galleryAssetId = this.repo.createAsset({
-        type: "image",
+        type: assetType,
         filename,
         filePath,
         mimeType: result.media_type,
