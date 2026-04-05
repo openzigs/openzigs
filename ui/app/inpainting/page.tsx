@@ -225,8 +225,7 @@ export default function InpaintingPage() {
           {/* Left: Canvas + Controls */}
           <div className="space-y-4">
             <SectionCard
-              title="Source Image"
-              icon={<Layers className="w-4 h-4" />}
+              title={<span className="flex items-center gap-2"><Layers className="w-4 h-4" />Source Image</span>}
             >
               <div className="space-y-4">
                 <label className="flex items-center gap-2 px-4 py-2 bg-zinc-800 hover:bg-zinc-700 rounded-lg cursor-pointer transition w-fit">
@@ -259,8 +258,7 @@ export default function InpaintingPage() {
 
             {sourceImage && (
               <SectionCard
-                title="Brush Controls"
-                icon={<Eraser className="w-4 h-4" />}
+                title={<span className="flex items-center gap-2"><Eraser className="w-4 h-4" />Brush Controls</span>}
               >
                 <div className="flex items-center gap-4">
                   <label className="text-sm text-zinc-400">Size:</label>
@@ -288,8 +286,7 @@ export default function InpaintingPage() {
           {/* Right: Prompt + Style + Result */}
           <div className="space-y-4">
             <SectionCard
-              title="Inpainting Prompt"
-              icon={<Palette className="w-4 h-4" />}
+              title={<span className="flex items-center gap-2"><Palette className="w-4 h-4" />Inpainting Prompt</span>}
             >
               <div className="space-y-4">
                 <textarea
@@ -335,8 +332,7 @@ export default function InpaintingPage() {
 
             {resultImage && (
               <SectionCard
-                title="Result"
-                icon={<Download className="w-4 h-4" />}
+                title={<span className="flex items-center gap-2"><Download className="w-4 h-4" />Result</span>}
               >
                 <div className="space-y-3">
                   <img

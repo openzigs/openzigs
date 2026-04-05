@@ -99,7 +99,6 @@ export default function ContentCalendarPage() {
   const queryClient = useQueryClient();
   const calendarRef = useRef<FullCalendar>(null);
   const [showAddModal, setShowAddModal] = useState(false);
-  const [selectedDate, setSelectedDate] = useState<Date | null>(null);
   const [filterPlatform, setFilterPlatform] = useState<OutboxPlatform | "">("");
   const [filterStatus, setFilterStatus] = useState<OutboxStatus | "">("");
   const [currentView, setCurrentView] = useState<
@@ -186,8 +185,7 @@ export default function ContentCalendarPage() {
     [reschedule],
   );
 
-  const handleDateSelect = useCallback((info: DateSelectArg) => {
-    setSelectedDate(info.start);
+  const handleDateSelect = useCallback((_info: DateSelectArg) => {
     setShowAddModal(true);
   }, []);
 
@@ -222,8 +220,12 @@ export default function ContentCalendarPage() {
 
         {/* Filters */}
         <SectionCard
-          title="Filters"
-          icon={<Filter className="w-4 h-4" />}
+          title={
+            <span className="flex items-center gap-2">
+              <Filter className="w-4 h-4" />
+              Filters
+            </span>
+          }
           defaultOpen={false}
         >
           <div className="flex flex-wrap gap-4">
@@ -350,21 +352,13 @@ export default function ContentCalendarPage() {
         </div>
       </div>
 
-      {showAddModal && (
-        <AddToOutboxModal
-          onClose={() => {
-            setShowAddModal(false);
-            setSelectedDate(null);
-          }}
-          onSuccess={() => {
-            queryClient.invalidateQueries({ queryKey: ["calendar-outbox"] });
-            setShowAddModal(false);
-            setSelectedDate(null);
-            showToast("Post scheduled", "success");
-          }}
-          initialDate={selectedDate ?? undefined}
-        />
-      )}
+      <AddToOutboxModal
+        open={showAddModal}
+        onClose={() => {
+          setShowAddModal(false);
+          queryClient.invalidateQueries({ queryKey: ["calendar-outbox"] });
+        }}
+      />
 
       <ToastContainer />
     </div>
