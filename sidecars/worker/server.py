@@ -356,12 +356,16 @@ def generate_video_ltx2(request: GenerateRequest) -> bytes:
 
 
 def _generate_with_mlx_video(request: GenerateRequest, num_frames: int, fps: int, output_path: str):
-    """Generate using the mlx-video Python package (Blaizzy fork)."""
+    """Generate using the mlx-video Python package (CharafChnioune fork).
+
+    The CharafChnioune fork performs runtime quantization from BF16 base weights
+    instead of using pre-quantized AITRADER snapshots (which cause 'snow'/static).
+    """
     try:
-        from mlx_video.models.ltx_2.generate import generate_video, PipelineType  # type: ignore[import-untyped]
-    except ImportError:
-        # Fall back to old import path for backward compatibility
         from mlx_video.generate import generate_video, PipelineType  # type: ignore[import-untyped]
+    except ImportError:
+        # Legacy Blaizzy fork path (kept for backward compatibility)
+        from mlx_video.models.ltx_2.generate import generate_video, PipelineType  # type: ignore[import-untyped]
 
     # Resolve pipeline type via getattr — available variants depend on
     # the installed mlx-video version.  Missing entries (e.g. DEV_TWO_STAGE)
