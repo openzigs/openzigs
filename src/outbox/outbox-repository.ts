@@ -19,12 +19,7 @@ export type OutboxStatus =
   | "failed"
   | "canceled";
 
-export type OutboxAssetType =
-  | "image"
-  | "video"
-  | "audio"
-  | "document"
-  | "text";
+export type OutboxAssetType = "image" | "video" | "audio" | "document" | "text";
 
 export interface OutboxAttachment {
   filePath: string;
@@ -135,7 +130,10 @@ const toItem = (row: StoredOutboxRow): OutboxItem => ({
   platform: row.platform as OutboxPlatform,
   scheduledTime: new Date(row.scheduled_time),
   agentContext: row.agent_context,
-  platformMetadata: JSON.parse(row.platform_metadata) as Record<string, unknown>,
+  platformMetadata: JSON.parse(row.platform_metadata) as Record<
+    string,
+    unknown
+  >,
   status: row.status as OutboxStatus,
   error: row.error,
   publishedUrl: row.published_url,
@@ -150,10 +148,20 @@ const toItem = (row: StoredOutboxRow): OutboxItem => ({
 // ── Valid platforms & statuses ───────────────────────────────
 
 const VALID_PLATFORMS: Set<string> = new Set([
-  "twitter", "pinterest", "linkedin", "youtube", "reddit", "instagram", "facebook",
+  "twitter",
+  "pinterest",
+  "linkedin",
+  "youtube",
+  "reddit",
+  "instagram",
+  "facebook",
 ]);
 const VALID_STATUSES: Set<string> = new Set([
-  "pending", "processing", "published", "failed", "canceled",
+  "pending",
+  "processing",
+  "published",
+  "failed",
+  "canceled",
 ]);
 
 // ── Repository ──────────────────────────────────────────────
@@ -198,7 +206,9 @@ export class OutboxRepository {
     `);
 
     // ── v2 migration: add title, content_body, attachments columns ──
-    const cols = this.db.prepare("PRAGMA table_info(outbox_queue)").all() as Array<{ name: string }>;
+    const cols = this.db
+      .prepare("PRAGMA table_info(outbox_queue)")
+      .all() as Array<{ name: string }>;
     const colNames = new Set(cols.map((c) => c.name));
     if (!colNames.has("title")) {
       this.db.exec("ALTER TABLE outbox_queue ADD COLUMN title TEXT");
@@ -207,7 +217,9 @@ export class OutboxRepository {
       this.db.exec("ALTER TABLE outbox_queue ADD COLUMN content_body TEXT");
     }
     if (!colNames.has("attachments")) {
-      this.db.exec("ALTER TABLE outbox_queue ADD COLUMN attachments TEXT NOT NULL DEFAULT '[]'");
+      this.db.exec(
+        "ALTER TABLE outbox_queue ADD COLUMN attachments TEXT NOT NULL DEFAULT '[]'",
+      );
     }
   }
 
@@ -217,30 +229,36 @@ export class OutboxRepository {
     }
     const now = this.clock().toISOString();
     const id = randomUUID();
-    this.db.prepare(`
+    this.db
+      .prepare(
+        `
       INSERT INTO outbox_queue (id, title, asset_id, asset_url, asset_type, content_body, attachments, platform, scheduled_time, agent_context, platform_metadata, status, retry_count, max_retries, created_at, updated_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0, ?, ?, ?)
-    `).run(
-      id,
-      input.title ?? null,
-      input.assetId ?? null,
-      input.assetUrl ?? null,
-      input.assetType ?? "text",
-      input.contentBody ?? null,
-      JSON.stringify(input.attachments ?? []),
-      input.platform,
-      input.scheduledTime.toISOString(),
-      input.agentContext,
-      JSON.stringify(input.platformMetadata ?? {}),
-      input.maxRetries ?? 3,
-      now,
-      now,
-    );
+    `,
+      )
+      .run(
+        id,
+        input.title ?? null,
+        input.assetId ?? null,
+        input.assetUrl ?? null,
+        input.assetType ?? "text",
+        input.contentBody ?? null,
+        JSON.stringify(input.attachments ?? []),
+        input.platform,
+        input.scheduledTime.toISOString(),
+        input.agentContext,
+        JSON.stringify(input.platformMetadata ?? {}),
+        input.maxRetries ?? 3,
+        now,
+        now,
+      );
     return this.getById(id)!;
   }
 
   getById(id: string): OutboxItem | null {
-    const row = this.db.prepare("SELECT * FROM outbox_queue WHERE id = ?").get(id) as StoredOutboxRow | undefined;
+    const row = this.db
+      .prepare("SELECT * FROM outbox_queue WHERE id = ?")
+      .get(id) as StoredOutboxRow | undefined;
     return row ? toItem(row) : null;
   }
 
@@ -269,11 +287,20 @@ export class OutboxRepository {
   }
 
   getStats(): OutboxStats {
-    const rows = this.db.prepare(
-      "SELECT status, COUNT(*) as count FROM outbox_queue GROUP BY status",
-    ).all() as Array<{ status: string; count: number }>;
+    const rows = this.db
+      .prepare(
+        "SELECT status, COUNT(*) as count FROM outbox_queue GROUP BY status",
+      )
+      .all() as Array<{ status: string; count: number }>;
 
-    const stats: OutboxStats = { pending: 0, processing: 0, published: 0, failed: 0, canceled: 0, total: 0 };
+    const stats: OutboxStats = {
+      pending: 0,
+      processing: 0,
+      published: 0,
+      failed: 0,
+      canceled: 0,
+      total: 0,
+    };
     for (const row of rows) {
       const key = row.status as keyof Omit<OutboxStats, "total">;
       if (key in stats) {
@@ -291,19 +318,23 @@ export class OutboxRepository {
   claimPending(batchSize: number): OutboxItem[] {
     const now = this.clock().toISOString();
     const claim = this.db.transaction(() => {
-      const rows = this.db.prepare(
-        `SELECT * FROM outbox_queue
+      const rows = this.db
+        .prepare(
+          `SELECT * FROM outbox_queue
          WHERE status = 'pending' AND scheduled_time <= ?
          ORDER BY scheduled_time ASC
          LIMIT ?`,
-      ).all(now, batchSize) as StoredOutboxRow[];
+        )
+        .all(now, batchSize) as StoredOutboxRow[];
 
       for (const row of rows) {
-        this.db.prepare(
-          `UPDATE outbox_queue
+        this.db
+          .prepare(
+            `UPDATE outbox_queue
            SET status = 'processing', started_at = ?, updated_at = ?
            WHERE id = ? AND status = 'pending'`,
-        ).run(now, now, row.id);
+          )
+          .run(now, now, row.id);
       }
 
       // Return the rows after status update
@@ -311,7 +342,9 @@ export class OutboxRepository {
       const ids = rows.map((r) => r.id);
       const placeholders = ids.map(() => "?").join(",");
       return (
-        this.db.prepare(`SELECT * FROM outbox_queue WHERE id IN (${placeholders})`).all(...ids) as StoredOutboxRow[]
+        this.db
+          .prepare(`SELECT * FROM outbox_queue WHERE id IN (${placeholders})`)
+          .all(...ids) as StoredOutboxRow[]
       ).map(toItem);
     });
 
@@ -320,11 +353,13 @@ export class OutboxRepository {
 
   markPublished(id: string, publishedUrl: string): OutboxItem | null {
     const now = this.clock().toISOString();
-    const result = this.db.prepare(
-      `UPDATE outbox_queue
+    const result = this.db
+      .prepare(
+        `UPDATE outbox_queue
        SET status = 'published', published_url = ?, completed_at = ?, updated_at = ?
        WHERE id = ? AND status = 'processing'`,
-    ).run(publishedUrl, now, now, id);
+      )
+      .run(publishedUrl, now, now, id);
 
     if (result.changes === 0) return null;
     return this.getById(id);
@@ -332,12 +367,14 @@ export class OutboxRepository {
 
   markFailed(id: string, error: string): OutboxItem | null {
     const now = this.clock().toISOString();
-    const result = this.db.prepare(
-      `UPDATE outbox_queue
+    const result = this.db
+      .prepare(
+        `UPDATE outbox_queue
        SET status = 'failed', error = ?, completed_at = ?, updated_at = ?,
            retry_count = retry_count + 1
        WHERE id = ? AND status = 'processing'`,
-    ).run(error, now, now, id);
+      )
+      .run(error, now, now, id);
 
     if (result.changes === 0) return null;
     return this.getById(id);
@@ -345,11 +382,13 @@ export class OutboxRepository {
 
   retry(id: string): OutboxItem | null {
     const now = this.clock().toISOString();
-    const result = this.db.prepare(
-      `UPDATE outbox_queue
+    const result = this.db
+      .prepare(
+        `UPDATE outbox_queue
        SET status = 'pending', error = NULL, started_at = NULL, completed_at = NULL, updated_at = ?
        WHERE id = ? AND status = 'failed'`,
-    ).run(now, id);
+      )
+      .run(now, id);
 
     if (result.changes === 0) return null;
     return this.getById(id);
@@ -357,11 +396,13 @@ export class OutboxRepository {
 
   cancel(id: string): OutboxItem | null {
     const now = this.clock().toISOString();
-    const result = this.db.prepare(
-      `UPDATE outbox_queue
+    const result = this.db
+      .prepare(
+        `UPDATE outbox_queue
        SET status = 'canceled', completed_at = ?, updated_at = ?
        WHERE id = ? AND status IN ('pending', 'failed')`,
-    ).run(now, now, id);
+      )
+      .run(now, now, id);
 
     if (result.changes === 0) return null;
     return this.getById(id);
@@ -370,9 +411,11 @@ export class OutboxRepository {
   /** Update status and started_at for an item (used by publish-now). */
   updateStatus(id: string, status: OutboxStatus, startedAt?: string): void {
     const now = this.clock().toISOString();
-    this.db.prepare(
-      `UPDATE outbox_queue SET status = ?, started_at = COALESCE(?, started_at), updated_at = ? WHERE id = ?`,
-    ).run(status, startedAt ?? null, now, id);
+    this.db
+      .prepare(
+        `UPDATE outbox_queue SET status = ?, started_at = COALESCE(?, started_at), updated_at = ? WHERE id = ?`,
+      )
+      .run(status, startedAt ?? null, now, id);
   }
 
   /**
@@ -426,15 +469,19 @@ export class OutboxRepository {
     }
 
     params.push(id);
-    this.db.prepare(
-      `UPDATE outbox_queue SET ${sets.join(", ")} WHERE id = ? AND status IN ('pending', 'canceled')`,
-    ).run(...params);
+    this.db
+      .prepare(
+        `UPDATE outbox_queue SET ${sets.join(", ")} WHERE id = ? AND status IN ('pending', 'canceled')`,
+      )
+      .run(...params);
 
     return this.getById(id);
   }
 
   delete(id: string): boolean {
-    const result = this.db.prepare("DELETE FROM outbox_queue WHERE id = ?").run(id);
+    const result = this.db
+      .prepare("DELETE FROM outbox_queue WHERE id = ?")
+      .run(id);
     return result.changes > 0;
   }
 }

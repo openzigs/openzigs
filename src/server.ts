@@ -164,6 +164,8 @@ import { MediaQueueRepository } from "./queue/media-queue-repository.js";
 import { OutboxRepository } from "./outbox/outbox-repository.js";
 import { OutboxPoller } from "./outbox/outbox-poller.js";
 import { createOutboxRouter } from "./api/outbox.js";
+import { BrandKitRepository } from "./video/brand-kit.js";
+import { PostTemplateRepository } from "./creative/post-template-repository.js";
 import { QueueMaster } from "./queue/queue-master.js";
 import { MediaNotificationService } from "./queue/media-notification-service.js";
 import { createQueueRouter, createQueueCallbackRouter } from "./api/queue.js";
@@ -280,6 +282,10 @@ videoPresetsRepo.migrate();
 // ── Outbox Publishing Queue (Epic #458) ──
 const outboxRepo = new OutboxRepository(db);
 outboxRepo.migrate();
+const brandKitRepo = new BrandKitRepository(db);
+brandKitRepo.migrate();
+const postTemplateRepo = new PostTemplateRepository(db);
+postTemplateRepo.migrate();
 const outboxPoller = new OutboxPoller({
   outboxRepo,
   taskEngine,
@@ -1064,6 +1070,13 @@ registerMcpTools(toolRegistry, {
   memoryManager,
   outboxRepo,
   tasksConfig: config.tasks,
+  imageProcessingSidecarUrl: resolveSidecarUrl(
+    "image-processing",
+    "IMAGE_PROCESSING_SIDECAR_URL",
+    5010,
+  ),
+  brandKitRepo,
+  postTemplateRepo,
 });
 
 // ── Task Background Worker ──
