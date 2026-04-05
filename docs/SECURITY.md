@@ -98,26 +98,40 @@ bash scripts/setup-cloudflare-access.sh
 
 The script creates all bypass and protected applications via the Cloudflare API. No credentials are hardcoded. See [USER_GUIDE.md — Securing the Tunnel](USER_GUIDE.md#securing-the-tunnel-with-cloudflare-access) for step-by-step instructions.
 
-### Tunnel Daemon
+### Tunnel Operation (Manual Start)
 
-The `cloudflared` process runs as a macOS **system LaunchDaemon**:
+> **Do NOT use a LaunchDaemon.** Running `cloudflared` as a system daemon means it runs as `root` 24/7, expanding the attack surface unnecessarily. A solo-developer deployment should start the tunnel on-demand and stop it when done.
 
-| Setting | Value |
-|---|---|
-| Plist | `/Library/LaunchDaemons/com.cloudflare.cloudflared.plist` |
-| RunAtLoad | `true` |
-| KeepAlive | `true` (restarts on crash) |
-| User | `root` |
-| Logs | `/Library/Logs/com.cloudflare.cloudflared.{out,err}.log` |
+Start the tunnel manually (runs as your user, not root):
 
 ```bash
-# Start/stop
-sudo launchctl bootstrap system /Library/LaunchDaemons/com.cloudflare.cloudflared.plist
-sudo launchctl bootout system/com.cloudflare.cloudflared
-
-# Check status
-pgrep -la cloudflared
+cloudflared tunnel run --token "$(cat ~/.openzigs/tunnel-token)" 2>&1 | tee /tmp/cloudflared.log
 ```
+
+Or inline with the token from the Cloudflare dashboard:
+
+```bash
+cloudflared tunnel run --token <YOUR_TUNNEL_TOKEN>
+```
+
+Stop with **Ctrl+C**. The tunnel is only active while this process runs.
+
+```bash
+# Check if tunnel is running
+pgrep -la cloudflared
+
+# If a LaunchDaemon plist still exists, ensure it's disabled:
+ls /Library/LaunchDaemons/com.cloudflare.cloudflared.plist 2>/dev/null && \
+  echo "WARNING: LaunchDaemon still active — disable it:" && \
+  echo "  sudo launchctl bootout system/com.cloudflare.cloudflared" && \
+  echo "  sudo mv /Library/LaunchDaemons/com.cloudflare.cloudflared.plist{,.disabled}"
+```
+
+**Why not a daemon?**
+- Runs as `root` — unnecessary privilege escalation
+- Always-on = 24/7 attack surface even when you're not working
+- Tunnel token stored in plaintext in the plist (readable by any local process)
+- Harder to notice misconfigurations when the tunnel silently restarts on boot
 
 ---
 
@@ -556,6 +570,18 @@ If an attacker gains chat access, they could use social media tools to interact 
 
 **Mitigation**: Rotate all social platform tokens immediately if a security breach is suspected.
 
+### Threat: LaunchDaemon Running Tunnel as Root
+
+**Severity**: Medium
+
+A system LaunchDaemon runs `cloudflared` as `root` with `KeepAlive` enabled. This means:
+- The tunnel restarts automatically on crash or reboot — even if you didn't intend it
+- The process runs with full root privileges (unnecessary for an HTTP proxy)
+- The tunnel token is stored in plaintext in the plist, readable by any local process
+- 24/7 uptime means the attack surface is always exposed
+
+**Mitigation**: Do not use a LaunchDaemon. Start the tunnel manually as your user. See [Tunnel Operation](#tunnel-operation-manual-start).
+
 ---
 
 ## Security Checklist
@@ -572,5 +598,6 @@ Pre-deployment checklist for any OpenZigs instance accessible beyond localhost:
 - [ ] **Social platform tokens secured** — stored in vault or env vars with `0600` permissions
 - [ ] **Audit logs reviewed** — check `~/.openzigs/logs/` for suspicious activity
 - [ ] **No orphaned tunnel processes** — check `pgrep -la cloudflared`
-- [ ] **Quick tunnel disabled** — `tunnel.enabled: false` in config (use named tunnel via launchd instead)
+- [ ] **Quick tunnel disabled** — `tunnel.enabled: false` in config
+- [ ] **No LaunchDaemon for cloudflared** — check `/Library/LaunchDaemons/com.cloudflare.cloudflared.plist` does not exist (use manual start instead)
 - [ ] **File permissions verified** — `ls -la ~/.openzigs/config.json` shows `0600`
