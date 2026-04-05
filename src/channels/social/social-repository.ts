@@ -183,7 +183,9 @@ export class SocialRepository {
 
     // Runtime migration: add model column to comment_automation_rules
     try {
-      this.db.exec(`ALTER TABLE comment_automation_rules ADD COLUMN model TEXT DEFAULT NULL`);
+      this.db.exec(
+        `ALTER TABLE comment_automation_rules ADD COLUMN model TEXT DEFAULT NULL`,
+      );
     } catch {
       // Column already exists
     }
@@ -191,26 +193,46 @@ export class SocialRepository {
     // Runtime migration: add lead fields to contacts
     try {
       this.db.exec(`ALTER TABLE contacts ADD COLUMN email TEXT DEFAULT NULL`);
-    } catch { /* Column already exists */ }
+    } catch {
+      /* Column already exists */
+    }
     try {
       this.db.exec(`ALTER TABLE contacts ADD COLUMN phone TEXT DEFAULT NULL`);
-    } catch { /* Column already exists */ }
+    } catch {
+      /* Column already exists */
+    }
     try {
-      this.db.exec(`ALTER TABLE contacts ADD COLUMN lead_captured_at TEXT DEFAULT NULL`);
-    } catch { /* Column already exists */ }
+      this.db.exec(
+        `ALTER TABLE contacts ADD COLUMN lead_captured_at TEXT DEFAULT NULL`,
+      );
+    } catch {
+      /* Column already exists */
+    }
 
     // Runtime migration: add ai_reply flag to comment_automation_rules
     try {
-      this.db.exec(`ALTER TABLE comment_automation_rules ADD COLUMN use_ai_reply INTEGER DEFAULT 0`);
-    } catch { /* Column already exists */ }
+      this.db.exec(
+        `ALTER TABLE comment_automation_rules ADD COLUMN use_ai_reply INTEGER DEFAULT 0`,
+      );
+    } catch {
+      /* Column already exists */
+    }
     try {
-      this.db.exec(`ALTER TABLE comment_automation_rules ADD COLUMN ai_reply_context TEXT DEFAULT NULL`);
-    } catch { /* Column already exists */ }
+      this.db.exec(
+        `ALTER TABLE comment_automation_rules ADD COLUMN ai_reply_context TEXT DEFAULT NULL`,
+      );
+    } catch {
+      /* Column already exists */
+    }
 
     // Runtime migration: expand the status CHECK constraint to include 'pending_approval' and 'rejected'.
     // SQLite doesn't support ALTER CHECK, so we must recreate the table.
     {
-      const tableInfo = this.db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='social_messages'").get() as { sql: string } | undefined;
+      const tableInfo = this.db
+        .prepare(
+          "SELECT sql FROM sqlite_master WHERE type='table' AND name='social_messages'",
+        )
+        .get() as { sql: string } | undefined;
       if (tableInfo && !tableInfo.sql.includes("pending_approval")) {
         this.db.exec(`
           CREATE TABLE social_messages_new (
@@ -252,16 +274,24 @@ export class SocialRepository {
   }): Contact {
     const now = this.clock().toISOString();
     const existing = this.db
-      .prepare("SELECT * FROM contacts WHERE platform = ? AND platform_user_id = ?")
+      .prepare(
+        "SELECT * FROM contacts WHERE platform = ? AND platform_user_id = ?",
+      )
       .get(opts.platform, opts.platformUserId) as Contact | undefined;
 
     if (existing) {
       this.db
         .prepare(
           `UPDATE contacts SET username = ?, display_name = ?, last_seen_at = ?,
-           updated_at = ? WHERE id = ?`
+           updated_at = ? WHERE id = ?`,
         )
-        .run(opts.username, opts.displayName ?? existing.display_name, now, now, existing.id);
+        .run(
+          opts.username,
+          opts.displayName ?? existing.display_name,
+          now,
+          now,
+          existing.id,
+        );
       return this.getContact(existing.id)!;
     }
 
@@ -271,24 +301,48 @@ export class SocialRepository {
         `INSERT INTO contacts (id, platform, platform_user_id, username, display_name,
          tags, notes, first_seen_at, last_seen_at, message_count, handoff_active,
          created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, '[]', '', ?, ?, 0, 0, ?, ?)`
+         VALUES (?, ?, ?, ?, ?, '[]', '', ?, ?, 0, 0, ?, ?)`,
       )
-      .run(id, opts.platform, opts.platformUserId, opts.username, opts.displayName ?? "", now, now, now, now);
+      .run(
+        id,
+        opts.platform,
+        opts.platformUserId,
+        opts.username,
+        opts.displayName ?? "",
+        now,
+        now,
+        now,
+        now,
+      );
     return this.getContact(id)!;
   }
 
   getContact(id: string): Contact | undefined {
-    return this.db.prepare("SELECT * FROM contacts WHERE id = ?").get(id) as Contact | undefined;
+    return this.db.prepare("SELECT * FROM contacts WHERE id = ?").get(id) as
+      | Contact
+      | undefined;
   }
 
-  getContactByPlatformUser(platform: SocialPlatform, platformUserId: string): Contact | undefined {
+  getContactByPlatformUser(
+    platform: SocialPlatform,
+    platformUserId: string,
+  ): Contact | undefined {
     return this.db
-      .prepare("SELECT * FROM contacts WHERE platform = ? AND platform_user_id = ?")
+      .prepare(
+        "SELECT * FROM contacts WHERE platform = ? AND platform_user_id = ?",
+      )
       .get(platform, platformUserId) as Contact | undefined;
   }
 
   listContacts(filter: ContactFilter = {}): PaginatedResult<Contact> {
-    const { platform, search, tag, handoffActive, page = 1, pageSize = 25 } = filter;
+    const {
+      platform,
+      search,
+      tag,
+      handoffActive,
+      page = 1,
+      pageSize = 25,
+    } = filter;
     const conditions: string[] = [];
     const params: unknown[] = [];
 
@@ -297,7 +351,9 @@ export class SocialRepository {
       params.push(platform);
     }
     if (search) {
-      conditions.push("(username LIKE ? OR display_name LIKE ? OR notes LIKE ?)");
+      conditions.push(
+        "(username LIKE ? OR display_name LIKE ? OR notes LIKE ?)",
+      );
       const like = `%${search}%`;
       params.push(like, like, like);
     }
@@ -310,20 +366,37 @@ export class SocialRepository {
       params.push(handoffActive ? 1 : 0);
     }
 
-    const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+    const where =
+      conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
     const total = (
-      this.db.prepare(`SELECT COUNT(*) as count FROM contacts ${where}`).get(...params) as { count: number }
+      this.db
+        .prepare(`SELECT COUNT(*) as count FROM contacts ${where}`)
+        .get(...params) as { count: number }
     ).count;
 
     const offset = (page - 1) * pageSize;
     const data = this.db
-      .prepare(`SELECT * FROM contacts ${where} ORDER BY last_seen_at DESC LIMIT ? OFFSET ?`)
+      .prepare(
+        `SELECT * FROM contacts ${where} ORDER BY last_seen_at DESC LIMIT ? OFFSET ?`,
+      )
       .all(...params, pageSize, offset) as Contact[];
 
     return { data, total, page, pageSize };
   }
 
-  updateContact(id: string, updates: Partial<Pick<Contact, "tags" | "notes" | "handoff_active" | "handoff_thread_id" | "handoff_channel">>): Contact | undefined {
+  updateContact(
+    id: string,
+    updates: Partial<
+      Pick<
+        Contact,
+        | "tags"
+        | "notes"
+        | "handoff_active"
+        | "handoff_thread_id"
+        | "handoff_channel"
+      >
+    >,
+  ): Contact | undefined {
     const contact = this.getContact(id);
     if (!contact) return undefined;
 
@@ -332,16 +405,35 @@ export class SocialRepository {
     const params: unknown[] = [now];
 
     if (updates.tags !== undefined) {
-      try { JSON.parse(updates.tags as string); } catch { throw new Error("Invalid JSON in tags"); }
-      sets.push("tags = ?"); params.push(updates.tags);
+      try {
+        JSON.parse(updates.tags as string);
+      } catch {
+        throw new Error("Invalid JSON in tags");
+      }
+      sets.push("tags = ?");
+      params.push(updates.tags);
     }
-    if (updates.notes !== undefined) { sets.push("notes = ?"); params.push(updates.notes); }
-    if (updates.handoff_active !== undefined) { sets.push("handoff_active = ?"); params.push(updates.handoff_active); }
-    if (updates.handoff_thread_id !== undefined) { sets.push("handoff_thread_id = ?"); params.push(updates.handoff_thread_id); }
-    if (updates.handoff_channel !== undefined) { sets.push("handoff_channel = ?"); params.push(updates.handoff_channel); }
+    if (updates.notes !== undefined) {
+      sets.push("notes = ?");
+      params.push(updates.notes);
+    }
+    if (updates.handoff_active !== undefined) {
+      sets.push("handoff_active = ?");
+      params.push(updates.handoff_active);
+    }
+    if (updates.handoff_thread_id !== undefined) {
+      sets.push("handoff_thread_id = ?");
+      params.push(updates.handoff_thread_id);
+    }
+    if (updates.handoff_channel !== undefined) {
+      sets.push("handoff_channel = ?");
+      params.push(updates.handoff_channel);
+    }
 
     params.push(id);
-    this.db.prepare(`UPDATE contacts SET ${sets.join(", ")} WHERE id = ?`).run(...params);
+    this.db
+      .prepare(`UPDATE contacts SET ${sets.join(", ")} WHERE id = ?`)
+      .run(...params);
     return this.getContact(id);
   }
 
@@ -380,7 +472,7 @@ export class SocialRepository {
     const result = this.db
       .prepare(
         `INSERT OR IGNORE INTO social_messages (id, contact_id, platform, direction, status, platform_message_id, content, metadata, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         id,
@@ -391,30 +483,43 @@ export class SocialRepository {
         opts.platformMessageId ?? "",
         opts.content,
         JSON.stringify(opts.metadata ?? {}),
-        now
+        now,
       );
     if (result.changes === 0) return null; // duplicate platformMessageId
     this.db
-      .prepare("UPDATE contacts SET message_count = message_count + 1, updated_at = ? WHERE id = ?")
+      .prepare(
+        "UPDATE contacts SET message_count = message_count + 1, updated_at = ? WHERE id = ?",
+      )
       .run(now, opts.contactId);
-    return this.db.prepare("SELECT * FROM social_messages WHERE id = ?").get(id) as SocialMessage;
+    return this.db
+      .prepare("SELECT * FROM social_messages WHERE id = ?")
+      .get(id) as SocialMessage;
   }
 
   getMessages(contactId: string, limit = 50, offset = 0): SocialMessage[] {
     return this.db
-      .prepare("SELECT * FROM social_messages WHERE contact_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?")
+      .prepare(
+        "SELECT * FROM social_messages WHERE contact_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?",
+      )
       .all(contactId, limit, offset) as SocialMessage[];
   }
 
   getRecentActivity(limit = 50, offset = 0): SocialMessage[] {
     return this.db
-      .prepare("SELECT * FROM social_messages ORDER BY created_at DESC LIMIT ? OFFSET ?")
+      .prepare(
+        "SELECT * FROM social_messages ORDER BY created_at DESC LIMIT ? OFFSET ?",
+      )
       .all(limit, offset) as SocialMessage[];
   }
 
   // ── Comment Automation Rules ────────────────────────────────────────
 
-  createRule(rule: Omit<CommentRule, "id" | "trigger_count" | "created_at" | "updated_at">): CommentRule {
+  createRule(
+    rule: Omit<
+      CommentRule,
+      "id" | "trigger_count" | "created_at" | "updated_at"
+    >,
+  ): CommentRule {
     const id = nanoid(16);
     const now = this.clock().toISOString();
     this.db
@@ -422,25 +527,45 @@ export class SocialRepository {
         `INSERT INTO comment_automation_rules
          (id, name, platform, enabled, post_ids, keywords, regex, comment_reply_template,
           dm_template, dm_delay_seconds, max_triggers_per_user, max_triggers_total, trigger_count, auto_tag, model, use_ai_reply, ai_reply_context, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?)`
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
-        id, rule.name, rule.platform, rule.enabled, rule.post_ids, rule.keywords,
-        rule.regex, rule.comment_reply_template, rule.dm_template, rule.dm_delay_seconds,
-        rule.max_triggers_per_user, rule.max_triggers_total, rule.auto_tag, rule.model ?? null,
-        rule.use_ai_reply ?? 0, rule.ai_reply_context ?? null, now, now
+        id,
+        rule.name,
+        rule.platform,
+        rule.enabled,
+        rule.post_ids,
+        rule.keywords,
+        rule.regex,
+        rule.comment_reply_template,
+        rule.dm_template,
+        rule.dm_delay_seconds,
+        rule.max_triggers_per_user,
+        rule.max_triggers_total,
+        rule.auto_tag,
+        rule.model ?? null,
+        rule.use_ai_reply ?? 0,
+        rule.ai_reply_context ?? null,
+        now,
+        now,
       );
-    return this.db.prepare("SELECT * FROM comment_automation_rules WHERE id = ?").get(id) as CommentRule;
+    return this.db
+      .prepare("SELECT * FROM comment_automation_rules WHERE id = ?")
+      .get(id) as CommentRule;
   }
 
   getRule(id: string): CommentRule | undefined {
-    return this.db.prepare("SELECT * FROM comment_automation_rules WHERE id = ?").get(id) as CommentRule | undefined;
+    return this.db
+      .prepare("SELECT * FROM comment_automation_rules WHERE id = ?")
+      .get(id) as CommentRule | undefined;
   }
 
   listRules(platform?: SocialPlatform): CommentRule[] {
     if (platform) {
       return this.db
-        .prepare("SELECT * FROM comment_automation_rules WHERE platform = ? ORDER BY created_at ASC")
+        .prepare(
+          "SELECT * FROM comment_automation_rules WHERE platform = ? ORDER BY created_at ASC",
+        )
         .all(platform) as CommentRule[];
     }
     return this.db
@@ -448,14 +573,33 @@ export class SocialRepository {
       .all() as CommentRule[];
   }
 
-  updateRule(id: string, updates: Partial<Omit<CommentRule, "id" | "created_at" | "updated_at">>): CommentRule | undefined {
+  updateRule(
+    id: string,
+    updates: Partial<Omit<CommentRule, "id" | "created_at" | "updated_at">>,
+  ): CommentRule | undefined {
     const rule = this.getRule(id);
     if (!rule) return undefined;
     const now = this.clock().toISOString();
     const sets: string[] = ["updated_at = ?"];
     const params: unknown[] = [now];
 
-    const allowed = ["name", "platform", "enabled", "post_ids", "keywords", "regex", "comment_reply_template", "dm_template", "dm_delay_seconds", "max_triggers_per_user", "max_triggers_total", "auto_tag", "model", "use_ai_reply", "ai_reply_context"];
+    const allowed = [
+      "name",
+      "platform",
+      "enabled",
+      "post_ids",
+      "keywords",
+      "regex",
+      "comment_reply_template",
+      "dm_template",
+      "dm_delay_seconds",
+      "max_triggers_per_user",
+      "max_triggers_total",
+      "auto_tag",
+      "model",
+      "use_ai_reply",
+      "ai_reply_context",
+    ];
     for (const [key, value] of Object.entries(updates)) {
       if (value !== undefined && allowed.includes(key)) {
         sets.push(`${key} = ?`);
@@ -464,23 +608,34 @@ export class SocialRepository {
     }
 
     params.push(id);
-    this.db.prepare(`UPDATE comment_automation_rules SET ${sets.join(", ")} WHERE id = ?`).run(...params);
+    this.db
+      .prepare(
+        `UPDATE comment_automation_rules SET ${sets.join(", ")} WHERE id = ?`,
+      )
+      .run(...params);
     return this.getRule(id);
   }
 
   deleteRule(id: string): boolean {
-    const result = this.db.prepare("DELETE FROM comment_automation_rules WHERE id = ?").run(id);
+    const result = this.db
+      .prepare("DELETE FROM comment_automation_rules WHERE id = ?")
+      .run(id);
     return result.changes > 0;
   }
 
   incrementRuleTriggerCount(id: string): void {
-    this.db.prepare("UPDATE comment_automation_rules SET trigger_count = trigger_count + 1, updated_at = ? WHERE id = ?")
+    this.db
+      .prepare(
+        "UPDATE comment_automation_rules SET trigger_count = trigger_count + 1, updated_at = ? WHERE id = ?",
+      )
       .run(this.clock().toISOString(), id);
   }
 
   // ── Automation Log ──────────────────────────────────────────────────
 
-  insertAutomationLog(entry: Omit<AutomationLogEntry, "id" | "created_at">): AutomationLogEntry {
+  insertAutomationLog(
+    entry: Omit<AutomationLogEntry, "id" | "created_at">,
+  ): AutomationLogEntry {
     const id = nanoid(16);
     const now = this.clock().toISOString();
     this.db
@@ -488,39 +643,63 @@ export class SocialRepository {
         `INSERT INTO comment_automation_log
          (id, rule_id, contact_id, platform, post_id, comment_id, username, matched_keyword,
           comment_replied, dm_sent, dm_error, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
-        id, entry.rule_id, entry.contact_id, entry.platform, entry.post_id,
-        entry.comment_id, entry.username, entry.matched_keyword,
-        entry.comment_replied, entry.dm_sent, entry.dm_error, now
+        id,
+        entry.rule_id,
+        entry.contact_id,
+        entry.platform,
+        entry.post_id,
+        entry.comment_id,
+        entry.username,
+        entry.matched_keyword,
+        entry.comment_replied,
+        entry.dm_sent,
+        entry.dm_error,
+        now,
       );
-    return this.db.prepare("SELECT * FROM comment_automation_log WHERE id = ?").get(id) as AutomationLogEntry;
+    return this.db
+      .prepare("SELECT * FROM comment_automation_log WHERE id = ?")
+      .get(id) as AutomationLogEntry;
   }
 
-  getAutomationLog(opts: { ruleId?: string; limit?: number; offset?: number } = {}): AutomationLogEntry[] {
+  getAutomationLog(
+    opts: { ruleId?: string; limit?: number; offset?: number } = {},
+  ): AutomationLogEntry[] {
     const { ruleId, limit = 50, offset = 0 } = opts;
     if (ruleId) {
       return this.db
-        .prepare("SELECT * FROM comment_automation_log WHERE rule_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?")
+        .prepare(
+          "SELECT * FROM comment_automation_log WHERE rule_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?",
+        )
         .all(ruleId, limit, offset) as AutomationLogEntry[];
     }
     return this.db
-      .prepare("SELECT * FROM comment_automation_log ORDER BY created_at DESC LIMIT ? OFFSET ?")
+      .prepare(
+        "SELECT * FROM comment_automation_log ORDER BY created_at DESC LIMIT ? OFFSET ?",
+      )
       .all(limit, offset) as AutomationLogEntry[];
   }
 
   /** Check whether a comment has already been processed by any rule. */
-  hasCommentBeenProcessed(commentId: string, platform: SocialPlatform): boolean {
+  hasCommentBeenProcessed(
+    commentId: string,
+    platform: SocialPlatform,
+  ): boolean {
     const row = this.db
-      .prepare("SELECT 1 FROM comment_automation_log WHERE comment_id = ? AND platform = ? LIMIT 1")
+      .prepare(
+        "SELECT 1 FROM comment_automation_log WHERE comment_id = ? AND platform = ? LIMIT 1",
+      )
       .get(commentId, platform);
     return !!row;
   }
 
   getUserTriggerCount(ruleId: string, username: string): number {
     const row = this.db
-      .prepare("SELECT COUNT(*) as count FROM comment_automation_log WHERE rule_id = ? AND username = ?")
+      .prepare(
+        "SELECT COUNT(*) as count FROM comment_automation_log WHERE rule_id = ? AND username = ?",
+      )
       .get(ruleId, username) as { count: number };
     return row.count;
   }
@@ -532,9 +711,19 @@ export class SocialRepository {
       .prepare(
         `INSERT OR REPLACE INTO post_context_cache
          (post_id, platform, caption, permalink, media_type, media_url, author_username, published_at, cached_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run(ctx.postId, ctx.platform, ctx.caption, ctx.permalink, ctx.mediaType, ctx.mediaUrl, ctx.authorUsername, ctx.publishedAt, ctx.cachedAt);
+      .run(
+        ctx.postId,
+        ctx.platform,
+        ctx.caption,
+        ctx.permalink,
+        ctx.mediaType,
+        ctx.mediaUrl,
+        ctx.authorUsername,
+        ctx.publishedAt,
+        ctx.cachedAt,
+      );
   }
 
   getPostContext(postId: string): PostContext | null {
@@ -564,40 +753,89 @@ export class SocialRepository {
     messagesLast24h: number;
     totalAutomationTriggers: number;
   } {
-    const totalContacts = (this.db.prepare("SELECT COUNT(*) as c FROM contacts").get() as { c: number }).c;
-    const activeHandoffs = (this.db.prepare("SELECT COUNT(*) as c FROM contacts WHERE handoff_active = 1").get() as { c: number }).c;
-    const totalMessages = (this.db.prepare("SELECT COUNT(*) as c FROM social_messages").get() as { c: number }).c;
+    const totalContacts = (
+      this.db.prepare("SELECT COUNT(*) as c FROM contacts").get() as {
+        c: number;
+      }
+    ).c;
+    const activeHandoffs = (
+      this.db
+        .prepare("SELECT COUNT(*) as c FROM contacts WHERE handoff_active = 1")
+        .get() as { c: number }
+    ).c;
+    const totalMessages = (
+      this.db.prepare("SELECT COUNT(*) as c FROM social_messages").get() as {
+        c: number;
+      }
+    ).c;
 
-    const oneDayAgo = new Date(this.clock().getTime() - 24 * 60 * 60 * 1000).toISOString();
+    const oneDayAgo = new Date(
+      this.clock().getTime() - 24 * 60 * 60 * 1000,
+    ).toISOString();
     const messagesLast24h = (
-      this.db.prepare("SELECT COUNT(*) as c FROM social_messages WHERE created_at >= ?").get(oneDayAgo) as { c: number }
+      this.db
+        .prepare(
+          "SELECT COUNT(*) as c FROM social_messages WHERE created_at >= ?",
+        )
+        .get(oneDayAgo) as { c: number }
     ).c;
 
     const totalAutomationTriggers = (
-      this.db.prepare("SELECT COALESCE(SUM(trigger_count), 0) as c FROM comment_automation_rules").get() as { c: number }
+      this.db
+        .prepare(
+          "SELECT COALESCE(SUM(trigger_count), 0) as c FROM comment_automation_rules",
+        )
+        .get() as { c: number }
     ).c;
 
-    return { totalContacts, activeHandoffs, totalMessages, messagesLast24h, totalAutomationTriggers };
+    return {
+      totalContacts,
+      activeHandoffs,
+      totalMessages,
+      messagesLast24h,
+      totalAutomationTriggers,
+    };
   }
 
   // ── Follow-Up Sequences ─────────────────────────────────────────────
 
-  createFollowUpStep(ruleId: string, step: { stepOrder: number; delaySeconds: number; messageTemplate: string }): FollowUpStep {
+  createFollowUpStep(
+    ruleId: string,
+    step: { stepOrder: number; delaySeconds: number; messageTemplate: string },
+  ): FollowUpStep {
     const id = nanoid(16);
     const now = this.clock().toISOString();
-    this.db.prepare(
-      `INSERT INTO follow_up_steps (id, rule_id, step_order, delay_seconds, message_template, created_at)
-       VALUES (?, ?, ?, ?, ?, ?)`
-    ).run(id, ruleId, step.stepOrder, step.delaySeconds, step.messageTemplate, now);
-    return this.db.prepare("SELECT * FROM follow_up_steps WHERE id = ?").get(id) as FollowUpStep;
+    this.db
+      .prepare(
+        `INSERT INTO follow_up_steps (id, rule_id, step_order, delay_seconds, message_template, created_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        id,
+        ruleId,
+        step.stepOrder,
+        step.delaySeconds,
+        step.messageTemplate,
+        now,
+      );
+    return this.db
+      .prepare("SELECT * FROM follow_up_steps WHERE id = ?")
+      .get(id) as FollowUpStep;
   }
 
   getFollowUpSteps(ruleId: string): FollowUpStep[] {
-    return this.db.prepare("SELECT * FROM follow_up_steps WHERE rule_id = ? ORDER BY step_order ASC").all(ruleId) as FollowUpStep[];
+    return this.db
+      .prepare(
+        "SELECT * FROM follow_up_steps WHERE rule_id = ? ORDER BY step_order ASC",
+      )
+      .all(ruleId) as FollowUpStep[];
   }
 
   deleteFollowUpStep(id: string): boolean {
-    return this.db.prepare("DELETE FROM follow_up_steps WHERE id = ?").run(id).changes > 0;
+    return (
+      this.db.prepare("DELETE FROM follow_up_steps WHERE id = ?").run(id)
+        .changes > 0
+    );
   }
 
   scheduleFollowUp(opts: {
@@ -611,56 +849,96 @@ export class SocialRepository {
   }): FollowUpJob {
     const id = nanoid(16);
     const now = this.clock().toISOString();
-    this.db.prepare(
-      `INSERT INTO follow_up_jobs (id, contact_id, rule_id, step_id, platform, platform_user_id, message, scheduled_at, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    ).run(id, opts.contactId, opts.ruleId, opts.stepId, opts.platform, opts.platformUserId, opts.message, opts.scheduledAt, now);
-    return this.db.prepare("SELECT * FROM follow_up_jobs WHERE id = ?").get(id) as FollowUpJob;
+    this.db
+      .prepare(
+        `INSERT INTO follow_up_jobs (id, contact_id, rule_id, step_id, platform, platform_user_id, message, scheduled_at, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        id,
+        opts.contactId,
+        opts.ruleId,
+        opts.stepId,
+        opts.platform,
+        opts.platformUserId,
+        opts.message,
+        opts.scheduledAt,
+        now,
+      );
+    return this.db
+      .prepare("SELECT * FROM follow_up_jobs WHERE id = ?")
+      .get(id) as FollowUpJob;
   }
 
   getPendingFollowUps(beforeTime: string): FollowUpJob[] {
-    return this.db.prepare(
-      "SELECT * FROM follow_up_jobs WHERE sent_at IS NULL AND error IS NULL AND scheduled_at <= ? ORDER BY scheduled_at ASC"
-    ).all(beforeTime) as FollowUpJob[];
+    return this.db
+      .prepare(
+        "SELECT * FROM follow_up_jobs WHERE sent_at IS NULL AND error IS NULL AND scheduled_at <= ? ORDER BY scheduled_at ASC",
+      )
+      .all(beforeTime) as FollowUpJob[];
   }
 
   markFollowUpSent(id: string): void {
     const now = this.clock().toISOString();
-    this.db.prepare("UPDATE follow_up_jobs SET sent_at = ? WHERE id = ?").run(now, id);
+    this.db
+      .prepare("UPDATE follow_up_jobs SET sent_at = ? WHERE id = ?")
+      .run(now, id);
   }
 
   markFollowUpError(id: string, error: string): void {
-    this.db.prepare("UPDATE follow_up_jobs SET error = ? WHERE id = ?").run(error, id);
+    this.db
+      .prepare("UPDATE follow_up_jobs SET error = ? WHERE id = ?")
+      .run(error, id);
   }
 
   // ── Lead Capture ────────────────────────────────────────────────────
 
-  updateContactLead(id: string, lead: { email?: string; phone?: string }): Contact | undefined {
+  updateContactLead(
+    id: string,
+    lead: { email?: string; phone?: string },
+  ): Contact | undefined {
     const contact = this.getContact(id);
     if (!contact) return undefined;
     const now = this.clock().toISOString();
     const sets: string[] = ["updated_at = ?"];
     const params: unknown[] = [now];
 
-    if (lead.email !== undefined) { sets.push("email = ?"); params.push(lead.email); }
-    if (lead.phone !== undefined) { sets.push("phone = ?"); params.push(lead.phone); }
-    if (lead.email || lead.phone) { sets.push("lead_captured_at = ?"); params.push(now); }
+    if (lead.email !== undefined) {
+      sets.push("email = ?");
+      params.push(lead.email);
+    }
+    if (lead.phone !== undefined) {
+      sets.push("phone = ?");
+      params.push(lead.phone);
+    }
+    if (lead.email || lead.phone) {
+      sets.push("lead_captured_at = ?");
+      params.push(now);
+    }
 
     params.push(id);
-    this.db.prepare(`UPDATE contacts SET ${sets.join(", ")} WHERE id = ?`).run(...params);
+    this.db
+      .prepare(`UPDATE contacts SET ${sets.join(", ")} WHERE id = ?`)
+      .run(...params);
     return this.getContact(id);
   }
 
-  getLeads(opts: { platform?: SocialPlatform; limit?: number; offset?: number } = {}): Contact[] {
+  getLeads(
+    opts: { platform?: SocialPlatform; limit?: number; offset?: number } = {},
+  ): Contact[] {
     const { platform, limit = 50, offset = 0 } = opts;
     if (platform) {
-      return this.db.prepare(
-        "SELECT * FROM contacts WHERE (email IS NOT NULL OR phone IS NOT NULL) AND platform = ? ORDER BY lead_captured_at DESC LIMIT ? OFFSET ?"
-      ).all(platform, limit, offset) as Contact[];
+      return this.db
+        .prepare(
+          "SELECT * FROM contacts WHERE (email IS NOT NULL OR phone IS NOT NULL) AND platform = ? ORDER BY lead_captured_at DESC LIMIT ? OFFSET ?",
+        )
+        .all(platform, limit, offset) as Contact[];
     }
-    return this.db.prepare(
-      "SELECT * FROM contacts WHERE (email IS NOT NULL OR phone IS NOT NULL) ORDER BY lead_captured_at DESC LIMIT ? OFFSET ?"
-    ).all(limit, offset) as Contact[];
+    return this.db
+      .prepare(
+        "SELECT * FROM contacts WHERE (email IS NOT NULL OR phone IS NOT NULL) ORDER BY lead_captured_at DESC LIMIT ? OFFSET ?",
+      )
+      .all(limit, offset) as Contact[];
   }
 
   // ── Conversation Analytics ──────────────────────────────────────────
@@ -669,7 +947,9 @@ export class SocialRepository {
     const sinceClause = since ? "AND sm.created_at >= ?" : "";
     const params: unknown[] = since ? [since] : [];
 
-    const rows = this.db.prepare(`
+    const rows = this.db
+      .prepare(
+        `
       SELECT
         c.platform,
         COUNT(DISTINCT c.id) as total_conversations,
@@ -681,14 +961,20 @@ export class SocialRepository {
       FROM contacts c
       LEFT JOIN social_messages sm ON sm.contact_id = c.id ${sinceClause}
       GROUP BY c.platform
-    `).all(...params) as Array<Record<string, number | string>>;
+    `,
+      )
+      .all(...params) as Array<Record<string, number | string>>;
 
-    const leadCounts = this.db.prepare(`
+    const leadCounts = this.db
+      .prepare(
+        `
       SELECT platform, COUNT(*) as leads
       FROM contacts
       WHERE email IS NOT NULL OR phone IS NOT NULL
       GROUP BY platform
-    `).all() as Array<{ platform: string; leads: number }>;
+    `,
+      )
+      .all() as Array<{ platform: string; leads: number }>;
     const leadMap = new Map(leadCounts.map((r) => [r.platform, r.leads]));
 
     return rows.map((r) => ({
@@ -697,8 +983,14 @@ export class SocialRepository {
       total_messages_in: Number(r.total_messages_in),
       total_messages_out: Number(r.total_messages_out),
       avg_response_time_ms: 0, // TODO: compute from paired inbound→outbound timestamps
-      auto_reply_rate: Number(r.total_msg) > 0 ? Number(r.auto_replies) / Number(r.total_msg) : 0,
-      escalation_rate: Number(r.total_msg) > 0 ? Number(r.escalations) / Number(r.total_msg) : 0,
+      auto_reply_rate:
+        Number(r.total_msg) > 0
+          ? Number(r.auto_replies) / Number(r.total_msg)
+          : 0,
+      escalation_rate:
+        Number(r.total_msg) > 0
+          ? Number(r.escalations) / Number(r.total_msg)
+          : 0,
       leads_captured: leadMap.get(r.platform as string) ?? 0,
     }));
   }
@@ -706,11 +998,35 @@ export class SocialRepository {
   // ── CSV Export ──────────────────────────────────────────────────────
 
   exportContactsCsv(): string {
-    const contacts = this.db.prepare("SELECT * FROM contacts ORDER BY last_seen_at DESC").all() as Contact[];
-    const headers = ["id", "platform", "username", "display_name", "tags", "notes", "first_seen_at", "last_seen_at", "message_count", "handoff_active"];
+    const contacts = this.db
+      .prepare("SELECT * FROM contacts ORDER BY last_seen_at DESC")
+      .all() as Contact[];
+    const headers = [
+      "id",
+      "platform",
+      "username",
+      "display_name",
+      "tags",
+      "notes",
+      "first_seen_at",
+      "last_seen_at",
+      "message_count",
+      "handoff_active",
+    ];
     const rows = contacts.map((c) => {
       const tags = JSON.parse(c.tags).join("; ");
-      return [c.id, c.platform, c.username, c.display_name, tags, c.notes, c.first_seen_at, c.last_seen_at, String(c.message_count), String(c.handoff_active)]
+      return [
+        c.id,
+        c.platform,
+        c.username,
+        c.display_name,
+        tags,
+        c.notes,
+        c.first_seen_at,
+        c.last_seen_at,
+        String(c.message_count),
+        String(c.handoff_active),
+      ]
         .map((v) => `"${String(v ?? "").replace(/"/g, '""')}"`)
         .join(",");
     });
@@ -720,47 +1036,82 @@ export class SocialRepository {
   // ── Approval Queue ─────────────────────────────────────────────────
 
   /** List all messages with pending_approval status, newest first. */
-  listPendingApprovals(limit = 50, offset = 0): Array<SocialMessage & { contact_username?: string; contact_display_name?: string }> {
-    return this.db.prepare(`
+  listPendingApprovals(
+    limit = 50,
+    offset = 0,
+  ): Array<
+    SocialMessage & { contact_username?: string; contact_display_name?: string }
+  > {
+    return this.db
+      .prepare(
+        `
       SELECT sm.*, c.username AS contact_username, c.display_name AS contact_display_name
       FROM social_messages sm
       LEFT JOIN contacts c ON c.id = sm.contact_id
       WHERE sm.status = 'pending_approval'
       ORDER BY sm.created_at DESC
       LIMIT ? OFFSET ?
-    `).all(limit, offset) as Array<SocialMessage & { contact_username?: string; contact_display_name?: string }>;
+    `,
+      )
+      .all(limit, offset) as Array<
+      SocialMessage & {
+        contact_username?: string;
+        contact_display_name?: string;
+      }
+    >;
   }
 
   /** Approve a pending reply — update status to auto_replied. */
   approveReply(messageId: string): SocialMessage | undefined {
     const now = this.clock().toISOString();
-    this.db.prepare(
-      "UPDATE social_messages SET status = 'auto_replied', metadata = json_set(metadata, '$.approved_at', ?) WHERE id = ? AND status = 'pending_approval'"
-    ).run(now, messageId);
-    return this.db.prepare("SELECT * FROM social_messages WHERE id = ?").get(messageId) as SocialMessage | undefined;
+    this.db
+      .prepare(
+        "UPDATE social_messages SET status = 'auto_replied', metadata = json_set(metadata, '$.approved_at', ?) WHERE id = ? AND status = 'pending_approval'",
+      )
+      .run(now, messageId);
+    return this.db
+      .prepare("SELECT * FROM social_messages WHERE id = ?")
+      .get(messageId) as SocialMessage | undefined;
   }
 
   /** Reject a pending reply — update status to rejected. */
   rejectReply(messageId: string): SocialMessage | undefined {
     const now = this.clock().toISOString();
-    this.db.prepare(
-      "UPDATE social_messages SET status = 'rejected', metadata = json_set(metadata, '$.rejected_at', ?) WHERE id = ? AND status = 'pending_approval'"
-    ).run(now, messageId);
-    return this.db.prepare("SELECT * FROM social_messages WHERE id = ?").get(messageId) as SocialMessage | undefined;
+    this.db
+      .prepare(
+        "UPDATE social_messages SET status = 'rejected', metadata = json_set(metadata, '$.rejected_at', ?) WHERE id = ? AND status = 'pending_approval'",
+      )
+      .run(now, messageId);
+    return this.db
+      .prepare("SELECT * FROM social_messages WHERE id = ?")
+      .get(messageId) as SocialMessage | undefined;
   }
 
   /** Edit and approve a pending reply — update content + status. */
-  editAndApproveReply(messageId: string, newContent: string): SocialMessage | undefined {
+  editAndApproveReply(
+    messageId: string,
+    newContent: string,
+  ): SocialMessage | undefined {
     const now = this.clock().toISOString();
-    this.db.prepare(
-      "UPDATE social_messages SET status = 'auto_replied', content = ?, metadata = json_set(metadata, '$.approved_at', ?, '$.edited', true) WHERE id = ? AND status = 'pending_approval'"
-    ).run(newContent, now, messageId);
-    return this.db.prepare("SELECT * FROM social_messages WHERE id = ?").get(messageId) as SocialMessage | undefined;
+    this.db
+      .prepare(
+        "UPDATE social_messages SET status = 'auto_replied', content = ?, metadata = json_set(metadata, '$.approved_at', ?, '$.edited', true) WHERE id = ? AND status = 'pending_approval'",
+      )
+      .run(newContent, now, messageId);
+    return this.db
+      .prepare("SELECT * FROM social_messages WHERE id = ?")
+      .get(messageId) as SocialMessage | undefined;
   }
 
   /** Get count of pending approval messages. */
   getPendingApprovalCount(): number {
-    return (this.db.prepare("SELECT COUNT(*) as c FROM social_messages WHERE status = 'pending_approval'").get() as { c: number }).c;
+    return (
+      this.db
+        .prepare(
+          "SELECT COUNT(*) as c FROM social_messages WHERE status = 'pending_approval'",
+        )
+        .get() as { c: number }
+    ).c;
   }
 
   /** Insert a manual reply message (sent by human from UI). */

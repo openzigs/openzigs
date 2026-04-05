@@ -20,6 +20,13 @@ import type {
   WorkerStatus,
   WorkerNodeConfig,
 } from "./types.js";
+import {
+  isSegmentJob,
+  handleSegmentCompletion,
+  stitchSegments,
+  registerSegmentJob,
+  formatSegmentProgress,
+} from "./multi-segment.js";
 
 export interface QueueMasterEvents {
   "job:dispatched": [job: MediaJob, node: TargetNode];
@@ -89,6 +96,13 @@ export class QueueMaster extends EventEmitter {
       this.timer = null;
     }
     logger.info("[QueueMaster] Stopped");
+  }
+
+  /** Dynamically update the callback URL (e.g. when a Cloudflare Tunnel connects). */
+  setCallbackUrl(url: string): void {
+    const prev = this.config.callbackUrl;
+    this.config.callbackUrl = url;
+    logger.info(`[QueueMaster] Callback URL changed: ${prev} → ${url}`);
   }
 
   // ── Node Status ───────────────────────────────────────────
@@ -948,7 +962,7 @@ export class QueueMaster extends EventEmitter {
       cfg_scale: job.payload.cfg_scale,
       num_inference_steps: job.payload.num_inference_steps,
       audio: job.payload.audio ?? false,
-      tiling: job.payload.tiling ?? "aggressive",
+      tiling: job.payload.tiling ?? "auto",
       enhance_prompt: job.payload.enhance_prompt ?? false,
     };
 
@@ -1277,6 +1291,89 @@ export class QueueMaster extends EventEmitter {
       return;
     }
 
+    // ── Multi-Segment Routing ────────────────────────────────
+    // If this is a segment sub-job, route to multi-segment handler
+    if (isSegmentJob(job) && result.media_base64) {
+      try {
+        const videoBytes = Buffer.from(result.media_base64, "base64");
+        const segResult = await handleSegmentCompletion(job, videoBytes, () =>
+          this.getLiveNodeConfig("m2-pro"),
+        );
+
+        // Mark this segment job as complete
+        this.repo.markComplete(jobId, "", result.metadata);
+
+        if (segResult.done) {
+          // All segments done — stitch and complete the parent
+          logger.info(
+            `[QueueMaster] All segments complete for parent ${segResult.parentJobId} — stitching`,
+          );
+          const stitchedVideo = await stitchSegments(segResult.parentJobId);
+          const stitchedBase64 = stitchedVideo.toString("base64");
+
+          // Complete the parent job with stitched video
+          await this.handleJobCompletion(segResult.parentJobId, {
+            media_base64: stitchedBase64,
+            media_type: "video/mp4",
+            metadata: {
+              ...((result.metadata as Record<string, unknown>) ?? {}),
+              multi_segment: true,
+              total_segments: job.payload.totalSegments,
+            },
+          });
+        } else {
+          // Create next segment job
+          const nextSeg = segResult.nextSegment;
+          const nextJob = this.repo.createJob({
+            type: nextSeg.type,
+            payload: nextSeg.payload,
+            model: job.requiredModel,
+            priority: job.priority,
+          });
+          registerSegmentJob(
+            segResult.parentJobId,
+            nextSeg.payload.segmentIndex!,
+            nextJob.id,
+          );
+
+          // Report aggregate progress
+          this.reportProgress(segResult.parentJobId, {
+            stage: "generating",
+            message: formatSegmentProgress(
+              nextSeg.payload.segmentIndex!,
+              nextSeg.payload.totalSegments!,
+            ),
+          });
+
+          logger.info(
+            `[QueueMaster] Created segment ${nextSeg.payload.segmentIndex! + 1}/${nextSeg.payload.totalSegments} job ${nextJob.id} for parent ${segResult.parentJobId}`,
+          );
+        }
+        return;
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        logger.warn(
+          `[QueueMaster] Multi-segment handling failed for job ${jobId}: ${msg}`,
+        );
+        // Mark the parent job as failed if we have a parentJobId
+        if (job.payload.parentJobId) {
+          const parentJob = this.repo.getJob(job.payload.parentJobId);
+          if (parentJob) {
+            this.repo.markFailed(
+              job.payload.parentJobId,
+              `Segment ${job.payload.segmentIndex} failed: ${msg}`,
+            );
+            this.emit(
+              "job:failed",
+              parentJob,
+              `Segment ${job.payload.segmentIndex} failed: ${msg}`,
+            );
+          }
+        }
+        return;
+      }
+    }
+
     let resultUrl = (result.metadata?.result_url as string | undefined) ?? "";
     let galleryAssetId: string | undefined = result.metadata
       ?.gallery_asset_id as string | undefined;
@@ -1290,14 +1387,21 @@ export class QueueMaster extends EventEmitter {
         path.join(os.homedir(), ".openzigs", "gallery");
       await fs.mkdir(galleryDir, { recursive: true });
 
-      const ext =
-        result.media_type === "image/png"
-          ? ".png"
-          : result.media_type === "image/jpeg"
-            ? ".jpg"
-            : result.media_type === "image/webp"
-              ? ".webp"
-              : ".bin";
+      const extMap: Record<string, string> = {
+        "image/png": ".png",
+        "image/jpeg": ".jpg",
+        "image/webp": ".webp",
+        "video/mp4": ".mp4",
+        "audio/wav": ".wav",
+        "audio/mp3": ".mp3",
+      };
+      const ext = extMap[result.media_type] ?? ".bin";
+      const assetType: "image" | "video" | "audio" =
+        result.media_type.startsWith("video/")
+          ? "video"
+          : result.media_type.startsWith("audio/")
+            ? "audio"
+            : "image";
       const safeJobId = String(jobId).replace(/[^a-zA-Z0-9_-]/g, "_");
       const filename = `${safeJobId}${ext}`;
       const filePath = path.join(galleryDir, filename);
@@ -1305,7 +1409,7 @@ export class QueueMaster extends EventEmitter {
       await fs.writeFile(filePath, buffer);
 
       galleryAssetId = this.repo.createAsset({
-        type: "image",
+        type: assetType,
         filename,
         filePath,
         mimeType: result.media_type,

@@ -98,7 +98,7 @@ export class CloudflareTunnel extends EventEmitter {
 
     const args = this.buildArgs(this.localUrl);
     this.process = this.spawn("cloudflared", args, {
-      stdio: ["ignore", "pipe", "pipe"]
+      stdio: ["ignore", "pipe", "pipe"],
     });
 
     const stderr = this.process.stderr;
@@ -113,7 +113,10 @@ export class CloudflareTunnel extends EventEmitter {
             newPublicUrl = match[0];
           }
         } else if (this.mode === "named" && this.namedTunnel?.hostname) {
-          if (/Registered tunnel connection/i.test(output) || /Connected/i.test(output)) {
+          if (
+            /Registered tunnel connection/i.test(output) ||
+            /Connected/i.test(output)
+          ) {
             newPublicUrl = `https://${this.namedTunnel.hostname}`;
           }
         }
@@ -138,10 +141,14 @@ export class CloudflareTunnel extends EventEmitter {
         return;
       }
       if (this.rejectConnect) {
-        this.rejectConnect(error instanceof Error ? error : new Error(String(error)));
+        this.rejectConnect(
+          error instanceof Error ? error : new Error(String(error)),
+        );
         this.resetConnectPromise();
       } else {
-        this.logger?.error(`Cloudflare tunnel process error: ${error instanceof Error ? error.message : String(error)}`);
+        this.logger?.error(
+          `Cloudflare tunnel process error: ${error instanceof Error ? error.message : String(error)}`,
+        );
         this.scheduleReconnect();
       }
     });
@@ -153,10 +160,14 @@ export class CloudflareTunnel extends EventEmitter {
       this.publicUrl = null;
       this.emit("disconnected");
       if (this.rejectConnect) {
-        this.rejectConnect(new Error("Tunnel exited before connection was established"));
+        this.rejectConnect(
+          new Error("Tunnel exited before connection was established"),
+        );
         this.resetConnectPromise();
       } else {
-        this.logger?.warn(`Cloudflare tunnel process exited with code ${code} and signal ${signal}`);
+        this.logger?.warn(
+          `Cloudflare tunnel process exited with code ${code} and signal ${signal}`,
+        );
         this.scheduleReconnect();
       }
     });
@@ -169,7 +180,9 @@ export class CloudflareTunnel extends EventEmitter {
         this.rejectConnect(new Error("Tunnel timeout"));
         this.resetConnectPromise();
       } else {
-        this.logger?.warn("Cloudflare tunnel reconnect attempt timed out, restarting process...");
+        this.logger?.warn(
+          "Cloudflare tunnel reconnect attempt timed out, restarting process...",
+        );
         if (this.process) {
           this.process.kill();
         } else {
@@ -202,7 +215,9 @@ export class CloudflareTunnel extends EventEmitter {
       if (this.stopping) {
         return;
       }
-      this.logger?.warn("Cloudflare tunnel disconnected, attempting reconnect...");
+      this.logger?.warn(
+        "Cloudflare tunnel disconnected, attempting reconnect...",
+      );
       this.startProcess();
     }, this.reconnectDelayMs);
   }

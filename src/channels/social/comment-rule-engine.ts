@@ -1,16 +1,24 @@
 import { EventEmitter } from "node:events";
 import { logger } from "../../logging/logger.js";
 import { SocialRepository } from "./social-repository.js";
-import type {
-  CommentRule,
-  IncomingComment,
-  SocialPlatform,
-} from "./types.js";
+import type { CommentRule, IncomingComment, SocialPlatform } from "./types.js";
 
-export type DmSender = (platform: SocialPlatform, userId: string, text: string) => Promise<void>;
-export type CommentReplier = (platform: SocialPlatform, commentId: string, text: string, postId?: string) => Promise<void>;
+export type DmSender = (
+  platform: SocialPlatform,
+  userId: string,
+  text: string,
+) => Promise<void>;
+export type CommentReplier = (
+  platform: SocialPlatform,
+  commentId: string,
+  text: string,
+  postId?: string,
+) => Promise<void>;
 /** AI reply generator for comment automation. */
-export type AiReplyGenerator = (prompt: string, context?: string) => Promise<string>;
+export type AiReplyGenerator = (
+  prompt: string,
+  context?: string,
+) => Promise<string>;
 
 export interface CommentRuleEngineOpts {
   repository: SocialRepository;
@@ -64,7 +72,12 @@ export class CommentRuleEngine extends EventEmitter {
    */
   async evaluate(comment: IncomingComment): Promise<string[]> {
     // Skip if this comment was already processed (webhook retry / poll overlap)
-    if (this.repository.hasCommentBeenProcessed(comment.commentId, comment.platform)) {
+    if (
+      this.repository.hasCommentBeenProcessed(
+        comment.commentId,
+        comment.platform,
+      )
+    ) {
       return [];
     }
 
@@ -82,8 +95,15 @@ export class CommentRuleEngine extends EventEmitter {
   }
 
   /** Log an outbound DM in the social_messages table with post context metadata. */
-  private logOutboundDm(comment: IncomingComment, dmText: string, metadata: Record<string, unknown>): void {
-    const contact = this.repository.getContactByPlatformUser(comment.platform, comment.userId);
+  private logOutboundDm(
+    comment: IncomingComment,
+    dmText: string,
+    metadata: Record<string, unknown>,
+  ): void {
+    const contact = this.repository.getContactByPlatformUser(
+      comment.platform,
+      comment.userId,
+    );
     if (contact) {
       this.repository.insertMessage({
         contactId: contact.id,
@@ -97,8 +117,14 @@ export class CommentRuleEngine extends EventEmitter {
   }
 
   /** Log an outbound comment reply in the social_messages table. */
-  private logOutboundCommentReply(comment: IncomingComment, replyText: string): void {
-    const contact = this.repository.getContactByPlatformUser(comment.platform, comment.userId);
+  private logOutboundCommentReply(
+    comment: IncomingComment,
+    replyText: string,
+  ): void {
+    const contact = this.repository.getContactByPlatformUser(
+      comment.platform,
+      comment.userId,
+    );
     if (contact) {
       this.repository.insertMessage({
         contactId: contact.id,
@@ -106,13 +132,21 @@ export class CommentRuleEngine extends EventEmitter {
         direction: "outbound",
         status: "auto_replied",
         content: replyText,
-        metadata: { source: "comment-rule-engine", type: "comment_reply", postId: comment.postId, commentId: comment.commentId },
+        metadata: {
+          source: "comment-rule-engine",
+          type: "comment_reply",
+          postId: comment.postId,
+          commentId: comment.commentId,
+        },
       });
     }
   }
 
   /** Check if a rule matches the given comment. */
-  private ruleMatchesComment(rule: CommentRule, comment: IncomingComment): boolean {
+  private ruleMatchesComment(
+    rule: CommentRule,
+    comment: IncomingComment,
+  ): boolean {
     // Post-scoping: if rule has specific post_ids, check membership
     if (rule.post_ids) {
       const postIds: string[] = JSON.parse(rule.post_ids);
@@ -120,7 +154,11 @@ export class CommentRuleEngine extends EventEmitter {
     }
 
     // Max total triggers
-    if (rule.max_triggers_total !== null && rule.trigger_count >= rule.max_triggers_total) return false;
+    if (
+      rule.max_triggers_total !== null &&
+      rule.trigger_count >= rule.max_triggers_total
+    )
+      return false;
 
     // Keyword matching: case-insensitive word-boundary match
     const keywords: string[] = JSON.parse(rule.keywords);
@@ -143,7 +181,9 @@ export class CommentRuleEngine extends EventEmitter {
             keywordMatched = true;
           }
         } catch {
-          logger.warn(`[CommentRule] Invalid regex in rule ${rule.id}: ${rule.regex}`);
+          logger.warn(
+            `[CommentRule] Invalid regex in rule ${rule.id}: ${rule.regex}`,
+          );
         }
       }
     }
@@ -151,14 +191,20 @@ export class CommentRuleEngine extends EventEmitter {
     if (!keywordMatched) return false;
 
     // Per-user trigger limit
-    const userTriggers = this.repository.getUserTriggerCount(rule.id, comment.username);
+    const userTriggers = this.repository.getUserTriggerCount(
+      rule.id,
+      comment.username,
+    );
     if (userTriggers >= rule.max_triggers_per_user) return false;
 
     return true;
   }
 
   /** Execute a matched rule: reply to comment and/or send DM. */
-  private async executeRule(rule: CommentRule, comment: IncomingComment): Promise<void> {
+  private async executeRule(
+    rule: CommentRule,
+    comment: IncomingComment,
+  ): Promise<void> {
     // Determine the matched keyword for template interpolation
     const keywords: string[] = JSON.parse(rule.keywords);
     let matchedKeyword = "";
@@ -173,7 +219,9 @@ export class CommentRuleEngine extends EventEmitter {
       try {
         const m = new RegExp(rule.regex, "i").exec(comment.text);
         if (m) matchedKeyword = m[0];
-      } catch { /* already logged in match phase */ }
+      } catch {
+        /* already logged in match phase */
+      }
     }
 
     const vars: TemplateVars = {
@@ -197,37 +245,73 @@ export class CommentRuleEngine extends EventEmitter {
           const aiPrompt = [
             `Reply to this comment on ${comment.platform}:`,
             `Comment by @${comment.username}: "${comment.text}"`,
-            comment.postContext?.caption ? `Post caption: "${comment.postContext.caption}"` : "",
+            comment.postContext?.caption
+              ? `Post caption: "${comment.postContext.caption}"`
+              : "",
             rule.ai_reply_context ? `Context: ${rule.ai_reply_context}` : "",
             "Keep the reply concise, friendly, and on-brand. Reply with just the text, no quotes.",
-          ].filter(Boolean).join("\n");
-          const reply = await this.generateAiReply(aiPrompt, rule.ai_reply_context ?? undefined);
-          await this.replyToComment(comment.platform, comment.commentId, reply, comment.postId);
+          ]
+            .filter(Boolean)
+            .join("\n");
+          const reply = await this.generateAiReply(
+            aiPrompt,
+            rule.ai_reply_context ?? undefined,
+          );
+          await this.replyToComment(
+            comment.platform,
+            comment.commentId,
+            reply,
+            comment.postId,
+          );
           this.logOutboundCommentReply(comment, reply);
           commentReplied = true;
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
-          logger.error(`[CommentRule] AI comment reply failed for rule ${rule.id}: ${msg}`);
+          logger.error(
+            `[CommentRule] AI comment reply failed for rule ${rule.id}: ${msg}`,
+          );
         }
       } else if (rule.comment_reply_template) {
         // Template-based comment reply
         try {
           const reply = interpolateTemplate(rule.comment_reply_template, vars);
-          await this.replyToComment(comment.platform, comment.commentId, reply, comment.postId);
+          await this.replyToComment(
+            comment.platform,
+            comment.commentId,
+            reply,
+            comment.postId,
+          );
           this.logOutboundCommentReply(comment, reply);
           commentReplied = true;
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
-          logger.error(`[CommentRule] Comment reply failed for rule ${rule.id}: ${msg}`);
+          logger.error(
+            `[CommentRule] Comment reply failed for rule ${rule.id}: ${msg}`,
+          );
         }
       }
     }
 
     // 2. Send DM (with optional delay) — skip for platforms without DM support (e.g. YouTube)
-    const DM_SUPPORTED_PLATFORMS: Set<string> = new Set(["twitter", "linkedin", "reddit", "instagram", "facebook"]);
-    if (this.sendDm && rule.dm_template && DM_SUPPORTED_PLATFORMS.has(comment.platform)) {
+    const DM_SUPPORTED_PLATFORMS: Set<string> = new Set([
+      "twitter",
+      "linkedin",
+      "reddit",
+      "instagram",
+      "facebook",
+    ]);
+    if (
+      this.sendDm &&
+      rule.dm_template &&
+      DM_SUPPORTED_PLATFORMS.has(comment.platform)
+    ) {
       const postMeta = comment.postContext
-        ? { postCaption: comment.postContext.caption, postUrl: comment.postContext.permalink, postMediaType: comment.postContext.mediaType, triggeringComment: comment.text }
+        ? {
+            postCaption: comment.postContext.caption,
+            postUrl: comment.postContext.permalink,
+            postMediaType: comment.postContext.mediaType,
+            triggeringComment: comment.text,
+          }
         : { triggeringComment: comment.text };
 
       if (rule.dm_delay_seconds > 0) {
@@ -237,11 +321,20 @@ export class CommentRuleEngine extends EventEmitter {
             const dmText = interpolateTemplate(rule.dm_template, vars);
             await this.sendDm!(comment.platform, comment.userId, dmText);
             this.logOutboundDm(comment, dmText, postMeta);
-            this.emit("dm_sent", { ruleId: rule.id, username: comment.username });
+            this.emit("dm_sent", {
+              ruleId: rule.id,
+              username: comment.username,
+            });
           } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
-            logger.error(`[CommentRule] Delayed DM failed for rule ${rule.id}: ${msg}`);
-            this.emit("dm_failed", { ruleId: rule.id, username: comment.username, error: msg });
+            logger.error(
+              `[CommentRule] Delayed DM failed for rule ${rule.id}: ${msg}`,
+            );
+            this.emit("dm_failed", {
+              ruleId: rule.id,
+              username: comment.username,
+              error: msg,
+            });
           }
         }, rule.dm_delay_seconds * 1000);
         dmSent = true; // scheduled
@@ -261,7 +354,10 @@ export class CommentRuleEngine extends EventEmitter {
 
     // Auto-tag contact
     if (rule.auto_tag) {
-      const contact = this.repository.getContactByPlatformUser(comment.platform, comment.userId);
+      const contact = this.repository.getContactByPlatformUser(
+        comment.platform,
+        comment.userId,
+      );
       if (contact) {
         this.repository.addTag(contact.id, rule.auto_tag);
       }
@@ -270,7 +366,11 @@ export class CommentRuleEngine extends EventEmitter {
     // Log the automation execution
     this.repository.insertAutomationLog({
       rule_id: rule.id,
-      contact_id: this.repository.getContactByPlatformUser(comment.platform, comment.userId)?.id ?? null,
+      contact_id:
+        this.repository.getContactByPlatformUser(
+          comment.platform,
+          comment.userId,
+        )?.id ?? null,
       platform: comment.platform,
       post_id: comment.postId,
       comment_id: comment.commentId,

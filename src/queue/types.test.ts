@@ -11,6 +11,7 @@ import {
   VALID_PIPELINE_TYPES,
   VALID_TILING_MODES,
   LTX_MODEL_CATALOG,
+  VALID_VIDEO_DURATIONS,
 } from "./types.js";
 
 describe("targetNodeForJobType", () => {
@@ -112,8 +113,24 @@ describe("LTX_MODEL_CATALOG", () => {
     expect(defaultModel!.repo).toBe("AITRADER/ltx2-distilled-4bit-mlx");
   });
 
-  it("includes LTX-2.3 models", () => {
-    const v23Models = LTX_MODEL_CATALOG.filter((m) => m.version === "2.3");
-    expect(v23Models.length).toBeGreaterThanOrEqual(1);
+  it("includes only supported models (LTX-2 via AITRADER)", () => {
+    // LTX-2.3 removed from catalog — mlx_video (Blaizzy fork) only supports LTX-2 format.
+    // dgrauet/ltx-2.3-mlx-q4 uses a flat layout incompatible with the current library.
+    const supported = LTX_MODEL_CATALOG.filter((m) => m.version === "2.0");
+    expect(supported.length).toBeGreaterThanOrEqual(1);
+  });
+});
+
+describe("VALID_VIDEO_DURATIONS", () => {
+  it("contains the four valid durations", () => {
+    expect(VALID_VIDEO_DURATIONS).toEqual([4, 8, 12, 16]);
+  });
+
+  it("includes 4s (single segment)", () => {
+    expect(VALID_VIDEO_DURATIONS).toContain(4);
+  });
+
+  it("includes 16s (maximum multi-segment)", () => {
+    expect(VALID_VIDEO_DURATIONS).toContain(16);
   });
 });

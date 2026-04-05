@@ -56,9 +56,7 @@ export default function PresenterPlayerPage() {
   const quizQuery = useQuery({
     queryKey: ["presentation-quiz", id],
     queryFn: () =>
-      fetchJson<{ questions: QuizQuestion[] }>(
-        `/api/presentations/${id}/quiz`,
-      ),
+      fetchJson<{ questions: QuizQuestion[] }>(`/api/presentations/${id}/quiz`),
     enabled: !!id,
   });
 
@@ -85,7 +83,11 @@ export default function PresenterPlayerPage() {
   } = usePresenterState();
 
   // Host joins the multiplayer room so playback syncs to guests
-  const { roomState, sendPlay, sendPause, sendSeek } = useRoomSync(id, "host", videoRef);
+  const { roomState, sendPlay, sendPause, sendSeek } = useRoomSync(
+    id,
+    "host",
+    videoRef,
+  );
 
   // A/V mesh: acquire local camera + mic, then join PeerJS mesh
   const media = useMediaDevices({ video: true, audio: true });
@@ -110,7 +112,10 @@ export default function PresenterPlayerPage() {
 
   // Latch blackboard open when any Q&A round begins (local or remote)
   useEffect(() => {
-    if (state.phase === "PAUSED_USER_Q" || roomState.fsmState === "PAUSED_USER_Q") {
+    if (
+      state.phase === "PAUSED_USER_Q" ||
+      roomState.fsmState === "PAUSED_USER_Q"
+    ) {
       setBlackboardActive(true);
     }
   }, [state.phase, roomState.fsmState]);
@@ -140,10 +145,9 @@ export default function PresenterPlayerPage() {
     if (scormExporting) return;
     setScormExporting(true);
     try {
-      const resp = await fetch(
-        buildUrl(`/api/presentations/${id}/scorm`),
-        { method: "POST" },
-      );
+      const resp = await fetch(buildUrl(`/api/presentations/${id}/scorm`), {
+        method: "POST",
+      });
       if (!resp.ok) throw new Error("Export failed");
       const blob = await resp.blob();
       const disposition = resp.headers.get("content-disposition") ?? "";
@@ -193,17 +197,14 @@ export default function PresenterPlayerPage() {
     // Try server TTS first, fall back to browser SpeechSynthesis
     void (async () => {
       try {
-        const resp = await fetch(
-          buildUrl("/api/presentations/tts-prompt"),
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              text: "Please ask your question out loud.",
-              presentationId: id,
-            }),
-          },
-        );
+        const resp = await fetch(buildUrl("/api/presentations/tts-prompt"), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            text: "Please ask your question out loud.",
+            presentationId: id,
+          }),
+        });
         if (resp.ok) {
           const blob = await resp.blob();
           const url = URL.createObjectURL(blob);
@@ -212,10 +213,14 @@ export default function PresenterPlayerPage() {
           await audio.play();
           return;
         }
-      } catch { /* fall through */ }
+      } catch {
+        /* fall through */
+      }
       // Browser fallback
       if ("speechSynthesis" in window) {
-        const utterance = new SpeechSynthesisUtterance("Please ask your question out loud.");
+        const utterance = new SpeechSynthesisUtterance(
+          "Please ask your question out loud.",
+        );
         utterance.rate = 0.95;
         speechSynthesis.speak(utterance);
       }
@@ -223,21 +228,24 @@ export default function PresenterPlayerPage() {
   }, [state.phase]);
 
   // Transcribe audio blob via the voice API
-  const handleTranscribe = useCallback(async (audioBlob: Blob): Promise<string | null> => {
-    try {
-      const formData = new FormData();
-      formData.append("audio", audioBlob, "question.webm");
-      const resp = await fetch(buildUrl("/api/voice/transcribe"), {
-        method: "POST",
-        body: formData,
-      });
-      if (!resp.ok) return null;
-      const data = await resp.json() as { text?: string };
-      return data.text ?? null;
-    } catch {
-      return null;
-    }
-  }, []);
+  const handleTranscribe = useCallback(
+    async (audioBlob: Blob): Promise<string | null> => {
+      try {
+        const formData = new FormData();
+        formData.append("audio", audioBlob, "question.webm");
+        const resp = await fetch(buildUrl("/api/voice/transcribe"), {
+          method: "POST",
+          body: formData,
+        });
+        if (!resp.ok) return null;
+        const data = (await resp.json()) as { text?: string };
+        return data.text ?? null;
+      } catch {
+        return null;
+      }
+    },
+    [],
+  );
 
   // Find current chapter from playback time
   const findChapter = useCallback(
@@ -297,7 +305,10 @@ export default function PresenterPlayerPage() {
     };
     const handleStart = (data: { askedBy?: string; question?: string }) => {
       if (data.askedBy && data.question) {
-        setQuestionAttribution({ askedBy: data.askedBy, question: data.question });
+        setQuestionAttribution({
+          askedBy: data.askedBy,
+          question: data.question,
+        });
       }
     };
 
@@ -442,7 +453,9 @@ export default function PresenterPlayerPage() {
           <div className="flex h-full w-full items-center justify-center">
             <InteractivePlayer
               videoRef={videoRef}
-              videoUrl={buildMediaUrl(`/api/files/serve?path=${encodeURIComponent(presentation.video_path)}`)}
+              videoUrl={buildMediaUrl(
+                `/api/files/serve?path=${encodeURIComponent(presentation.video_path)}`,
+              )}
               onTimeUpdate={handleTimeUpdate}
               onEnded={handleVideoEnd}
               onPlay={handleVideoPlay}
@@ -458,15 +471,26 @@ export default function PresenterPlayerPage() {
             />
 
             {/* Remote participant tiles */}
-            <RemotePeerTiles peerIds={voice.peerIds} remoteStreams={voice.remoteStreams} />
+            <RemotePeerTiles
+              peerIds={voice.peerIds}
+              remoteStreams={voice.remoteStreams}
+            />
 
             {/* Blackboard overlay (Q&A) — latches open until user dismisses */}
             {blackboardActive && (
               <BlackboardOverlay
                 question={state.pendingQuestion}
                 answerTokens={state.answerTokens}
-                isAnswering={state.pendingQuestion !== null && state.answerTokens === ""}
-                isDone={state.pendingQuestion !== null && state.answerTokens !== "" && state.qaHistory.length > 0 && state.qaHistory[state.qaHistory.length - 1].question === state.pendingQuestion}
+                isAnswering={
+                  state.pendingQuestion !== null && state.answerTokens === ""
+                }
+                isDone={
+                  state.pendingQuestion !== null &&
+                  state.answerTokens !== "" &&
+                  state.qaHistory.length > 0 &&
+                  state.qaHistory[state.qaHistory.length - 1].question ===
+                    state.pendingQuestion
+                }
                 noteSaved={noteSaved}
                 onAsk={handleAskQuestion}
                 onResume={handleResume}
@@ -571,7 +595,9 @@ export default function PresenterPlayerPage() {
         participantCount={roomState.memberCount}
         showParticipants={showParticipants}
         showChapters={showChapters}
-        canRaiseHand={state.phase === "PLAYING" && roomState.fsmState !== "PAUSED_USER_Q"}
+        canRaiseHand={
+          state.phase === "PLAYING" && roomState.fsmState !== "PAUSED_USER_Q"
+        }
       />
 
       <ToastContainer />

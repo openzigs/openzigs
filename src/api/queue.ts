@@ -4,6 +4,7 @@
  */
 
 import { Router } from "express";
+import type { Request, Response, NextFunction } from "express";
 import { timingSafeEqual } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -23,7 +24,16 @@ import {
   MAX_VIDEO_FRAMES,
   MAX_VIDEO_DURATION_SEC,
   DEFAULT_VIDEO_FPS,
+  VALID_VIDEO_DURATIONS,
 } from "../queue/types.js";
+import {
+  isMultiSegmentDuration,
+  isValidVideoDuration,
+  decomposeMultiSegmentJob,
+  registerSegmentJob,
+  isSegmentJob as isSegmentJobCheck,
+  formatSegmentProgress,
+} from "../queue/multi-segment.js";
 import type { CharacterRepository } from "../characters/character-repository.js";
 import type { KnowledgeIngestionService } from "../knowledge/index.js";
 
@@ -100,10 +110,23 @@ export const createQueueCallbackRouter = ({
 }: QueueRouterOptions): Router => {
   const callbackRouter = Router();
 
-  // Worker secret auth middleware (opt-in via config.auth.workerSecret)
+  // Worker secret auth middleware — scoped to callback routes only (/complete, /progress)
+  // NOT applied as callbackRouter.use() because the callback and main queue routers
+  // are both mounted at /api/queue. A blanket .use() would intercept requests meant
+  // for the main queue router (e.g. /jobs, /dispatch) and reject them.
+  let callbackAuthMiddleware: (
+    req: Request,
+    res: Response,
+    next: NextFunction,
+  ) => void;
+
   if (workerSecret) {
     const expectedBuf = Buffer.from(workerSecret);
-    callbackRouter.use((req, res, next) => {
+    callbackAuthMiddleware = (
+      req: Request,
+      res: Response,
+      next: NextFunction,
+    ) => {
       const authHeader = req.headers.authorization ?? "";
       const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
       const tokenBuf = Buffer.from(token);
@@ -112,23 +135,42 @@ export const createQueueCallbackRouter = ({
         !timingSafeEqual(tokenBuf, expectedBuf)
       ) {
         logger.warn(
-          `[QueueAPI] Rejected callback — invalid worker secret from ${req.ip}`,
+          `[QueueAPI] Rejected callback — invalid worker secret from ${req.ip} ${req.method} ${req.originalUrl}`,
         );
         res.status(401).json({ error: "Invalid worker secret" });
         return;
       }
       next();
-    });
+    };
     logger.info(
       "[QueueAPI] Worker callback auth enabled (workerSecret configured)",
     );
   } else {
+    // No workerSecret — only allow localhost requests
+    const LOCALHOST_IPS = new Set(["127.0.0.1", "::1", "::ffff:127.0.0.1"]);
+    callbackAuthMiddleware = (
+      req: Request,
+      res: Response,
+      next: NextFunction,
+    ) => {
+      if (LOCALHOST_IPS.has(req.ip ?? "")) {
+        return next();
+      }
+      logger.warn(
+        `[QueueAPI] Rejected callback from non-localhost ${req.ip} — auth.workerSecret not configured`,
+      );
+      res.status(401).json({
+        error:
+          "Queue callback requires auth.workerSecret when accessed from non-localhost. Set it in ~/.openzigs/config.json",
+      });
+      return;
+    };
     logger.warn(
-      "[QueueAPI] Worker callbacks are UNAUTHENTICATED — set auth.workerSecret to secure them",
+      "[QueueAPI] auth.workerSecret not configured — queue callbacks will only be accepted from localhost",
     );
   }
 
-  callbackRouter.post("/complete", async (req, res) => {
+  callbackRouter.post("/complete", callbackAuthMiddleware, async (req, res) => {
     try {
       const {
         job_id,
@@ -166,6 +208,36 @@ export const createQueueCallbackRouter = ({
       // Save media to gallery filesystem
       let resultUrl = "";
       let galleryAssetId: string | undefined;
+
+      // Check if this is a multi-segment sub-job — if so, pass base64 directly
+      // to handleJobCompletion for segment orchestration instead of saving to gallery.
+      const completedJob = repo.getJob(job_id);
+      if (
+        completedJob &&
+        isSegmentJobCheck(completedJob) &&
+        (media_base64 || file_path)
+      ) {
+        // Read video bytes from file_path or use base64
+        let videoBase64 = media_base64;
+        if (!videoBase64 && file_path) {
+          const resolved = path.resolve(String(file_path));
+          if (resolved.startsWith(path.resolve(GALLERY_DIR))) {
+            const fileData = await fs.readFile(resolved);
+            videoBase64 = fileData.toString("base64");
+          }
+        }
+
+        await queueMaster.handleJobCompletion(job_id, {
+          media_base64: videoBase64,
+          media_type: media_type ?? "video/mp4",
+          metadata: {
+            ...((metadata as Record<string, unknown>) ?? {}),
+            ...(extraFields as Record<string, unknown>),
+          },
+        });
+        res.json({ ok: true, segment: true });
+        return;
+      }
 
       // File-based callback: sidecar already wrote the file to gallery dir
       if (file_path && media_type) {
@@ -306,8 +378,8 @@ export const createQueueCallbackRouter = ({
     }
   });
 
-  // ── POST /progress — Granular pipeline progress updates (no auth — called by sidecars) ──
-  callbackRouter.post("/progress", (req, res) => {
+  // ── POST /progress — Granular pipeline progress updates (called by sidecars) ──
+  callbackRouter.post("/progress", callbackAuthMiddleware, (req, res) => {
     try {
       const { job_id, stage, progress, message } = req.body as {
         job_id?: string;
@@ -319,6 +391,21 @@ export const createQueueCallbackRouter = ({
       if (!job_id) {
         res.status(400).json({ error: "job_id is required" });
         return;
+      }
+
+      // For segment sub-jobs, also report aggregate progress on the parent
+      const progressJob = repo.getJob(job_id);
+      if (progressJob?.payload?.parentJobId) {
+        const segMsg = formatSegmentProgress(
+          progressJob.payload.segmentIndex ?? 0,
+          progressJob.payload.totalSegments ?? 1,
+          progress,
+        );
+        queueMaster.reportProgress(progressJob.payload.parentJobId, {
+          stage,
+          progress,
+          message: segMsg,
+        });
       }
 
       queueMaster.reportProgress(job_id, { stage, progress, message });
@@ -401,11 +488,9 @@ export const createQueueRouter = ({
       } = req.body as Partial<CreateMediaJobInput>;
 
       if (!type || !VALID_JOB_TYPES.includes(type)) {
-        res
-          .status(400)
-          .json({
-            error: `Invalid job type. Must be one of: ${VALID_JOB_TYPES.join(", ")}`,
-          });
+        res.status(400).json({
+          error: `Invalid job type. Must be one of: ${VALID_JOB_TYPES.join(", ")}`,
+        });
         return;
       }
 
@@ -425,11 +510,9 @@ export const createQueueRouter = ({
         typeof payload.prompt === "string" &&
         payload.prompt.length > MAX_TASK_INPUT_LENGTH
       ) {
-        res
-          .status(400)
-          .json({
-            error: `Prompt exceeds ${MAX_TASK_INPUT_LENGTH} characters`,
-          });
+        res.status(400).json({
+          error: `Prompt exceeds ${MAX_TASK_INPUT_LENGTH} characters`,
+        });
         return;
       }
 
@@ -449,6 +532,55 @@ export const createQueueRouter = ({
       // Automatically inject character LoRA when trigger word detected in prompt
       if (type === "txt2img" || type === "img2img") {
         injectCharacterLora(payload);
+      }
+
+      // ── Multi-Segment Video Decomposition ─────────────────
+      // If video_duration > 4, decompose into chained 4s segment jobs
+      if (
+        (type === "txt2video" || type === "img2video") &&
+        isMultiSegmentDuration(payload.video_duration)
+      ) {
+        const duration = payload.video_duration!;
+        if (!isValidVideoDuration(duration)) {
+          res.status(400).json({
+            error: `Invalid video_duration ${duration}. Must be one of: ${VALID_VIDEO_DURATIONS.join(", ")}`,
+          });
+          return;
+        }
+
+        // Create parent job (tracks overall progress)
+        const parentJob = repo.createJob({
+          type,
+          payload: { ...payload, video_duration: duration },
+          model,
+          projectId: projectId ?? undefined,
+          priority: priority ?? 0,
+          notifyViaTelegram: notifyViaTelegram ?? undefined,
+          telegramChatId: telegramChatId ?? undefined,
+        });
+
+        // Decompose into first segment
+        const decomposed = decomposeMultiSegmentJob(parentJob);
+        if (decomposed) {
+          const firstSegment = repo.createJob({
+            type: decomposed.type,
+            payload: decomposed.payload,
+            model,
+            priority: (priority ?? 0) + 1, // segments get higher priority
+          });
+          registerSegmentJob(parentJob.id, 0, firstSegment.id);
+
+          logger.info(
+            `[QueueAPI] Multi-segment job created: parent=${parentJob.id} (${duration}s, ${decomposed.totalSegments} segments), first segment=${firstSegment.id}`,
+          );
+
+          res.status(201).json({
+            ...parentJob,
+            multiSegment: true,
+            totalSegments: decomposed.totalSegments,
+          });
+          return;
+        }
       }
 
       const job = repo.createJob({
@@ -733,19 +865,15 @@ export const createQueueRouter = ({
       ];
 
       if (visibility && !VALID_VISIBILITY.includes(visibility)) {
-        res
-          .status(400)
-          .json({
-            error: `visibility must be one of: ${VALID_VISIBILITY.join(", ")}`,
-          });
+        res.status(400).json({
+          error: `visibility must be one of: ${VALID_VISIBILITY.join(", ")}`,
+        });
         return;
       }
       if (category && !VALID_CATEGORY.includes(category)) {
-        res
-          .status(400)
-          .json({
-            error: `category must be one of: ${VALID_CATEGORY.join(", ")}`,
-          });
+        res.status(400).json({
+          error: `category must be one of: ${VALID_CATEGORY.join(", ")}`,
+        });
         return;
       }
 
@@ -934,11 +1062,9 @@ export const createQueueRouter = ({
 
       // Validate MIME type against allowlist
       if (!ALLOWED_UPLOAD_MIMES.has(mime_type)) {
-        res
-          .status(400)
-          .json({
-            error: `Unsupported MIME type: ${mime_type}. Allowed: ${[...ALLOWED_UPLOAD_MIMES].join(", ")}`,
-          });
+        res.status(400).json({
+          error: `Unsupported MIME type: ${mime_type}. Allowed: ${[...ALLOWED_UPLOAD_MIMES].join(", ")}`,
+        });
         return;
       }
 
@@ -947,11 +1073,9 @@ export const createQueueRouter = ({
 
       // Validate decoded file size
       if (buffer.length > MAX_UPLOAD_BYTES) {
-        res
-          .status(413)
-          .json({
-            error: `File too large: ${buffer.length} bytes exceeds ${MAX_UPLOAD_BYTES} byte limit`,
-          });
+        res.status(413).json({
+          error: `File too large: ${buffer.length} bytes exceeds ${MAX_UPLOAD_BYTES} byte limit`,
+        });
         return;
       }
 
@@ -1260,14 +1384,12 @@ export const createQueueRouter = ({
           });
       }
 
-      res
-        .status(201)
-        .json({
-          assetId,
-          provider: result.provider,
-          model: modelLabel,
-          filename,
-        });
+      res.status(201).json({
+        assetId,
+        provider: result.provider,
+        model: modelLabel,
+        filename,
+      });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       logger.warn(`[QueueAPI] Cloud image generate failed: ${msg}`);
@@ -1321,11 +1443,9 @@ export const createQueueRouter = ({
           targetNode !== "m2-pro" &&
           targetNode !== "local")
       ) {
-        res
-          .status(400)
-          .json({
-            error: "targetNode must be 'mac-mini', 'm2-pro', or 'local'",
-          });
+        res.status(400).json({
+          error: "targetNode must be 'mac-mini', 'm2-pro', or 'local'",
+        });
         return;
       }
 

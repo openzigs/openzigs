@@ -56,10 +56,14 @@ export class VoiceLearningService {
         visibility: "internal",
         category: "voice_example",
       });
-      logger.info(`[VoiceLearning] Stored voice example ${docId} (edited=${opts.wasEdited})`);
+      logger.info(
+        `[VoiceLearning] Stored voice example ${docId} (edited=${opts.wasEdited})`,
+      );
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      logger.error(`[VoiceLearning] Failed to store voice example ${docId}: ${msg}`);
+      logger.error(
+        `[VoiceLearning] Failed to store voice example ${docId}: ${msg}`,
+      );
     }
   }
 

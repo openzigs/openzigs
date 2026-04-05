@@ -3,7 +3,11 @@ import path from "node:path";
 import os from "node:os";
 import { randomBytes } from "node:crypto";
 import * as z from "zod";
-import { secureDirOptions, secureWriteOptions, chmodSecureFile } from "./file-permissions.js";
+import {
+  secureDirOptions,
+  secureWriteOptions,
+  chmodSecureFile,
+} from "./file-permissions.js";
 import { logger } from "../logging/logger.js";
 import { PROJECT_ROOT } from "../project-root.js";
 import type { Role } from "../auth/auth.js";
@@ -72,6 +76,8 @@ export type TunnelConfig = {
   enabled: boolean;
   mode: TunnelMode;
   namedTunnel?: NamedTunnelConfig;
+  cfAccessTeamDomain?: string;
+  cfAccessAudience?: string | string[];
 };
 
 export type SidecarConfig = {
@@ -107,9 +113,26 @@ export type SessionConfig = {
 };
 
 export type CopilotProviderConfig =
-  | { type: "openai"; baseUrl: string; apiKey?: string; bearerToken?: string; wireApi?: "openai" | "anthropic" }
-  | { type: "azure"; baseUrl: string; apiKey?: string; bearerToken?: string; azure?: { apiVersion?: string } }
-  | { type: "anthropic"; baseUrl: string; apiKey?: string; bearerToken?: string }
+  | {
+      type: "openai";
+      baseUrl: string;
+      apiKey?: string;
+      bearerToken?: string;
+      wireApi?: "openai" | "anthropic";
+    }
+  | {
+      type: "azure";
+      baseUrl: string;
+      apiKey?: string;
+      bearerToken?: string;
+      azure?: { apiVersion?: string };
+    }
+  | {
+      type: "anthropic";
+      baseUrl: string;
+      apiKey?: string;
+      bearerToken?: string;
+    }
   | { type: "ollama"; baseUrl: string };
 
 // ── Native Custom Agent Config ──
@@ -127,8 +150,24 @@ export type CustomAgentConfig = {
 
 // ── Native MCP Server Config (SDK-level) ──
 export type NativeMcpServerConfig =
-  | { type: "local" | "stdio"; command: string; args?: string[]; env?: Record<string, string>; cwd?: string; tools?: string[]; disabledTools?: string[]; timeout?: number }
-  | { type: "http" | "sse"; url: string; headers?: Record<string, string>; tools?: string[]; disabledTools?: string[]; timeout?: number };
+  | {
+      type: "local" | "stdio";
+      command: string;
+      args?: string[];
+      env?: Record<string, string>;
+      cwd?: string;
+      tools?: string[];
+      disabledTools?: string[];
+      timeout?: number;
+    }
+  | {
+      type: "http" | "sse";
+      url: string;
+      headers?: Record<string, string>;
+      tools?: string[];
+      disabledTools?: string[];
+      timeout?: number;
+    };
 
 export type CopilotConfig = {
   provider?: CopilotProviderConfig | null;
@@ -300,7 +339,7 @@ export type AppConfig = {
 
 const rateLimitSchema = z.object({
   windowMs: z.number(),
-  max: z.number()
+  max: z.number(),
 });
 
 const authSchema = z.object({
@@ -308,18 +347,20 @@ const authSchema = z.object({
   token: z.string().optional(),
   role: z.enum(["viewer", "operator", "admin"]).optional(),
   rateLimit: rateLimitSchema,
-  workerSecret: z.string().optional()
+  workerSecret: z.string().optional(),
 });
 
 const accessControlSchema = z.object({
   mode: z.enum(["allowlist", "blocklist", "open"]),
   allowedUsers: z.array(z.string()),
-  blockedUsers: z.array(z.string())
+  blockedUsers: z.array(z.string()),
 });
 
-const messagingSchema = z.object({
-  accessControl: accessControlSchema
-}).optional();
+const messagingSchema = z
+  .object({
+    accessControl: accessControlSchema,
+  })
+  .optional();
 
 const telegramSchema = z.object({
   enabled: z.boolean(),
@@ -328,74 +369,91 @@ const telegramSchema = z.object({
   webhookSecret: z.string().optional(),
   allowedUsers: z.array(z.string()),
   adminUserId: z.string().optional(),
-  model: z.string().optional()
+  model: z.string().optional(),
 });
 
 const discordSchema = z.object({
   enabled: z.boolean(),
   token: z.string(),
-  allowedGuilds: z.array(z.string())
+  allowedGuilds: z.array(z.string()),
 });
 
 const webChannelSchema = z.object({
-  enabled: z.boolean()
+  enabled: z.boolean(),
 });
 
-const channelsSchema = z.object({
-  telegram: telegramSchema.optional(),
-  discord: discordSchema.optional(),
-  web: webChannelSchema.optional()
-}).optional();
+const channelsSchema = z
+  .object({
+    telegram: telegramSchema.optional(),
+    discord: discordSchema.optional(),
+    web: webChannelSchema.optional(),
+  })
+  .optional();
 
 const namedTunnelSchema = z.object({
   credentialsFile: z.string(),
-  hostname: z.string()
+  hostname: z.string(),
 });
 
-const tunnelSchema = z.object({
-  enabled: z.boolean(),
-  mode: z.enum(["quick", "named"]),
-  namedTunnel: namedTunnelSchema.optional()
-}).superRefine((value, ctx) => {
-  if (value.enabled && value.mode === "named" && !value.namedTunnel) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: "namedTunnel is required when tunnel mode is named"
-    });
-  }
-});
+const tunnelSchema = z
+  .object({
+    enabled: z.boolean(),
+    mode: z.enum(["quick", "named"]),
+    namedTunnel: namedTunnelSchema.optional(),
+    cfAccessTeamDomain: z.string().optional(),
+    cfAccessAudience: z.union([z.string(), z.array(z.string())]).optional(),
+  })
+  .superRefine((value, ctx) => {
+    if (value.enabled && value.mode === "named" && !value.namedTunnel) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "namedTunnel is required when tunnel mode is named",
+      });
+    }
+  });
 
 const sidecarConfigSchema = z.object({
-  enabled: z.boolean()
+  enabled: z.boolean(),
 });
 
-const mcpServersSchema = z.object({
-  autoProvision: z.boolean(),
-  skipUnconfigured: z.boolean(),
-  healthRetries: z.number(),
-  healthRetryDelay: z.number(),
-  network: z.string(),
-  sidecars: z.record(z.string(), sidecarConfigSchema)
-}).optional();
+const mcpServersSchema = z
+  .object({
+    autoProvision: z.boolean(),
+    skipUnconfigured: z.boolean(),
+    healthRetries: z.number(),
+    healthRetryDelay: z.number(),
+    network: z.string(),
+    sidecars: z.record(z.string(), sidecarConfigSchema),
+  })
+  .optional();
 
-const tasksSchema = z.object({
-  maxConcurrent: z.number().int().min(1).max(10).default(2),
-  backgroundTaskDefaultModel: z.string().nullable().optional().default(null),
-  defaultOrchestrationMode: z.enum(["task", "session"]).optional().default("task"),
-}).optional();
+const tasksSchema = z
+  .object({
+    maxConcurrent: z.number().int().min(1).max(10).default(2),
+    backgroundTaskDefaultModel: z.string().nullable().optional().default(null),
+    defaultOrchestrationMode: z
+      .enum(["task", "session"])
+      .optional()
+      .default("task"),
+  })
+  .optional();
 
-const infiniteSessionsSchema = z.object({
-  enabled: z.boolean().default(true),
-  backgroundCompactionThreshold: z.number().min(0).max(1).default(0.80),
-  bufferExhaustionThreshold: z.number().min(0).max(1).default(0.95),
-}).optional();
+const infiniteSessionsSchema = z
+  .object({
+    enabled: z.boolean().default(true),
+    backgroundCompactionThreshold: z.number().min(0).max(1).default(0.8),
+    bufferExhaustionThreshold: z.number().min(0).max(1).default(0.95),
+  })
+  .optional();
 
-const sessionSchema = z.object({
-  historyWindow: z.number().int().min(1).default(20),
-  maxToolsPerRequest: z.number().int().min(1).max(128).default(30),
-  dynamicToolLoading: z.boolean().default(false),
-  infiniteSessions: infiniteSessionsSchema,
-}).optional();
+const sessionSchema = z
+  .object({
+    historyWindow: z.number().int().min(1).default(20),
+    maxToolsPerRequest: z.number().int().min(1).max(128).default(30),
+    dynamicToolLoading: z.boolean().default(false),
+    infiniteSessions: infiniteSessionsSchema,
+  })
+  .optional();
 
 const providerSchema = z.discriminatedUnion("type", [
   z.object({
@@ -447,28 +505,38 @@ export const mcpServerConfigSchema = z.union([
 ]);
 
 /** Zod schema for a single custom agent entry. */
-export const customAgentSchema = z.object({
-  name: z.string(),
-  displayName: z.string().optional(),
-  description: z.string().optional(),
-  prompt: z.string().optional().default(""),
-  role: z.string().optional(),
-  instructions: z.string().optional(),
-  tools: z.array(z.string()).nullable().optional(),
-  infer: z.boolean().optional(),
-  mcpServers: z.record(z.string(), mcpServerConfigSchema).optional(),
-}).strict();
+export const customAgentSchema = z
+  .object({
+    name: z.string(),
+    displayName: z.string().optional(),
+    description: z.string().optional(),
+    prompt: z.string().optional().default(""),
+    role: z.string().optional(),
+    instructions: z.string().optional(),
+    tools: z.array(z.string()).nullable().optional(),
+    infer: z.boolean().optional(),
+    mcpServers: z.record(z.string(), mcpServerConfigSchema).optional(),
+  })
+  .strict();
 
 /** Zod schema for the nativeMcpServers record. */
-export const nativeMcpServersSchema = z.record(z.string(), mcpServerConfigSchema);
+export const nativeMcpServersSchema = z.record(
+  z.string(),
+  mcpServerConfigSchema,
+);
 
-const copilotSchema = z.object({
-  provider: providerSchema.nullable().optional().default(null),
-  defaultReasoningEffort: z.enum(["low", "medium", "high", "xhigh"]).optional().default("medium"),
-  defaultWorkingDirectory: z.string().nullable().optional().default(null),
-  customAgents: z.array(customAgentSchema).optional().default([]),
-  nativeMcpServers: nativeMcpServersSchema.optional().default({}),
-}).optional();
+const copilotSchema = z
+  .object({
+    provider: providerSchema.nullable().optional().default(null),
+    defaultReasoningEffort: z
+      .enum(["low", "medium", "high", "xhigh"])
+      .optional()
+      .default("medium"),
+    defaultWorkingDirectory: z.string().nullable().optional().default(null),
+    customAgents: z.array(customAgentSchema).optional().default([]),
+    nativeMcpServers: nativeMcpServersSchema.optional().default({}),
+  })
+  .optional();
 
 const appConfigSchema = z.object({
   server: z.object({
@@ -476,7 +544,7 @@ const appConfigSchema = z.object({
     trustProxy: z.union([z.boolean(), z.number(), z.string()]).optional(),
   }),
   logging: z.object({
-    level: z.string()
+    level: z.string(),
   }),
   auth: authSchema,
   messaging: messagingSchema,
@@ -486,114 +554,151 @@ const appConfigSchema = z.object({
   tasks: tasksSchema,
   session: sessionSchema,
   copilot: copilotSchema,
-  presenter: z.object({
-    inviteSecret: z.string().optional().default(""),
-    baseUrl: z.string().optional().default(""),
-  }).optional(),
-  socialBrain: z.object({
-    enabled: z.boolean().optional(),
-    confidenceThreshold: z.enum(["high", "medium", "low"]).optional(),
-    commentBrainEnabled: z.boolean().optional(),
-    approvalRequired: z.boolean().optional(),
-    handoff: z.object({
-      preferredChannel: z.enum(["discord", "telegram"]).optional(),
-      discordChannelId: z.string().optional(),
-      telegramChatId: z.string().optional(),
-      autoArchiveMinutes: z.number().optional(),
-    }).optional(),
-    commentAutomation: z.object({
+  presenter: z
+    .object({
+      inviteSecret: z.string().optional().default(""),
+      baseUrl: z.string().optional().default(""),
+    })
+    .optional(),
+  socialBrain: z
+    .object({
       enabled: z.boolean().optional(),
-    }).optional(),
-    notifications: z.object({
+      confidenceThreshold: z.enum(["high", "medium", "low"]).optional(),
+      commentBrainEnabled: z.boolean().optional(),
+      approvalRequired: z.boolean().optional(),
+      handoff: z
+        .object({
+          preferredChannel: z.enum(["discord", "telegram"]).optional(),
+          discordChannelId: z.string().optional(),
+          telegramChatId: z.string().optional(),
+          autoArchiveMinutes: z.number().optional(),
+        })
+        .optional(),
+      commentAutomation: z
+        .object({
+          enabled: z.boolean().optional(),
+        })
+        .optional(),
+      notifications: z
+        .object({
+          enabled: z.boolean().optional(),
+          telegram: z.boolean().optional(),
+          discord: z.boolean().optional(),
+          web: z.boolean().optional(),
+        })
+        .optional(),
+      connections: z
+        .record(
+          z.string(),
+          z.object({
+            enabled: z.boolean().optional(),
+            mode: z.enum(["webhook", "polling", "browser"]).optional(),
+            pollIntervalSeconds: z.number().optional(),
+            accessToken: z.string().optional(),
+          }),
+        )
+        .optional(),
+    })
+    .optional(),
+  sentinel: z
+    .object({
       enabled: z.boolean().optional(),
-      telegram: z.boolean().optional(),
-      discord: z.boolean().optional(),
-      web: z.boolean().optional(),
-    }).optional(),
-    connections: z.record(z.string(), z.object({
+      model: z.string().optional(),
+      checkIntervalMinutes: z.number().optional(),
+      jitterMinutes: z.number().optional(),
+      slowTaskThresholdMinutes: z.number().optional(),
+      orphanTaskThresholdMinutes: z.number().optional(),
+      digestHour: z.number().optional(),
+      auditHour: z.number().optional(),
+      consecutiveFailureThreshold: z.number().optional(),
+      queueDepthThreshold: z.number().optional(),
+      persistMarkdownDigest: z.boolean().optional(),
+      markdownDigestPath: z.string().nullable().optional(),
+      digestRetentionDays: z.number().optional(),
+      notifyChannels: z.array(z.string()).optional(),
+      criticalCooldownMinutes: z.number().optional(),
+      warningCooldownMinutes: z.number().optional(),
+      timezone: z.string().optional(),
+      noOverlap: z.boolean().optional(),
+      maxRandomDelayMs: z.number().optional(),
+    })
+    .optional(),
+  knowledge: z
+    .object({
       enabled: z.boolean().optional(),
-      mode: z.enum(["webhook", "polling", "browser"]).optional(),
-      pollIntervalSeconds: z.number().optional(),
-      accessToken: z.string().optional(),
-    })).optional(),
-  }).optional(),
-  sentinel: z.object({
-    enabled: z.boolean().optional(),
-    model: z.string().optional(),
-    checkIntervalMinutes: z.number().optional(),
-    jitterMinutes: z.number().optional(),
-    slowTaskThresholdMinutes: z.number().optional(),
-    orphanTaskThresholdMinutes: z.number().optional(),
-    digestHour: z.number().optional(),
-    auditHour: z.number().optional(),
-    consecutiveFailureThreshold: z.number().optional(),
-    queueDepthThreshold: z.number().optional(),
-    persistMarkdownDigest: z.boolean().optional(),
-    markdownDigestPath: z.string().nullable().optional(),
-    digestRetentionDays: z.number().optional(),
-    notifyChannels: z.array(z.string()).optional(),
-    criticalCooldownMinutes: z.number().optional(),
-    warningCooldownMinutes: z.number().optional(),
-    timezone: z.string().optional(),
-    noOverlap: z.boolean().optional(),
-    maxRandomDelayMs: z.number().optional(),
-  }).optional(),
-  knowledge: z.object({
-    enabled: z.boolean().optional(),
-    directory: z.string().optional(),
-    chunkSize: z.number().optional(),
-    chunkOverlap: z.number().optional(),
-    maxResults: z.number().optional(),
-    includeExtensions: z.array(z.string()).optional(),
-    excludePatterns: z.array(z.string()).optional(),
-    watchEnabled: z.boolean().optional(),
-    mediaModel: z.string().optional(),
-    vectorStore: z.object({
-      provider: z.enum(["lancedb"]).optional().default("lancedb"),
-      options: z.record(z.unknown()).optional(),
-    }).optional(),
-  }).optional(),
-  voice: z.object({
-    enabled: z.boolean().optional(),
-    provider: z.enum(["google", "local"]).optional(),
-    voiceName: z.string().optional(),
-    speakingRate: z.number().min(0.25).max(4.0).optional(),
-    pitch: z.number().min(-20).max(20).optional(),
-    cacheDir: z.string().optional(),
-    maxCacheSizeMb: z.number().min(1).optional(),
-    maxTextLength: z.number().min(1).optional(),
-    sidecarUrl: z.string().optional(),
-  }).optional(),
-  vault: z.object({
-    enabled: z.boolean().optional(),
-    vaultPath: z.string().optional(),
-  }).optional(),
-  memory: z.object({
-    enabled: z.boolean().optional(),
-    owner: z.string().optional(),
-    repo: z.string().optional(),
-    cacheTtlMs: z.number().min(0).optional(),
-  }).optional(),
-  firecrawl: z.object({
-    enabled: z.boolean().optional().default(false),
-    url: z.string().optional().default("http://localhost:3002"),
-    idleTimeoutMs: z.number().min(0).optional().default(600000),
-  }).optional(),
-  workbench: z.object({
-    directories: z.array(z.string()).optional().default([]),
-  }).optional().default({}),
+      directory: z.string().optional(),
+      chunkSize: z.number().optional(),
+      chunkOverlap: z.number().optional(),
+      maxResults: z.number().optional(),
+      includeExtensions: z.array(z.string()).optional(),
+      excludePatterns: z.array(z.string()).optional(),
+      watchEnabled: z.boolean().optional(),
+      mediaModel: z.string().optional(),
+      vectorStore: z
+        .object({
+          provider: z.enum(["lancedb"]).optional().default("lancedb"),
+          options: z.record(z.unknown()).optional(),
+        })
+        .optional(),
+    })
+    .optional(),
+  voice: z
+    .object({
+      enabled: z.boolean().optional(),
+      provider: z.enum(["google", "local"]).optional(),
+      voiceName: z.string().optional(),
+      speakingRate: z.number().min(0.25).max(4.0).optional(),
+      pitch: z.number().min(-20).max(20).optional(),
+      cacheDir: z.string().optional(),
+      maxCacheSizeMb: z.number().min(1).optional(),
+      maxTextLength: z.number().min(1).optional(),
+      sidecarUrl: z.string().optional(),
+    })
+    .optional(),
+  vault: z
+    .object({
+      enabled: z.boolean().optional(),
+      vaultPath: z.string().optional(),
+    })
+    .optional(),
+  memory: z
+    .object({
+      enabled: z.boolean().optional(),
+      owner: z.string().optional(),
+      repo: z.string().optional(),
+      cacheTtlMs: z.number().min(0).optional(),
+    })
+    .optional(),
+  firecrawl: z
+    .object({
+      enabled: z.boolean().optional().default(false),
+      url: z.string().optional().default("http://localhost:3002"),
+      idleTimeoutMs: z.number().min(0).optional().default(600000),
+    })
+    .optional(),
+  workbench: z
+    .object({
+      directories: z.array(z.string()).optional().default([]),
+    })
+    .optional()
+    .default({}),
 });
 
 export type LoadConfigOptions = {
   configPath?: string;
 };
 
-const defaultConfigPath = () => path.join(os.homedir(), ".openzigs", "config.json");
+const defaultConfigPath = () =>
+  path.join(os.homedir(), ".openzigs", "config.json");
 
-const defaultConfigFile = () => path.resolve(PROJECT_ROOT, "config", "default.json");
+const defaultConfigFile = () =>
+  path.resolve(PROJECT_ROOT, "config", "default.json");
 
 const interpolateEnv = (value: string) => {
-  return value.replace(/\$\{([^}]+)\}/g, (_match, name) => process.env[name] ?? "");
+  return value.replace(
+    /\$\{([^}]+)\}/g,
+    (_match, name) => process.env[name] ?? "",
+  );
 };
 
 const applyEnv = (value: unknown): unknown => {
@@ -613,25 +718,41 @@ const applyEnv = (value: unknown): unknown => {
   return value;
 };
 
-const readJsonFile = async (filePath: string): Promise<Record<string, unknown> | null> => {
+const readJsonFile = async (
+  filePath: string,
+): Promise<Record<string, unknown> | null> => {
   try {
     const raw = await fs.readFile(filePath, "utf-8");
     return JSON.parse(raw) as Record<string, unknown>;
   } catch (error) {
-    if (error instanceof Error && "code" in error && (error as { code?: string }).code === "ENOENT") {
+    if (
+      error instanceof Error &&
+      "code" in error &&
+      (error as { code?: string }).code === "ENOENT"
+    ) {
       return null;
     }
     throw error;
   }
 };
 
-const deepMerge = (base: Record<string, unknown>, override: Record<string, unknown>) => {
+const deepMerge = (
+  base: Record<string, unknown>,
+  override: Record<string, unknown>,
+) => {
   const result: Record<string, unknown> = { ...base };
   for (const [key, value] of Object.entries(override)) {
     if (value && typeof value === "object" && !Array.isArray(value)) {
       const baseValue = result[key];
-      if (baseValue && typeof baseValue === "object" && !Array.isArray(baseValue)) {
-        result[key] = deepMerge(baseValue as Record<string, unknown>, value as Record<string, unknown>);
+      if (
+        baseValue &&
+        typeof baseValue === "object" &&
+        !Array.isArray(baseValue)
+      ) {
+        result[key] = deepMerge(
+          baseValue as Record<string, unknown>,
+          value as Record<string, unknown>,
+        );
       } else {
         result[key] = value;
       }
@@ -644,7 +765,11 @@ const deepMerge = (base: Record<string, unknown>, override: Record<string, unkno
 
 const writeJsonFile = async (filePath: string, data: unknown) => {
   await fs.mkdir(path.dirname(filePath), secureDirOptions());
-  await fs.writeFile(filePath, JSON.stringify(data, null, 2), secureWriteOptions());
+  await fs.writeFile(
+    filePath,
+    JSON.stringify(data, null, 2),
+    secureWriteOptions(),
+  );
   await chmodSecureFile(filePath);
 };
 
@@ -657,7 +782,7 @@ const toObject = (value: unknown): Record<string, unknown> => {
 const ensureToken = async (
   config: AppConfig,
   configPath: string,
-  userConfig: Record<string, unknown> | null
+  userConfig: Record<string, unknown> | null,
 ) => {
   if (config.auth.mode !== "local") {
     return config;
@@ -671,8 +796,8 @@ const ensureToken = async (
     ...config,
     auth: {
       ...config.auth,
-      token
-    }
+      token,
+    },
   };
 
   const userConfigObject = toObject(userConfig);
@@ -681,8 +806,8 @@ const ensureToken = async (
     ...userConfigObject,
     auth: {
       ...userAuth,
-      token
-    }
+      token,
+    },
   };
 
   await writeJsonFile(configPath, updatedUserConfig);
@@ -690,10 +815,13 @@ const ensureToken = async (
   return updated;
 };
 
-export const loadConfig = async (options: LoadConfigOptions = {}): Promise<AppConfig> => {
-  const configPath = options.configPath
-    ?? process.env.OPENZIGS_CONFIG_PATH
-    ?? defaultConfigPath();
+export const loadConfig = async (
+  options: LoadConfigOptions = {},
+): Promise<AppConfig> => {
+  const configPath =
+    options.configPath ??
+    process.env.OPENZIGS_CONFIG_PATH ??
+    defaultConfigPath();
 
   const defaultConfigRaw = await readJsonFile(defaultConfigFile());
   // We apply env substitution after merging so user config can also use ${ENV_VARS}

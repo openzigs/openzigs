@@ -41,6 +41,7 @@
 - [Social Brain — Unified Social Inbox, CRM & AI Automation](#social-brain--unified-social-inbox-crm--ai-automation-epic-291)
 - [Director Mode Studio & Advanced Compositing](#director-mode-studio--advanced-compositing-epic-313)
 - [Distributed Media Queue, Worker Nodes & Asset Gallery](#distributed-media-queue-worker-nodes--asset-gallery-epic-325)
+- [Multi-Segment Video Generation Pipeline](#multi-segment-video-generation-pipeline-epic-780)
 - [Music Studio — Voice2Voice Pipeline & Smart Remix Lab](#music-studio--voice2voice-pipeline--smart-remix-lab-epic-380-389-402)
 - [Character Lab — LoRA Training & Identity Consistency](#character-lab--lora-training--identity-consistency-epic-374)
 - [Autonomous Agent Testing Architecture](#autonomous-agent-testing-architecture)
@@ -2173,6 +2174,34 @@ admin/page.tsx
 
 ## Security Model
 
+### Cloudflare Access (Edge Layer)
+
+All public hostnames are gated by **Cloudflare Access** before requests reach the Express server. This is the first and outermost security layer.
+
+Access uses path-based application separation: more-specific paths take precedence over broader ones. The deployment creates two categories of Access applications:
+
+**Bypass apps** (path-specific, no Cloudflare auth — secured by app-level mechanisms):
+
+| Path | App-level security |
+|---|---|
+| `/api/queue/complete` | `Authorization: Bearer <workerSecret>` |
+| `/telegram/webhook` | `X-Telegram-Bot-Api-Secret-Token` header |
+| `/api/social/webhooks/*` | HMAC-SHA256 per platform |
+| `/api/*/oauth/callback` | OAuth CSRF `state` parameter |
+| `/health` | None (read-only status) |
+| `/presenter/*`, `/socket.io/*`, `/peerjs/*` | `guest_token` cookie / JWT invite |
+
+**Protected catch-all apps** (email OTP via Cloudflare Access):
+
+| Domain | Catch-all protects |
+|---|---|
+| `agent.example.com` | All admin, chat, gallery, scheduler, task, knowledge routes |
+| `presenter.example.com` | All admin and room management routes |
+
+The setup script at `scripts/setup-cloudflare-access.sh` creates all applications via the Cloudflare API. It reads credentials from environment variables or interactive prompts — **no credentials are hardcoded in the script**.
+
+The `cloudflared` process runs as a macOS **system LaunchDaemon** (`/Library/LaunchDaemons/com.cloudflare.cloudflared.plist`) with `RunAtLoad=true` and `KeepAlive=true`, ensuring the tunnel persists across reboots and restarts automatically on crash.
+
 ### Risk Classification
 
 Every tool is classified at registration time:
@@ -2196,6 +2225,10 @@ Every tool is classified at registration time:
 
 ### Transport Security
 
+- **Cloudflare Access (edge):** All public hostnames behind the tunnel are gated by Access before reaching Express. See the Cloudflare Access section above.
+- **Cloudflare Access JWT validation (server-side):** When `tunnel.cfAccessTeamDomain` is configured, the `cfAccessGuard` middleware validates `CF-Access-JWT-Assertion` JWTs against the Cloudflare JWKS endpoint. This provides defense-in-depth — even if Access is misconfigured, the server independently verifies JWT signature, expiry, and audience. Requests without CF headers (direct/localhost) bypass validation.
+- **Setup route protection:** `POST /api/setup/config`, `/complete`, and `/reset` require Bearer token authentication once the setup wizard has been completed (`.setup-complete` flag exists). This prevents unauthenticated config overwrites via tunnels or exposed ports.
+- **Queue callback localhost-only fallback:** When `auth.workerSecret` is not configured, `POST /api/queue/complete` only accepts requests from localhost (`127.0.0.1`, `::1`). Non-localhost requests are rejected with 401.
 - **CORS:** Restricted to explicit origin allowlist (UI origin + localhost + `OPENZIGS_CORS_ORIGINS` env var). Credentials enabled.
 - **CSP:** Helmet enforces strict Content-Security-Policy: `frame-ancestors: 'none'` (anti-clickjacking), `script-src: 'self'`, `object-src: 'none'`, `base-uri: 'self'`.
 - **Trust Proxy:** Disabled by default; configurable via `server.trustProxy` in config. Prevents IP spoofing when not behind a reverse proxy.
@@ -5439,6 +5472,8 @@ Push-based orchestrator that polls pending jobs on a configurable tick interval 
 
 **Voice2Voice jobs** use the Music Studio sidecar (port 5010) — a FastAPI service that orchestrates a 3-stage pipeline: (1) Demucs v4 stem separation, (2) RVC v2 voice conversion, (3) pydub mixdown. The sidecar reports granular progress via `POST /api/queue/progress`, which the QueueMaster re-emits as `job:progress` Socket.IO events for real-time UI updates. The sidecar has its own `processMusicStudioJobs()` tick and independent busy state.
 
+**Tunnel-aware callbacks:** When a Cloudflare Tunnel is enabled (`tunnel.enabled: true`), the `QueueMaster.setCallbackUrl()` method is called automatically when the tunnel connects. This replaces the LAN-based callback URL (e.g., `http://192.168.x.x:3000/api/queue/complete`) with the tunnel URL (e.g., `https://xxx.trycloudflare.com/api/queue/complete`). This ensures remote worker nodes can POST results back even when LAN connectivity is blocked by WiFi AP isolation, firewalls, or when the worker is on a completely different network. If the tunnel disconnects, the callback URL falls back to the LAN IP automatically.
+
 **Stale result recovery:** `pollForStaleResults()` runs every tick and checks dispatched jobs older than 3 minutes. For each stale job, it polls the worker's `/job-result/<id>` endpoint. If the result is available, it's processed as if the callback had arrived — this recovers jobs where the callback POST failed.
 
 **Events:** `job:dispatched`, `job:complete`, `job:failed`, `job:progress`, `project:complete`
@@ -5689,6 +5724,77 @@ The Gallery page at `/gallery` provides:
 | `/music-studio` | `music-studio/page.tsx` | AI Music Studio — Voice2Voice pipeline + Smart Remix Lab with DAW waveform view |
 
 ### Tracking: [Epic #325](https://github.com/openzigs/openzigs/issues/325), [Epic #335](https://github.com/openzigs/openzigs/issues/335), [Epic #380](https://github.com/openzigs/openzigs/issues/380), [Epic #389](https://github.com/openzigs/openzigs/issues/389)
+
+---
+
+## Multi-Segment Video Generation Pipeline (Epic #780)
+
+Enables video durations beyond the 4-second LTX-2 hardware limit by decomposing long video requests into chained 4-second segments, stitching them with ffmpeg crossfade transitions, and optional audio post-processing.
+
+### Architecture
+
+```mermaid
+graph TB
+    subgraph Client["Gallery Studio UI"]
+        DUR[Duration Selector<br/>4s · 8s · 12s · 16s]
+    end
+
+    subgraph Backend["Queue Master"]
+        DECOMP[decomposeMultiSegmentJob<br/>Splits into N × 4s segments]
+        TRACKER[Segment Tracker<br/>In-memory Map]
+        CHAIN[handleSegmentCompletion<br/>Chain via /last-frame]
+        STITCH[stitchSegments<br/>ffmpeg xfade concat]
+        AUDIO[runAudioPostProcessing<br/>Optional audio on final video]
+    end
+
+    subgraph Worker["M2 Pro Sidecar"]
+        GEN[/generate<br/>4s segment]
+        LF[/last-frame<br/>Extract last frame as PNG]
+    end
+
+    DUR -->|POST /api/queue/jobs<br/>video_duration=16| DECOMP
+    DECOMP --> TRACKER
+    DECOMP -->|First segment| GEN
+    GEN -->|Segment complete callback| CHAIN
+    CHAIN -->|Extract init_image| LF
+    LF -->|base64 PNG| CHAIN
+    CHAIN -->|Next segment as img2video| GEN
+    CHAIN -->|All segments done| STITCH
+    STITCH --> AUDIO
+    AUDIO -->|Final video| TRACKER
+
+    style Client fill:#0d2137,stroke:#16213e,color:#fff
+    style Backend fill:#16213e,stroke:#1a1a2e,color:#fff
+    style Worker fill:#1b2d1b,stroke:#3a8b3a,color:#fff
+```
+
+### How It Works
+
+1. **Decomposition**: When a video job arrives with `video_duration > 4`, the Queue API validates it against `VALID_VIDEO_DURATIONS` (4, 8, 12, 16) and calls `decomposeMultiSegmentJob()`. This creates the first segment job (txt2video or img2video) and initializes an in-memory segment tracker.
+
+2. **Segment Chaining**: When each segment completes, `handleSegmentCompletion()` calls the worker's `/last-frame` endpoint to extract the last frame as a base64 PNG. This frame becomes the `init_image` for the next segment (img2video), ensuring visual continuity.
+
+3. **Stitching**: After all segments complete, `stitchSegments()` runs an ffmpeg concat with 0.5s crossfade transitions between each segment using the `xfade` filter.
+
+4. **Audio Post-Processing**: If the user requested audio, the stitched video is re-submitted to the worker for audio-only generation. Audio is never generated per-segment — only on the final stitched video.
+
+5. **Progress Aggregation**: `reportSegmentProgress()` calculates weighted aggregate progress across all segments and emits `job:progress` events with a "Segment N/M" indicator.
+
+### Constants
+
+| Constant | Value | Description |
+|---|---|---|
+| `VALID_VIDEO_DURATIONS` | `[4, 8, 12, 16]` | Allowed total durations (seconds) |
+| `SEGMENT_DURATION_SEC` | `4` | Each segment is 4 seconds |
+| `MAX_VIDEO_FRAMES` | `97` | Maximum frames per segment (24fps × 4s) |
+
+### Security Considerations
+
+- **Path Traversal Protection**: The `/last-frame` worker endpoint validates that `video_path` resolves within the gallery directory (`~/.openzigs/gallery`). Paths outside this directory are rejected with HTTP 403.
+- **Duration Validation**: `video_duration` is validated against `VALID_VIDEO_DURATIONS` at the API boundary. Invalid values are rejected with HTTP 400, preventing resource exhaustion from arbitrarily large segment counts.
+- **Audio Memory Safety**: The Gallery Studio UI auto-disables the audio toggle when effective frame count exceeds 97 (the safe limit for audio+video on M2 Pro 32GB).
+
+### Tracking: [Epic #780](https://github.com/openzigs/openzigs/issues/780), [Epic #782](https://github.com/openzigs/openzigs/issues/782)
 
 ## Music Studio — Voice2Voice Pipeline & Smart Remix Lab (Epic #380, #389, #402)
 

@@ -48,6 +48,10 @@ from typing import Any, Optional
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Depends, Header
 from fastapi.responses import Response
 from PIL import Image
+
+# When CALLBACK_SECRET is set, outgoing callback POSTs include
+# Authorization: Bearer <secret> so the openzigs server can verify them.
+_callback_secret: Optional[str] = os.getenv("CALLBACK_SECRET") or None
 from pydantic import BaseModel, Field, field_validator
 
 # ── Persistent Training Directory ──────────────────────────────
@@ -354,11 +358,14 @@ def _post_callback(job_id: str, callback_url: Optional[str], payload: dict) -> N
     body = json.dumps(payload).encode("utf-8")
     max_retries = 3
     for attempt in range(1, max_retries + 1):
+        headers = {"Content-Type": "application/json"}
+        if _callback_secret:
+            headers["Authorization"] = f"Bearer {_callback_secret}"
         req = urllib.request.Request(
             callback_url,
             data=body,
             method="POST",
-            headers={"Content-Type": "application/json"},
+            headers=headers,
         )
         try:
             with urllib.request.urlopen(req, timeout=30) as resp:

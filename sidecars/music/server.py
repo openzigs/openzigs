@@ -310,10 +310,14 @@ def run_async_job(
                 return
 
             data = json.dumps(result).encode("utf-8")
+            _cb_secret = os.getenv("CALLBACK_SECRET") or None
+            headers = {"Content-Type": "application/json"}
+            if _cb_secret:
+                headers["Authorization"] = f"Bearer {_cb_secret}"
             req = Request(
                 callback_url,
                 data=data,
-                headers={"Content-Type": "application/json"},
+                headers=headers,
                 method="POST",
             )
             with urlopen(req, timeout=10) as resp:

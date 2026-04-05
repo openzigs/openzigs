@@ -3,7 +3,13 @@ import fs from "node:fs";
 import path from "node:path";
 import { logger } from "../../logging/logger.js";
 import { SocialRepository } from "./social-repository.js";
-import type { Contact, IncomingSocialMessage, IncomingComment, SocialMessage, BrainResult } from "./types.js";
+import type {
+  Contact,
+  IncomingSocialMessage,
+  IncomingComment,
+  SocialMessage,
+  BrainResult,
+} from "./types.js";
 import type { CopilotWrapperService } from "../../copilot/copilot-wrapper.js";
 import type { KnowledgeIngestionService } from "../../knowledge/index.js";
 import { getUserSelectedModel } from "../../config/user-model.js";
@@ -70,7 +76,13 @@ const RESPONSE_STYLE_MODIFIERS: Record<ResponseStyle, string> = {
 /** Load the social-responder SKILL.md content (sync, cached). */
 function loadSkillContent(): string {
   try {
-    const skillPath = path.join(PROJECT_ROOT, "src", "skills", "social-responder", "SKILL.md");
+    const skillPath = path.join(
+      PROJECT_ROOT,
+      "src",
+      "skills",
+      "social-responder",
+      "SKILL.md",
+    );
     const raw = fs.readFileSync(skillPath, "utf-8");
     // Strip YAML frontmatter
     const trimmed = raw.trimStart();
@@ -80,7 +92,9 @@ function loadSkillContent(): string {
     }
     return raw.trim();
   } catch {
-    logger.warn("[SocialBrain] Could not load social-responder skill — using built-in prompt only");
+    logger.warn(
+      "[SocialBrain] Could not load social-responder skill — using built-in prompt only",
+    );
     return "";
   }
 }
@@ -193,7 +207,11 @@ export class SocialBrain extends EventEmitter {
    * Process an inbound message through the Brain pipeline.
    * Returns the BrainResult (or null if skipped due to handoff).
    */
-  async process(contact: Contact, message: SocialMessage, raw: IncomingSocialMessage): Promise<BrainResult | null> {
+  async process(
+    contact: Contact,
+    message: SocialMessage,
+    raw: IncomingSocialMessage,
+  ): Promise<BrainResult | null> {
     // 1. Check if contact is in handoff state — skip Brain
     if (contact.handoff_active) {
       this.emit("escalated_message", { contact, message, raw });
@@ -212,17 +230,23 @@ export class SocialBrain extends EventEmitter {
             searchContext = String(meta.postCaption);
             break;
           }
-        } catch { /* not JSON, skip */ }
+        } catch {
+          /* not JSON, skip */
+        }
       }
       const ragChunks = await this.searchKnowledge(raw.text, searchContext);
-      const ragContext = ragChunks.length > 0
-        ? ragChunks.map((c, i) => `[${i + 1}] ${c}`).join("\n\n")
-        : "(No relevant knowledge base context found)";
+      const ragContext =
+        ragChunks.length > 0
+          ? ragChunks.map((c, i) => `[${i + 1}] ${c}`).join("\n\n")
+          : "(No relevant knowledge base context found)";
 
       // 3. Build conversation context (last 5 messages — already fetched above)
       const conversationContext = history
         .reverse()
-        .map((m) => `${m.direction === "inbound" ? "User" : "Assistant"}: ${m.content}`)
+        .map(
+          (m) =>
+            `${m.direction === "inbound" ? "User" : "Assistant"}: ${m.content}`,
+        )
         .join("\n");
 
       // 3b. Extract post context from recent outbound DMs (comment-rule-engine stores it in metadata)
@@ -236,18 +260,28 @@ export class SocialBrain extends EventEmitter {
               meta.postCaption ? `  Caption: ${meta.postCaption}` : "",
               meta.postUrl ? `  URL: ${meta.postUrl}` : "",
               meta.postMediaType ? `  Media type: ${meta.postMediaType}` : "",
-              meta.triggeringComment ? `  Their comment: ${meta.triggeringComment}` : "",
-            ].filter(Boolean).join("\n");
+              meta.triggeringComment
+                ? `  Their comment: ${meta.triggeringComment}`
+                : "",
+            ]
+              .filter(Boolean)
+              .join("\n");
             break; // use most recent post context
           }
-        } catch { /* not JSON, skip */ }
+        } catch {
+          /* not JSON, skip */
+        }
       }
 
       // 4. Retrieve voice examples (few-shot) for style matching
       let voiceExamplesBlock = "";
       if (this.voiceLearningEnabled) {
-        const voiceExamples = await this.voiceLearning.getVoiceExamples(raw.text, 3);
-        voiceExamplesBlock = VoiceLearningService.formatForPrompt(voiceExamples);
+        const voiceExamples = await this.voiceLearning.getVoiceExamples(
+          raw.text,
+          3,
+        );
+        voiceExamplesBlock =
+          VoiceLearningService.formatForPrompt(voiceExamples);
       }
 
       // 5. Compose prompt
@@ -290,9 +324,21 @@ export class SocialBrain extends EventEmitter {
           direction: "outbound",
           status: "pending_approval",
           content: result.reply,
-          metadata: { confidence: result.confidence, intent: result.intent, source: "brain_dm", originalMessage: raw.text, escalated: shouldEscalate },
+          metadata: {
+            confidence: result.confidence,
+            intent: result.intent,
+            source: "brain_dm",
+            originalMessage: raw.text,
+            escalated: shouldEscalate,
+          },
         });
-        this.emit("pending_approval", { contact, message, result: brainResult, raw, pendingMessage: pendingMsg });
+        this.emit("pending_approval", {
+          contact,
+          message,
+          result: brainResult,
+          raw,
+          pendingMessage: pendingMsg,
+        });
       } else if (shouldEscalate) {
         // Escalate to human handoff (no approval queue configured)
         this.emit("escalate", { contact, message, result: brainResult, raw });
@@ -312,7 +358,9 @@ export class SocialBrain extends EventEmitter {
       return brainResult;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      logger.error(`[SocialBrain] Processing failed for contact ${contact.id}: ${msg}`);
+      logger.error(
+        `[SocialBrain] Processing failed for contact ${contact.id}: ${msg}`,
+      );
       return {
         reply: "",
         confidence: "low",
@@ -330,8 +378,12 @@ export class SocialBrain extends EventEmitter {
    */
   async processComment(comment: IncomingComment): Promise<BrainResult | null> {
     // Upsert / look up the contact
-    const contact = this.repository.getContactByPlatformUser(comment.platform, comment.userId)
-      ?? this.repository.upsertContact({
+    const contact =
+      this.repository.getContactByPlatformUser(
+        comment.platform,
+        comment.userId,
+      ) ??
+      this.repository.upsertContact({
         platform: comment.platform,
         platformUserId: comment.userId,
         username: comment.username,
@@ -344,10 +396,14 @@ export class SocialBrain extends EventEmitter {
     try {
       // RAG retrieval — enhance query with post caption for better semantic matching
       const commentSearchContext = comment.postContext?.caption ?? "";
-      const ragChunks = await this.searchKnowledge(comment.text, commentSearchContext);
-      const ragContext = ragChunks.length > 0
-        ? ragChunks.map((c, i) => `[${i + 1}] ${c}`).join("\n\n")
-        : "(No relevant knowledge base context found)";
+      const ragChunks = await this.searchKnowledge(
+        comment.text,
+        commentSearchContext,
+      );
+      const ragContext =
+        ragChunks.length > 0
+          ? ragChunks.map((c, i) => `[${i + 1}] ${c}`).join("\n\n")
+          : "(No relevant knowledge base context found)";
 
       // Build post context block
       let postContextBlock = "";
@@ -357,14 +413,20 @@ export class SocialBrain extends EventEmitter {
           `  Caption: ${comment.postContext.caption}`,
           `  URL: ${comment.postContext.permalink}`,
           `  Media type: ${comment.postContext.mediaType}`,
-        ].filter(Boolean).join("\n");
+        ]
+          .filter(Boolean)
+          .join("\n");
       }
 
       // Retrieve voice examples for style matching
       let voiceExamplesBlock = "";
       if (this.voiceLearningEnabled) {
-        const voiceExamples = await this.voiceLearning.getVoiceExamples(comment.text, 3);
-        voiceExamplesBlock = VoiceLearningService.formatForPrompt(voiceExamples);
+        const voiceExamples = await this.voiceLearning.getVoiceExamples(
+          comment.text,
+          3,
+        );
+        voiceExamplesBlock =
+          VoiceLearningService.formatForPrompt(voiceExamples);
       }
 
       // Compose prompt
@@ -411,7 +473,12 @@ export class SocialBrain extends EventEmitter {
             escalated: shouldEscalate,
           },
         });
-        this.emit("pending_approval", { contact, comment, result: brainResult, pendingMessage: pendingMsg });
+        this.emit("pending_approval", {
+          contact,
+          comment,
+          result: brainResult,
+          pendingMessage: pendingMsg,
+        });
       } else if (shouldEscalate) {
         this.emit("escalate", { contact, comment, result: brainResult });
       } else {
@@ -435,7 +502,9 @@ export class SocialBrain extends EventEmitter {
       return brainResult;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      logger.error(`[SocialBrain] Comment processing failed for ${comment.commentId}: ${msg}`);
+      logger.error(
+        `[SocialBrain] Comment processing failed for ${comment.commentId}: ${msg}`,
+      );
       return {
         reply: "",
         confidence: "low",
@@ -446,7 +515,10 @@ export class SocialBrain extends EventEmitter {
     }
   }
 
-  private async searchKnowledge(query: string, context?: string): Promise<string[]> {
+  private async searchKnowledge(
+    query: string,
+    context?: string,
+  ): Promise<string[]> {
     try {
       // When approval is required a human reviews every reply, so internal docs are safe to include.
       // Auto-replies (no approval gate) are restricted to public-only to prevent leaking internal data.
@@ -467,7 +539,9 @@ export class SocialBrain extends EventEmitter {
         minScore: 0.3,
         filter: { visibility },
       });
-      logger.debug(`[SocialBrain] Knowledge search for "${enhancedQuery.slice(0, 80)}" returned ${results.length} chunks (visibility=${visibility})`);
+      logger.debug(
+        `[SocialBrain] Knowledge search for "${enhancedQuery.slice(0, 80)}" returned ${results.length} chunks (visibility=${visibility})`,
+      );
       return results.map((r) => r.text);
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
@@ -476,12 +550,16 @@ export class SocialBrain extends EventEmitter {
     }
   }
 
-  private async generateReply(prompt: string): Promise<{ reply: string; confidence: "high" | "medium" | "low"; intent: string }> {
+  private async generateReply(prompt: string): Promise<{
+    reply: string;
+    confidence: "high" | "medium" | "low";
+    intent: string;
+  }> {
     let fullResponse = "";
     const conversationId = `social-brain-${Date.now()}`;
 
     // Resolve model: explicit override → user's selected model → copilot default
-    const resolvedModel = this.model ?? await getUserSelectedModel();
+    const resolvedModel = this.model ?? (await getUserSelectedModel());
 
     for await (const chunk of this.copilot.chat(prompt, {
       conversationId,
@@ -499,12 +577,18 @@ export class SocialBrain extends EventEmitter {
       // Extract JSON from response (may be wrapped in markdown code block)
       const jsonMatch = fullResponse.match(/\{[\s\S]*?"reply"[\s\S]*?\}/);
       if (jsonMatch) {
-        const parsed = JSON.parse(jsonMatch[0]) as { reply?: string; confidence?: string; intent?: string };
+        const parsed = JSON.parse(jsonMatch[0]) as {
+          reply?: string;
+          confidence?: string;
+          intent?: string;
+        };
         return {
           reply: parsed.reply ?? fullResponse,
-          confidence: (["high", "medium", "low"].includes(parsed.confidence ?? "")
-            ? parsed.confidence as "high" | "medium" | "low"
-            : "medium"),
+          confidence: ["high", "medium", "low"].includes(
+            parsed.confidence ?? "",
+          )
+            ? (parsed.confidence as "high" | "medium" | "low")
+            : "medium",
           intent: parsed.intent ?? "unknown",
         };
       }

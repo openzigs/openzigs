@@ -1,7 +1,11 @@
 import { EventEmitter } from "node:events";
 import { logger } from "../../logging/logger.js";
 import { SocialRepository } from "./social-repository.js";
-import type { Contact, IncomingSocialMessage, EscalationContext } from "./types.js";
+import type {
+  Contact,
+  IncomingSocialMessage,
+  EscalationContext,
+} from "./types.js";
 
 /** Abstraction over Discord/Telegram thread creation for handoff. */
 export interface HandoffChannel {
@@ -66,7 +70,9 @@ export class HandoffManager extends EventEmitter {
   ): Promise<HandoffSession | null> {
     const channel = this.channels.get(this.preferredChannel);
     if (!channel) {
-      logger.warn(`[Handoff] No ${this.preferredChannel} channel registered for handoff`);
+      logger.warn(
+        `[Handoff] No ${this.preferredChannel} channel registered for handoff`,
+      );
       return null;
     }
 
@@ -96,7 +102,10 @@ export class HandoffManager extends EventEmitter {
         }
       }
 
-      const threadId = await channel.createThread(threadName, contextLines.join("\n"));
+      const threadId = await channel.createThread(
+        threadName,
+        contextLines.join("\n"),
+      );
 
       // Update CRM
       this.repository.updateContact(contact.id, {
@@ -117,11 +126,15 @@ export class HandoffManager extends EventEmitter {
       };
 
       this.emit("escalated", session);
-      logger.info(`[Handoff] Escalated contact ${contact.id} to ${channel.type} thread ${threadId}`);
+      logger.info(
+        `[Handoff] Escalated contact ${contact.id} to ${channel.type} thread ${threadId}`,
+      );
       return session;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      logger.error(`[Handoff] Failed to escalate contact ${contact.id}: ${msg}`);
+      logger.error(
+        `[Handoff] Failed to escalate contact ${contact.id}: ${msg}`,
+      );
       return null;
     }
   }
@@ -130,7 +143,12 @@ export class HandoffManager extends EventEmitter {
    * Forward a new user message to an existing handoff thread.
    */
   async forwardToThread(contact: Contact, message: string): Promise<void> {
-    if (!contact.handoff_active || !contact.handoff_thread_id || !contact.handoff_channel) return;
+    if (
+      !contact.handoff_active ||
+      !contact.handoff_thread_id ||
+      !contact.handoff_channel
+    )
+      return;
 
     const channel = this.channels.get(contact.handoff_channel);
     if (!channel) return;
@@ -148,7 +166,10 @@ export class HandoffManager extends EventEmitter {
    * Handle an admin reply in a handoff thread.
    * Returns the contact if found (caller dispatches to platform).
    */
-  handleAdminReply(threadId: string, adminMessage: string): { contactId: string; message: string } | null {
+  handleAdminReply(
+    threadId: string,
+    adminMessage: string,
+  ): { contactId: string; message: string } | null {
     const contactId = this.threadToContact.get(threadId);
     if (!contactId) return null;
 
@@ -197,7 +218,10 @@ export class HandoffManager extends EventEmitter {
       handoff_channel: null,
     });
     this.repository.removeTag(contactId, "handoff-active");
-    this.repository.addTag(contactId, `handoff-resolved-${new Date().toISOString().split("T")[0]}`);
+    this.repository.addTag(
+      contactId,
+      `handoff-resolved-${new Date().toISOString().split("T")[0]}`,
+    );
 
     if (resolution) {
       const existing = contact.notes;
@@ -219,7 +243,10 @@ export class HandoffManager extends EventEmitter {
 
   private rebuildThreadMap(): void {
     // Query all contacts with active handoffs to rebuild the thread→contact map
-    const result = this.repository.listContacts({ handoffActive: true, pageSize: 1000 });
+    const result = this.repository.listContacts({
+      handoffActive: true,
+      pageSize: 1000,
+    });
     for (const contact of result.data) {
       if (contact.handoff_thread_id) {
         this.threadToContact.set(contact.handoff_thread_id, contact.id);

@@ -36,9 +36,11 @@ logger = logging.getLogger("m2pro-worker")
 # ── Security Utilities ───────────────────────────────────────
 
 def validate_callback_url(url: str) -> str:
-    """Validate that a callback URL is safe (SSRF protection).
+    """Validate that a callback URL is safe.
 
-    Allows only http/https and blocks private/internal networks.
+    Allows http/https to private-network and loopback hosts (required for
+    LAN sidecar→primary callbacks).  Blocks metadata endpoints and
+    non-HTTP schemes.
     """
     from urllib.parse import urlparse
     parsed = urlparse(url)
@@ -47,16 +49,10 @@ def validate_callback_url(url: str) -> str:
     hostname = parsed.hostname or ""
     if not hostname:
         raise ValueError("URL must have a hostname")
-    _blocked = {"localhost", "0.0.0.0", "metadata.google.internal"}
+    _blocked = {"metadata.google.internal", "metadata.google.com",
+                "169.254.169.254"}  # cloud metadata endpoints
     if hostname.lower() in _blocked:
-        raise ValueError(f"Blocked hostname: {hostname}")
-    try:
-        addr = ipaddress.ip_address(hostname.strip("[]"))
-        if addr.is_private or addr.is_loopback or addr.is_link_local or addr.is_reserved:
-            raise ValueError(f"Blocked private/internal IP: {addr}")
-    except ValueError as e:
-        if "Blocked" in str(e):
-            raise
+        raise ValueError(f"Blocked metadata hostname: {hostname}")
     return url
 
 
@@ -83,6 +79,17 @@ MODEL_IDLE_TIMEOUT_SEC = int(os.getenv("LTX_MODEL_IDLE_TIMEOUT", "300"))  # 5 mi
 # When LTX_SECRET_TOKEN is set, mutating endpoints require
 # Authorization: Bearer <token>.  Health/status remain public.
 _secret_token: Optional[str] = os.getenv("LTX_SECRET_TOKEN") or None
+
+# When CALLBACK_SECRET is set, outgoing callback POSTs include
+# Authorization: Bearer <secret> so the openzigs server can verify them.
+_callback_secret: Optional[str] = os.getenv("CALLBACK_SECRET") or None
+
+
+def _callback_auth_headers() -> dict[str, str]:
+    """Build Authorization header for outgoing callback POSTs."""
+    if _callback_secret:
+        return {"Authorization": f"Bearer {_callback_secret}"}
+    return {}
 
 
 def verify_token(authorization: Optional[str] = Header(None)) -> None:
@@ -121,6 +128,23 @@ class WorkerState:
 
 state = WorkerState()
 
+# ── Job Result Store ─────────────────────────────────────────
+# In-memory ring buffer of completed/failed job results.  When the callback
+# POST fails (e.g. "No route to host"), QueueMaster can poll GET /job-result/{id}
+# to pick up the result instead.  Capped at _MAX_STORED_RESULTS entries.
+import threading as _threading
+_MAX_STORED_RESULTS = 100
+_job_results: dict[str, dict] = {}       # job_id → payload (same shape as callback body)
+_job_results_lock = _threading.Lock()
+
+def _store_result(job_id: str, payload: dict) -> None:
+    """Store a job result for later polling.  Evicts oldest when full."""
+    with _job_results_lock:
+        _job_results[job_id] = payload
+        while len(_job_results) > _MAX_STORED_RESULTS:
+            oldest = next(iter(_job_results))
+            del _job_results[oldest]
+
 # ── Request/Response Models ──────────────────────────────────
 
 class GenerateRequest(BaseModel):
@@ -142,7 +166,7 @@ class GenerateRequest(BaseModel):
     num_inference_steps: int | None = None  # DEV pipeline only; default 20
     # LTX Video Engine v2 fields
     audio: bool = False  # Enable synchronized audio generation
-    tiling: str = Field(default="aggressive", pattern=r"^(auto|none|default|aggressive|conservative)$")
+    tiling: str = Field(default="auto", pattern=r"^(auto|none|default|aggressive|conservative)$")
     model_repo: str | None = Field(default=None, max_length=200, pattern=r"^[A-Za-z0-9_\-]+/[A-Za-z0-9_\-\.]+$")
     enhance_prompt: bool = False  # Gemma-based prompt enhancement
     image_strength: float = Field(default=1.0, ge=0.0, le=1.0)  # I2V conditioning strength
@@ -181,10 +205,16 @@ def get_system_memory_info() -> dict:
         inactive = stats.get("Pages inactive", 0)
         wired = stats.get("Pages wired down", 0)
         compressed = stats.get("Pages occupied by compressor", 0)
+        purgeable = stats.get("Pages purgeable", 0)
         used = active + wired + compressed
+        # macOS keeps "free" near zero; inactive + purgeable pages are
+        # instantly reclaimable so include them in available memory.
+        available = free + inactive + purgeable
         return {
             "free_gb": round(free / 1024**3, 2),
+            "available_gb": round(available / 1024**3, 2),
             "active_gb": round(active / 1024**3, 2),
+            "inactive_gb": round(inactive / 1024**3, 2),
             "wired_gb": round(wired / 1024**3, 2),
             "compressed_gb": round(compressed / 1024**3, 2),
             "used_gb": round(used / 1024**3, 2),
@@ -204,9 +234,9 @@ def check_memory_budget() -> tuple[bool, str]:
             f"{MEMORY_LIMIT_GB:.0f} GB"
         )
     info = get_system_memory_info()
-    free_gb = info.get("free_gb", 999)
-    if free_gb < 2.0:
-        return False, f"System free memory dangerously low ({free_gb:.1f} GB)"
+    available_gb = info.get("available_gb", info.get("free_gb", 999))
+    if available_gb < 2.0:
+        return False, f"System available memory dangerously low ({available_gb:.1f} GB)"
     return True, "ok"
 
 
@@ -326,20 +356,22 @@ def generate_video_ltx2(request: GenerateRequest) -> bytes:
 
 
 def _generate_with_mlx_video(request: GenerateRequest, num_frames: int, fps: int, output_path: str):
-    """Generate using the mlx-video Python package (Blaizzy fork)."""
-    try:
-        from mlx_video.models.ltx_2.generate import generate_video, PipelineType  # type: ignore[import-untyped]
-    except ImportError:
-        # Fall back to old import path for backward compatibility
-        from mlx_video.generate import generate_video, PipelineType  # type: ignore[import-untyped]
+    """Generate using the mlx-video Python package (CharafChnioune fork).
 
-    pipeline_map = {
-        "distilled": PipelineType.DISTILLED,
-        "dev": PipelineType.DEV,
-        "dev-two-stage": PipelineType.DEV_TWO_STAGE,
-        "dev-two-stage-hq": PipelineType.DEV_TWO_STAGE_HQ,
-    }
-    pipeline_type = pipeline_map.get(request.pipeline.lower(), PipelineType.DISTILLED)
+    The CharafChnioune fork performs runtime quantization from BF16 base weights
+    instead of using pre-quantized AITRADER snapshots (which cause 'snow'/static).
+    """
+    try:
+        from mlx_video.generate import generate_video, PipelineType  # type: ignore[import-untyped]
+    except ImportError:
+        # Legacy Blaizzy fork path (kept for backward compatibility)
+        from mlx_video.models.ltx_2.generate import generate_video, PipelineType  # type: ignore[import-untyped]
+
+    # Resolve pipeline type via getattr — available variants depend on
+    # the installed mlx-video version.  Missing entries (e.g. DEV_TWO_STAGE)
+    # gracefully fall back to DISTILLED instead of crashing at dict-build time.
+    pipeline_name = request.pipeline.upper().replace("-", "_")
+    pipeline_type = getattr(PipelineType, pipeline_name, PipelineType.DISTILLED)
     use_dev = request.pipeline.lower() in ("dev", "dev-two-stage", "dev-two-stage-hq")
 
     resolved_model_repo = request.model_repo or DEFAULT_MODEL_REPO
@@ -562,8 +594,11 @@ async def run_generation_job(request: GenerateRequest):
 
         validated_url = validate_callback_url(request.callback_url)
         async with httpx.AsyncClient(timeout=60.0) as client:
-            resp = await client.post(validated_url, json=payload)
+            resp = await client.post(validated_url, json=payload, headers=_callback_auth_headers())
             logger.info(f"Webhook callback: {resp.status_code}")
+
+        # Store result for polling fallback regardless of callback success
+        _store_result(request.job_id, payload)
 
         # Report completion progress (#762)
         await _report_progress(request.job_id, request.progress_url, "Complete", 100, "Video delivered")
@@ -573,14 +608,16 @@ async def run_generation_job(request: GenerateRequest):
         logger.error(f"Job {request.job_id} failed after {elapsed:.1f}s: {e}")
 
         # Notify failure
+        error_payload = {
+            "job_id": request.job_id,
+            "status": "failed",
+            "error": str(e),
+        }
+        _store_result(request.job_id, error_payload)
         try:
             validated_url = validate_callback_url(request.callback_url)
             async with httpx.AsyncClient(timeout=30.0) as client:
-                await client.post(validated_url, json={
-                    "job_id": request.job_id,
-                    "status": "failed",
-                    "error": str(e),
-                })
+                await client.post(validated_url, json=error_payload, headers=_callback_auth_headers())
         except Exception as webhook_err:
             logger.error(f"Failed to send error webhook: {webhook_err}")
 
@@ -624,6 +661,17 @@ async def lifespan(app: FastAPI):
     mx.set_cache_limit(_cache_mb * 1024 * 1024)
     logger.info(f"MLX cache limit set to {_cache_mb}MB")
 
+    # Wire GPU memory to prevent kIOGPUCommandBufferCallbackErrorImpactingInteractivity
+    # watchdog on M2 (macOS 15+). MLX docs: "useful on macOS 15.0 or higher".
+    # Equivalent to: sudo sysctl iogpu.wired_limit_mb=<mb>
+    _wired_mb = int(os.environ.get("MLX_WIRED_LIMIT_MB", "0"))
+    if _wired_mb > 0:
+        try:
+            old_limit = mx.set_wired_limit(_wired_mb * 1024 * 1024)
+            logger.info(f"MLX wired limit set to {_wired_mb}MB (was {old_limit // (1024*1024)}MB)")
+        except Exception as _e:
+            logger.warning(f"MLX wired limit not set: {_e}")
+
     logger.info("M2 Pro Worker starting up")
     mem = get_system_memory_info()
     logger.info(
@@ -653,6 +701,18 @@ async def health():
         worker="m2-pro",
         loaded_model=state.loaded_model,
     )
+
+
+@app.get("/job-result/{job_id}")
+async def get_job_result(job_id: str):
+    """Poll for a completed job result.  Returns the same payload that would
+    have been POSTed to the callback URL.  Returns 404 if the job is unknown
+    or still in progress.  The result is deleted after retrieval (ack)."""
+    with _job_results_lock:
+        result = _job_results.pop(job_id, None)
+    if result is None:
+        raise HTTPException(status_code=404, detail="No result for this job")
+    return result
 
 
 @app.get("/memory")
@@ -714,6 +774,67 @@ async def unload():
     unload_model()
     state.loaded_model = None
     return {"status": "unloaded", "previous_model": prev}
+
+
+# Safe directory for video file access — only files within this directory
+# (or subdirectories) are permitted for the /last-frame endpoint.
+GALLERY_DIR = Path(os.environ.get("GALLERY_DIR", str(Path.home() / ".openzigs" / "gallery"))).resolve()
+
+
+class LastFrameRequest(BaseModel):
+    video_path: str = Field(..., min_length=1, max_length=1024)
+
+
+@app.post("/last-frame", dependencies=[Depends(verify_token)])
+async def extract_last_frame(request: LastFrameRequest):
+    """Extract the last frame of a video file as a base64-encoded PNG.
+    Used for multi-segment video chaining — segment N's last frame
+    becomes segment N+1's init_image for visual continuity.
+    """
+    video_path = request.video_path
+    # Security: resolve path and restrict to gallery directory (path traversal protection)
+    vp = Path(video_path).resolve()
+    if not vp.is_relative_to(GALLERY_DIR):
+        raise HTTPException(status_code=403, detail="Access denied: path outside gallery directory")
+    if not vp.exists():
+        raise HTTPException(status_code=404, detail="Video file not found")
+    if not vp.is_file():
+        raise HTTPException(status_code=400, detail="Path is not a regular file")
+    # Only allow video files
+    suffix = vp.suffix.lower()
+    if suffix not in (".mp4", ".mov", ".mkv", ".webm", ".avi"):
+        raise HTTPException(status_code=400, detail=f"Unsupported video format: {suffix}")
+
+    try:
+        result = subprocess.run(
+            [
+                "ffmpeg", "-sseof", "-0.1",
+                "-i", str(vp),
+                "-frames:v", "1",
+                "-f", "image2pipe",
+                "-vcodec", "png",
+                "pipe:1",
+            ],
+            capture_output=True,
+            timeout=30,
+        )
+        if result.returncode != 0:
+            stderr = result.stderr.decode("utf-8", errors="replace")[:500]
+            logger.error(f"ffmpeg failed for {vp}: {stderr}")
+            raise HTTPException(
+                status_code=500,
+                detail="Frame extraction failed",
+            )
+        if not result.stdout:
+            raise HTTPException(status_code=500, detail="ffmpeg produced no output")
+        image_base64 = base64.b64encode(result.stdout).decode("ascii")
+        return {"image_base64": image_base64}
+    except subprocess.TimeoutExpired:
+        raise HTTPException(status_code=504, detail="ffmpeg timed out extracting last frame")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Last frame extraction failed: {str(e)}")
 
 
 @app.post("/generate", status_code=202, dependencies=[Depends(verify_token)])

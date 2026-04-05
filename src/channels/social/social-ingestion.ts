@@ -2,13 +2,20 @@ import { EventEmitter } from "node:events";
 import { logger } from "../../logging/logger.js";
 import { SocialRepository } from "./social-repository.js";
 import type { PostContextService } from "./platform-api-client.js";
-import type { IncomingSocialMessage, IncomingComment, SocialPlatform } from "./types.js";
+import type {
+  IncomingSocialMessage,
+  IncomingComment,
+  SocialPlatform,
+} from "./types.js";
 
 /** Platform adapter interface — each platform implements this. */
 export interface SocialPlatformAdapter {
   readonly platform: SocialPlatform;
   /** Parse an inbound webhook payload into a normalised message (or null if not applicable). */
-  parseWebhook(body: unknown, headers: Record<string, string>): IncomingSocialMessage | IncomingComment | null;
+  parseWebhook(
+    body: unknown,
+    headers: Record<string, string>,
+  ): IncomingSocialMessage | IncomingComment | null;
   /** Poll for new messages since the given timestamp. */
   poll?(since: string): Promise<(IncomingSocialMessage | IncomingComment)[]>;
 }
@@ -54,11 +61,17 @@ export class SocialIngestionService extends EventEmitter {
   }
 
   /** Handle a raw webhook payload — delegates to the platform adapter. */
-  async handleWebhook(platform: SocialPlatform, body: unknown, headers: Record<string, string>): Promise<void> {
+  async handleWebhook(
+    platform: SocialPlatform,
+    body: unknown,
+    headers: Record<string, string>,
+  ): Promise<void> {
     logger.info(`[SocialIngestion] Webhook received for ${platform}`);
     const adapter = this.adapters.get(platform);
     if (!adapter) {
-      logger.warn(`[SocialIngestion] No adapter registered for platform: ${platform}`);
+      logger.warn(
+        `[SocialIngestion] No adapter registered for platform: ${platform}`,
+      );
       this.pushWebhookLog(platform, false, "no_adapter");
       return;
     }
@@ -76,11 +89,16 @@ export class SocialIngestionService extends EventEmitter {
         // Enrich comment with post context (non-blocking on failure)
         if (this.postContextService && comment.postId) {
           try {
-            const ctx = await this.postContextService.getPostContext(comment.platform, comment.postId);
+            const ctx = await this.postContextService.getPostContext(
+              comment.platform,
+              comment.postId,
+            );
             if (ctx) comment.postContext = ctx;
           } catch (err) {
             const ctxMsg = err instanceof Error ? err.message : String(err);
-            logger.warn(`[SocialIngestion] Post context enrichment failed: ${ctxMsg}`);
+            logger.warn(
+              `[SocialIngestion] Post context enrichment failed: ${ctxMsg}`,
+            );
           }
         }
         this.processComment(comment);
@@ -90,14 +108,27 @@ export class SocialIngestionService extends EventEmitter {
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      logger.error(`[SocialIngestion] Webhook parse error (${platform}): ${msg}`);
+      logger.error(
+        `[SocialIngestion] Webhook parse error (${platform}): ${msg}`,
+      );
       this.pushWebhookLog(platform, false, "parse_error");
     }
   }
 
   /** Push an inbound event into the diagnostics ring buffer. */
-  private pushWebhookLog(platform: string, parsed: boolean, type?: string, source = "webhook"): void {
-    this.webhookLog.push({ ts: new Date().toISOString(), platform, parsed, type, source });
+  private pushWebhookLog(
+    platform: string,
+    parsed: boolean,
+    type?: string,
+    source = "webhook",
+  ): void {
+    this.webhookLog.push({
+      ts: new Date().toISOString(),
+      platform,
+      parsed,
+      type,
+      source,
+    });
     if (this.webhookLog.length > 50) this.webhookLog.shift();
   }
 
@@ -123,7 +154,9 @@ export class SocialIngestionService extends EventEmitter {
     });
 
     if (!message) {
-      logger.info(`[SocialIngestion] Duplicate message skipped: ${msg.platform}/${msg.platformMessageId}`);
+      logger.info(
+        `[SocialIngestion] Duplicate message skipped: ${msg.platform}/${msg.platformMessageId}`,
+      );
       return;
     }
 
@@ -152,7 +185,9 @@ export class SocialIngestionService extends EventEmitter {
     });
 
     if (!message) {
-      logger.info(`[SocialIngestion] Duplicate comment skipped: ${comment.platform}/${comment.commentId}`);
+      logger.info(
+        `[SocialIngestion] Duplicate comment skipped: ${comment.platform}/${comment.commentId}`,
+      );
       return;
     }
 
@@ -163,7 +198,9 @@ export class SocialIngestionService extends EventEmitter {
   startPolling(platform: SocialPlatform, intervalSeconds: number): void {
     const adapter = this.adapters.get(platform);
     if (!adapter?.poll) {
-      logger.warn(`[SocialIngestion] Adapter for ${platform} does not support polling`);
+      logger.warn(
+        `[SocialIngestion] Adapter for ${platform} does not support polling`,
+      );
       return;
     }
 
@@ -189,7 +226,9 @@ export class SocialIngestionService extends EventEmitter {
     const poll = async () => {
       // Respect backoff window — skip this cycle if we're backing off
       if (health.backoffUntil && new Date() < new Date(health.backoffUntil)) {
-        logger.info(`[SocialIngestion] ${platform} in backoff until ${health.backoffUntil}, skipping poll`);
+        logger.info(
+          `[SocialIngestion] ${platform} in backoff until ${health.backoffUntil}, skipping poll`,
+        );
         return;
       }
 
@@ -208,9 +247,14 @@ export class SocialIngestionService extends EventEmitter {
             const comment = item as IncomingComment;
             if (this.postContextService && comment.postId) {
               try {
-                const ctx = await this.postContextService.getPostContext(comment.platform, comment.postId);
+                const ctx = await this.postContextService.getPostContext(
+                  comment.platform,
+                  comment.postId,
+                );
                 if (ctx) comment.postContext = ctx;
-              } catch { /* best-effort enrichment */ }
+              } catch {
+                /* best-effort enrichment */
+              }
             }
             this.pushWebhookLog(platform, true, "comment", "poll");
             this.processComment(comment);
@@ -228,8 +272,13 @@ export class SocialIngestionService extends EventEmitter {
         health.lastError = msg;
 
         // Exponential backoff: 2^(n-1) × interval, capped at the polling interval itself
-        const backoffSeconds = Math.min(Math.pow(2, health.consecutiveErrors - 1) * intervalSeconds, Math.max(intervalSeconds, 600));
-        health.backoffUntil = new Date(Date.now() + backoffSeconds * 1000).toISOString();
+        const backoffSeconds = Math.min(
+          Math.pow(2, health.consecutiveErrors - 1) * intervalSeconds,
+          Math.max(intervalSeconds, 600),
+        );
+        health.backoffUntil = new Date(
+          Date.now() + backoffSeconds * 1000,
+        ).toISOString();
         logger.warn(
           `[SocialIngestion] ${platform} consecutive error #${health.consecutiveErrors} — backing off for ${backoffSeconds}s`,
         );
@@ -238,7 +287,9 @@ export class SocialIngestionService extends EventEmitter {
 
     const timer = setInterval(poll, intervalSeconds * 1000);
     this.pollTimers.set(platform, timer);
-    logger.info(`[SocialIngestion] Started polling ${platform} every ${intervalSeconds}s`);
+    logger.info(
+      `[SocialIngestion] Started polling ${platform} every ${intervalSeconds}s`,
+    );
 
     // Do an initial poll immediately
     void poll();
@@ -283,10 +334,22 @@ export class SocialIngestionService extends EventEmitter {
   }
 
   /** Recent inbound events for diagnostics (ring buffer, last 50). */
-  private webhookLog: Array<{ ts: string; platform: string; parsed: boolean; type?: string; source?: string }> = [];
+  private webhookLog: Array<{
+    ts: string;
+    platform: string;
+    parsed: boolean;
+    type?: string;
+    source?: string;
+  }> = [];
 
   /** Get recent inbound event log. */
-  getWebhookLog(): Array<{ ts: string; platform: string; parsed: boolean; type?: string; source?: string }> {
+  getWebhookLog(): Array<{
+    ts: string;
+    platform: string;
+    parsed: boolean;
+    type?: string;
+    source?: string;
+  }> {
     return [...this.webhookLog];
   }
 }
@@ -301,7 +364,9 @@ export class TwitterAdapter implements SocialPlatformAdapter {
     const payload = body as Record<string, unknown>;
 
     // Direct message events
-    const dmEvents = payload.direct_message_events as Array<Record<string, unknown>> | undefined;
+    const dmEvents = payload.direct_message_events as
+      | Array<Record<string, unknown>>
+      | undefined;
     if (dmEvents?.length) {
       const event = dmEvents[0];
       const msgCreate = event.message_create as Record<string, unknown>;
@@ -313,12 +378,16 @@ export class TwitterAdapter implements SocialPlatformAdapter {
         platformUserId: (msgCreate.sender_id as string) ?? "",
         username: (msgCreate.sender_id as string) ?? "",
         text: msgData?.text ?? "",
-        timestamp: new Date(Number(event.created_timestamp ?? Date.now())).toISOString(),
+        timestamp: new Date(
+          Number(event.created_timestamp ?? Date.now()),
+        ).toISOString(),
       };
     }
 
     // Tweet create events (mentions / replies treated as comments)
-    const tweetCreateEvents = payload.tweet_create_events as Array<Record<string, unknown>> | undefined;
+    const tweetCreateEvents = payload.tweet_create_events as
+      | Array<Record<string, unknown>>
+      | undefined;
     if (tweetCreateEvents?.length) {
       const tweet = tweetCreateEvents[0];
       const user = tweet.user as Record<string, string>;
@@ -352,7 +421,9 @@ export class LinkedInAdapter implements SocialPlatformAdapter {
     const payloadType = payload.type as string | undefined;
 
     if (payloadType === "ORGANIZATION_SOCIAL_ACTION_NOTIFICATIONS") {
-      const notifications = payload.notifications as Array<Record<string, unknown>> | undefined;
+      const notifications = payload.notifications as
+        | Array<Record<string, unknown>>
+        | undefined;
       if (!notifications?.length) return null;
 
       // Process the first COMMENT notification (Social Brain handles one at a time)
@@ -361,13 +432,23 @@ export class LinkedInAdapter implements SocialPlatformAdapter {
         if (action !== "COMMENT" && action !== "ADMIN_COMMENT") continue;
 
         const sourcePost = (notification.sourcePost as string) ?? "";
-        const generatedActivity = (notification.generatedActivity as string) ?? "";
-        const lastModifiedAt = notification.lastModifiedAt as number | undefined;
+        const generatedActivity =
+          (notification.generatedActivity as string) ?? "";
+        const lastModifiedAt = notification.lastModifiedAt as
+          | number
+          | undefined;
 
         // Extract comment text from decoratedGeneratedActivity if available
-        const decorated = notification.decoratedGeneratedActivity as Record<string, unknown> | undefined;
-        const commentData = decorated?.comment as Record<string, unknown> | undefined;
-        const commentText = (commentData?.text as string) ?? (commentData?.message as string) ?? "";
+        const decorated = notification.decoratedGeneratedActivity as
+          | Record<string, unknown>
+          | undefined;
+        const commentData = decorated?.comment as
+          | Record<string, unknown>
+          | undefined;
+        const commentText =
+          (commentData?.text as string) ??
+          (commentData?.message as string) ??
+          "";
         const commentOwner = (commentData?.owner as string) ?? "";
 
         if (!generatedActivity || !sourcePost) continue;
@@ -398,7 +479,9 @@ export class LinkedInAdapter implements SocialPlatformAdapter {
         platformUserId: sender?.id ?? "",
         username: sender?.id ?? "",
         text: (msg?.text as string) ?? "",
-        timestamp: new Date(event.createdAt as number ?? Date.now()).toISOString(),
+        timestamp: new Date(
+          (event.createdAt as number) ?? Date.now(),
+        ).toISOString(),
       };
     }
 
@@ -413,7 +496,9 @@ export class LinkedInAdapter implements SocialPlatformAdapter {
         userId: actor ?? "",
         username: actor ?? "",
         text: (event.message as Record<string, string>)?.text ?? "",
-        timestamp: new Date(event.createdAt as number ?? Date.now()).toISOString(),
+        timestamp: new Date(
+          (event.createdAt as number) ?? Date.now(),
+        ).toISOString(),
       };
     }
 
@@ -424,9 +509,16 @@ export class LinkedInAdapter implements SocialPlatformAdapter {
 /** Generic adapter for platforms that use polling (Reddit, YouTube, etc.). */
 export class GenericPollAdapter implements SocialPlatformAdapter {
   readonly platform: SocialPlatform;
-  private _poll: (since: string) => Promise<(IncomingSocialMessage | IncomingComment)[]>;
+  private _poll: (
+    since: string,
+  ) => Promise<(IncomingSocialMessage | IncomingComment)[]>;
 
-  constructor(platform: SocialPlatform, pollFn: (since: string) => Promise<(IncomingSocialMessage | IncomingComment)[]>) {
+  constructor(
+    platform: SocialPlatform,
+    pollFn: (
+      since: string,
+    ) => Promise<(IncomingSocialMessage | IncomingComment)[]>,
+  ) {
     this.platform = platform;
     this._poll = pollFn;
   }
@@ -435,7 +527,9 @@ export class GenericPollAdapter implements SocialPlatformAdapter {
     return null; // Polling-only adapter
   }
 
-  async poll(since: string): Promise<(IncomingSocialMessage | IncomingComment)[]> {
+  async poll(
+    since: string,
+  ): Promise<(IncomingSocialMessage | IncomingComment)[]> {
     return this._poll(since);
   }
 }
@@ -452,7 +546,9 @@ export class InstagramAdapter implements SocialPlatformAdapter {
     if (!entry) return null;
 
     // Instagram messaging webhook (DMs)
-    const messaging = entry.messaging as Array<Record<string, unknown>> | undefined;
+    const messaging = entry.messaging as
+      | Array<Record<string, unknown>>
+      | undefined;
     if (messaging?.length) {
       const event = messaging[0];
       const sender = event.sender as Record<string, string> | undefined;
@@ -464,7 +560,9 @@ export class InstagramAdapter implements SocialPlatformAdapter {
           platformUserId: sender.id,
           username: sender.id,
           text: message.text,
-          timestamp: new Date(Number(event.timestamp ?? Date.now())).toISOString(),
+          timestamp: new Date(
+            Number(event.timestamp ?? Date.now()),
+          ).toISOString(),
         };
       }
     }
@@ -510,7 +608,9 @@ export class FacebookAdapter implements SocialPlatformAdapter {
     if (!entry) return null;
 
     // Facebook Messenger webhook (messaging array)
-    const messaging = entry.messaging as Array<Record<string, unknown>> | undefined;
+    const messaging = entry.messaging as
+      | Array<Record<string, unknown>>
+      | undefined;
     if (messaging?.length) {
       const event = messaging[0];
       const sender = event.sender as Record<string, string> | undefined;
@@ -522,7 +622,9 @@ export class FacebookAdapter implements SocialPlatformAdapter {
           platformUserId: sender.id,
           username: sender.id,
           text: message.text,
-          timestamp: new Date(Number(event.timestamp ?? Date.now())).toISOString(),
+          timestamp: new Date(
+            Number(event.timestamp ?? Date.now()),
+          ).toISOString(),
         };
       }
     }
@@ -547,7 +649,9 @@ export class FacebookAdapter implements SocialPlatformAdapter {
             userId: senderId,
             username: senderName ?? senderId,
             text: message,
-            timestamp: new Date(Number(value.created_time ?? Date.now()) * 1000).toISOString(),
+            timestamp: new Date(
+              Number(value.created_time ?? Date.now()) * 1000,
+            ).toISOString(),
           };
         }
       }

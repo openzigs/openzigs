@@ -12,7 +12,9 @@ export type VaultRouterOptions = {
   vaultService: SecretVaultService;
 };
 
-export const createVaultRouter = ({ vaultService }: VaultRouterOptions): Router => {
+export const createVaultRouter = ({
+  vaultService,
+}: VaultRouterOptions): Router => {
   const router = Router();
 
   // ── Vault status ──
@@ -22,7 +24,9 @@ export const createVaultRouter = ({ vaultService }: VaultRouterOptions): Router 
       res.json({
         exists,
         unlocked: vaultService.isUnlocked(),
-        secretCount: vaultService.isUnlocked() ? vaultService.listSecrets().length : null,
+        secretCount: vaultService.isUnlocked()
+          ? vaultService.listSecrets().length
+          : null,
       });
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
@@ -34,8 +38,14 @@ export const createVaultRouter = ({ vaultService }: VaultRouterOptions): Router 
   router.post("/initialize", async (req, res) => {
     try {
       const { masterPassword } = req.body as { masterPassword?: string };
-      if (!masterPassword || typeof masterPassword !== "string" || masterPassword.length < 8) {
-        res.status(400).json({ error: "Master password must be at least 8 characters" });
+      if (
+        !masterPassword ||
+        typeof masterPassword !== "string" ||
+        masterPassword.length < 8
+      ) {
+        res
+          .status(400)
+          .json({ error: "Master password must be at least 8 characters" });
         return;
       }
       await vaultService.initialize(masterPassword);
@@ -76,11 +86,15 @@ export const createVaultRouter = ({ vaultService }: VaultRouterOptions): Router 
         newPassword?: string;
       };
       if (!currentPassword || !newPassword) {
-        res.status(400).json({ error: "Both currentPassword and newPassword are required" });
+        res
+          .status(400)
+          .json({ error: "Both currentPassword and newPassword are required" });
         return;
       }
       if (newPassword.length < 8) {
-        res.status(400).json({ error: "New password must be at least 8 characters" });
+        res
+          .status(400)
+          .json({ error: "New password must be at least 8 characters" });
         return;
       }
       await vaultService.changeMasterPassword(currentPassword, newPassword);
@@ -115,7 +129,12 @@ export const createVaultRouter = ({ vaultService }: VaultRouterOptions): Router 
         res.status(400).json({ error: "label and value are required" });
         return;
       }
-      const entry = await vaultService.addSecret({ label, value, service, username });
+      const entry = await vaultService.addSecret({
+        label,
+        value,
+        service,
+        username,
+      });
       res.status(201).json({ secret: entry });
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
@@ -133,7 +152,12 @@ export const createVaultRouter = ({ vaultService }: VaultRouterOptions): Router 
         service?: string;
         username?: string;
       };
-      const entry = await vaultService.updateSecret(id, { label, value, service, username });
+      const entry = await vaultService.updateSecret(id, {
+        label,
+        value,
+        service,
+        username,
+      });
       res.json({ secret: entry });
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);

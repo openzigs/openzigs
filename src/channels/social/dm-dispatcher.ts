@@ -9,13 +9,36 @@ import type { SocialPlatform } from "./types.js";
 import type { DmSender, CommentReplier } from "./comment-rule-engine.js";
 
 /** Maps SocialPlatform to MCP server name and tool names. */
-const PLATFORM_DM_MAP: Record<string, { server: string; dmTool?: string; replyTool?: string }> = {
-  twitter: { server: "twitter", dmTool: "twitter_send_dm", replyTool: "twitter_post_tweet" },
+const PLATFORM_DM_MAP: Record<
+  string,
+  { server: string; dmTool?: string; replyTool?: string }
+> = {
+  twitter: {
+    server: "twitter",
+    dmTool: "twitter_send_dm",
+    replyTool: "twitter_post_tweet",
+  },
   youtube: { server: "youtube", replyTool: "yt_reply_to_comment" },
-  linkedin: { server: "linkedin", dmTool: "linkedin_send_message", replyTool: "linkedin_reply_to_comment" },
-  reddit: { server: "reddit", dmTool: "reddit_send_message", replyTool: "reddit_reply_to_comment" },
-  instagram: { server: "instagram", dmTool: "send_dm", replyTool: "reply_to_comment" },
-  facebook: { server: "facebook", dmTool: "fb_send_message", replyTool: "fb_reply_to_comment" },
+  linkedin: {
+    server: "linkedin",
+    dmTool: "linkedin_send_message",
+    replyTool: "linkedin_reply_to_comment",
+  },
+  reddit: {
+    server: "reddit",
+    dmTool: "reddit_send_message",
+    replyTool: "reddit_reply_to_comment",
+  },
+  instagram: {
+    server: "instagram",
+    dmTool: "send_dm",
+    replyTool: "reply_to_comment",
+  },
+  facebook: {
+    server: "facebook",
+    dmTool: "fb_send_message",
+    replyTool: "fb_reply_to_comment",
+  },
 };
 
 export interface DmDispatcherOptions {
@@ -31,9 +54,15 @@ export class DmDispatcher {
 
   /** Returns a DmSender function compatible with CommentRuleEngine. */
   createDmSender(): DmSender {
-    return async (platform: SocialPlatform, userId: string, text: string): Promise<void> => {
+    return async (
+      platform: SocialPlatform,
+      userId: string,
+      text: string,
+    ): Promise<void> => {
       if (!userId) {
-        throw new Error(`DM send aborted for ${platform}: recipient userId is empty`);
+        throw new Error(
+          `DM send aborted for ${platform}: recipient userId is empty`,
+        );
       }
 
       const mapping = PLATFORM_DM_MAP[platform];
@@ -46,7 +75,11 @@ export class DmDispatcher {
       }
 
       const args = this._buildDmArgs(platform, userId, text);
-      const result = await this.mgr.callTool(mapping.server, mapping.dmTool, args);
+      const result = await this.mgr.callTool(
+        mapping.server,
+        mapping.dmTool,
+        args,
+      );
 
       if (result.isError) {
         throw new Error(`DM send failed (${platform}): ${result.text}`);
@@ -58,10 +91,17 @@ export class DmDispatcher {
 
   /** Returns a CommentReplier function compatible with CommentRuleEngine. */
   createCommentReplier(): CommentReplier {
-    return async (platform: SocialPlatform, commentId: string, text: string, postId?: string): Promise<void> => {
+    return async (
+      platform: SocialPlatform,
+      commentId: string,
+      text: string,
+      postId?: string,
+    ): Promise<void> => {
       const mapping = PLATFORM_DM_MAP[platform];
       if (!mapping?.replyTool) {
-        throw new Error(`Comment reply not supported for platform: ${platform}`);
+        throw new Error(
+          `Comment reply not supported for platform: ${platform}`,
+        );
       }
 
       if (!this.mgr.isRunning(mapping.server)) {
@@ -69,7 +109,11 @@ export class DmDispatcher {
       }
 
       const args = this._buildReplyArgs(platform, commentId, text, postId);
-      const result = await this.mgr.callTool(mapping.server, mapping.replyTool, args);
+      const result = await this.mgr.callTool(
+        mapping.server,
+        mapping.replyTool,
+        args,
+      );
 
       if (result.isError) {
         throw new Error(`Comment reply failed (${platform}): ${result.text}`);
@@ -79,13 +123,19 @@ export class DmDispatcher {
       try {
         const parsed = JSON.parse(result.text);
         if (parsed.success === false) {
-          throw new Error(`Comment reply failed (${platform}): ${parsed.error ?? result.text}`);
+          throw new Error(
+            `Comment reply failed (${platform}): ${parsed.error ?? result.text}`,
+          );
         }
       } catch (e) {
-        if (e instanceof SyntaxError) { /* non-JSON response, assume ok */ } else throw e;
+        if (e instanceof SyntaxError) {
+          /* non-JSON response, assume ok */
+        } else throw e;
       }
 
-      logger.info(`[DmDispatcher] Replied to comment ${commentId} via ${platform}`);
+      logger.info(
+        `[DmDispatcher] Replied to comment ${commentId} via ${platform}`,
+      );
     };
   }
 
@@ -93,7 +143,11 @@ export class DmDispatcher {
    * Build platform-specific arguments for DM tools.
    * Each MCP server uses a different parameter name for the recipient ID.
    */
-  private _buildDmArgs(platform: string, userId: string, text: string): Record<string, string> {
+  private _buildDmArgs(
+    platform: string,
+    userId: string,
+    text: string,
+  ): Record<string, string> {
     switch (platform) {
       case "twitter":
         // twitter_send_dm expects participant_id + text
@@ -119,7 +173,12 @@ export class DmDispatcher {
    * Build platform-specific arguments for comment reply tools.
    * Each MCP server uses different parameter names.
    */
-  private _buildReplyArgs(platform: string, commentId: string, text: string, postId?: string): Record<string, string> {
+  private _buildReplyArgs(
+    platform: string,
+    commentId: string,
+    text: string,
+    postId?: string,
+  ): Record<string, string> {
     switch (platform) {
       case "twitter":
         return { text, reply_to: commentId };

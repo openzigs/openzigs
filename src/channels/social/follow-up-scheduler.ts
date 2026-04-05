@@ -46,10 +46,15 @@ export class FollowUpScheduler extends EventEmitter {
   /** Start the scheduler loop. */
   start(): void {
     if (this.timer) return;
-    this.timer = setInterval(() => void this.processPending(), this.checkIntervalMs);
+    this.timer = setInterval(
+      () => void this.processPending(),
+      this.checkIntervalMs,
+    );
     // Process immediately on start
     void this.processPending();
-    logger.info(`[FollowUpScheduler] Started (interval: ${this.checkIntervalMs}ms)`);
+    logger.info(
+      `[FollowUpScheduler] Started (interval: ${this.checkIntervalMs}ms)`,
+    );
   }
 
   /** Stop the scheduler loop. */
@@ -64,14 +69,23 @@ export class FollowUpScheduler extends EventEmitter {
    * Schedule follow-up steps for a contact after a rule trigger.
    * Called by CommentRuleEngine after a successful match.
    */
-  scheduleForRule(ruleId: string, contact: { id: string; platform: SocialPlatform; platformUserId: string }, vars: Record<string, string>): void {
+  scheduleForRule(
+    ruleId: string,
+    contact: { id: string; platform: SocialPlatform; platformUserId: string },
+    vars: Record<string, string>,
+  ): void {
     const steps = this.repository.getFollowUpSteps(ruleId);
     if (steps.length === 0) return;
 
     const now = this.clock();
     for (const step of steps) {
-      const scheduledAt = new Date(now.getTime() + step.delay_seconds * 1000).toISOString();
-      const message = step.message_template.replace(/\{\{(\w+)\}\}/g, (_m, key: string) => vars[key] ?? `{{${key}}}`);
+      const scheduledAt = new Date(
+        now.getTime() + step.delay_seconds * 1000,
+      ).toISOString();
+      const message = step.message_template.replace(
+        /\{\{(\w+)\}\}/g,
+        (_m, key: string) => vars[key] ?? `{{${key}}}`,
+      );
 
       this.repository.scheduleFollowUp({
         contactId: contact.id,
@@ -84,7 +98,9 @@ export class FollowUpScheduler extends EventEmitter {
       });
     }
 
-    logger.info(`[FollowUpScheduler] Scheduled ${steps.length} follow-ups for contact ${contact.id} (rule ${ruleId})`);
+    logger.info(
+      `[FollowUpScheduler] Scheduled ${steps.length} follow-ups for contact ${contact.id} (rule ${ruleId})`,
+    );
   }
 
   /** Process all pending follow-up jobs that are due. */
@@ -97,7 +113,11 @@ export class FollowUpScheduler extends EventEmitter {
 
     for (const job of pending) {
       try {
-        await this.sendDm(job.platform as SocialPlatform, job.platform_user_id, job.message);
+        await this.sendDm(
+          job.platform as SocialPlatform,
+          job.platform_user_id,
+          job.message,
+        );
         this.repository.markFollowUpSent(job.id);
 
         // Log the outbound DM in social_messages
@@ -107,17 +127,25 @@ export class FollowUpScheduler extends EventEmitter {
           direction: "outbound",
           status: "auto_replied",
           content: job.message,
-          metadata: { source: "follow-up", ruleId: job.rule_id, stepId: job.step_id },
+          metadata: {
+            source: "follow-up",
+            ruleId: job.rule_id,
+            stepId: job.step_id,
+          },
         });
 
         sent++;
         this.emit("sent", { job });
-        logger.info(`[FollowUpScheduler] Sent follow-up ${job.id} to ${job.platform_user_id}`);
+        logger.info(
+          `[FollowUpScheduler] Sent follow-up ${job.id} to ${job.platform_user_id}`,
+        );
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         this.repository.markFollowUpError(job.id, msg);
         this.emit("error", { job, error: msg });
-        logger.error(`[FollowUpScheduler] Failed to send follow-up ${job.id}: ${msg}`);
+        logger.error(
+          `[FollowUpScheduler] Failed to send follow-up ${job.id}: ${msg}`,
+        );
       }
     }
 

@@ -327,13 +327,23 @@ try {
 // POST callbacks back to us.  Falls back to localhost when no external
 // interface is found (single-machine dev setup).
 function getLanIp(): string {
+  const candidates: string[] = [];
   for (const addrs of Object.values(os.networkInterfaces())) {
     if (!addrs) continue;
     for (const addr of addrs) {
-      if (addr.family === "IPv4" && !addr.internal) return addr.address;
+      if (addr.family === "IPv4" && !addr.internal)
+        candidates.push(addr.address);
     }
   }
-  return "localhost";
+  if (candidates.length === 0) return "localhost";
+  // Prefer common LAN subnets (192.168.x.x, 10.x.x.x) over virtual interfaces
+  // like Docker bridges (172.x.x.x) or macOS VM networks (192.168.64.x).
+  const preferred = candidates.find(
+    (ip) =>
+      (ip.startsWith("192.168.") && !ip.startsWith("192.168.64.")) ||
+      ip.startsWith("10."),
+  );
+  return preferred ?? candidates[0];
 }
 
 const queueMaster = new QueueMaster(mediaQueueRepo, {
@@ -2159,6 +2169,11 @@ app.use("/api/tasks", authMiddleware, tasksRouter);
 // Media Queue API routes (push-based distributed queue + gallery)
 // Callback route is mounted WITHOUT auth — remote workers (Mac Mini, FluxQ)
 // POST results to /api/queue/complete without an Authorization header.
+if (!config.auth.workerSecret) {
+  logger.warn(
+    "⚠ auth.workerSecret is not configured. Queue callbacks will only be accepted from localhost.",
+  );
+}
 const queueCallbackRouter = createQueueCallbackRouter({
   queueMaster,
   repo: mediaQueueRepo,
@@ -3670,10 +3685,16 @@ httpServer.listen(port, "0.0.0.0", () => {
     tunnel.on("connected", (publicUrl) => {
       logger.info(`Public URL: ${publicUrl}`);
       setTunnelPublicUrl(publicUrl);
+      // Route worker callbacks through the tunnel so they bypass LAN/AP isolation
+      queueMaster.setCallbackUrl(`${publicUrl}/api/queue/complete`);
     });
     tunnel.on("disconnected", () => {
       logger.warn("Cloudflare tunnel disconnected");
       setTunnelPublicUrl(null);
+      // Fall back to LAN IP for callbacks
+      queueMaster.setCallbackUrl(
+        `http://${getLanIp()}:${port}/api/queue/complete`,
+      );
     });
     void tunnel.start(port).catch((error) => {
       const details = error instanceof Error ? error.message : String(error);

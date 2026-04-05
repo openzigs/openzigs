@@ -46,7 +46,9 @@
     "namedTunnel": {
       "credentialsFile": "~/.cloudflared/credentials.json",
       "hostname": "agent.example.com"
-    }
+    },
+    "cfAccessTeamDomain": "",
+    "cfAccessAudience": ""
   },
   "mcpServers": {
     "autoProvision": true,
