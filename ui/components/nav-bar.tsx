@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
-import { ChevronDown, Film, Zap, Settings } from "lucide-react";
+import { ChevronDown, Film, Zap, Settings, Palette } from "lucide-react";
 import { ModeToggle } from "@/components/mode-toggle";
 import { ActivityIndicator } from "@/components/activity-indicator";
 import {
@@ -38,6 +38,15 @@ const NAV_GROUPS: NavGroup[] = [
       { href: "/gallery", label: "Gallery" },
       { href: "/characters", label: "Characters" },
       { href: "/music-studio", label: "Music Studio" },
+      { href: "/inpainting", label: "Inpainting" },
+    ],
+  },
+  {
+    label: "Creative",
+    icon: <Palette className="h-3.5 w-3.5" />,
+    items: [
+      { href: "/calendar", label: "Calendar" },
+      { href: "/outbox", label: "Outbox" },
     ],
   },
   {
@@ -49,7 +58,6 @@ const NAV_GROUPS: NavGroup[] = [
       { href: "/skills", label: "Skills" },
       { href: "/scheduler", label: "Scheduler" },
       { href: "/tasks", label: "Tasks" },
-      { href: "/outbox", label: "Outbox" },
     ],
   },
   {
@@ -83,7 +91,13 @@ const linkClasses = (active: boolean) =>
       : "text-muted-foreground hover:bg-accent/10 hover:text-foreground"
   }`;
 
-const NavDropdown = ({ group, pathname }: { group: NavGroup; pathname: string }) => {
+const NavDropdown = ({
+  group,
+  pathname,
+}: {
+  group: NavGroup;
+  pathname: string;
+}) => {
   const groupActive = group.items.some((item) => isActive(pathname, item.href));
 
   return (
@@ -140,7 +154,9 @@ export const NavBar = () => {
           {isGuest ? (
             <button
               onClick={async () => {
-                await fetch("/api/invite/logout", { method: "POST" }).catch(() => {});
+                await fetch("/api/invite/logout", { method: "POST" }).catch(
+                  () => {},
+                );
                 window.location.href = "/";
               }}
               className="rounded-lg bg-muted px-3 py-1.5 text-xs font-semibold text-muted-foreground hover:bg-destructive/20 hover:text-destructive transition"
@@ -160,7 +176,11 @@ export const NavBar = () => {
                 </Link>
               ))}
               {NAV_GROUPS.map((group) => (
-                <NavDropdown key={group.label} group={group} pathname={pathname} />
+                <NavDropdown
+                  key={group.label}
+                  group={group}
+                  pathname={pathname}
+                />
               ))}
             </>
           )}
