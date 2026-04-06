@@ -252,7 +252,7 @@ export const createVideoPipelineRouter = (
       res.json({
         status: "complete",
         format: input.format,
-        outputPath,
+        outputPath: path.basename(outputPath),
         clips: timeline.clips.filter((c) => c.type === "video").length,
         transitions: timeline.transitions.length,
       });

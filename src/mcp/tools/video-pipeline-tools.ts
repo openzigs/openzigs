@@ -605,18 +605,23 @@ export const createVideoPipelineTools = (
         const ext = input.format === "fcpxml" ? ".xml" : ".edl";
         const exportDir = path.join(os.homedir(), ".openzigs", "exports");
         fs.mkdirSync(exportDir, { recursive: true });
+        const sanitizedName = timeline.name.replace(/[^a-zA-Z0-9_-]/g, "_");
         const outputPath = path.join(
           exportDir,
-          `${timeline.name}_${Date.now()}${ext}`,
+          `${sanitizedName}_${Date.now()}${ext}`,
         );
-        fs.writeFileSync(outputPath, output, "utf-8");
+        const resolved = path.resolve(outputPath);
+        if (!resolved.startsWith(path.resolve(exportDir))) {
+          return { text: "Invalid export path", isError: true };
+        }
+        fs.writeFileSync(resolved, output, "utf-8");
 
         return {
           text: JSON.stringify(
             {
               status: "complete",
               format: input.format,
-              outputPath,
+              outputPath: path.basename(resolved),
               tracks: new Set(timeline.clips.map((c) => c.trackIndex)).size,
               clips: timeline.clips.filter((c) => c.type === "video").length,
               transitions: timeline.transitions.length,

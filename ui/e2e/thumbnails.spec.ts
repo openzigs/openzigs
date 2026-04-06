@@ -49,6 +49,6 @@ test.describe("Thumbnail Templates (#825)", () => {
     await navigateTo(page, "/director/studio/test-draft");
     // Look for variant-related controls
     const variantText = page.getByText(/variant|A\/B/i).first();
-    await expect(page.getByText(/Thumbnail/i).first()).toBeVisible();
+    await expect(variantText).toBeVisible();
   });
 });

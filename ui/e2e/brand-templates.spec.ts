@@ -1,6 +1,5 @@
 import { test, expect } from "@playwright/test";
 import { navigateTo } from "./helpers";
-import { BrandTemplatePage } from "./pages/brand-template.page";
 
 /**
  * E2E Tests — Brand Templates (#827)
@@ -21,7 +20,6 @@ test.describe("Brand Templates (#827)", () => {
     page,
   }) => {
     await navigateTo(page, "/admin");
-    const template = new BrandTemplatePage(page);
     // Editor should be accessible from admin
     await expect(page.getByText(/Brand|Template/i).first()).toBeVisible();
   });
@@ -105,7 +103,6 @@ test.describe("Brand Templates (#827)", () => {
   }) => {
     await navigateTo(page, "/admin");
     // Selecting a template shows the customization form
-    const template = new BrandTemplatePage(page);
     await expect(
       page.getByText(/Customize|Custom title/i).first(),
     ).toBeVisible();

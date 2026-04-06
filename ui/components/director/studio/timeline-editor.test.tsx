@@ -5,6 +5,7 @@ import { TimelineRuler } from "./timeline-ruler";
 
 // Mock ResizeObserver for canvas tests
 class MockResizeObserver {
+  constructor(_callback: ResizeObserverCallback) {}
   observe() {}
   unobserve() {}
   disconnect() {}

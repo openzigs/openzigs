@@ -32,6 +32,7 @@ test.describe("AI Video Reframing (#818)", () => {
   }) => {
     await navigateTo(page, "/director/studio/test-draft");
     const layoutSelector = page.getByLabel(/Layout|Mode/i).first();
+    await expect(layoutSelector).toBeVisible();
     // Verify the selector exists or the layout choices are present
     const autoOption = page.getByText(/Auto/i).first();
     await expect(autoOption).toBeVisible();

@@ -296,6 +296,35 @@ describe("createVideoPipelineTools", () => {
     expect(result.text).toContain("Invalid manifest JSON");
   });
 
+  it("export-timeline handler sanitizes path traversal in title", async () => {
+    vi.spyOn(fs, "mkdirSync").mockReturnValue(undefined);
+    const writeSpy = vi.spyOn(fs, "writeFileSync").mockReturnValue(undefined);
+
+    const tools = createVideoPipelineTools({});
+    const tool = tools.find((t) => t.name === "export-timeline")!;
+    const manifest = JSON.stringify({
+      composition: { fps: 30, width: 1920, height: 1080 },
+      timeline: [
+        { id: "s1", durationInFrames: 90, media: { src: "test.mp4" } },
+      ],
+      title: "../../../../etc/cron.d/exploit",
+    });
+    const result = await tool.handler({
+      manifest_json: manifest,
+      format: "fcpxml",
+      title: "../../../../etc/cron.d/exploit",
+    });
+    const parsed = JSON.parse(result.text);
+    expect(parsed.status).toBe("complete");
+    // Path should be sanitized — no directory traversal chars
+    expect(parsed.outputPath).not.toContain("..");
+    expect(parsed.outputPath).not.toContain("/");
+    // writeFileSync should have been called with a safe path
+    const writtenPath = writeSpy.mock.calls[0]![0] as string;
+    expect(writtenPath).not.toContain("..");
+    expect(writtenPath).toContain(".openzigs");
+  });
+
   it("generate-thumbnail handler returns config", async () => {
     const tools = createVideoPipelineTools({});
     const tool = tools.find((t) => t.name === "generate-thumbnail")!;

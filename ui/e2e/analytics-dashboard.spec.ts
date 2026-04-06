@@ -27,7 +27,6 @@ test.describe("Analytics Dashboard (#828)", () => {
   // AC1: KPI cards shown — total views, engagements, engagement rate, top content
   test("should display four KPI summary cards", async ({ page }) => {
     await navigateTo(page, "/admin");
-    const dashboard = new AnalyticsDashboardPage(page);
     await expect(page.getByText("Total Views")).toBeVisible();
     await expect(page.getByText("Total Engagements")).toBeVisible();
     await expect(page.getByText("Engagement Rate")).toBeVisible();
@@ -79,7 +78,6 @@ test.describe("Analytics Dashboard (#828)", () => {
     page,
   }) => {
     await navigateTo(page, "/admin");
-    const dashboard = new AnalyticsDashboardPage(page);
     // Day headers should be present
     await expect(page.getByText("Mon")).toBeVisible();
     await expect(page.getByText("Tue")).toBeVisible();

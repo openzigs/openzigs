@@ -50,6 +50,7 @@
 - [Creative Studio](#creative-studio)
 - [Director Mode (Video Production)](#director-mode-video-production)
 - [Director Studio & Advanced Compositing](#director-studio--advanced-compositing)
+- [Video Pipeline Tools (OpusClip Feature Parity)](#video-pipeline-tools-opusclip-feature-parity)
 - [Advanced Director Mode (Voice Cloning & Visual Injection)](#advanced-director-mode-voice-cloning--visual-injection)
 - [Presenter Mode (Interactive Playback & Quizzes)](#presenter-mode-interactive-playback--quizzes)
 - [Configuration Reference](#configuration-reference)
@@ -5068,6 +5069,113 @@ curl -X DELETE http://localhost:3000/api/admin/director/drafts/<id>
 | POST | `/api/admin/director/files/upload` | Upload video/audio/script files (BYOA) |
 | POST | `/api/admin/director/assets/upload` | Upload asset to local library |
 | POST | `/api/admin/director/assets/ingest` | Ingest uploaded video through analysis pipeline |
+
+---
+
+## Video Pipeline Tools (OpusClip Feature Parity)
+
+> **Epic #817** — Seven MCP tools for end-to-end video clipping, editing, and publishing. These tools can be used standalone via chat or integrated into the Director Studio UI.
+
+### `clip-video` — Intelligent Video Clipping
+
+Extract the best clips from a long video using multi-modal AI analysis (transcript + visual + audio). Supports natural language prompts for targeted extraction.
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `source` | string | *(required)* | File path or YouTube URL of the source video |
+| `prompt` | string | — | Natural language description of what clips to extract (e.g., "find the funniest moments") |
+| `mode` | `auto` \| `prompt` | `auto` | `auto` = AI decides clip boundaries, `prompt` = user-guided |
+| `clip_count` | number (1–50) | `10` | Target number of clips to extract |
+| `min_duration` | number | `15` | Minimum clip duration in seconds |
+| `max_duration` | number | `90` | Maximum clip duration in seconds |
+| `style` | `react` \| `highlight` \| `summarize` \| `teaser` | `highlight` | Clip selection style |
+
+**Output:** JSON with `jobId`, clip count, and per-clip details (start/end times, virality score, title, hook detection).
+
+### `reframe-video` — AI Video Reframing
+
+Reframe a video to a different aspect ratio with AI subject tracking. Automatically detects and follows the primary subject with Bézier-interpolated crop trajectories.
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `source` | string | *(required)* | Video file path |
+| `target_aspect` | `9:16` \| `1:1` \| `16:9` \| `4:5` | *(required)* | Target aspect ratio |
+| `layout` | `auto` \| `single-speaker` \| `split-screen` \| `gameplay` \| `action` | `auto` | Content layout mode |
+| `smoothing` | number (0–1) | `0.7` | Crop movement smoothness (0 = linear, 1 = full Bézier) |
+
+**Output:** JSON with `jobId`, output path, target aspect, and detected layout mode.
+
+### `clean-audio` — Filler Word Removal & Audio Cleaning
+
+Remove filler words (um, uh, like, you know), trim excessive silence, apply noise reduction, and normalize loudness.
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `source` | string | *(required)* | Audio or video file path |
+| `remove_filler` | boolean | `true` | Remove detected filler words |
+| `filler_words` | string[] | — | Custom filler word list (extends defaults) |
+| `trim_silence` | boolean | `true` | Trim excessive silence |
+| `max_silence_duration` | number (0.1–5) | `0.5` | Maximum pause duration in seconds |
+| `aggressiveness` | `gentle` \| `moderate` \| `aggressive` | `moderate` | Filler detection aggressiveness |
+| `enhance_speech` | boolean | `false` | Normalize loudness |
+| `de_noise` | boolean | `false` | Apply noise reduction |
+
+**Output:** JSON with `jobId`, output path, removed filler count, silence trimmed duration, and total time saved.
+
+### `add-captions` — Animated Caption Templates
+
+Apply animated captions to a video with configurable templates. Supports word-level highlighting and brand kit integration.
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `source` | string | *(required)* | Video file path |
+| `template` | `hormozi` \| `minimal` \| `tiktok` \| `news` \| `podcast` \| `corporate` \| `custom` | `hormozi` | Caption animation template |
+| `position` | `top` \| `center` \| `bottom` \| `lower-third` | — | Caption position override |
+| `highlight_color` | string | — | Highlight color hex (e.g., `#FFD700`) |
+| `font` | string | — | Font family override |
+| `font_size` | number | — | Font size override |
+| `max_words_per_line` | number (1–10) | `5` | Words per caption line |
+
+**Output:** JSON with caption configuration ready for Director Studio render pipeline.
+
+### `auto-broll` — Automatic B-Roll Insertion
+
+Analyze narration to identify B-Roll insertion points. Sources from stock footage (Pexels/Pixabay), AI generation, or custom assets.
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `source` | string | *(required)* | Video file path |
+| `mode` | `auto` \| `suggest` \| `custom` | `suggest` | `auto` = immediate insert, `suggest` = review first, `custom` = use provided assets |
+| `density` | `sparse` \| `moderate` \| `dense` | `moderate` | B-Roll insertion frequency |
+| `transition_style` | `crossfade` \| `cut` \| `zoom` \| `slide` | `crossfade` | Transition between main and B-Roll clips |
+
+**Output:** JSON with `jobId`, suggestion count, and per-suggestion details (timestamp, duration, search query, context).
+
+### `export-timeline` — NLE Export (FCP XML / EDL)
+
+Export a Director manifest as FCP XML (for Premiere Pro, DaVinci Resolve, Final Cut Pro) or EDL (CMX3600 format for universal NLE compatibility).
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `manifest_json` | string | *(required)* | Director manifest JSON string |
+| `format` | `fcpxml` \| `edl` | *(required)* | Export format |
+| `title` | string | — | Timeline title |
+
+**Output:** JSON with export status, format, filename, track count, clip count, and transition count. Exported file saved to `~/.openzigs/exports/`.
+
+### `generate-thumbnail` — YouTube Thumbnail Generator
+
+Generate YouTube-optimized thumbnails with multiple templates and batch A/B variant generation.
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `source` | string | *(required)* | Video file path |
+| `title` | string | — | Video title for text overlay |
+| `template` | `reaction` \| `before-after` \| `list` \| `spotlight` \| `minimal` \| `auto` | `auto` | Thumbnail layout template |
+| `text_overlay` | string | — | Custom overlay text |
+| `count` | number (1–6) | `3` | Number of A/B variants to generate |
+
+**Output:** JSON with thumbnail configuration. Use Director Studio thumbnail panel for interactive generation, or POST to `/api/studio/thumbnails/batch` for batch mode.
 
 ---
 

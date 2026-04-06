@@ -54,9 +54,8 @@ test.describe("Enhanced Captions (#819)", () => {
     const hormoziOption = page.getByText(/hormozi/i).first();
     const minimalOption = page.getByText(/minimal/i).first();
     // At least one should be visible if templates are loaded
-    await expect(
-      page.getByText(/template|caption style/i).first(),
-    ).toBeVisible();
+    await expect(hormoziOption).toBeVisible();
+    await expect(minimalOption).toBeVisible();
   });
 
   // AC3: Multi-language support visible
@@ -64,9 +63,7 @@ test.describe("Enhanced Captions (#819)", () => {
     await navigateTo(page, "/director/studio/test-draft");
     const langSelector = page.getByLabel(/Language/i).first();
     // Language dropdown or selector should exist
-    await expect(
-      page.getByText(/Language|Multi-language/i).first(),
-    ).toBeVisible();
+    await expect(langSelector).toBeVisible();
   });
 
   // AC5: Caption editor allows per-word editing
