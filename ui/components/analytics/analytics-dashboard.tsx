@@ -148,8 +148,7 @@ export function AnalyticsDashboard() {
 
       {/* Platform Breakdown */}
       <SectionCard
-        title="Platform Breakdown"
-        icon={<BarChart3 className="w-4 h-4" />}
+        title={<span className="inline-flex items-center gap-2"><BarChart3 className="w-4 h-4" /> Platform Breakdown</span>}
       >
         {!summary?.platformBreakdown?.length ? (
           <p className="text-sm text-zinc-400">
@@ -192,8 +191,7 @@ export function AnalyticsDashboard() {
 
       {/* Best Times Heatmap */}
       <SectionCard
-        title="Best Posting Times"
-        icon={<Clock className="w-4 h-4" />}
+        title={<span className="inline-flex items-center gap-2"><Clock className="w-4 h-4" /> Best Posting Times</span>}
       >
         {!bestTimes?.slots?.length ? (
           <p className="text-sm text-zinc-400">

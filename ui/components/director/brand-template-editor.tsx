@@ -98,8 +98,11 @@ export function BrandTemplateEditor({ brandKitId }: { brandKitId: string }) {
         return (
           <SectionCard
             key={type}
-            title={TYPE_LABELS[type]}
-            icon={<Film className="w-4 h-4" />}
+            title={
+              <span className="inline-flex items-center gap-2">
+                <Film className="w-4 h-4" /> {TYPE_LABELS[type]}
+              </span>
+            }
           >
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
               {templates.map((t) => {
@@ -179,8 +182,7 @@ export function BrandTemplateEditor({ brandKitId }: { brandKitId: string }) {
       {/* Saved templates list */}
       {saved?.templates && saved.templates.length > 0 && (
         <SectionCard
-          title="Saved Templates"
-          icon={<Check className="w-4 h-4" />}
+          title={<span className="inline-flex items-center gap-2"><Check className="w-4 h-4" /> Saved Templates</span>}
         >
           <div className="space-y-2">
             {saved.templates.map((s) => {
