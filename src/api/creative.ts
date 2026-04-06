@@ -19,17 +19,28 @@ import type { CopilotWrapperService, SdkAttachment } from "../copilot/index.js";
 
 const GALLERY_DIR = path.join(os.homedir(), ".openzigs", "gallery");
 
-const ALLOWED_DIRS = [
-  GALLERY_DIR,
-  path.join(os.homedir(), ".openzigs"),
-  os.homedir(),
-];
+/** Base directory for all creative studio file operations. */
+const SAFE_BASE = path.resolve(path.join(os.homedir(), ".openzigs"));
+
+/**
+ * Sanitize and validate a user-supplied file path.
+ * Ensures the resolved path lives under ~/.openzigs to prevent path traversal.
+ */
+function validatePath(filePath: string): string {
+  const resolved = path.resolve(filePath);
+  if (!resolved.startsWith(SAFE_BASE + path.sep) && resolved !== SAFE_BASE) {
+    throw new Error(
+      "Path not allowed: must be under ~/.openzigs",
+    );
+  }
+  return resolved;
+}
 
 function resolveImagePath(filePath: string): string {
-  if (path.isAbsolute(filePath)) return filePath;
+  if (path.isAbsolute(filePath)) return validatePath(filePath);
+  // Resolve relative paths against the gallery directory, then validate
   const galleryPath = path.join(GALLERY_DIR, filePath);
-  if (fs.existsSync(galleryPath)) return galleryPath;
-  return filePath;
+  return validatePath(galleryPath);
 }
 
 function generateOutputPath(
@@ -41,17 +52,6 @@ function generateOutputPath(
   const base = path.basename(sourcePath, path.extname(sourcePath));
   const outputExt = ext ?? path.extname(sourcePath);
   return path.join(GALLERY_DIR, `${base}_${suffix}_${Date.now()}${outputExt}`);
-}
-
-function validatePath(filePath: string): string {
-  const resolved = path.resolve(filePath);
-  const allowed = ALLOWED_DIRS.some(
-    (dir) => resolved.startsWith(dir + path.sep) || resolved === dir,
-  );
-  if (!allowed) {
-    throw new Error("Path not allowed: must be under home directory");
-  }
-  return resolved;
 }
 
 // ── Image generation models available on the Mac Mini sidecar ──────────────────
@@ -362,7 +362,7 @@ FLUX KONTEXT PROMPT RULES — follow these exactly:
         | "inside"
         | "outside";
 
-      const sourcePath = validatePath(resolveImagePath(filePath));
+      const sourcePath = resolveImagePath(filePath);
       if (!fs.existsSync(sourcePath)) {
         res.status(404).json({ error: `File not found: ${filePath}` });
         return;
@@ -410,7 +410,7 @@ FLUX KONTEXT PROMPT RULES — follow these exactly:
         return;
       }
 
-      const sourcePath = validatePath(resolveImagePath(filePath));
+      const sourcePath = resolveImagePath(filePath);
       if (!fs.existsSync(sourcePath)) {
         res.status(404).json({ error: `File not found: ${filePath}` });
         return;
@@ -456,7 +456,7 @@ FLUX KONTEXT PROMPT RULES — follow these exactly:
       const intensity =
         typeof body.intensity === "number" ? body.intensity : undefined;
 
-      const sourcePath = validatePath(resolveImagePath(filePath));
+      const sourcePath = resolveImagePath(filePath);
       if (!fs.existsSync(sourcePath)) {
         res.status(404).json({ error: `File not found: ${filePath}` });
         return;
@@ -513,7 +513,7 @@ FLUX KONTEXT PROMPT RULES — follow these exactly:
       }
       const quality = typeof body.quality === "number" ? body.quality : 80;
 
-      const sourcePath = validatePath(resolveImagePath(filePath));
+      const sourcePath = resolveImagePath(filePath);
       if (!fs.existsSync(sourcePath)) {
         res.status(404).json({ error: `File not found: ${filePath}` });
         return;
@@ -558,8 +558,8 @@ FLUX KONTEXT PROMPT RULES — follow these exactly:
       const opacity = typeof body.opacity === "number" ? body.opacity : 0.5;
       const scale = typeof body.scale === "number" ? body.scale : 0.2;
 
-      const sourcePath = validatePath(resolveImagePath(filePath));
-      const wmPath = validatePath(resolveImagePath(watermarkPath));
+      const sourcePath = resolveImagePath(filePath);
+      const wmPath = resolveImagePath(watermarkPath);
       if (!fs.existsSync(sourcePath)) {
         res.status(404).json({ error: `Source file not found: ${filePath}` });
         return;
@@ -657,7 +657,7 @@ FLUX KONTEXT PROMPT RULES — follow these exactly:
       }
       const alphaMatting = body.alpha_matting === true;
 
-      const sourcePath = validatePath(resolveImagePath(filePath));
+      const sourcePath = resolveImagePath(filePath);
       if (!fs.existsSync(sourcePath)) {
         res.status(404).json({ error: `File not found: ${filePath}` });
         return;
@@ -738,7 +738,7 @@ FLUX KONTEXT PROMPT RULES — follow these exactly:
         return;
       }
 
-      const sourcePath = validatePath(resolveImagePath(filePath));
+      const sourcePath = resolveImagePath(filePath);
       if (!fs.existsSync(sourcePath)) {
         res.status(404).json({ error: `File not found: ${filePath}` });
         return;

@@ -43,7 +43,7 @@ describe("POST /templates", () => {
     expect(res.status).toBe(201);
     expect(res.body.name).toBe("Tweet promo");
     expect(res.body.platform).toBe("twitter");
-    expect(res.body.contentTemplate).toBe("Check out {{product}}! #launch");
+    expect(res.body.content_template).toBe("Check out {{product}}! #launch");
     expect(res.body.tags).toEqual(["promo"]);
     expect(res.body.id).toBeDefined();
   });
@@ -143,7 +143,7 @@ describe("PUT /templates/:id", () => {
       .send({ name: "New", content_template: "updated {{x}}" });
     expect(res.status).toBe(200);
     expect(res.body.name).toBe("New");
-    expect(res.body.contentTemplate).toBe("updated {{x}}");
+    expect(res.body.content_template).toBe("updated {{x}}");
   });
 
   it("returns 404 for unknown id", async () => {
