@@ -44,6 +44,8 @@ export interface OutboxItem {
   publishedUrl: string | null;
   retryCount: number;
   maxRetries: number;
+  templateId: string | null;
+  brandKitId: string | null;
   createdAt: Date;
   updatedAt: Date;
   startedAt: Date | null;
@@ -62,6 +64,8 @@ export interface CreateOutboxInput {
   agentContext: string;
   platformMetadata?: Record<string, unknown>;
   maxRetries?: number;
+  templateId?: string | null;
+  brandKitId?: string | null;
 }
 
 export interface UpdateOutboxInput {
@@ -74,6 +78,8 @@ export interface UpdateOutboxInput {
   assetType?: OutboxAssetType;
   attachments?: OutboxAttachment[];
   platformMetadata?: Record<string, unknown>;
+  templateId?: string | null;
+  brandKitId?: string | null;
 }
 
 export interface OutboxListFilters {
@@ -111,6 +117,8 @@ interface StoredOutboxRow {
   published_url: string | null;
   retry_count: number;
   max_retries: number;
+  template_id: string | null;
+  brand_kit_id: string | null;
   created_at: string;
   updated_at: string;
   started_at: string | null;
@@ -139,6 +147,8 @@ const toItem = (row: StoredOutboxRow): OutboxItem => ({
   publishedUrl: row.published_url,
   retryCount: row.retry_count,
   maxRetries: row.max_retries,
+  templateId: row.template_id ?? null,
+  brandKitId: row.brand_kit_id ?? null,
   createdAt: new Date(row.created_at),
   updatedAt: new Date(row.updated_at),
   startedAt: row.started_at ? new Date(row.started_at) : null,
@@ -221,6 +231,14 @@ export class OutboxRepository {
         "ALTER TABLE outbox_queue ADD COLUMN attachments TEXT NOT NULL DEFAULT '[]'",
       );
     }
+
+    // ── v3 migration: add template_id, brand_kit_id columns (Issue #810) ──
+    if (!colNames.has("template_id")) {
+      this.db.exec("ALTER TABLE outbox_queue ADD COLUMN template_id TEXT");
+    }
+    if (!colNames.has("brand_kit_id")) {
+      this.db.exec("ALTER TABLE outbox_queue ADD COLUMN brand_kit_id TEXT");
+    }
   }
 
   insert(input: CreateOutboxInput): OutboxItem {
@@ -232,8 +250,8 @@ export class OutboxRepository {
     this.db
       .prepare(
         `
-      INSERT INTO outbox_queue (id, title, asset_id, asset_url, asset_type, content_body, attachments, platform, scheduled_time, agent_context, platform_metadata, status, retry_count, max_retries, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0, ?, ?, ?)
+      INSERT INTO outbox_queue (id, title, asset_id, asset_url, asset_type, content_body, attachments, platform, scheduled_time, agent_context, platform_metadata, status, retry_count, max_retries, template_id, brand_kit_id, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0, ?, ?, ?, ?, ?)
     `,
       )
       .run(
@@ -249,6 +267,8 @@ export class OutboxRepository {
         input.agentContext,
         JSON.stringify(input.platformMetadata ?? {}),
         input.maxRetries ?? 3,
+        input.templateId ?? null,
+        input.brandKitId ?? null,
         now,
         now,
       );
@@ -466,6 +486,14 @@ export class OutboxRepository {
     if (input.platformMetadata !== undefined) {
       sets.push("platform_metadata = ?");
       params.push(JSON.stringify(input.platformMetadata));
+    }
+    if (input.templateId !== undefined) {
+      sets.push("template_id = ?");
+      params.push(input.templateId);
+    }
+    if (input.brandKitId !== undefined) {
+      sets.push("brand_kit_id = ?");
+      params.push(input.brandKitId);
     }
 
     params.push(id);

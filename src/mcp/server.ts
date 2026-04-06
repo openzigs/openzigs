@@ -1090,6 +1090,7 @@ export const registerMcpTools = (
   // Social Caption & Hashtag Generator — #772
   const captionTools = createSocialCaptionTools({
     copilotWrapper: options.copilot,
+    outboxRepo: options.outboxRepo,
   });
   for (const tool of captionTools) {
     registerTool(tool);

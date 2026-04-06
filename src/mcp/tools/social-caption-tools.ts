@@ -6,6 +6,10 @@
 import * as z from "zod";
 import type { ToolDefinition } from "../tool-registry.js";
 import type { CopilotWrapper } from "../../copilot/copilot-wrapper.js";
+import type {
+  OutboxRepository,
+  OutboxPlatform,
+} from "../../outbox/outbox-repository.js";
 
 const PLATFORM_LIMITS: Record<
   string,
@@ -90,6 +94,13 @@ const generateCaptionSchema = z.object({
     .string()
     .optional()
     .describe("Additional context (brand voice, campaign, audience)"),
+  create_outbox_item: z
+    .boolean()
+    .optional()
+    .default(false)
+    .describe(
+      "When true, create a pending outbox item with the generated caption",
+    ),
 });
 
 const generateHashtagsSchema = z.object({
@@ -128,10 +139,12 @@ const generateHashtagsSchema = z.object({
 
 export interface SocialCaptionToolsOptions {
   copilotWrapper?: CopilotWrapper;
+  outboxRepo?: OutboxRepository;
 }
 
 export const createSocialCaptionTools = ({
   copilotWrapper,
+  outboxRepo,
 }: SocialCaptionToolsOptions): ToolDefinition[] => {
   async function generateViaLLM(
     systemPrompt: string,
@@ -192,6 +205,11 @@ export const createSocialCaptionTools = ({
             type: "string",
             description: "Additional brand/campaign context",
           },
+          create_outbox_item: {
+            type: "boolean",
+            description:
+              "When true, create a pending outbox item with the caption",
+          },
         },
         required: ["topic", "platform"],
       },
@@ -221,14 +239,29 @@ export const createSocialCaptionTools = ({
 
           const caption = await generateViaLLM(systemPrompt, userPrompt);
 
+          const result: Record<string, unknown> = {
+            platform: input.platform,
+            caption,
+            charCount: caption.length,
+            maxChars: limits.maxChars,
+            withinLimit: caption.length <= limits.maxChars,
+          };
+
+          // Create outbox item if requested (Issue #816)
+          if (input.create_outbox_item && outboxRepo && caption) {
+            const outboxItem = outboxRepo.insert({
+              platform: input.platform as OutboxPlatform,
+              contentBody: caption,
+              agentContext: `Auto-generated caption for: ${input.topic}`,
+              scheduledTime: new Date(Date.now() + 30 * 60_000),
+              assetType: "text",
+              title: input.topic.slice(0, 100),
+            });
+            result.outboxItemId = outboxItem.id;
+          }
+
           return {
-            text: JSON.stringify({
-              platform: input.platform,
-              caption,
-              charCount: caption.length,
-              maxChars: limits.maxChars,
-              withinLimit: caption.length <= limits.maxChars,
-            }),
+            text: JSON.stringify(result),
           };
         } catch (err) {
           return {

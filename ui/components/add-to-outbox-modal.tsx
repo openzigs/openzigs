@@ -23,6 +23,8 @@ import {
   Pencil,
   Download,
   Check,
+  LayoutTemplate,
+  Palette,
 } from "lucide-react";
 import { InlineModelPicker } from "@/components/model-picker-select";
 
@@ -36,7 +38,7 @@ type OutboxPlatform =
   | "reddit"
   | "instagram"
   | "facebook";
-type SourceTab = "text" | "file" | "gallery" | "url";
+type SourceTab = "text" | "file" | "gallery" | "url" | "template";
 type ImageSource = "extract" | "generate" | "none";
 
 interface OutboxAttachment {
@@ -119,6 +121,7 @@ const SOURCE_TABS: {
   { key: "file", label: "Files", icon: Paperclip },
   { key: "gallery", label: "Gallery", icon: ImageIcon },
   { key: "url", label: "URL", icon: Link2 },
+  { key: "template", label: "Templates", icon: LayoutTemplate },
 ];
 
 function guessAssetType(filename: string): string {
@@ -185,6 +188,17 @@ export function AddToOutboxModal({
 
   // URL tab
   const [assetUrl, setAssetUrl] = useState("");
+
+  // Template tab
+  const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(
+    null,
+  );
+  const [templateVars, setTemplateVars] = useState<Record<string, string>>({});
+
+  // Brand kit
+  const [selectedBrandKitId, setSelectedBrandKitId] = useState<string | null>(
+    null,
+  );
 
   // AI Generate state
   const [modelOverride, setModelOverride] = useState("");
@@ -279,6 +293,61 @@ export function AddToOutboxModal({
       return fetchJson(`/api/queue/assets?${params.toString()}`);
     },
     enabled: activeTab === "gallery",
+  });
+
+  // Templates query for template tab
+  interface PostTemplate {
+    id: string;
+    name: string;
+    content_template: string;
+    platform_defaults?: Record<string, unknown>;
+    brand_kit_id?: string;
+  }
+  const templatesQuery = useQuery<PostTemplate[]>({
+    queryKey: ["post-templates"],
+    queryFn: () => fetchJson("/api/admin/templates"),
+    enabled: activeTab === "template",
+  });
+
+  const applyTemplateMutation = useMutation({
+    mutationFn: (body: {
+      templateId: string;
+      variables: Record<string, string>;
+    }) =>
+      fetchJson(`/api/admin/templates/${body.templateId}/apply`, {
+        method: "POST",
+        body: JSON.stringify({ variables: body.variables }),
+      }) as Promise<{
+        content: string;
+        platform_defaults?: Record<string, unknown>;
+      }>,
+  });
+
+  // Extract {{variable}} placeholders from a template
+  const extractTemplateVars = (template: string): string[] => {
+    const matches = template.match(/\{\{(\w+)\}\}/g);
+    if (!matches) return [];
+    return [...new Set(matches.map((m) => m.replace(/\{\{|\}\}/g, "")))];
+  };
+
+  const selectedTemplate = templatesQuery.data?.find(
+    (t) => t.id === selectedTemplateId,
+  );
+  const templatePlaceholders = selectedTemplate
+    ? extractTemplateVars(selectedTemplate.content_template)
+    : [];
+
+  // Brand kits query
+  interface BrandKitOption {
+    id: string;
+    name: string;
+    primaryColor: string;
+    secondaryColor: string;
+    accentColor: string;
+  }
+  const brandKitsQuery = useQuery<{ brandKits: BrandKitOption[] }>({
+    queryKey: ["brand-kits"],
+    queryFn: () => fetchJson("/api/admin/director/brand-kits"),
   });
 
   const addAttachment = useCallback(
@@ -580,6 +649,7 @@ export function AddToOutboxModal({
         scheduled_time: new Date(scheduledTime).toISOString(),
         agent_context: effectiveContext,
         title: title.trim() || null,
+        ...(selectedBrandKitId ? { brand_kit_id: selectedBrandKitId } : {}),
       };
 
       if (activeTab === "text") {
@@ -612,6 +682,16 @@ export function AddToOutboxModal({
             filename: img.filename,
             assetType: "image",
           }));
+        }
+      } else if (activeTab === "template") {
+        payload.template_id = selectedTemplateId;
+        payload.asset_type = "text";
+        if (selectedTemplate?.brand_kit_id) {
+          payload.brand_kit_id = selectedTemplate.brand_kit_id;
+        }
+        // If template was applied, use the resolved content
+        if (applyTemplateMutation.data?.content) {
+          payload.content_body = applyTemplateMutation.data.content;
         }
       }
 
@@ -654,7 +734,9 @@ export function AddToOutboxModal({
           ? selectedAssetId.length > 0
           : activeTab === "url"
             ? assetUrl.trim().length > 0
-            : false);
+            : activeTab === "template"
+              ? selectedTemplateId !== null
+              : false);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
@@ -760,6 +842,48 @@ export function AddToOutboxModal({
                 </div>
               )}
             </div>
+
+            {/* ─── Brand Kit (optional) ──────────────────── */}
+            {(brandKitsQuery.data?.brandKits ?? []).length > 0 && (
+              <div>
+                <label className="mb-1.5 block text-sm font-medium text-card-foreground">
+                  <Palette className="mr-1 inline h-3.5 w-3.5" />
+                  Brand Kit{" "}
+                  <span className="text-xs font-normal text-muted-foreground">
+                    (optional)
+                  </span>
+                </label>
+                <div className="flex flex-wrap gap-2">
+                  {brandKitsQuery.data!.brandKits.map((kit) => {
+                    const selected = selectedBrandKitId === kit.id;
+                    return (
+                      <button
+                        key={kit.id}
+                        type="button"
+                        onClick={() =>
+                          setSelectedBrandKitId(selected ? null : kit.id)
+                        }
+                        className={`flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
+                          selected
+                            ? "border-primary bg-primary/10 text-primary"
+                            : "border-border bg-background text-muted-foreground hover:border-primary/50"
+                        }`}
+                      >
+                        <span
+                          className="inline-block h-3 w-3 rounded-full border border-border/50"
+                          style={{ backgroundColor: kit.primaryColor }}
+                        />
+                        <span
+                          className="inline-block h-3 w-3 rounded-full border border-border/50"
+                          style={{ backgroundColor: kit.secondaryColor }}
+                        />
+                        {kit.name}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
 
             {/* ─── Text Tab ──────────────────────────────── */}
             {activeTab === "text" && (
@@ -1485,6 +1609,145 @@ export function AddToOutboxModal({
                     ? "Review the generated content above, edit if needed, then queue for publishing."
                     : "Paste a URL and click AI Generate, or the AI agent will fetch and process content when publishing."}
                 </p>
+              </div>
+            )}
+
+            {/* ─── Template Tab ──────────────────────────── */}
+            {activeTab === "template" && (
+              <div className="space-y-3">
+                <div>
+                  <label className="mb-1.5 block text-sm font-medium text-card-foreground">
+                    Select Template
+                  </label>
+                  <div className="max-h-48 overflow-y-auto rounded-lg border border-border bg-background">
+                    {templatesQuery.isLoading ? (
+                      <div className="flex items-center justify-center py-6">
+                        <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                      </div>
+                    ) : (templatesQuery.data ?? []).length === 0 ? (
+                      <p className="py-4 text-center text-xs text-muted-foreground">
+                        No templates found. Create templates in Admin &gt;
+                        Templates.
+                      </p>
+                    ) : (
+                      <div className="grid grid-cols-1 gap-0">
+                        {(selectedBrandKitId
+                          ? templatesQuery.data!.filter(
+                              (t) =>
+                                !t.brand_kit_id ||
+                                t.brand_kit_id === selectedBrandKitId,
+                            )
+                          : templatesQuery.data!
+                        ).map((tpl) => (
+                          <button
+                            type="button"
+                            key={tpl.id}
+                            onClick={() => {
+                              setSelectedTemplateId(tpl.id);
+                              // Initialize vars with empty strings for each placeholder
+                              const vars: Record<string, string> = {};
+                              for (const v of extractTemplateVars(
+                                tpl.content_template,
+                              )) {
+                                vars[v] = templateVars[v] ?? "";
+                              }
+                              setTemplateVars(vars);
+                              applyTemplateMutation.reset();
+                            }}
+                            className={`flex w-full items-center gap-3 px-3 py-2 text-left text-sm transition-colors hover:bg-muted/60 ${
+                              selectedTemplateId === tpl.id
+                                ? "bg-primary/10 text-primary"
+                                : "text-card-foreground"
+                            }`}
+                          >
+                            <LayoutTemplate className="h-4 w-4 flex-shrink-0 text-muted-foreground" />
+                            <div className="flex-1 min-w-0">
+                              <span className="block truncate text-sm font-medium">
+                                {tpl.name}
+                              </span>
+                              <span className="block truncate text-xs text-muted-foreground">
+                                {tpl.content_template.slice(0, 80)}
+                                {tpl.content_template.length > 80 ? "…" : ""}
+                              </span>
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Template variable inputs */}
+                {selectedTemplate && templatePlaceholders.length > 0 && (
+                  <div className="space-y-2">
+                    <label className="block text-sm font-medium text-card-foreground">
+                      Fill Template Variables
+                    </label>
+                    {templatePlaceholders.map((varName) => (
+                      <div key={varName}>
+                        <label className="mb-0.5 block text-xs text-muted-foreground">
+                          {`{{${varName}}}`}
+                        </label>
+                        <input
+                          type="text"
+                          value={templateVars[varName] ?? ""}
+                          onChange={(e) =>
+                            setTemplateVars((prev) => ({
+                              ...prev,
+                              [varName]: e.target.value,
+                            }))
+                          }
+                          placeholder={varName}
+                          className="w-full rounded-lg border border-border bg-background px-3 py-1.5 text-sm text-foreground placeholder:text-muted-foreground"
+                        />
+                      </div>
+                    ))}
+                    <button
+                      type="button"
+                      onClick={() =>
+                        applyTemplateMutation.mutate({
+                          templateId: selectedTemplateId!,
+                          variables: templateVars,
+                        })
+                      }
+                      disabled={applyTemplateMutation.isPending}
+                      className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+                    >
+                      {applyTemplateMutation.isPending ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <Sparkles className="h-3.5 w-3.5" />
+                      )}
+                      {applyTemplateMutation.isPending
+                        ? "Applying..."
+                        : "Preview Result"}
+                    </button>
+                  </div>
+                )}
+
+                {/* Show no-variable template preview */}
+                {selectedTemplate && templatePlaceholders.length === 0 && (
+                  <div className="rounded-lg border border-border bg-muted/30 p-3">
+                    <p className="text-xs font-semibold uppercase text-muted-foreground mb-1">
+                      Template Content
+                    </p>
+                    <p className="text-sm text-foreground whitespace-pre-wrap">
+                      {selectedTemplate.content_template}
+                    </p>
+                  </div>
+                )}
+
+                {/* Applied template preview */}
+                {applyTemplateMutation.data?.content && (
+                  <div className="rounded-lg border border-primary/30 bg-primary/5 p-3">
+                    <p className="text-xs font-semibold uppercase text-primary mb-1">
+                      Preview
+                    </p>
+                    <p className="text-sm text-foreground whitespace-pre-wrap">
+                      {applyTemplateMutation.data.content}
+                    </p>
+                  </div>
+                )}
               </div>
             )}
 

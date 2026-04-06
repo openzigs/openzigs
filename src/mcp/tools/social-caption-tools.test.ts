@@ -2,6 +2,8 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createSocialCaptionTools } from "./social-caption-tools.js";
 import type { ToolDefinition } from "../tool-registry.js";
 import type { CopilotWrapper } from "../../copilot/copilot-wrapper.js";
+import Database from "better-sqlite3";
+import { OutboxRepository } from "../../outbox/outbox-repository.js";
 
 function makeMockWrapper(response: string): CopilotWrapper {
   return {
@@ -79,6 +81,76 @@ describe("Social Caption Tools", () => {
       expect(parsed.platform).toBe("instagram");
       expect(parsed.hashtags.length).toBeGreaterThan(0);
       expect(parsed.hashtags[0].tag).toMatch(/^#/);
+    });
+  });
+
+  describe("caption-to-outbox flow (Issue #816)", () => {
+    it("creates an outbox item when create_outbox_item is true", async () => {
+      const db = new Database(":memory:");
+      db.pragma("journal_mode = WAL");
+      const outboxRepo = new OutboxRepository(db);
+      outboxRepo.migrate();
+
+      const toolsWithOutbox = createSocialCaptionTools({
+        copilotWrapper: mockCopilot,
+        outboxRepo,
+      });
+      const tool = toolsWithOutbox.find(
+        (t) => t.name === "generate-social-caption",
+      )!;
+      const result = await tool.handler({
+        topic: "new product launch",
+        platform: "twitter",
+        create_outbox_item: true,
+      });
+      expect(result.isError).toBeFalsy();
+      const parsed = JSON.parse(result.text);
+      expect(parsed.outboxItemId).toBeDefined();
+
+      // Verify the outbox item was created
+      const item = outboxRepo.getById(parsed.outboxItemId);
+      expect(item).not.toBeNull();
+      expect(item!.platform).toBe("twitter");
+      expect(item!.contentBody).toBe(parsed.caption);
+      expect(item!.status).toBe("pending");
+    });
+
+    it("does not create outbox item when create_outbox_item is false", async () => {
+      const db = new Database(":memory:");
+      db.pragma("journal_mode = WAL");
+      const outboxRepo = new OutboxRepository(db);
+      outboxRepo.migrate();
+
+      const toolsWithOutbox = createSocialCaptionTools({
+        copilotWrapper: mockCopilot,
+        outboxRepo,
+      });
+      const tool = toolsWithOutbox.find(
+        (t) => t.name === "generate-social-caption",
+      )!;
+      const result = await tool.handler({
+        topic: "test",
+        platform: "twitter",
+        create_outbox_item: false,
+      });
+      const parsed = JSON.parse(result.text);
+      expect(parsed.outboxItemId).toBeUndefined();
+    });
+
+    it("does not create outbox item when outboxRepo is not provided", async () => {
+      const toolsNoOutbox = createSocialCaptionTools({
+        copilotWrapper: mockCopilot,
+      });
+      const tool = toolsNoOutbox.find(
+        (t) => t.name === "generate-social-caption",
+      )!;
+      const result = await tool.handler({
+        topic: "test",
+        platform: "twitter",
+        create_outbox_item: true,
+      });
+      const parsed = JSON.parse(result.text);
+      expect(parsed.outboxItemId).toBeUndefined();
     });
   });
 });

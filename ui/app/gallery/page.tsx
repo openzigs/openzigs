@@ -42,6 +42,7 @@ import { AskAiPanel, AskAiButton, PAGE_CONTEXTS } from "@/components/ask-ai";
 import { AddToOutboxModal } from "@/components/add-to-outbox-modal";
 import { CollectionSidebar } from "@/components/gallery/collection-sidebar";
 import { TagFilter } from "@/components/gallery/tag-filter";
+import { ImageActionsPanel } from "@/components/gallery/image-actions-panel";
 
 // ── Types ───────────────────────────────────────────────────
 
@@ -198,6 +199,8 @@ export default function GalleryPage() {
   const [typeFilter, setTypeFilter] = useState<string>("");
   const [sourceFilter, setSourceFilter] = useState<string>("");
   const [previewAsset, setPreviewAsset] = useState<GalleryAsset | null>(null);
+  const [imageActionsAsset, setImageActionsAsset] =
+    useState<GalleryAsset | null>(null);
   const [showStudio, setShowStudio] = useState(false);
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
   const [askAiOpen, setAskAiOpen] = useState(false);
@@ -935,7 +938,28 @@ export default function GalleryPage() {
               : undefined
           }
           openingInStudio={openingInStudio === previewAsset.id}
+          onImageActions={
+            previewAsset.type === "image"
+              ? () => {
+                  setImageActionsAsset(previewAsset);
+                  setPreviewAsset(null);
+                }
+              : undefined
+          }
         />
+      )}
+
+      {/* Image Actions Panel (Issue #812) */}
+      {imageActionsAsset && imageActionsAsset.type === "image" && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+          <div className="mx-4 w-full max-w-md">
+            <ImageActionsPanel
+              filePath={imageActionsAsset.file_path}
+              filename={imageActionsAsset.filename}
+              onClose={() => setImageActionsAsset(null)}
+            />
+          </div>
+        </div>
       )}
 
       {pendingDelete && (
@@ -1712,11 +1736,13 @@ function PreviewLightbox({
   onClose,
   onOpenInStudio,
   openingInStudio,
+  onImageActions,
 }: {
   asset: GalleryAsset;
   onClose: () => void;
   onOpenInStudio?: () => void;
   openingInStudio?: boolean;
+  onImageActions?: () => void;
 }) {
   const url = assetUrl(asset);
   const scenePreviewUrl =
@@ -1833,6 +1859,18 @@ function PreviewLightbox({
                     <Clapperboard className="h-3.5 w-3.5" />
                   )}
                   Edit in Studio
+                </button>
+              )}
+              {onImageActions && (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onImageActions();
+                  }}
+                  className="flex items-center gap-1.5 rounded-lg border border-primary/50 bg-primary/10 px-3 py-1.5 text-xs font-medium text-primary hover:bg-primary/20"
+                >
+                  <Pencil className="h-3.5 w-3.5" />
+                  Edit Image
                 </button>
               )}
               <a

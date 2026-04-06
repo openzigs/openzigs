@@ -3,10 +3,11 @@
 export const dynamic = "force-dynamic";
 
 import { useState, useRef, useCallback, useEffect } from "react";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 
 import { SectionCard } from "@/components/section-card";
 import { ToastContainer, showToast } from "@/components/toast";
+import { fetchJson, buildMediaUrl } from "@/lib/api";
 import {
   Paintbrush,
   Upload,
@@ -15,6 +16,8 @@ import {
   RotateCcw,
   Layers,
   Palette,
+  ImageIcon,
+  X,
 } from "lucide-react";
 
 // ── Types ───────────────────────────────────────────────────
@@ -35,6 +38,13 @@ interface QueueJob {
   };
 }
 
+interface GalleryAsset {
+  id: string;
+  filename: string;
+  type: string;
+  file_path: string;
+}
+
 // ── Page Component ──────────────────────────────────────────
 
 export default function InpaintingPage() {
@@ -47,6 +57,7 @@ export default function InpaintingPage() {
   const [selectedStyle, setSelectedStyle] = useState("");
   const [resultImage, setResultImage] = useState<string | null>(null);
   const [canvasSize, setCanvasSize] = useState({ width: 512, height: 512 });
+  const [showGalleryPicker, setShowGalleryPicker] = useState(false);
 
   // ── Art styles from the art-style-tools ──
   const artStyles = [
@@ -170,6 +181,37 @@ export default function InpaintingPage() {
     img.src = sourceImage;
   }, [sourceImage]);
 
+  // ── Gallery picker query (Issue #815) ──
+  const galleryQuery = useQuery<{ assets: GalleryAsset[] }>({
+    queryKey: ["gallery-images-inpainting"],
+    queryFn: () => fetchJson("/api/queue/assets?type=image&limit=30"),
+    enabled: showGalleryPicker,
+  });
+
+  const loadFromGallery = useCallback(async (asset: GalleryAsset) => {
+    try {
+      const url = buildMediaUrl(`/api/queue/assets/${asset.id}/file`);
+      const resp = await fetch(url);
+      if (!resp.ok) throw new Error("Failed to fetch image");
+      const blob = await resp.blob();
+      const file = new File([blob], asset.filename, { type: blob.type });
+      setSourceFile(file);
+      setResultImage(null);
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        setSourceImage(ev.target?.result as string);
+      };
+      reader.readAsDataURL(blob);
+      setShowGalleryPicker(false);
+      showToast(`Loaded "${asset.filename}" from gallery`, "success");
+    } catch (err) {
+      showToast(
+        `Failed to load image: ${err instanceof Error ? err.message : String(err)}`,
+        "error",
+      );
+    }
+  }, []);
+
   // ── Generate inpainting ──
   const apiBase =
     process.env.NEXT_PUBLIC_OPENZIGS_API_BASE ?? "http://localhost:3000";
@@ -291,16 +333,26 @@ export default function InpaintingPage() {
               }
             >
               <div className="space-y-4">
-                <label className="flex w-fit cursor-pointer items-center gap-2 rounded-lg bg-zinc-800 px-4 py-2 transition hover:bg-zinc-700">
-                  <Upload className="h-4 w-4" />
-                  <span className="text-sm">Upload Image</span>
-                  <input
-                    type="file"
-                    accept="image/*"
-                    className="hidden"
-                    onChange={handleImageUpload}
-                  />
-                </label>
+                <div className="flex gap-2">
+                  <label className="flex w-fit cursor-pointer items-center gap-2 rounded-lg bg-zinc-800 px-4 py-2 transition hover:bg-zinc-700">
+                    <Upload className="h-4 w-4" />
+                    <span className="text-sm">Upload Image</span>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={handleImageUpload}
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setShowGalleryPicker(true)}
+                    className="flex items-center gap-2 rounded-lg bg-zinc-800 px-4 py-2 text-sm transition hover:bg-zinc-700"
+                  >
+                    <ImageIcon className="h-4 w-4" />
+                    From Gallery
+                  </button>
+                </div>
 
                 {/* Canvas is always in the DOM — hidden when no image to avoid race conditions */}
                 <div
@@ -321,7 +373,7 @@ export default function InpaintingPage() {
 
                 {!sourceImage && (
                   <div className="flex h-64 items-center justify-center rounded-lg border-2 border-dashed border-zinc-700 text-sm text-zinc-500">
-                    No image loaded. Click &ldquo;Upload Image&rdquo; above.
+                    No image loaded. Upload a file or pick one from the Gallery.
                   </div>
                 )}
               </div>
@@ -441,6 +493,60 @@ export default function InpaintingPage() {
           </div>
         </div>
       </div>
+
+      {/* Gallery Picker Modal (Issue #815) */}
+      {showGalleryPicker && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+          <div className="relative mx-4 w-full max-w-2xl rounded-2xl border border-zinc-700 bg-zinc-900 shadow-xl">
+            <div className="flex items-center justify-between border-b border-zinc-700 px-6 py-4">
+              <h2 className="text-lg font-semibold">
+                Select Image from Gallery
+              </h2>
+              <button
+                onClick={() => setShowGalleryPicker(false)}
+                className="rounded-lg p-1.5 text-zinc-400 hover:bg-zinc-800"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <div className="max-h-[60vh] overflow-y-auto p-6">
+              {galleryQuery.isLoading && (
+                <div className="flex justify-center py-8 text-sm text-zinc-400">
+                  Loading gallery images...
+                </div>
+              )}
+              {galleryQuery.data?.assets?.length === 0 && (
+                <div className="py-8 text-center text-sm text-zinc-500">
+                  No images found in gallery.
+                </div>
+              )}
+              <div className="grid grid-cols-3 gap-3 sm:grid-cols-4">
+                {galleryQuery.data?.assets?.map((asset) => (
+                  <button
+                    key={asset.id}
+                    type="button"
+                    onClick={() => loadFromGallery(asset)}
+                    className="group relative aspect-square overflow-hidden rounded-lg border border-zinc-700 transition hover:border-purple-500"
+                  >
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={buildMediaUrl(`/api/queue/assets/${asset.id}/file`)}
+                      alt={asset.filename}
+                      className="h-full w-full object-cover"
+                    />
+                    <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 to-transparent p-2">
+                      <span className="block truncate text-xs text-zinc-300">
+                        {asset.filename}
+                      </span>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       <ToastContainer />
     </div>
   );

@@ -172,6 +172,7 @@ import { createQueueRouter, createQueueCallbackRouter } from "./api/queue.js";
 import { createGalleryRouter } from "./api/gallery.js";
 import { createStudioRouter } from "./api/studio.js";
 import { createCreativeRouter } from "./api/creative.js";
+import { createTemplatesRouter } from "./api/templates.js";
 import {
   createCharacterRouter,
   setCharacterIO,
@@ -2223,6 +2224,10 @@ app.use("/api/studio", authMiddleware, studioRouter);
 // Creative Studio API routes (inpainting, AI image editing)
 const creativeRouter = createCreativeRouter({ mediaQueueRepo });
 app.use("/api/admin/creative", authMiddleware, creativeRouter);
+
+// Post Template API routes (Issue #809)
+const templatesRouter = createTemplatesRouter({ postTemplateRepo });
+app.use("/api/admin/templates", authMiddleware, templatesRouter);
 
 // Character API routes (LoRA character profiles + training)
 const characterRouter = createCharacterRouter({ characterRepo, copilot });
