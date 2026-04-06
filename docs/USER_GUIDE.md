@@ -1832,6 +1832,73 @@ Create reusable brand kits for consistent video styling:
 3. The live **Preview** shows your color swatches and font.
 4. Brand kits are stored in SQLite and available across all productions.
 
+### Creative Studio
+
+The Creative Studio provides Canva-inspired design and media tools accessible via MCP chat commands.
+
+#### Image Manipulation
+
+Use these tools in chat to process images from the gallery:
+
+- **`resize-image`** — Resize to target dimensions with fit modes (cover, contain, fill, inside, outside)
+- **`crop-image`** — Crop a region by specifying left, top, width, height in pixels
+- **`convert-image`** — Convert between PNG, JPEG, WebP, AVIF, TIFF with quality control
+- **`filter-image`** — Apply filters: grayscale, blur, sharpen, negate, normalize, sepia
+- **`watermark-image`** — Overlay a watermark with position, opacity, and scale controls
+
+#### AI Image Processing
+
+Requires the image processing sidecar (`sidecars/image-processing/`):
+
+- **`upscale-image`** — AI super-resolution (2x or 4x) using Real-ESRGAN
+- **`remove-background`** — AI background removal using rembg with model selection and alpha matting
+
+Start the sidecar: `cd sidecars/image-processing && pip install -r requirements.txt && python server.py`
+
+#### Art Style Picker
+
+- **`list-art-styles`** — Browse 12 built-in art styles (Photorealistic, Anime, Oil Painting, Cyberpunk, Pixel Art, etc.)
+- **`apply-art-style`** — Enhance a prompt with an art style's modifiers for Flux image generation
+
+#### Social Content
+
+- **`generate-social-caption`** — Generate platform-optimized captions (Instagram, Twitter/X, LinkedIn, TikTok, Facebook) with configurable tone and length
+- **`generate-hashtags`** — Generate relevant hashtags with reach estimates
+
+#### Post Templates
+
+Create reusable templates for social media posts with `{{variable}}` placeholders:
+
+- **`create-post-template`** / **`update-post-template`** / **`delete-post-template`** — Template CRUD
+- **`list-post-templates`** — Browse templates, filterable by platform and brand kit
+- **`apply-post-template`** — Fill in template variables to produce final post content
+
+#### QR Code Generator
+
+- **`generate-qr-code`** — Generate QR codes as PNG, SVG, or terminal ASCII art with customizable colors and error correction levels
+
+#### Audio Tools
+
+- **`normalize-audio`** — EBU R128 loudness normalization via FFmpeg two-pass loudnorm
+- **`speech-to-text`** — Transcribe audio using Whisper MLX with text, SRT, VTT, or JSON output
+
+#### Visual Content Calendar
+
+Navigate to `/calendar` to manage your content schedule:
+
+1. View scheduled outbox posts on a monthly/weekly/daily calendar (FullCalendar).
+2. Drag and drop posts to reschedule them.
+3. Click a post to view details or edit.
+
+#### Inpainting Studio
+
+Navigate to `/inpainting` for AI-powered image editing:
+
+1. Upload or select an image from the gallery.
+2. Paint a mask over the area to modify using the canvas tools.
+3. Choose an art style and enter a prompt describing the desired change.
+4. Submit for AI inpainting.
+
 ### Batch Render Queue
 
 Render multiple drafts at once:
