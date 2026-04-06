@@ -116,7 +116,10 @@ export const createVideoPipelineRouter = (
 
     router.get("/clip/:jobId", (req, res) => {
       const job = clipExtractor.getJob(req.params.jobId);
-      if (!job) return res.status(404).json({ error: "Job not found" });
+      if (!job) {
+        res.status(404).json({ error: "Job not found" });
+        return;
+      }
       res.json(job);
     });
   }
@@ -142,7 +145,10 @@ export const createVideoPipelineRouter = (
 
     router.get("/reframe/:jobId", (req, res) => {
       const job = reframeWorker.getJob(req.params.jobId);
-      if (!job) return res.status(404).json({ error: "Job not found" });
+      if (!job) {
+        res.status(404).json({ error: "Job not found" });
+        return;
+      }
       res.json(job);
     });
   }
@@ -168,7 +174,10 @@ export const createVideoPipelineRouter = (
 
     router.get("/clean-audio/:jobId", (req, res) => {
       const job = audioCleaner.getJob(req.params.jobId);
-      if (!job) return res.status(404).json({ error: "Job not found" });
+      if (!job) {
+        res.status(404).json({ error: "Job not found" });
+        return;
+      }
       res.json(job);
     });
   }
@@ -194,7 +203,10 @@ export const createVideoPipelineRouter = (
 
     router.get("/broll/:jobId", (req, res) => {
       const job = brollPipeline.getJob(req.params.jobId);
-      if (!job) return res.status(404).json({ error: "Job not found" });
+      if (!job) {
+        res.status(404).json({ error: "Job not found" });
+        return;
+      }
       res.json(job);
     });
   }
