@@ -194,7 +194,7 @@ export class PostTemplateRepository {
     if (!template) return null;
     let content = template.contentTemplate;
     for (const [key, value] of Object.entries(variables)) {
-      content = content.replace(new RegExp(`\\{\\{${key}\\}\\}`, "g"), value);
+      content = content.replaceAll(`{{${key}}}`, value);
     }
     return { content, platform: template.platform };
   }

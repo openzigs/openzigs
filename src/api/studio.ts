@@ -15,13 +15,15 @@ import type { MediaQueueRepository } from "../queue/media-queue-repository.js";
 
 // ── Schemas ─────────────────────────────────────────────────
 
-const trimRequestSchema = z.object({
-  assetId: z.string().min(1, "assetId is required"),
-  startTime: z.number().min(0, "startTime must be >= 0"),
-  endTime: z.number().positive("endTime must be positive"),
-}).refine(data => data.endTime > data.startTime, {
-  message: "endTime must be greater than startTime",
-});
+const trimRequestSchema = z
+  .object({
+    assetId: z.string().min(1, "assetId is required"),
+    startTime: z.number().min(0, "startTime must be >= 0"),
+    endTime: z.number().positive("endTime must be positive"),
+  })
+  .refine((data) => data.endTime > data.startTime, {
+    message: "endTime must be greater than startTime",
+  });
 
 const analyzeRequestSchema = z.object({
   assetId: z.string().min(1, "assetId is required"),
@@ -106,9 +108,13 @@ export const createStudioRouter = ({
             source: "uploaded",
             tags: ["trimmed", `source:${assetId}`],
           });
-          logger.info(`[StudioRouter] Trimmed asset registered in gallery: ${outputFilename}`);
+          logger.info(
+            `[StudioRouter] Trimmed asset registered in gallery: ${outputFilename}`,
+          );
         } catch (err) {
-          logger.error(`[StudioRouter] Failed to register trimmed asset: ${err}`);
+          logger.error(
+            `[StudioRouter] Failed to register trimmed asset: ${err}`,
+          );
         }
       };
 
@@ -193,9 +199,15 @@ export const createStudioRouter = ({
   // ── POST /upload-recording — Accept a screen recording blob ──
   router.post("/upload-recording", async (req, res) => {
     try {
-      if (!req.headers["content-type"]?.includes("multipart/form-data") &&
-          !req.headers["content-type"]?.includes("video/")) {
-        res.status(400).json({ error: "Expected multipart/form-data or video/* content-type" });
+      if (
+        !req.headers["content-type"]?.includes("multipart/form-data") &&
+        !req.headers["content-type"]?.includes("video/")
+      ) {
+        res
+          .status(400)
+          .json({
+            error: "Expected multipart/form-data or video/* content-type",
+          });
         return;
       }
 
@@ -227,7 +239,9 @@ export const createStudioRouter = ({
         tags: ["screen-recording"],
       });
 
-      logger.info(`[StudioRouter] Screen recording saved: ${filename} (${buffer.length} bytes)`);
+      logger.info(
+        `[StudioRouter] Screen recording saved: ${filename} (${buffer.length} bytes)`,
+      );
       res.json({ assetId, filename, size: buffer.length });
     } catch (err) {
       logger.error(`[StudioRouter] Upload error: ${err}`);

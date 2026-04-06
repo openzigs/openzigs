@@ -2,6 +2,24 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createImageManipulationTools } from "./image-manipulation-tools.js";
 import type { ToolDefinition } from "../tool-registry.js";
 import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
+const HOME = os.homedir();
+const TEST_IMAGE = path.join(HOME, ".openzigs", "gallery", "test.png");
+const MISSING_IMAGE = path.join(HOME, ".openzigs", "gallery", "missing.png");
+const WATERMARK_IMAGE = path.join(
+  HOME,
+  ".openzigs",
+  "gallery",
+  "watermark.png",
+);
+const MISSING_WATERMARK = path.join(
+  HOME,
+  ".openzigs",
+  "gallery",
+  "missing-wm.png",
+);
 
 // Mock sharp and fs
 vi.mock("sharp", () => {
@@ -20,14 +38,12 @@ vi.mock("sharp", () => {
     ensureAlpha: vi.fn().mockReturnThis(),
     toFile: vi.fn().mockResolvedValue({}),
     toBuffer: vi.fn().mockResolvedValue(Buffer.from("fake")),
-    metadata: vi
-      .fn()
-      .mockResolvedValue({
-        width: 800,
-        height: 600,
-        format: "png",
-        size: 1024,
-      }),
+    metadata: vi.fn().mockResolvedValue({
+      width: 800,
+      height: 600,
+      format: "png",
+      size: 1024,
+    }),
   };
   mockSharp.mockReturnValue(pipeline);
   return { default: mockSharp };
@@ -73,7 +89,7 @@ describe("Image Manipulation Tools", () => {
     it("should resize an image", async () => {
       const tool = tools.find((t) => t.name === "resize-image")!;
       const result = await tool.handler({
-        file_path: "/tmp/test.png",
+        file_path: TEST_IMAGE,
         width: 200,
         height: 150,
       });
@@ -84,7 +100,7 @@ describe("Image Manipulation Tools", () => {
 
     it("should error if neither width nor height is provided", async () => {
       const tool = tools.find((t) => t.name === "resize-image")!;
-      const result = await tool.handler({ file_path: "/tmp/test.png" });
+      const result = await tool.handler({ file_path: TEST_IMAGE });
       expect(result.isError).toBe(true);
       expect(result.text).toContain("At least one of width or height");
     });
@@ -94,11 +110,21 @@ describe("Image Manipulation Tools", () => {
       vi.mocked(fsMod.default.existsSync).mockReturnValueOnce(false);
       const tool = tools.find((t) => t.name === "resize-image")!;
       const result = await tool.handler({
-        file_path: "/tmp/missing.png",
+        file_path: MISSING_IMAGE,
         width: 100,
       });
       expect(result.isError).toBe(true);
       expect(result.text).toContain("File not found");
+    });
+
+    it("should reject paths outside allowed directories", async () => {
+      const tool = tools.find((t) => t.name === "resize-image")!;
+      const result = await tool.handler({
+        file_path: "/etc/passwd",
+        width: 100,
+      });
+      expect(result.isError).toBe(true);
+      expect(result.text).toContain("Path not allowed");
     });
   });
 
@@ -106,7 +132,7 @@ describe("Image Manipulation Tools", () => {
     it("should crop an image", async () => {
       const tool = tools.find((t) => t.name === "crop-image")!;
       const result = await tool.handler({
-        file_path: "/tmp/test.png",
+        file_path: TEST_IMAGE,
         left: 10,
         top: 20,
         width: 100,
@@ -123,7 +149,7 @@ describe("Image Manipulation Tools", () => {
     it("should convert image format", async () => {
       const tool = tools.find((t) => t.name === "convert-image")!;
       const result = await tool.handler({
-        file_path: "/tmp/test.png",
+        file_path: TEST_IMAGE,
         format: "webp",
         quality: 90,
       });
@@ -137,7 +163,7 @@ describe("Image Manipulation Tools", () => {
     it("should apply grayscale filter", async () => {
       const tool = tools.find((t) => t.name === "filter-image")!;
       const result = await tool.handler({
-        file_path: "/tmp/test.png",
+        file_path: TEST_IMAGE,
         filter: "grayscale",
       });
       const parsed = JSON.parse(result.text);
@@ -148,7 +174,7 @@ describe("Image Manipulation Tools", () => {
     it("should apply blur filter", async () => {
       const tool = tools.find((t) => t.name === "filter-image")!;
       const result = await tool.handler({
-        file_path: "/tmp/test.png",
+        file_path: TEST_IMAGE,
         filter: "blur",
         intensity: 5,
       });
@@ -160,7 +186,7 @@ describe("Image Manipulation Tools", () => {
     it("should apply sepia filter", async () => {
       const tool = tools.find((t) => t.name === "filter-image")!;
       const result = await tool.handler({
-        file_path: "/tmp/test.png",
+        file_path: TEST_IMAGE,
         filter: "sepia",
       });
       const parsed = JSON.parse(result.text);
@@ -173,8 +199,8 @@ describe("Image Manipulation Tools", () => {
     it("should add watermark to image", async () => {
       const tool = tools.find((t) => t.name === "watermark-image")!;
       const result = await tool.handler({
-        file_path: "/tmp/test.png",
-        watermark_path: "/tmp/watermark.png",
+        file_path: TEST_IMAGE,
+        watermark_path: WATERMARK_IMAGE,
         position: "bottom-right",
         opacity: 0.5,
       });
@@ -190,8 +216,8 @@ describe("Image Manipulation Tools", () => {
         .mockReturnValueOnce(false); // watermark missing
       const tool = tools.find((t) => t.name === "watermark-image")!;
       const result = await tool.handler({
-        file_path: "/tmp/test.png",
-        watermark_path: "/tmp/missing.png",
+        file_path: TEST_IMAGE,
+        watermark_path: MISSING_WATERMARK,
       });
       expect(result.isError).toBe(true);
       expect(result.text).toContain("Watermark file not found");

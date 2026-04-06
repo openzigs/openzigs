@@ -202,11 +202,9 @@ export const createOutboxRouter = ({
     try {
       const parsed = listQuerySchema.safeParse(req.query);
       if (!parsed.success) {
-        return res
-          .status(400)
-          .json({
-            error: parsed.error.issues.map((i) => i.message).join(", "),
-          });
+        return res.status(400).json({
+          error: parsed.error.issues.map((i) => i.message).join(", "),
+        });
       }
       const items = outboxRepo.list(parsed.data);
       return res.json({ items, total: items.length });
@@ -273,11 +271,9 @@ export const createOutboxRouter = ({
     try {
       const parsed = generatePreviewSchema.safeParse(req.body);
       if (!parsed.success) {
-        return res
-          .status(400)
-          .json({
-            error: parsed.error.issues.map((i) => i.message).join(", "),
-          });
+        return res.status(400).json({
+          error: parsed.error.issues.map((i) => i.message).join(", "),
+        });
       }
       const { url, platforms, model, imageSource } = parsed.data;
 
@@ -436,11 +432,9 @@ export const createOutboxRouter = ({
     try {
       const parsed = enhanceTextSchema.safeParse(req.body);
       if (!parsed.success) {
-        return res
-          .status(400)
-          .json({
-            error: parsed.error.issues.map((i) => i.message).join(", "),
-          });
+        return res.status(400).json({
+          error: parsed.error.issues.map((i) => i.message).join(", "),
+        });
       }
       const { text, platforms: targetPlatforms, model } = parsed.data;
 
@@ -526,11 +520,9 @@ export const createOutboxRouter = ({
     try {
       const parsed = enhanceContentSchema.safeParse(req.body);
       if (!parsed.success) {
-        return res
-          .status(400)
-          .json({
-            error: parsed.error.issues.map((i) => i.message).join(", "),
-          });
+        return res.status(400).json({
+          error: parsed.error.issues.map((i) => i.message).join(", "),
+        });
       }
       const {
         platforms: targetPlatforms,
@@ -651,11 +643,9 @@ export const createOutboxRouter = ({
     try {
       const parsed = saveImagesSchema.safeParse(req.body);
       if (!parsed.success) {
-        return res
-          .status(400)
-          .json({
-            error: parsed.error.issues.map((i) => i.message).join(", "),
-          });
+        return res.status(400).json({
+          error: parsed.error.issues.map((i) => i.message).join(", "),
+        });
       }
 
       await fs.mkdir(GALLERY_DIR, { recursive: true });
@@ -738,11 +728,9 @@ export const createOutboxRouter = ({
     try {
       const parsed = createOutboxSchema.safeParse(req.body);
       if (!parsed.success) {
-        return res
-          .status(400)
-          .json({
-            error: parsed.error.issues.map((i) => i.message).join(", "),
-          });
+        return res.status(400).json({
+          error: parsed.error.issues.map((i) => i.message).join(", "),
+        });
       }
       const data = parsed.data;
       const item = outboxRepo.insert({
@@ -771,11 +759,9 @@ export const createOutboxRouter = ({
     try {
       const parsed = batchCreateSchema.safeParse(req.body);
       if (!parsed.success) {
-        return res
-          .status(400)
-          .json({
-            error: parsed.error.issues.map((i) => i.message).join(", "),
-          });
+        return res.status(400).json({
+          error: parsed.error.issues.map((i) => i.message).join(", "),
+        });
       }
       const created = parsed.data.items.map((data) =>
         outboxRepo.insert({
@@ -805,11 +791,9 @@ export const createOutboxRouter = ({
     try {
       const parsed = updateOutboxSchema.safeParse(req.body);
       if (!parsed.success) {
-        return res
-          .status(400)
-          .json({
-            error: parsed.error.issues.map((i) => i.message).join(", "),
-          });
+        return res.status(400).json({
+          error: parsed.error.issues.map((i) => i.message).join(", "),
+        });
       }
       const data = parsed.data;
       const updateInput: UpdateOutboxInput = {};
@@ -831,12 +815,10 @@ export const createOutboxRouter = ({
 
       const item = outboxRepo.update(req.params.id, updateInput);
       if (!item) {
-        return res
-          .status(400)
-          .json({
-            error:
-              "Cannot update: item not found or not in editable state (pending/canceled)",
-          });
+        return res.status(400).json({
+          error:
+            "Cannot update: item not found or not in editable state (pending/canceled)",
+        });
       }
       return res.json(item);
     } catch (err) {
@@ -851,11 +833,9 @@ export const createOutboxRouter = ({
     try {
       const item = outboxRepo.retry(req.params.id);
       if (!item)
-        return res
-          .status(400)
-          .json({
-            error: "Cannot retry: item not found or not in failed status",
-          });
+        return res.status(400).json({
+          error: "Cannot retry: item not found or not in failed status",
+        });
       return res.json(item);
     } catch (err) {
       return res
@@ -869,12 +849,10 @@ export const createOutboxRouter = ({
     try {
       const item = outboxRepo.cancel(req.params.id);
       if (!item)
-        return res
-          .status(400)
-          .json({
-            error:
-              "Cannot cancel: item not found or not in pending/failed status",
-          });
+        return res.status(400).json({
+          error:
+            "Cannot cancel: item not found or not in pending/failed status",
+        });
       return res.json(item);
     } catch (err) {
       return res
@@ -893,11 +871,9 @@ export const createOutboxRouter = ({
       const item = outboxRepo.getById(req.params.id);
       if (!item) return res.status(404).json({ error: "Item not found" });
       if (item.status !== "pending") {
-        return res
-          .status(400)
-          .json({
-            error: `Cannot publish: item is ${item.status}, must be pending`,
-          });
+        return res.status(400).json({
+          error: `Cannot publish: item is ${item.status}, must be pending`,
+        });
       }
 
       // Parse optional notification channels from body

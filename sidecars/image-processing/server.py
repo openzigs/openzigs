@@ -25,7 +25,8 @@ import logging
 import os
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 logging.basicConfig(level=logging.INFO)
@@ -35,6 +36,18 @@ _callback_secret: Optional[str] = os.getenv("CALLBACK_SECRET") or None
 
 app = FastAPI(title="Image Processing Sidecar", version="1.0.0")
 
+
+# ── Auth Middleware ───────────────────────────────────────────
+
+@app.middleware("http")
+async def verify_callback_secret(request: Request, call_next):
+    """Enforce CALLBACK_SECRET on mutating (POST) endpoints when configured."""
+    if _callback_secret and request.method == "POST":
+        auth = request.headers.get("Authorization", "")
+        if not auth.startswith("Bearer ") or auth[7:] != _callback_secret:
+            return JSONResponse(status_code=401, content={"error": "Unauthorized"})
+    return await call_next(request)
+
 # Lazy-loaded models
 _upscaler = None
 _rembg_session = None
@@ -42,8 +55,12 @@ _rembg_session = None
 
 # ── Request/Response Models ──────────────────────────────────
 
+# ~50 MB base64 ≈ 37 MB binary; prevents memory-exhaustion DoS
+_MAX_BASE64_LENGTH = 67_108_864
+
+
 class UpscaleRequest(BaseModel):
-    image: str = Field(..., description="Base64-encoded image")
+    image: str = Field(..., max_length=_MAX_BASE64_LENGTH, description="Base64-encoded image")
     format: str = Field(default="png", description="Image format (png, jpeg, webp)")
     scale: int = Field(default=2, ge=2, le=4, description="Upscale factor (2 or 4)")
 
@@ -55,7 +72,7 @@ class UpscaleResponse(BaseModel):
 
 
 class RemoveBackgroundRequest(BaseModel):
-    image: str = Field(..., description="Base64-encoded image")
+    image: str = Field(..., max_length=_MAX_BASE64_LENGTH, description="Base64-encoded image")
     model: str = Field(default="u2net", description="Rembg model name")
     alpha_matting: bool = Field(default=False, description="Enable alpha matting")
 

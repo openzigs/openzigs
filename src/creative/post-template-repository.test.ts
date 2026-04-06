@@ -213,6 +213,21 @@ describe("PostTemplateRepository", () => {
     expect(repo.applyTemplate("nonexistent", {})).toBeNull();
   });
 
+  it("should handle variable keys with regex metacharacters safely", () => {
+    const created = repo.create({
+      name: "Meta",
+      platform: "twitter",
+      layout: "default",
+      contentTemplate: "Hello {{user.name}} and {{price$}}!",
+    });
+    const result = repo.applyTemplate(created.id, {
+      "user.name": "Alice",
+      price$: "99",
+    });
+    expect(result).not.toBeNull();
+    expect(result!.content).toBe("Hello Alice and 99!");
+  });
+
   it("should set brand_kit_id to null when referenced kit is deleted", () => {
     db.prepare(
       "INSERT INTO brand_kits (id, name, primary_color, secondary_color, accent_color, font_family, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",

@@ -58,7 +58,10 @@ export interface GalleryRouterOptions {
   toolRegistry: ToolRegistry;
 }
 
-export const createGalleryRouter = ({ copilot, toolRegistry }: GalleryRouterOptions): Router => {
+export const createGalleryRouter = ({
+  copilot,
+  toolRegistry,
+}: GalleryRouterOptions): Router => {
   const router = Router();
 
   // ── POST /enhance-prompt — AI-enhance a generation prompt ──
@@ -84,7 +87,15 @@ export const createGalleryRouter = ({ copilot, toolRegistry }: GalleryRouterOpti
       const systemContent = buildSystemPrompt(model, mode, isVideo, isMusic);
 
       // Build the user message
-      const userMessage = buildUserMessage(rawPrompt, model, mode, params, isVideo, isMusic, seed);
+      const userMessage = buildUserMessage(
+        rawPrompt,
+        model,
+        mode,
+        params,
+        isVideo,
+        isMusic,
+        seed,
+      );
 
       // Collect only the web-search tool for the LLM to use
       const webSearchTool = toolRegistry.getToolDefinition("web-search");
@@ -93,7 +104,7 @@ export const createGalleryRouter = ({ copilot, toolRegistry }: GalleryRouterOpti
       // Stream the response from the LLM
       const conversationId = `enhance-prompt-${Date.now()}`;
       let fullResponse = "";
-      const galleryModel = body.llmModel || await getUserSelectedModel();
+      const galleryModel = body.llmModel || (await getUserSelectedModel());
 
       for await (const chunk of copilot.chat(userMessage, {
         conversationId,
@@ -111,7 +122,9 @@ export const createGalleryRouter = ({ copilot, toolRegistry }: GalleryRouterOpti
       // Parse the JSON response from the LLM
       const result = parseEnhanceResponse(fullResponse, params);
 
-      logger.info(`[GalleryAPI] Prompt enhanced for ${model}/${mode}: "${rawPrompt.slice(0, 50)}..." → "${result.enhanced_prompt.slice(0, 50)}..."`);
+      logger.info(
+        `[GalleryAPI] Prompt enhanced for ${model}/${mode}: "${rawPrompt.slice(0, 50)}..." → "${result.enhanced_prompt.slice(0, 50)}..."`,
+      );
 
       res.json(result);
     } catch (err) {
@@ -126,7 +139,12 @@ export const createGalleryRouter = ({ copilot, toolRegistry }: GalleryRouterOpti
 
 // ── Prompt Construction ─────────────────────────────────────
 
-function buildSystemPrompt(model: string, mode: string, isVideo: boolean, isMusic: boolean): string {
+function buildSystemPrompt(
+  model: string,
+  mode: string,
+  isVideo: boolean,
+  isMusic: boolean,
+): string {
   const modelGuidance = getModelGuidance(model, isVideo, isMusic);
 
   if (isMusic) {
@@ -220,7 +238,11 @@ ${isVideo ? '{"thinking": "...", "enhanced_prompt": "...", "suggested_negative_p
 Only include parameters in suggested_parameters that should change from the current values. Omit seed unless you have a specific suggestion.`;
 }
 
-function getModelGuidance(model: string, isVideo: boolean, isMusic: boolean): string {
+function getModelGuidance(
+  model: string,
+  isVideo: boolean,
+  isMusic: boolean,
+): string {
   if (isMusic) {
     return `## ACE-Step Music Generation Prompting Guide
 - Use descriptive, tag-style captions combining genre, mood, instruments, and production style.
@@ -301,13 +323,18 @@ function buildUserMessage(
   seed?: number,
 ): string {
   const wordCount = rawPrompt.trim().split(/\s+/).length;
-  const complexity = wordCount <= 5 ? "very simple (≤5 words)" : wordCount <= 15 ? "moderate (6–15 words)" : `detailed (${wordCount} words)`;
+  const complexity =
+    wordCount <= 5
+      ? "very simple (≤5 words)"
+      : wordCount <= 15
+        ? "moderate (6–15 words)"
+        : `detailed (${wordCount} words)`;
 
   const paramSummary = isMusic
     ? `Duration: ${(params as Record<string, unknown>).duration_seconds ?? 30}s, Steps: ${(params as Record<string, unknown>).music_steps ?? 20}, Instrumental: ${(params as Record<string, unknown>).instrumental ?? false}${seed != null ? `, Seed: ${seed}` : ", Seed: (none)"}`
     : isVideo
-    ? `Frames: ${params.num_frames ?? 97}, FPS: ${params.fps ?? 24}, Steps: ${params.steps ?? 30}, Guidance: ${params.guidance ?? 3.5}, Resolution: 768×512${seed != null ? `, Seed: ${seed}` : ", Seed: (none)"}`
-    : `Resolution: ${params.width ?? 1024}×${params.height ?? 1024}, Steps: ${params.steps ?? 4}, Guidance: ${params.guidance ?? 3.5}${seed != null ? `, Seed: ${seed}` : ", Seed: (none)"}`;
+      ? `Frames: ${params.num_frames ?? 97}, FPS: ${params.fps ?? 24}, Steps: ${params.steps ?? 30}, Guidance: ${params.guidance ?? 3.5}, Resolution: 768×512${seed != null ? `, Seed: ${seed}` : ", Seed: (none)"}`
+      : `Resolution: ${params.width ?? 1024}×${params.height ?? 1024}, Steps: ${params.steps ?? 4}, Guidance: ${params.guidance ?? 3.5}${seed != null ? `, Seed: ${seed}` : ", Seed: (none)"}`;
 
   return `Enhance this prompt for ${model} (${mode}):
 
@@ -357,19 +384,30 @@ function parseEnhanceResponse(
         if (typeof sp.guidance === "number") suggested.guidance = sp.guidance;
         if (typeof sp.width === "number") suggested.width = sp.width;
         if (typeof sp.height === "number") suggested.height = sp.height;
-        if (typeof sp.num_frames === "number") suggested.num_frames = sp.num_frames;
+        if (typeof sp.num_frames === "number")
+          suggested.num_frames = sp.num_frames;
         if (typeof sp.fps === "number") suggested.fps = sp.fps;
         if (typeof sp.seed === "number") suggested.seed = sp.seed;
-        if (typeof sp.duration_seconds === "number") suggested.duration_seconds = sp.duration_seconds;
-        if (typeof sp.music_steps === "number") suggested.music_steps = sp.music_steps;
-        if (typeof sp.video_steps === "number") suggested.video_steps = sp.video_steps;
-        if (typeof sp.video_guidance === "number") suggested.video_guidance = sp.video_guidance;
+        if (typeof sp.duration_seconds === "number")
+          suggested.duration_seconds = sp.duration_seconds;
+        if (typeof sp.music_steps === "number")
+          suggested.music_steps = sp.music_steps;
+        if (typeof sp.video_steps === "number")
+          suggested.video_steps = sp.video_steps;
+        if (typeof sp.video_guidance === "number")
+          suggested.video_guidance = sp.video_guidance;
 
         return {
           enhanced_prompt: parsed.enhanced_prompt,
           thinking: parsed.thinking ?? "",
-          suggested_lyrics: typeof parsed.suggested_lyrics === "string" ? parsed.suggested_lyrics : undefined,
-          suggested_negative_prompt: typeof parsed.suggested_negative_prompt === "string" ? parsed.suggested_negative_prompt : undefined,
+          suggested_lyrics:
+            typeof parsed.suggested_lyrics === "string"
+              ? parsed.suggested_lyrics
+              : undefined,
+          suggested_negative_prompt:
+            typeof parsed.suggested_negative_prompt === "string"
+              ? parsed.suggested_negative_prompt
+              : undefined,
           suggested_parameters: suggested,
         };
       }

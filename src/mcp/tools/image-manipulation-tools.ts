@@ -12,6 +12,12 @@ import type { ToolDefinition } from "../tool-registry.js";
 
 const GALLERY_DIR = path.join(os.homedir(), ".openzigs", "gallery");
 
+const ALLOWED_DIRS = [
+  GALLERY_DIR,
+  path.join(os.homedir(), ".openzigs"),
+  os.homedir(),
+];
+
 // ── Schemas ─────────────────────────────────────────────────
 
 const resizeImageSchema = z.object({
@@ -123,8 +129,11 @@ function generateOutputPath(
 
 function validatePath(filePath: string): string {
   const resolved = path.resolve(filePath);
-  if (resolved.includes("..")) {
-    throw new Error("Path traversal not allowed");
+  const allowed = ALLOWED_DIRS.some(
+    (dir) => resolved.startsWith(dir + path.sep) || resolved === dir,
+  );
+  if (!allowed) {
+    throw new Error(`Path not allowed: must be under home directory`);
   }
   return resolved;
 }
