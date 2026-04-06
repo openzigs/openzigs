@@ -2227,6 +2227,12 @@ const creativeRouter = createCreativeRouter({
   copilotWrapper: copilot,
   imageProcessingSidecarUrl: resolveSidecarUrl("image-processing", "IMAGE_PROCESSING_SIDECAR_URL", 5010),
 });
+// enhance-prompt accepts a base64 image in the JSON body — needs a higher limit
+app.use(
+  "/api/admin/creative/enhance-prompt",
+  authMiddleware,
+  express.json({ limit: "20mb" }),
+);
 app.use("/api/admin/creative", authMiddleware, creativeRouter);
 
 // Post Template API routes (Issue #809)

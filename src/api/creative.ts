@@ -12,9 +12,10 @@ import QRCode from "qrcode";
 import path from "node:path";
 import os from "node:os";
 import fs from "node:fs";
+import fsPromises from "node:fs/promises";
 import { logger } from "../logging/logger.js";
 import type { MediaQueueRepository } from "../queue/media-queue-repository.js";
-import type { CopilotWrapperService } from "../copilot/index.js";
+import type { CopilotWrapperService, SdkAttachment } from "../copilot/index.js";
 
 const GALLERY_DIR = path.join(os.homedir(), ".openzigs", "gallery");
 
@@ -189,21 +190,26 @@ export function createCreativeRouter({
         // Convert uploaded image to base64
         const imageBase64 = imageFile.buffer.toString("base64");
 
+        // Convert mask to base64 if provided
+        const maskFile = files?.["mask"]?.[0];
+        const maskBase64 = maskFile
+          ? maskFile.buffer.toString("base64")
+          : undefined;
+
         // Build prompt — prepend style instruction if specified
         const styledPrompt = styleId ? `${styleId} style: ${prompt}` : prompt;
 
-        // Kontext uses a slightly higher strength (semantic editing);
-        // other models use img2img style transfer strength.
-        const strength = selectedModel === "flux-kontext" ? 0.85 : 0.75;
+        // Kontext doesn't use strength — only prompt + input_image.
+        // Other models use img2img with a strength parameter.
+        const isKontext = selectedModel === "flux-kontext";
 
-        // Create an img2img queue job. QueueMaster routes flux-kontext to
-        // /kontext-async and all other models to /img2img-async.
         const job = mediaQueueRepo.createJob({
           type: "img2img",
           payload: {
             prompt: styledPrompt,
             init_image: imageBase64,
-            strength,
+            ...(maskBase64 && !isKontext ? { mask: maskBase64 } : {}),
+            ...(!isKontext ? { strength: 0.75 } : {}),
           },
           model: selectedModel,
           priority: 1,
@@ -238,11 +244,13 @@ export function createCreativeRouter({
 
   /**
    * POST /enhance-prompt
-   * Uses the LLM to rewrite a raw inpainting prompt into a more descriptive,
-   * effective image generation prompt.
-   * Body: { prompt: string }
+   * Rewrites a raw inpainting prompt into a Flux Kontext-optimised edit instruction.
+   * When an image (base64) is provided, uses vision to understand the scene first,
+   * then crafts the prompt around the subject the user is trying to change.
+   * Body: { prompt: string, image?: string (base64), mime_type?: string }
    */
   router.post("/enhance-prompt", async (req, res) => {
+    let tmpImagePath: string | null = null;
     try {
       const body = req.body as Record<string, string>;
       const rawPrompt = body.prompt?.trim();
@@ -259,18 +267,58 @@ export function createCreativeRouter({
         return;
       }
 
-      const systemPrompt = [
-        "You are an expert at writing AI image generation prompts for inpainting workflows.",
-        "Improve the following prompt to be more descriptive and effective for AI image generation.",
-        "Keep the core intent exactly, but add specific visual details, lighting, texture, and composition guidance.",
-        "The prompt should describe WHAT should appear in the painted region.",
-        "Return ONLY the improved prompt text — no preamble, no quotes, no explanations.",
-        `\nOriginal prompt: ${rawPrompt}`,
-      ].join("\n");
+      // Optional image for vision-guided enhancement
+      const imageBase64 = body.image?.trim();
+      const mimeType = body.mime_type?.trim() || "image/jpeg";
+      let attachment: SdkAttachment | null = null;
+
+      if (imageBase64) {
+        // Write to a temp file so the SDK attachment system can read it
+        const ext = mimeType.includes("png") ? ".png" : ".jpg";
+        tmpImagePath = path.join(
+          os.tmpdir(),
+          `openzigs-enhance-${Date.now()}${ext}`,
+        );
+        await fsPromises.writeFile(
+          tmpImagePath,
+          Buffer.from(imageBase64, "base64"),
+        );
+        attachment = {
+          type: "file",
+          path: tmpImagePath,
+          displayName: `source${ext}`,
+        };
+      }
+
+      const kontextRules = `
+FLUX KONTEXT PROMPT RULES — follow these exactly:
+1. NAME the subject by WHAT IT IS, not where it is or what surrounds it.
+   BAD: "replace the thing next to the window with a cat"
+   GOOD: "replace the dog with a tabby cat"
+2. Describe the CHANGE (delta), never the whole scene.
+   BAD: "a living room with a fireplace and a tabby cat on the couch"
+   GOOD: "replace the dog with a tabby cat in the same pose"
+3. Preserve phrasing: start with an action verb — Replace / Change / Add / Remove / Make.
+4. Keep it under 25 words. Precision beats length.
+5. Do NOT describe lighting, backgrounds, or anything that should stay the same.
+6. Return ONLY the improved prompt — no preamble, no quotes, no explanation.`.trim();
+
+      let systemPrompt: string;
+      let userMessage: string;
+
+      if (attachment) {
+        systemPrompt = `You are an expert at writing Flux Kontext image-editing prompts. You have vision capabilities and will examine the attached source image to understand the scene before rewriting the user's prompt.\n\n${kontextRules}`;
+        userMessage = `Look at the attached source image. The user wants to make this edit: "${rawPrompt}"\n\nStep 1 — Identify: What is the specific subject the user is trying to change? Name it precisely (e.g. "the dog", "the red chair", "the person's jacket").\nStep 2 — Rewrite: Write a single, improved Flux Kontext prompt for this change.\n\nReturn ONLY the final improved prompt.`;
+      } else {
+        systemPrompt = `You are an expert at writing Flux Kontext image-editing prompts.\n\n${kontextRules}`;
+        userMessage = `Rewrite this as a precise Flux Kontext edit instruction: "${rawPrompt}"`;
+      }
 
       let enhanced = "";
-      for await (const chunk of copilotWrapper.chat(systemPrompt, {
+      for await (const chunk of copilotWrapper.chat(userMessage, {
         availableTools: [],
+        systemMessage: { mode: "replace", content: systemPrompt },
+        ...(attachment ? { attachments: [attachment] } : {}),
       })) {
         enhanced += chunk;
       }
@@ -280,6 +328,11 @@ export function createCreativeRouter({
       const msg = err instanceof Error ? err.message : String(err);
       logger.error(`[CreativeRouter] Enhance-prompt error: ${msg}`);
       res.status(500).json({ error: "Internal server error" });
+    } finally {
+      // Always clean up the temp image file
+      if (tmpImagePath) {
+        fsPromises.unlink(tmpImagePath).catch(() => {});
+      }
     }
   });
 

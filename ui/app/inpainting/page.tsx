@@ -11,7 +11,6 @@ import { fetchJson, buildMediaUrl } from "@/lib/api";
 import {
   Paintbrush,
   Upload,
-  Eraser,
   Download,
   RotateCcw,
   Layers,
@@ -19,7 +18,9 @@ import {
   ImageIcon,
   X,
   Sparkles,
-  ChevronDown,
+  Undo2,
+  Type,
+  PaintBucket,
 } from "lucide-react";
 
 // ── Types ───────────────────────────────────────────────────
@@ -47,15 +48,20 @@ interface GalleryAsset {
   file_path: string;
 }
 
+type EditMode = "semantic" | "mask";
+
+// Models that do whole-image semantic editing via text prompt (no mask support)
+const SEMANTIC_MODELS = new Set(["flux-kontext"]);
+
 // ── Page Component ──────────────────────────────────────────
 
 export default function InpaintingPage() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  // Separate canvas for clean mask tracking — image pixels never bleed in
   const maskCanvasRef = useRef<HTMLCanvasElement>(null);
   const [sourceImage, setSourceImage] = useState<string | null>(null);
   const [sourceFile, setSourceFile] = useState<File | null>(null);
-  const [brushSize, setBrushSize] = useState(20);
+  const [brushSize, setBrushSize] = useState(30);
+  const [brushFeather, setBrushFeather] = useState(0.4);
   const [isDrawing, setIsDrawing] = useState(false);
   const [prompt, setPrompt] = useState("");
   const [selectedStyle, setSelectedStyle] = useState("");
@@ -64,32 +70,60 @@ export default function InpaintingPage() {
   const [showGalleryPicker, setShowGalleryPicker] = useState(false);
   const [selectedModel, setSelectedModel] = useState("flux-kontext");
   const [isEnhancing, setIsEnhancing] = useState(false);
+  const [editMode, setEditMode] = useState<EditMode>("semantic");
+  // Undo: store mask snapshots (ImageData from maskCanvas)
+  const maskHistory = useRef<ImageData[]>([]);
+  const [maskHistoryLen, setMaskHistoryLen] = useState(0);
 
-  // ── Available image generation models (must match sidecar MODEL_REGISTRY) ──
+  const isMaskMode = editMode === "mask";
+  const isSemanticModel = SEMANTIC_MODELS.has(selectedModel);
+
+  // When switching to a semantic model, force semantic mode
+  useEffect(() => {
+    if (isSemanticModel && editMode === "mask") {
+      setEditMode("semantic");
+    }
+  }, [isSemanticModel, editMode]);
+
   const IMAGE_GEN_MODELS = [
     {
       id: "flux-kontext",
       name: "Flux Kontext",
-      description: "Text-guided semantic editing — recommended",
+      bestFor: "Targeted edits — swap objects, change colors, add/remove things",
+      description:
+        "Context-aware editor. Describe the change in plain language and it modifies only the relevant part while keeping everything else intact. Best choice for most editing tasks.",
+      supportsMask: false,
+      recommended: true,
     },
     {
       id: "flux-dev",
       name: "Flux Dev",
-      description: "High-quality 25-step model",
+      bestFor: "Creative re-imaginings where full-scene changes are OK",
+      description:
+        "High-quality 25-step generator adapted for img2img. Treats your image as a loose starting point — may alter areas you wanted to keep. Good for stylistic overhauls.",
+      supportsMask: true,
+      recommended: false,
     },
     {
       id: "flux-schnell",
       name: "Flux Schnell",
-      description: "Fast 4-step model",
+      bestFor: "Quick drafts and style experiments",
+      description:
+        "Fast 4-step generator. Same tradeoffs as Flux Dev but much quicker. Use to quickly test ideas before committing to a full Flux Dev run.",
+      supportsMask: true,
+      recommended: false,
     },
     {
       id: "z-image-turbo",
       name: "Z-Image Turbo",
-      description: "Fast LoRA-compatible model",
+      bestFor: "Style transfers and LoRA-driven character edits",
+      description:
+        "Fast LoRA-compatible model. Best when you want to apply a specific art style or character LoRA to an image. Not ideal for precise regional edits.",
+      supportsMask: true,
+      recommended: false,
     },
   ];
 
-  // ── Art styles from the art-style-tools ──
   const artStyles = [
     { id: "", name: "None (auto)" },
     { id: "photorealistic", name: "Photorealistic" },
@@ -101,111 +135,11 @@ export default function InpaintingPage() {
     { id: "minimalist", name: "Minimalist" },
   ];
 
-  // ── API base / auth (declared before compositeWithMask so the closure captures them) ──
   const apiBase =
     process.env.NEXT_PUBLIC_OPENZIGS_API_BASE ?? "http://localhost:3000";
   const authToken = process.env.NEXT_PUBLIC_OPENZIGS_TOKEN ?? "";
 
-  // ── Composite model result with original image using the painted mask ──
-  // This ensures only the brushed area in the source image changes,
-  // preserving the rest of the original exactly. No new models needed —
-  // the mask is applied client-side after the model runs.
-  const compositeWithMask = useCallback(
-    async (resultUrl: string): Promise<string> => {
-      const canvas = canvasRef.current;
-      // Use the clean mask canvas so we read only brush strokes, not image pixels
-      const maskCanvas = maskCanvasRef.current;
-      if (!canvas || !maskCanvas || !sourceImage) return resultUrl;
-
-      const maskCtx = maskCanvas.getContext("2d");
-      if (!maskCtx) return resultUrl;
-
-      // Check if anything was painted — reads from the pure mask canvas
-      const maskData = maskCtx.getImageData(
-        0,
-        0,
-        maskCanvas.width,
-        maskCanvas.height,
-      );
-      let hasMask = false;
-      for (let i = 0; i < maskData.data.length; i += 4) {
-        // Opaque red on transparent canvas: R > 128, A > 0 is sufficient
-        if (maskData.data[i] > 128 && maskData.data[i + 3] > 0) {
-          hasMask = true;
-          break;
-        }
-      }
-      if (!hasMask) return resultUrl;
-
-      // Fetch result image as blob to avoid CORS tainting the canvas
-      const headers: Record<string, string> = {};
-      if (authToken) headers["Authorization"] = `Bearer ${authToken}`;
-      const resultBlob = await fetch(resultUrl, { headers }).then((r) =>
-        r.blob(),
-      );
-      const resultObjectUrl = URL.createObjectURL(resultBlob);
-
-      try {
-        // Load original image
-        const origImg = await new Promise<HTMLImageElement>((res, rej) => {
-          const img = new window.Image();
-          img.onload = () => res(img);
-          img.onerror = rej;
-          img.src = sourceImage;
-        });
-
-        // Load result image
-        const resultImg = await new Promise<HTMLImageElement>((res, rej) => {
-          const img = new window.Image();
-          img.onload = () => res(img);
-          img.onerror = rej;
-          img.src = resultObjectUrl;
-        });
-
-        const w = canvas.width;
-        const h = canvas.height;
-
-        // Draw original at canvas scale
-        const origCanvas = document.createElement("canvas");
-        origCanvas.width = w;
-        origCanvas.height = h;
-        const origCtx = origCanvas.getContext("2d")!;
-        origCtx.drawImage(origImg, 0, 0, w, h);
-        const origPixels = origCtx.getImageData(0, 0, w, h);
-
-        // Draw result at canvas scale
-        const resultCanvas = document.createElement("canvas");
-        resultCanvas.width = w;
-        resultCanvas.height = h;
-        const resultCtx = resultCanvas.getContext("2d")!;
-        resultCtx.drawImage(resultImg, 0, 0, w, h);
-        const resultPixels = resultCtx.getImageData(0, 0, w, h);
-
-        // Composite: use result pixels where mask is painted, original elsewhere
-        const finalData = origCtx.createImageData(w, h);
-        for (let i = 0; i < maskData.data.length; i += 4) {
-          const isMasked = maskData.data[i] > 128 && maskData.data[i + 3] > 0;
-          const src = isMasked ? resultPixels : origPixels;
-          finalData.data[i] = src.data[i];
-          finalData.data[i + 1] = src.data[i + 1];
-          finalData.data[i + 2] = src.data[i + 2];
-          finalData.data[i + 3] = src.data[i + 3];
-        }
-
-        const compositeCanvas = document.createElement("canvas");
-        compositeCanvas.width = w;
-        compositeCanvas.height = h;
-        const compositeCtx = compositeCanvas.getContext("2d")!;
-        compositeCtx.putImageData(finalData, 0, 0);
-        return compositeCanvas.toDataURL("image/png");
-      } finally {
-        URL.revokeObjectURL(resultObjectUrl);
-      }
-    },
-    [sourceImage, authToken],
-  );
-
-  // ── Effect 1: Calculate canvas dimensions when image changes ──
+  // ── Canvas sizing ──
   useEffect(() => {
     if (!sourceImage) return;
     const img = new window.Image();
@@ -219,7 +153,7 @@ export default function InpaintingPage() {
     img.src = sourceImage;
   }, [sourceImage]);
 
-  // ── Effect 2: Draw image on canvas AFTER React re-renders with new size ──
+  // ── Draw image on canvas ──
   useEffect(() => {
     if (!sourceImage) return;
     const canvas = canvasRef.current;
@@ -235,7 +169,7 @@ export default function InpaintingPage() {
     img.src = sourceImage;
   }, [sourceImage, canvasSize]);
 
-  // ── Handle image upload ──
+  // ── Image upload ──
   const handleImageUpload = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
       const file = e.target.files?.[0];
@@ -246,20 +180,83 @@ export default function InpaintingPage() {
       }
       setSourceFile(file);
       setResultImage(null);
+      maskHistory.current = [];
+      setMaskHistoryLen(0);
 
       const reader = new FileReader();
       reader.onload = (ev) => {
-        const dataUrl = ev.target?.result as string;
-        setSourceImage(dataUrl);
+        setSourceImage(ev.target?.result as string);
       };
       reader.readAsDataURL(file);
     },
     [],
   );
 
-  // ── Drawing handlers (mask painting) ──
+  // ── Save mask snapshot for undo ──
+  const saveMaskSnapshot = useCallback(() => {
+    const maskCanvas = maskCanvasRef.current;
+    if (!maskCanvas) return;
+    const mctx = maskCanvas.getContext("2d");
+    if (!mctx) return;
+    const snap = mctx.getImageData(0, 0, maskCanvas.width, maskCanvas.height);
+    maskHistory.current.push(snap);
+    if (maskHistory.current.length > 50) maskHistory.current.shift();
+    setMaskHistoryLen(maskHistory.current.length);
+  }, []);
+
+  // ── Undo last stroke ──
+  const undoStroke = useCallback(() => {
+    if (maskHistory.current.length === 0) return;
+    maskHistory.current.pop();
+    setMaskHistoryLen(maskHistory.current.length);
+    const maskCanvas = maskCanvasRef.current;
+    if (!maskCanvas) return;
+    const mctx = maskCanvas.getContext("2d");
+    if (!mctx) return;
+
+    if (maskHistory.current.length === 0) {
+      mctx.clearRect(0, 0, maskCanvas.width, maskCanvas.height);
+    } else {
+      mctx.putImageData(maskHistory.current[maskHistory.current.length - 1], 0, 0);
+    }
+
+    // Redraw display canvas: original image + current mask overlay
+    if (!sourceImage) return;
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    const img = new window.Image();
+    img.onload = () => {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      // Overlay the mask
+      const maskData = mctx.getImageData(0, 0, maskCanvas.width, maskCanvas.height);
+      const overlay = ctx.createImageData(canvas.width, canvas.height);
+      for (let i = 0; i < maskData.data.length; i += 4) {
+        if (maskData.data[i] > 128 && maskData.data[i + 3] > 0) {
+          overlay.data[i] = 255;
+          overlay.data[i + 1] = 80;
+          overlay.data[i + 2] = 80;
+          overlay.data[i + 3] = 100;
+        }
+      }
+      const tempCanvas = document.createElement("canvas");
+      tempCanvas.width = canvas.width;
+      tempCanvas.height = canvas.height;
+      const tempCtx = tempCanvas.getContext("2d")!;
+      tempCtx.putImageData(overlay, 0, 0);
+      ctx.drawImage(tempCanvas, 0, 0);
+    };
+    img.src = sourceImage;
+  }, [sourceImage]);
+
+  // ── Drawing handlers — active in both modes ──
+  // In semantic mode: draws annotation markers that Kontext uses for targeting
+  // In mask mode: draws a mask for non-Kontext models
   const startDrawing = useCallback(
     (e: React.MouseEvent<HTMLCanvasElement>) => {
+      saveMaskSnapshot();
       setIsDrawing(true);
       const canvas = canvasRef.current;
       if (!canvas) return;
@@ -270,24 +267,31 @@ export default function InpaintingPage() {
       const scaleY = canvas.height / rect.height;
       const x = (e.clientX - rect.left) * scaleX;
       const y = (e.clientY - rect.top) * scaleY;
-      // Paint semi-transparent red on display canvas (visual feedback)
+      const radius = brushSize / 2;
+
+      // Visual overlay: green for Kontext annotation, red for mask mode
+      const color = isSemanticModel ? "0, 220, 0" : "255, 80, 80";
+      const gradient = ctx.createRadialGradient(x, y, radius * (1 - brushFeather), x, y, radius);
+      gradient.addColorStop(0, `rgba(${color}, 0.5)`);
+      gradient.addColorStop(1, `rgba(${color}, 0)`);
       ctx.beginPath();
-      ctx.arc(x, y, brushSize / 2, 0, Math.PI * 2);
-      ctx.fillStyle = "rgba(255, 0, 0, 0.4)";
+      ctx.arc(x, y, radius, 0, Math.PI * 2);
+      ctx.fillStyle = gradient;
       ctx.fill();
-      // Paint opaque red on mask canvas (clean, no image pixel blending)
+
+      // Clean mask canvas (solid circle for actual mask data)
       const maskCanvas = maskCanvasRef.current;
       if (maskCanvas) {
         const mctx = maskCanvas.getContext("2d");
         if (mctx) {
           mctx.beginPath();
-          mctx.arc(x, y, brushSize / 2, 0, Math.PI * 2);
+          mctx.arc(x, y, radius, 0, Math.PI * 2);
           mctx.fillStyle = "rgba(255, 0, 0, 1)";
           mctx.fill();
         }
       }
     },
-    [brushSize],
+    [brushSize, brushFeather, saveMaskSnapshot, isSemanticModel],
   );
 
   const draw = useCallback(
@@ -302,22 +306,29 @@ export default function InpaintingPage() {
       const scaleY = canvas.height / rect.height;
       const x = (e.clientX - rect.left) * scaleX;
       const y = (e.clientY - rect.top) * scaleY;
+      const radius = brushSize / 2;
+
+      const color = isSemanticModel ? "0, 220, 0" : "255, 80, 80";
+      const gradient = ctx.createRadialGradient(x, y, radius * (1 - brushFeather), x, y, radius);
+      gradient.addColorStop(0, `rgba(${color}, 0.5)`);
+      gradient.addColorStop(1, `rgba(${color}, 0)`);
       ctx.beginPath();
-      ctx.arc(x, y, brushSize / 2, 0, Math.PI * 2);
-      ctx.fillStyle = "rgba(255, 0, 0, 0.4)";
+      ctx.arc(x, y, radius, 0, Math.PI * 2);
+      ctx.fillStyle = gradient;
       ctx.fill();
+
       const maskCanvas = maskCanvasRef.current;
       if (maskCanvas) {
         const mctx = maskCanvas.getContext("2d");
         if (mctx) {
           mctx.beginPath();
-          mctx.arc(x, y, brushSize / 2, 0, Math.PI * 2);
+          mctx.arc(x, y, radius, 0, Math.PI * 2);
           mctx.fillStyle = "rgba(255, 0, 0, 1)";
           mctx.fill();
         }
       }
     },
-    [isDrawing, brushSize],
+    [isDrawing, brushSize, brushFeather, isSemanticModel],
   );
 
   const stopDrawing = useCallback(() => setIsDrawing(false), []);
@@ -335,15 +346,16 @@ export default function InpaintingPage() {
       ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
     };
     img.src = sourceImage;
-    // Also clear the clean mask canvas
     const maskCanvas = maskCanvasRef.current;
     if (maskCanvas) {
       const mctx = maskCanvas.getContext("2d");
       mctx?.clearRect(0, 0, maskCanvas.width, maskCanvas.height);
     }
+    maskHistory.current = [];
+    setMaskHistoryLen(0);
   }, [sourceImage]);
 
-  // ── Gallery picker query (Issue #815) ──
+  // ── Gallery picker ──
   const galleryQuery = useQuery<{ assets: GalleryAsset[] }>({
     queryKey: ["gallery-images-inpainting"],
     queryFn: () => fetchJson("/api/queue/assets?type=image&limit=30"),
@@ -359,6 +371,8 @@ export default function InpaintingPage() {
       const file = new File([blob], asset.filename, { type: blob.type });
       setSourceFile(file);
       setResultImage(null);
+      maskHistory.current = [];
+      setMaskHistoryLen(0);
       const reader = new FileReader();
       reader.onload = (ev) => {
         setSourceImage(ev.target?.result as string);
@@ -374,9 +388,7 @@ export default function InpaintingPage() {
     }
   }, []);
 
-  // ── Generate inpainting ──
-
-  // Enhance prompt with AI
+  // ── Enhance prompt (vision-guided when image is loaded) ──
   const enhancePrompt = useCallback(async () => {
     if (!prompt.trim() || isEnhancing) return;
     setIsEnhancing(true);
@@ -385,10 +397,27 @@ export default function InpaintingPage() {
         "Content-Type": "application/json",
       };
       if (authToken) headers["Authorization"] = `Bearer ${authToken}`;
+
+      // Extract base64 payload from the data URL so the backend can write it to
+      // a temp file and pass it to the vision model as an attachment
+      let imageBase64: string | undefined;
+      let mimeType: string | undefined;
+      if (sourceImage?.startsWith("data:")) {
+        const [header, b64] = sourceImage.split(",");
+        const match = header.match(/data:(image\/[a-z+]+);base64/);
+        if (match && b64) {
+          mimeType = match[1];
+          imageBase64 = b64;
+        }
+      }
+
       const res = await fetch(`${apiBase}/api/admin/creative/enhance-prompt`, {
         method: "POST",
         headers,
-        body: JSON.stringify({ prompt }),
+        body: JSON.stringify({
+          prompt,
+          ...(imageBase64 ? { image: imageBase64, mime_type: mimeType } : {}),
+        }),
       });
       if (!res.ok) {
         const { error } = (await res.json()) as { error: string };
@@ -399,7 +428,10 @@ export default function InpaintingPage() {
         enhancedPrompt: string;
       };
       setPrompt(enhancedPrompt);
-      showToast("Prompt enhanced!", "success");
+      showToast(
+        imageBase64 ? "Prompt enhanced with image context!" : "Prompt enhanced!",
+        "success",
+      );
     } catch (err) {
       showToast(
         `Enhance failed: ${err instanceof Error ? err.message : String(err)}`,
@@ -408,56 +440,121 @@ export default function InpaintingPage() {
     } finally {
       setIsEnhancing(false);
     }
-  }, [prompt, isEnhancing, apiBase, authToken]);
+  }, [prompt, isEnhancing, apiBase, authToken, sourceImage]);
 
+  // ── Check if mask has any paint ──
+  const hasMaskPaint = useCallback(() => {
+    const maskCanvas = maskCanvasRef.current;
+    if (!maskCanvas) return false;
+    const mctx = maskCanvas.getContext("2d");
+    if (!mctx) return false;
+    const data = mctx.getImageData(0, 0, maskCanvas.width, maskCanvas.height).data;
+    for (let i = 0; i < data.length; i += 4) {
+      if (data[i] > 128 && data[i + 3] > 0) return true;
+    }
+    return false;
+  }, []);
+
+  // ── Build an annotated image for Kontext ──
+  // Bakes bright green annotation over the painted regions directly into the
+  // source image. Kontext natively understands colored annotation boxes and
+  // removes them from the output automatically.
+  const buildAnnotatedImage = useCallback(async (): Promise<Blob | null> => {
+    const maskCanvas = maskCanvasRef.current;
+    if (!maskCanvas || !sourceImage) return null;
+    const mctx = maskCanvas.getContext("2d");
+    if (!mctx) return null;
+
+    const maskData = mctx.getImageData(0, 0, maskCanvas.width, maskCanvas.height);
+
+    // Load original image at canvas resolution
+    const img = await new Promise<HTMLImageElement>((res, rej) => {
+      const el = new window.Image();
+      el.onload = () => res(el);
+      el.onerror = rej;
+      el.src = sourceImage;
+    });
+
+    const w = maskCanvas.width;
+    const h = maskCanvas.height;
+    const out = document.createElement("canvas");
+    out.width = w;
+    out.height = h;
+    const ctx = out.getContext("2d")!;
+    ctx.drawImage(img, 0, 0, w, h);
+
+    // Draw bright green (0, 255, 0) annotation over painted areas
+    const imgData = ctx.getImageData(0, 0, w, h);
+    for (let i = 0; i < maskData.data.length; i += 4) {
+      if (maskData.data[i] > 128 && maskData.data[i + 3] > 0) {
+        imgData.data[i] = 0;       // R
+        imgData.data[i + 1] = 255; // G
+        imgData.data[i + 2] = 0;   // B
+        imgData.data[i + 3] = 255; // A
+      }
+    }
+    ctx.putImageData(imgData, 0, 0);
+
+    return new Promise<Blob>((resolve) =>
+      out.toBlob((b) => resolve(b!), "image/png"),
+    );
+  }, [sourceImage]);
+
+  // ── Generate ──
   const inpaint = useMutation({
     mutationFn: async () => {
       if (!sourceFile) throw new Error("No image uploaded");
       if (!prompt.trim()) throw new Error("No prompt provided");
 
+      const hasPaint = hasMaskPaint();
+
       const formData = new FormData();
-      formData.append("image", sourceFile);
-      formData.append("prompt", prompt);
       formData.append("model", selectedModel);
       if (selectedStyle) formData.append("style_id", selectedStyle);
 
-      // Extract mask from the clean mask canvas (not the display canvas)
-      const maskCanvas = maskCanvasRef.current;
-      if (maskCanvas) {
-        const maskCtx = maskCanvas.getContext("2d")!;
-        const imageData = maskCtx.getImageData(
-          0,
-          0,
-          maskCanvas.width,
-          maskCanvas.height,
-        );
-        const outCanvas = document.createElement("canvas");
-        outCanvas.width = maskCanvas.width;
-        outCanvas.height = maskCanvas.height;
-        const outCtx = outCanvas.getContext("2d")!;
-        const maskData = outCtx.createImageData(
-          maskCanvas.width,
-          maskCanvas.height,
-        );
-
-        for (let i = 0; i < imageData.data.length; i += 4) {
-          const r = imageData.data[i];
-          const a = imageData.data[i + 3];
-          const isMask = r > 128 && a > 0;
-          maskData.data[i] = isMask ? 255 : 0;
-          maskData.data[i + 1] = isMask ? 255 : 0;
-          maskData.data[i + 2] = isMask ? 255 : 0;
-          maskData.data[i + 3] = 255;
+      if (isSemanticModel && hasPaint) {
+        // Kontext: bake annotation into the source image
+        const annotatedBlob = await buildAnnotatedImage();
+        if (annotatedBlob) {
+          formData.append("image", annotatedBlob, "annotated.png");
+          // Append annotation context to the prompt
+          formData.append(
+            "prompt",
+            `${prompt}. The bright green area in the image marks the region to change.`,
+          );
+        } else {
+          formData.append("image", sourceFile);
+          formData.append("prompt", prompt);
         }
-        outCtx.putImageData(maskData, 0, 0);
+      } else {
+        formData.append("image", sourceFile);
+        formData.append("prompt", prompt);
 
-        const maskBlob = await new Promise<Blob>((resolve) =>
-          outCanvas.toBlob((b) => resolve(b!), "image/png"),
-        );
-        formData.append("mask", maskBlob, "mask.png");
+        // Non-Kontext models: include B/W mask if painted
+        if (hasPaint && !isSemanticModel) {
+          const maskCanvas = maskCanvasRef.current!;
+          const maskCtx = maskCanvas.getContext("2d")!;
+          const imageData = maskCtx.getImageData(0, 0, maskCanvas.width, maskCanvas.height);
+          const outCanvas = document.createElement("canvas");
+          outCanvas.width = maskCanvas.width;
+          outCanvas.height = maskCanvas.height;
+          const outCtx = outCanvas.getContext("2d")!;
+          const bwData = outCtx.createImageData(maskCanvas.width, maskCanvas.height);
+          for (let i = 0; i < imageData.data.length; i += 4) {
+            const on = imageData.data[i] > 128 && imageData.data[i + 3] > 0;
+            bwData.data[i] = on ? 255 : 0;
+            bwData.data[i + 1] = on ? 255 : 0;
+            bwData.data[i + 2] = on ? 255 : 0;
+            bwData.data[i + 3] = 255;
+          }
+          outCtx.putImageData(bwData, 0, 0);
+          const maskBlob = await new Promise<Blob>((resolve) =>
+            outCanvas.toBlob((b) => resolve(b!), "image/png"),
+          );
+          formData.append("mask", maskBlob, "mask.png");
+        }
       }
 
-      // Submit the inpaint job
       const headers: Record<string, string> = {};
       if (authToken) headers["Authorization"] = `Bearer ${authToken}`;
 
@@ -472,31 +569,28 @@ export default function InpaintingPage() {
       }
       const { jobId } = (await submitRes.json()) as InpaintQueueResponse;
 
-      // Poll for completion (max ~5 minutes)
+      // Poll for completion
       const maxPolls = 60;
       const pollInterval = 5000;
       for (let i = 0; i < maxPolls; i++) {
         await new Promise((r) => setTimeout(r, pollInterval));
-
         const pollRes = await fetch(`${apiBase}/api/queue/jobs/${jobId}`, {
           headers,
         });
         if (!pollRes.ok) continue;
 
         const job = (await pollRes.json()) as QueueJob;
-        if (job.status === "complete") {
-          return job;
-        }
+        if (job.status === "complete") return job;
         if (job.status === "failed") {
           throw new Error("Inpainting job failed on the worker");
         }
       }
 
       throw new Error(
-        "Generation is taking longer than expected. The result will appear in the Gallery when complete — you can safely leave this page.",
+        "Generation is taking longer than expected. The result will appear in the Gallery when complete.",
       );
     },
-    onSuccess: async (job) => {
+    onSuccess: (job) => {
       let rawUrl: string | null = null;
       if (job.result?.asset_id) {
         rawUrl = `${apiBase}/api/queue/assets/${job.result.asset_id}/file`;
@@ -504,23 +598,15 @@ export default function InpaintingPage() {
         const filename = job.result.file_path.split("/").pop();
         rawUrl = `${apiBase}/api/admin/gallery/file/${filename}`;
       }
-      if (!rawUrl) return;
-
-      // Composite: apply result only in the painted mask region
-      // (no new model needed — mask compositing is client-side)
-      try {
-        const composited = await compositeWithMask(rawUrl);
-        setResultImage(composited);
-      } catch {
-        // Fall back to raw result if compositing fails
-        setResultImage(rawUrl);
-      }
+      if (rawUrl) setResultImage(rawUrl);
       showToast("Generation complete!", "success");
     },
     onError: (err: Error) => {
-      showToast(`Inpainting failed: ${err.message}`, "error");
+      showToast(`Failed: ${err.message}`, "error");
     },
   });
+
+  const currentModelInfo = IMAGE_GEN_MODELS.find((m) => m.id === selectedModel);
 
   return (
     <div className="min-h-screen bg-zinc-950 p-6 text-zinc-100">
@@ -531,12 +617,49 @@ export default function InpaintingPage() {
           <h1 className="text-2xl font-bold">Inpainting Studio</h1>
         </div>
         <p className="text-sm text-zinc-400">
-          Upload an image, paint a mask over the area to change, describe what
-          should appear, and generate. The result is composited back — only the
-          painted region changes.
+          Upload an image, paint over the area to change (optional), describe what you want, and generate.
         </p>
 
-        {/* Leave-page notice shown while generation is in-flight */}
+        {/* Mode Switcher */}
+        {sourceImage && (
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setEditMode("semantic")}
+              className={`flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition ${
+                editMode === "semantic"
+                  ? "bg-purple-600 text-white"
+                  : "bg-zinc-800 text-zinc-400 hover:bg-zinc-700"
+              }`}
+            >
+              <Type className="h-4 w-4" />
+              Semantic Edit
+            </button>
+            <button
+              onClick={() => {
+                if (isSemanticModel) {
+                  showToast(
+                    "Flux Kontext uses text prompts only — switch to a different model for mask-based inpainting",
+                    "error",
+                  );
+                  return;
+                }
+                setEditMode("mask");
+              }}
+              className={`flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition ${
+                editMode === "mask"
+                  ? "bg-purple-600 text-white"
+                  : isSemanticModel
+                    ? "cursor-not-allowed bg-zinc-800/50 text-zinc-600"
+                    : "bg-zinc-800 text-zinc-400 hover:bg-zinc-700"
+              }`}
+            >
+              <PaintBucket className="h-4 w-4" />
+              Mask Inpaint
+            </button>
+          </div>
+        )}
+
+        {/* Leave-page notice */}
         {inpaint.isPending && (
           <div className="flex items-start gap-3 rounded-lg border border-blue-800/60 bg-blue-950/40 px-4 py-3 text-sm text-blue-300">
             <span className="mt-0.5 text-base leading-none">💡</span>
@@ -584,7 +707,6 @@ export default function InpaintingPage() {
                   </button>
                 </div>
 
-                {/* Canvas is always in the DOM — hidden when no image to avoid race conditions */}
                 <div
                   className={`relative inline-block overflow-hidden rounded-lg border border-zinc-700 ${!sourceImage ? "hidden" : ""}`}
                 >
@@ -599,8 +721,16 @@ export default function InpaintingPage() {
                     onMouseUp={stopDrawing}
                     onMouseLeave={stopDrawing}
                   />
+                  {sourceImage && (
+                    <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/60 to-transparent px-3 py-2">
+                      <p className="text-xs text-zinc-300">
+                        {isSemanticModel
+                          ? "Paint over the area to change (optional) — Kontext uses it as a targeting annotation."
+                          : "Paint over the area to fill — the mask tells the model where to generate."}
+                      </p>
+                    </div>
+                  )}
                 </div>
-                {/* Hidden mask canvas — tracks only brush strokes (no image blending) */}
                 <canvas
                   ref={maskCanvasRef}
                   width={canvasSize.width}
@@ -616,39 +746,163 @@ export default function InpaintingPage() {
               </div>
             </SectionCard>
 
+            {/* Brush Controls */}
             {sourceImage && (
               <SectionCard
                 title={
                   <span className="flex items-center gap-2">
-                    <Eraser className="h-4 w-4" />
+                    <PaintBucket className="h-4 w-4" />
                     Brush Controls
                   </span>
                 }
               >
-                <div className="flex items-center gap-4">
-                  <label className="text-sm text-zinc-400">Size:</label>
-                  <input
-                    type="range"
-                    min={5}
-                    max={80}
-                    value={brushSize}
-                    onChange={(e) => setBrushSize(Number(e.target.value))}
-                    className="flex-1"
-                  />
-                  <span className="w-10 text-right text-sm">{brushSize}px</span>
-                  <button
-                    onClick={clearMask}
-                    className="flex items-center gap-1.5 rounded bg-zinc-800 px-3 py-1.5 text-sm hover:bg-zinc-700"
-                  >
-                    <RotateCcw className="h-3.5 w-3.5" />
-                    Clear
-                  </button>
+                <div className="space-y-3">
+                  <div className="flex items-center gap-4">
+                    <label className="w-14 text-sm text-zinc-400">Size:</label>
+                    <input
+                      type="range"
+                      min={5}
+                      max={120}
+                      value={brushSize}
+                      onChange={(e) => setBrushSize(Number(e.target.value))}
+                      className="flex-1"
+                    />
+                    <span className="w-12 text-right text-sm">{brushSize}px</span>
+                  </div>
+                  <div className="flex items-center gap-4">
+                    <label className="w-14 text-sm text-zinc-400">Feather:</label>
+                    <input
+                      type="range"
+                      min={0}
+                      max={1}
+                      step={0.05}
+                      value={brushFeather}
+                      onChange={(e) => setBrushFeather(Number(e.target.value))}
+                      className="flex-1"
+                    />
+                    <span className="w-12 text-right text-sm">
+                      {Math.round(brushFeather * 100)}%
+                    </span>
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={undoStroke}
+                      disabled={maskHistoryLen === 0}
+                      className="flex items-center gap-1.5 rounded bg-zinc-800 px-3 py-1.5 text-sm hover:bg-zinc-700 disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      <Undo2 className="h-3.5 w-3.5" />
+                      Undo
+                    </button>
+                    <button
+                      onClick={clearMask}
+                      className="flex items-center gap-1.5 rounded bg-zinc-800 px-3 py-1.5 text-sm hover:bg-zinc-700"
+                    >
+                      <RotateCcw className="h-3.5 w-3.5" />
+                      Clear All
+                    </button>
+                  </div>
+                </div>
+              </SectionCard>
+            )}
+
+            {/* Prompt tips */}
+            {sourceImage && isSemanticModel && (
+              <SectionCard
+                title={
+                  <span className="flex items-center gap-2">
+                    <Type className="h-4 w-4" />
+                    How Semantic Editing Works
+                  </span>
+                }
+              >
+                <div className="space-y-3 text-sm text-zinc-400">
+                  <p>
+                    Flux Kontext reads your image and changes only what you
+                    describe. The more precisely you identify the subject, the
+                    better the result.
+                  </p>
+
+                  {/* Formula */}
+                  <div className="rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2.5">
+                    <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-zinc-500">
+                      Prompt formula
+                    </p>
+                    <p className="font-mono text-xs text-zinc-300">
+                      Change{" "}
+                      <span className="rounded bg-blue-900/60 px-1 text-blue-300">
+                        [the specific subject]
+                      </span>{" "}
+                      to{" "}
+                      <span className="rounded bg-green-900/60 px-1 text-green-300">
+                        [what you want instead]
+                      </span>
+                    </p>
+                    <p className="mt-1.5 text-[11px] text-zinc-500">
+                      Name the subject by what it <em>is</em>, not where it is.
+                    </p>
+                  </div>
+
+                  {/* Examples — tappable to fill prompt */}
+                  <div>
+                    <p className="mb-1.5 text-xs font-medium text-zinc-300">
+                      Tap an example to use it:
+                    </p>
+                    <div className="space-y-1.5">
+                      {[
+                        {
+                          bad: "Replace the pillow with a dog on it next to the fireplace with a cat",
+                          good: "Replace the dog with a tabby cat in the same pose",
+                          why: "Name the subject (the dog), not its surroundings",
+                        },
+                        {
+                          bad: "A cat sitting there",
+                          good: "Change the dog on the couch to a tabby cat",
+                          why: "Be explicit — describe the full change, not just the result",
+                        },
+                        {
+                          bad: "Make it look like winter",
+                          good: "Replace the green lawn with snow-covered ground",
+                          why: "Identify what changes, not just the mood",
+                        },
+                        {
+                          bad: "Put sunglasses on",
+                          good: "Add aviator sunglasses to the person's face",
+                          why: "Specify the subject when there are multiple people or objects",
+                        },
+                      ].map(({ bad, good, why }) => (
+                        <button
+                          key={good}
+                          type="button"
+                          onClick={() => setPrompt(good)}
+                          className="w-full rounded-lg border border-zinc-700 bg-zinc-800/50 px-3 py-2 text-left transition hover:border-purple-600/50 hover:bg-zinc-800"
+                        >
+                          <div className="flex items-start gap-2">
+                            <span className="mt-0.5 shrink-0 text-[10px] font-bold text-red-400">
+                              ✗
+                            </span>
+                            <span className="text-[11px] text-zinc-500 line-through">
+                              {bad}
+                            </span>
+                          </div>
+                          <div className="mt-0.5 flex items-start gap-2">
+                            <span className="mt-0.5 shrink-0 text-[10px] font-bold text-green-400">
+                              ✓
+                            </span>
+                            <span className="text-[11px] font-medium text-zinc-200">
+                              {good}
+                            </span>
+                          </div>
+                          <p className="mt-1 text-[10px] text-zinc-500">{why}</p>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
                 </div>
               </SectionCard>
             )}
           </div>
 
-          {/* Right: Prompt + Style + Model + Result */}
+          {/* Right: Settings + Result */}
           <div className="space-y-4">
             <SectionCard
               title={
@@ -659,27 +913,43 @@ export default function InpaintingPage() {
               }
             >
               <div className="space-y-4">
-                {/* Prompt with AI Enhance */}
+                {/* Prompt */}
                 <div>
                   <div className="mb-1 flex items-center justify-between">
                     <label className="text-xs text-zinc-400">
-                      What should replace the painted area?
+                      {isMaskMode
+                        ? "What should fill the painted area?"
+                        : "Describe the change you want"}
                     </label>
                     <button
                       type="button"
                       onClick={enhancePrompt}
                       disabled={!prompt.trim() || isEnhancing}
                       className="flex items-center gap-1.5 rounded px-2 py-1 text-xs text-purple-400 transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:text-zinc-600"
-                      title="Rewrite your prompt for better AI results"
+                      title={
+                        sourceImage
+                          ? "AI will look at your image and rewrite the prompt for Flux Kontext"
+                          : "Rewrite the prompt as a precise Flux Kontext edit instruction"
+                      }
                     >
                       <Sparkles className="h-3 w-3" />
-                      {isEnhancing ? "Enhancing..." : "Enhance with AI"}
+                      {isEnhancing
+                        ? sourceImage
+                          ? "Analysing image…"
+                          : "Enhancing…"
+                        : sourceImage
+                          ? "Enhance with Vision"
+                          : "Enhance with AI"}
                     </button>
                   </div>
                   <textarea
                     value={prompt}
                     onChange={(e) => setPrompt(e.target.value)}
-                    placeholder="e.g. a tabby cat sitting and looking at the camera"
+                    placeholder={
+                      isMaskMode
+                        ? "e.g. a tabby cat sitting and looking at the camera"
+                        : "e.g. Replace the pillow with a tabby cat"
+                    }
                     className="h-24 w-full resize-none rounded-lg border border-zinc-700 bg-zinc-800 p-3 text-sm focus:border-purple-500 focus:outline-none"
                   />
                 </div>
@@ -704,29 +974,40 @@ export default function InpaintingPage() {
 
                 {/* Model Picker */}
                 <div>
-                  <label className="mb-1 block text-xs text-zinc-400">
+                  <label className="mb-2 block text-xs text-zinc-400">
                     Image Model
                   </label>
-                  <div className="relative">
-                    <select
-                      value={selectedModel}
-                      onChange={(e) => setSelectedModel(e.target.value)}
-                      className="w-full appearance-none rounded border border-zinc-700 bg-zinc-800 px-3 py-2 pr-8 text-sm"
-                    >
-                      {IMAGE_GEN_MODELS.map((m) => (
-                        <option key={m.id} value={m.id}>
+                  <div className="grid grid-cols-2 gap-2">
+                    {IMAGE_GEN_MODELS.map((m) => (
+                      <button
+                        key={m.id}
+                        type="button"
+                        onClick={() => setSelectedModel(m.id)}
+                        className={`relative rounded-lg border p-2.5 text-left transition ${
+                          selectedModel === m.id
+                            ? "border-purple-500 bg-purple-900/30"
+                            : "border-zinc-700 bg-zinc-800/60 hover:border-zinc-500"
+                        }`}
+                      >
+                        {m.recommended && (
+                          <span className="mb-1 inline-block rounded bg-purple-600/70 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-purple-100">
+                            Best for editing
+                          </span>
+                        )}
+                        <p className="text-xs font-semibold text-zinc-100">
                           {m.name}
-                        </option>
-                      ))}
-                    </select>
-                    <ChevronDown className="pointer-events-none absolute right-2 top-2.5 h-4 w-4 text-zinc-500" />
+                        </p>
+                        <p className="mt-0.5 text-[10px] leading-snug text-zinc-400">
+                          {m.bestFor}
+                        </p>
+                      </button>
+                    ))}
                   </div>
-                  <p className="mt-1 text-xs text-zinc-500">
-                    {
-                      IMAGE_GEN_MODELS.find((m) => m.id === selectedModel)
-                        ?.description
-                    }
-                  </p>
+                  {selectedModel && (
+                    <p className="mt-2 text-xs text-zinc-500">
+                      {currentModelInfo?.description}
+                    </p>
+                  )}
                 </div>
 
                 <button
@@ -764,14 +1045,42 @@ export default function InpaintingPage() {
                     alt="Inpainting result"
                     className="max-w-full rounded-lg border border-zinc-700"
                   />
-                  <a
-                    href={resultImage}
-                    download
-                    className="flex w-fit items-center gap-2 rounded-lg bg-zinc-800 px-4 py-2 text-sm hover:bg-zinc-700"
-                  >
-                    <Download className="h-4 w-4" />
-                    Download Result
-                  </a>
+                  <div className="flex gap-2">
+                    <a
+                      href={resultImage}
+                      download
+                      className="flex items-center gap-2 rounded-lg bg-zinc-800 px-4 py-2 text-sm hover:bg-zinc-700"
+                    >
+                      <Download className="h-4 w-4" />
+                      Download
+                    </a>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        // Use result as new source for iterative editing
+                        fetch(resultImage)
+                          .then((r) => r.blob())
+                          .then((blob) => {
+                            const file = new File([blob], "result.png", { type: "image/png" });
+                            setSourceFile(file);
+                            setResultImage(null);
+                            maskHistory.current = [];
+                            setMaskHistoryLen(0);
+                            const reader = new FileReader();
+                            reader.onload = (ev) => {
+                              setSourceImage(ev.target?.result as string);
+                            };
+                            reader.readAsDataURL(blob);
+                            showToast("Result loaded as new source — edit again!", "success");
+                          })
+                          .catch(() => showToast("Failed to load result", "error"));
+                      }}
+                      className="flex items-center gap-2 rounded-lg bg-purple-600/30 px-4 py-2 text-sm text-purple-300 hover:bg-purple-600/50"
+                    >
+                      <Paintbrush className="h-4 w-4" />
+                      Edit This Result
+                    </button>
+                  </div>
                 </div>
               </SectionCard>
             )}
@@ -779,7 +1088,7 @@ export default function InpaintingPage() {
         </div>
       </div>
 
-      {/* Gallery Picker Modal (Issue #815) */}
+      {/* Gallery Picker Modal */}
       {showGalleryPicker && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
           <div className="relative mx-4 w-full max-w-2xl rounded-2xl border border-zinc-700 bg-zinc-900 shadow-xl">
@@ -815,7 +1124,9 @@ export default function InpaintingPage() {
                   >
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img
-                      src={buildMediaUrl(`/api/queue/assets/${asset.id}/file`)}
+                      src={buildMediaUrl(
+                        `/api/queue/assets/${asset.id}/file`,
+                      )}
                       alt={asset.filename}
                       className="h-full w-full object-cover"
                     />

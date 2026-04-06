@@ -124,6 +124,8 @@ export interface MediaJobPayload {
   seed?: number;
   /** Base64-encoded source image for img2img / img2video */
   init_image?: string;
+  /** Base64-encoded B/W mask for inpainting (white = edit region) */
+  mask?: string;
   /** Strength for img2img (0–1) */
   strength?: number;
   /** Number of frames for video generation */
