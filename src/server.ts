@@ -171,6 +171,7 @@ import { MediaNotificationService } from "./queue/media-notification-service.js"
 import { createQueueRouter, createQueueCallbackRouter } from "./api/queue.js";
 import { createGalleryRouter } from "./api/gallery.js";
 import { createStudioRouter } from "./api/studio.js";
+import { createCreativeRouter } from "./api/creative.js";
 import {
   createCharacterRouter,
   setCharacterIO,
@@ -2218,6 +2219,10 @@ const studioRouter = createStudioRouter({
   mediaQueueRepo,
 });
 app.use("/api/studio", authMiddleware, studioRouter);
+
+// Creative Studio API routes (inpainting, AI image editing)
+const creativeRouter = createCreativeRouter({ mediaQueueRepo });
+app.use("/api/admin/creative", authMiddleware, creativeRouter);
 
 // Character API routes (LoRA character profiles + training)
 const characterRouter = createCharacterRouter({ characterRepo, copilot });
