@@ -299,6 +299,7 @@ export function AddToOutboxModal({
   interface PostTemplate {
     id: string;
     name: string;
+    platform: string;
     content_template: string;
     platform_defaults?: Record<string, unknown>;
     brand_kit_id?: string;
@@ -1618,27 +1619,28 @@ export function AddToOutboxModal({
             {/* ─── Template Tab ──────────────────────────── */}
             {activeTab === "template" && (
               <div className="space-y-3">
-                <div>
-                  <label className="mb-1.5 block text-sm font-medium text-card-foreground">
-                    Select Template
-                  </label>
-                  <div className="max-h-48 overflow-y-auto rounded-lg border border-border bg-background">
-                    {templatesQuery.isLoading ? (
-                      <div className="flex items-center justify-center py-6">
-                        <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-                      </div>
-                    ) : (templatesQuery.data ?? []).length === 0 ? (
-                      <p className="py-4 text-center text-xs text-muted-foreground">
-                        No templates found. Create templates in Admin &gt;
-                        Templates.
-                      </p>
-                    ) : (
-                      <div className="grid grid-cols-1 gap-0">
-                        {(selectedBrandKitId
+                {/* Template picker — collapses after selection */}
+                {!selectedTemplateId ? (
+                  <div>
+                    <label className="mb-1.5 block text-sm font-medium text-card-foreground">
+                      Select Template
+                    </label>
+                    <div className="max-h-52 overflow-y-auto rounded-lg border border-border bg-background">
+                      {templatesQuery.isLoading ? (
+                        <div className="flex items-center justify-center py-6">
+                          <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                        </div>
+                      ) : (templatesQuery.data ?? []).length === 0 ? (
+                        <p className="py-4 text-center text-xs text-muted-foreground">
+                          No templates yet.{" "}
+                          <a href="/templates" target="_blank" className="text-primary underline">
+                            Create one
+                          </a>
+                        </p>
+                      ) : (
+                        (selectedBrandKitId
                           ? templatesQuery.data!.filter(
-                              (t) =>
-                                !t.brand_kit_id ||
-                                t.brand_kit_id === selectedBrandKitId,
+                              (t) => !t.brand_kit_id || t.brand_kit_id === selectedBrandKitId,
                             )
                           : templatesQuery.data!
                         ).map((tpl) => (
@@ -1647,108 +1649,116 @@ export function AddToOutboxModal({
                             key={tpl.id}
                             onClick={() => {
                               setSelectedTemplateId(tpl.id);
-                              // Initialize vars with empty strings for each placeholder
                               const vars: Record<string, string> = {};
-                              for (const v of extractTemplateVars(
-                                tpl.content_template,
-                              )) {
+                              for (const v of extractTemplateVars(tpl.content_template)) {
                                 vars[v] = templateVars[v] ?? "";
                               }
                               setTemplateVars(vars);
                               applyTemplateMutation.reset();
                             }}
-                            className={`flex w-full items-center gap-3 px-3 py-2 text-left text-sm transition-colors hover:bg-muted/60 ${
-                              selectedTemplateId === tpl.id
-                                ? "bg-primary/10 text-primary"
-                                : "text-card-foreground"
-                            }`}
+                            className="flex w-full items-start gap-3 border-b border-border/50 px-3 py-2.5 text-left transition-colors last:border-b-0 hover:bg-muted/60"
                           >
-                            <LayoutTemplate className="h-4 w-4 flex-shrink-0 text-muted-foreground" />
-                            <div className="flex-1 min-w-0">
-                              <span className="block truncate text-sm font-medium">
-                                {tpl.name}
-                              </span>
-                              <span className="block truncate text-xs text-muted-foreground">
-                                {tpl.content_template.slice(0, 80)}
-                                {tpl.content_template.length > 80 ? "…" : ""}
-                              </span>
+                            <LayoutTemplate className="mt-0.5 h-4 w-4 flex-shrink-0 text-muted-foreground" />
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center gap-2">
+                                <span className="text-sm font-medium text-card-foreground">
+                                  {tpl.name}
+                                </span>
+                                <span className="rounded bg-muted px-1.5 py-0.5 text-xs capitalize text-muted-foreground">
+                                  {tpl.platform}
+                                </span>
+                              </div>
+                              <p className="mt-0.5 line-clamp-2 text-xs text-muted-foreground">
+                                {tpl.content_template}
+                              </p>
                             </div>
                           </button>
-                        ))}
+                        ))
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  /* Selected template — show full editing experience */
+                  <div className="space-y-3">
+                    {/* Selected template header */}
+                    <div className="flex items-center justify-between rounded-lg border border-primary/30 bg-primary/5 px-3 py-2">
+                      <div className="flex items-center gap-2">
+                        <LayoutTemplate className="h-4 w-4 text-primary" />
+                        <span className="text-sm font-medium text-primary">
+                          {selectedTemplate?.name}
+                        </span>
+                        <span className="rounded bg-primary/20 px-1.5 py-0.5 text-xs capitalize text-primary">
+                          {selectedTemplate?.platform}
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectedTemplateId(null);
+                          setTemplateVars({});
+                          applyTemplateMutation.reset();
+                        }}
+                        className="text-xs text-muted-foreground hover:text-foreground"
+                      >
+                        Change
+                      </button>
+                    </div>
+
+                    {/* Variable inputs + live preview */}
+                    {templatePlaceholders.length > 0 ? (
+                      <>
+                        <div className="space-y-2">
+                          <label className="block text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                            Fill in Variables
+                          </label>
+                          {templatePlaceholders.map((varName) => (
+                            <div key={varName} className="flex items-center gap-2">
+                              <span className="w-28 shrink-0 rounded bg-muted px-2 py-1 font-mono text-xs text-muted-foreground">
+                                {`{{${varName}}}`}
+                              </span>
+                              <input
+                                type="text"
+                                value={templateVars[varName] ?? ""}
+                                onChange={(e) =>
+                                  setTemplateVars((prev) => ({
+                                    ...prev,
+                                    [varName]: e.target.value,
+                                  }))
+                                }
+                                placeholder={varName}
+                                className="flex-1 rounded-lg border border-border bg-background px-3 py-1.5 text-sm text-foreground placeholder:text-muted-foreground"
+                              />
+                            </div>
+                          ))}
+                        </div>
+
+                        {/* Live preview — renders as vars are filled */}
+                        <div className="rounded-lg border border-border bg-muted/30 p-3">
+                          <p className="mb-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                            Preview
+                          </p>
+                          <p className="whitespace-pre-wrap text-sm text-foreground">
+                            {selectedTemplate?.content_template.replace(
+                              /\{\{(\w+)\}\}/g,
+                              (_, key) =>
+                                templateVars[key]
+                                  ? `\u200b${templateVars[key]}\u200b`
+                                  : `{{${key}}}`,
+                            )}
+                          </p>
+                        </div>
+                      </>
+                    ) : (
+                      /* No variables — show content directly */
+                      <div className="rounded-lg border border-border bg-muted/30 p-3">
+                        <p className="mb-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                          Content
+                        </p>
+                        <p className="whitespace-pre-wrap text-sm text-foreground">
+                          {selectedTemplate?.content_template}
+                        </p>
                       </div>
                     )}
-                  </div>
-                </div>
-
-                {/* Template variable inputs */}
-                {selectedTemplate && templatePlaceholders.length > 0 && (
-                  <div className="space-y-2">
-                    <label className="block text-sm font-medium text-card-foreground">
-                      Fill Template Variables
-                    </label>
-                    {templatePlaceholders.map((varName) => (
-                      <div key={varName}>
-                        <label className="mb-0.5 block text-xs text-muted-foreground">
-                          {`{{${varName}}}`}
-                        </label>
-                        <input
-                          type="text"
-                          value={templateVars[varName] ?? ""}
-                          onChange={(e) =>
-                            setTemplateVars((prev) => ({
-                              ...prev,
-                              [varName]: e.target.value,
-                            }))
-                          }
-                          placeholder={varName}
-                          className="w-full rounded-lg border border-border bg-background px-3 py-1.5 text-sm text-foreground placeholder:text-muted-foreground"
-                        />
-                      </div>
-                    ))}
-                    <button
-                      type="button"
-                      onClick={() =>
-                        applyTemplateMutation.mutate({
-                          templateId: selectedTemplateId!,
-                          variables: templateVars,
-                        })
-                      }
-                      disabled={applyTemplateMutation.isPending}
-                      className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
-                    >
-                      {applyTemplateMutation.isPending ? (
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                      ) : (
-                        <Sparkles className="h-3.5 w-3.5" />
-                      )}
-                      {applyTemplateMutation.isPending
-                        ? "Applying..."
-                        : "Preview Result"}
-                    </button>
-                  </div>
-                )}
-
-                {/* Show no-variable template preview */}
-                {selectedTemplate && templatePlaceholders.length === 0 && (
-                  <div className="rounded-lg border border-border bg-muted/30 p-3">
-                    <p className="text-xs font-semibold uppercase text-muted-foreground mb-1">
-                      Template Content
-                    </p>
-                    <p className="text-sm text-foreground whitespace-pre-wrap">
-                      {selectedTemplate.content_template}
-                    </p>
-                  </div>
-                )}
-
-                {/* Applied template preview */}
-                {applyTemplateMutation.data?.content && (
-                  <div className="rounded-lg border border-primary/30 bg-primary/5 p-3">
-                    <p className="text-xs font-semibold uppercase text-primary mb-1">
-                      Preview
-                    </p>
-                    <p className="text-sm text-foreground whitespace-pre-wrap">
-                      {applyTemplateMutation.data.content}
-                    </p>
                   </div>
                 )}
               </div>
