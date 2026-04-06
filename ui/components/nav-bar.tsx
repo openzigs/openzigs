@@ -47,6 +47,8 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { href: "/calendar", label: "Calendar" },
       { href: "/outbox", label: "Outbox" },
+      { href: "/creative-tools", label: "Creative Tools" },
+      { href: "/templates", label: "Templates" },
     ],
   },
   {

@@ -1850,57 +1850,78 @@ Brand kits created via MCP tools are shared with the Director UI and the Post Te
 
 ### Creative Studio
 
-The Creative Studio provides Canva-inspired design and media tools accessible via MCP chat commands.
+The Creative Studio provides Canva-inspired design and media tools accessible both through the web UI and MCP chat commands. All Creative Studio UI pages are accessible from the **Creative** dropdown in the top navigation bar.
 
-#### Image Manipulation
+#### Gallery Image Actions (Visual Editor)
 
-Use these tools in chat to process images from the gallery:
+Select any image in the **Gallery** and click **Edit Image** to open the visual editing panel. All actions produce a new gallery asset — the original is never modified.
 
-- **`resize-image`** — Resize to target dimensions with fit modes (cover, contain, fill, inside, outside)
-- **`crop-image`** — Crop a region by specifying left, top, width, height in pixels
-- **`convert-image`** — Convert between PNG, JPEG, WebP, AVIF, TIFF with quality control
-- **`filter-image`** — Apply filters: grayscale, blur, sharpen, negate, normalize, sepia
-- **`watermark-image`** — Overlay a watermark with position, opacity, and scale controls
+- **Resize** — Pre-fills the image's actual width and height. An aspect-ratio lock button keeps proportions synced. Choose a fit mode (cover, contain, fill, inside, outside).
+- **Crop** — Drag directly on the image to select the crop region. A live pixel readout shows left, top, width, and height in real image coordinates.
+- **Filter** — Click filter cards (Grayscale, Sepia, Blur, Sharpen, Invert, Normalize) to see a live CSS preview on the image before committing.
+- **Convert** — Format button cards (PNG, JPEG, WebP, AVIF, TIFF) with quality slider. The current format is dimmed.
+- **Watermark** — Enter text, pick a position on a 3×3 visual grid, and adjust opacity.
+- **Remove Background** — AI-powered background removal via rembg. Choose a model (General, People, Detailed) and optionally enable alpha matting for softer edges. Produces a transparent PNG. *Requires the image processing sidecar.*
+- **Upscale** — AI super-resolution (2x or 4x) using Real-ESRGAN. Shows the projected output dimensions. *Requires the image processing sidecar.*
 
-#### AI Image Processing
+> **Sidecar required for Remove Background & Upscale:** `cd sidecars/image-processing && pip install -r requirements.txt && python server.py`
 
-Requires the image processing sidecar (`sidecars/image-processing/`):
+#### Creative Tools Page
 
-- **`upscale-image`** — AI super-resolution (2x or 4x) using Real-ESRGAN
-- **`remove-background`** — AI background removal using rembg with model selection and alpha matting
+Navigate to `/creative-tools` (or **Creative** → **Creative Tools**) for self-service content generation:
 
-Start the sidecar: `cd sidecars/image-processing && pip install -r requirements.txt && python server.py`
+**QR Code Generator**
+
+1. Enter the content (URL, text, vCard, WiFi config, etc.).
+2. Choose format (PNG or SVG), adjust width, pick dark/light colors with native color pickers.
+3. Set error correction level (L 7%, M 15%, Q 25%, H 30%).
+4. Click **Generate QR Code** — the result is saved to the Gallery automatically.
+
+**Caption Generator**
+
+1. Describe your content topic.
+2. Select the target platform (Twitter, Instagram, LinkedIn, Facebook, Pinterest, YouTube).
+3. Choose a tone (Professional, Casual, Humorous, Inspirational, Educational, Promotional).
+4. Toggle call-to-action and emoji inclusion. Optionally add brand context.
+5. Click **Generate Caption** — the AI generates a platform-optimized caption. Character count and limit are shown. Click **Copy** to copy.
+
+**Hashtag Generator**
+
+1. Enter a topic.
+2. Select platform and the number of hashtags (1–30).
+3. Choose specificity (Broad for reach, Medium, Niche for targeted engagement).
+4. Toggle trending tag inclusion.
+5. Click **Generate Hashtags** — results appear as color-coded pills (blue=broad, purple=niche). Click any tag to copy it, or **Copy All**.
+
+> All creative tools are also available as MCP chat commands: `generate-qr-code`, `generate-social-caption`, `generate-hashtags`.
+
+#### Post Templates Page
+
+Navigate to `/templates` (or **Creative** → **Templates**) to manage reusable social media post templates:
+
+1. **Browse** all templates in a searchable, filterable list. Filter by platform or search by name/content.
+2. **Create** a new template with a name, platform, content body using `{{variable}}` syntax, optional brand kit association, and tags.
+3. **Edit** existing templates — click the pencil icon to open the editor modal.
+4. **Preview** — click the eye icon to fill in template variables and see the rendered output before using it.
+5. **Delete** templates with a confirmation dialog.
+
+Templates created here are available in the **Outbox** modal's Template tab for quick content creation.
+
+> Also available via MCP: `create-post-template`, `list-post-templates`, `apply-post-template`, etc.
 
 #### Art Style Picker
 
 - **`list-art-styles`** — Browse 12 built-in art styles (Photorealistic, Anime, Oil Painting, Cyberpunk, Pixel Art, etc.)
-- **`apply-art-style`** — Enhance a prompt with an art style's modifiers for Flux image generation
+- **`apply-art-style`** — Enhance a prompt with an art style's modifiers for Flux image generation. Also available on the Inpainting Studio page.
 
-#### Social Content
-
-- **`generate-social-caption`** — Generate platform-optimized captions (Instagram, Twitter/X, LinkedIn, TikTok, Facebook) with configurable tone and length
-- **`generate-hashtags`** — Generate relevant hashtags with reach estimates
-
-#### Post Templates
-
-Create reusable templates for social media posts with `{{variable}}` placeholders:
-
-- **`create-post-template`** / **`update-post-template`** / **`delete-post-template`** — Template CRUD
-- **`list-post-templates`** — Browse templates, filterable by platform and brand kit
-- **`apply-post-template`** — Fill in template variables to produce final post content
-
-#### QR Code Generator
-
-- **`generate-qr-code`** — Generate QR codes as PNG, SVG, or terminal ASCII art with customizable colors and error correction levels
-
-#### Audio Tools
+#### Audio Tools (MCP)
 
 - **`normalize-audio`** — EBU R128 loudness normalization via FFmpeg two-pass loudnorm
 - **`speech-to-text`** — Transcribe audio using Whisper MLX with text, SRT, VTT, or JSON output
 
 #### Visual Content Calendar
 
-Navigate to `/calendar` to manage your content schedule:
+Navigate to `/calendar` (or **Creative** → **Calendar**) to manage your content schedule:
 
 1. View scheduled outbox posts on a monthly/weekly/daily calendar (FullCalendar).
 2. **Drag and drop** posts to reschedule them — the outbox item's `scheduled_time` is updated automatically.
@@ -1912,9 +1933,9 @@ Navigate to `/calendar` to manage your content schedule:
 
 #### Inpainting Studio
 
-Navigate to `/inpainting` for AI-powered image editing:
+Navigate to `/inpainting` (or **Studio** → **Inpainting**) for AI-powered image editing:
 
-1. **Upload** an image (PNG, JPEG, WebP — max 20 MB).
+1. **Upload** an image (PNG, JPEG, WebP — max 20 MB), or pick one from the Gallery.
 2. **Paint a mask** over the area to replace using the red brush tool. Adjust brush size with the slider. Click **Clear** to reset the mask.
 3. **Enter a prompt** describing what should appear in the masked area.
 4. Optionally choose an **art style** (Photorealistic, Oil Painting, Watercolor, Anime, etc.) to apply style modifiers to the prompt.
@@ -1922,6 +1943,26 @@ Navigate to `/inpainting` for AI-powered image editing:
 6. The page polls for completion automatically. When the job finishes, the result image appears with a **Download** button.
 
 > **Requires:** The Mac Mini image-gen sidecar with Flux Kontext loaded (Apple Silicon only). Without the sidecar online, jobs queue but remain in `pending` status. No external LLM APIs are needed — all inference is local.
+
+#### REST API Reference (Creative Studio)
+
+All endpoints are at `/api/admin/creative` and require authentication.
+
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/resize` | Resize image (width, height, fit) |
+| POST | `/crop` | Crop image (left, top, width, height) |
+| POST | `/filter` | Apply filter (grayscale, blur, sharpen, negate, normalize, sepia) |
+| POST | `/convert` | Convert format (png, jpeg, webp, avif, tiff) |
+| POST | `/watermark` | Add watermark overlay |
+| POST | `/remove-background` | AI background removal (model, alpha_matting) |
+| POST | `/upscale` | AI super-resolution (scale: 2 or 4) |
+| POST | `/qr-code` | Generate QR code (content, format, colors, error correction) |
+| POST | `/caption` | Generate AI caption (topic, platform, tone) |
+| POST | `/hashtags` | Generate AI hashtags (topic, platform, count, niche_level) |
+| POST | `/inpaint` | Queue inpainting job (multipart: image, mask, prompt) |
+| POST | `/enhance-prompt` | AI prompt enhancement |
+| GET | `/image-models` | List available image generation models |
 
 ### Batch Render Queue
 

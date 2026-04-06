@@ -20,6 +20,8 @@ import {
   X,
   Link,
   Link2Off,
+  Eraser,
+  ArrowUpFromLine,
 } from "lucide-react";
 
 interface ImageActionsPanelProps {
@@ -29,7 +31,7 @@ interface ImageActionsPanelProps {
   onClose: () => void;
 }
 
-type ActionType = "resize" | "crop" | "filter" | "convert" | "watermark" | null;
+type ActionType = "resize" | "crop" | "filter" | "convert" | "watermark" | "remove-bg" | "upscale" | null;
 
 const FILTERS = [
   { key: "grayscale", label: "Grayscale", css: "grayscale(100%)" },
@@ -121,6 +123,13 @@ export function ImageActionsPanel({
   const [watermarkPosition, setWatermarkPosition] =
     useState<WatermarkPosition>("bottom-right");
   const [watermarkOpacity, setWatermarkOpacity] = useState(0.5);
+
+  // Remove background state
+  const [bgModel, setBgModel] = useState("u2net");
+  const [alphaMatting, setAlphaMatting] = useState(false);
+
+  // Upscale state
+  const [upscaleScale, setUpscaleScale] = useState(2);
 
   const onImageLoad = useCallback(
     (e: React.SyntheticEvent<HTMLImageElement>) => {
@@ -243,12 +252,35 @@ export function ImageActionsPanel({
     });
   };
 
+  const handleRemoveBackground = () => {
+    actionMutation.mutate({
+      action: "remove-background",
+      payload: {
+        file_path: filePath,
+        model: bgModel,
+        alpha_matting: alphaMatting,
+      },
+    });
+  };
+
+  const handleUpscale = () => {
+    actionMutation.mutate({
+      action: "upscale",
+      payload: {
+        file_path: filePath,
+        scale: upscaleScale,
+      },
+    });
+  };
+
   const actions = [
     { key: "resize" as const, label: "Resize", icon: Maximize2 },
     { key: "crop" as const, label: "Crop", icon: Scissors },
     { key: "filter" as const, label: "Filter", icon: SlidersHorizontal },
     { key: "convert" as const, label: "Convert", icon: FileImage },
     { key: "watermark" as const, label: "Watermark", icon: Stamp },
+    { key: "remove-bg" as const, label: "Remove BG", icon: Eraser },
+    { key: "upscale" as const, label: "Upscale", icon: ArrowUpFromLine },
   ];
 
   return (
@@ -619,6 +651,90 @@ export function ImageActionsPanel({
                 className="w-full rounded-lg bg-primary px-3 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
               >
                 {actionMutation.isPending ? "Processing…" : "Add Watermark"}
+              </button>
+            </div>
+          )}
+
+          {/* Remove Background */}
+          {activeAction === "remove-bg" && (
+            <div className="space-y-3">
+              <p className="text-xs text-muted-foreground">
+                AI-powered background removal. The result is a transparent PNG.
+              </p>
+              <div>
+                <label className="text-xs text-muted-foreground">Model</label>
+                <div className="mt-1 flex flex-wrap gap-1.5">
+                  {[
+                    { id: "u2net", label: "General" },
+                    { id: "u2net_human_seg", label: "People" },
+                    { id: "isnet-general-use", label: "Detailed" },
+                  ].map((m) => (
+                    <button
+                      key={m.id}
+                      onClick={() => setBgModel(m.id)}
+                      className={`rounded px-2.5 py-1 text-xs font-medium transition ${
+                        bgModel === m.id
+                          ? "bg-primary text-primary-foreground"
+                          : "bg-muted text-muted-foreground hover:bg-muted/80"
+                      }`}
+                    >
+                      {m.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <label className="flex items-center gap-2 text-xs text-muted-foreground">
+                <input
+                  type="checkbox"
+                  checked={alphaMatting}
+                  onChange={(e) => setAlphaMatting(e.target.checked)}
+                  className="rounded"
+                />
+                Alpha matting (softer edges)
+              </label>
+              <button
+                onClick={handleRemoveBackground}
+                disabled={actionMutation.isPending}
+                className="w-full rounded-lg bg-primary px-3 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+              >
+                {actionMutation.isPending ? "Processing…" : "Remove Background"}
+              </button>
+            </div>
+          )}
+
+          {/* Upscale */}
+          {activeAction === "upscale" && (
+            <div className="space-y-3">
+              <p className="text-xs text-muted-foreground">
+                AI super-resolution using Real-ESRGAN.
+                {naturalWidth > 0 && (
+                  <> Output: {naturalWidth * upscaleScale} x {naturalHeight * upscaleScale} px</>
+                )}
+              </p>
+              <div>
+                <label className="text-xs text-muted-foreground">Scale Factor</label>
+                <div className="mt-1 flex gap-2">
+                  {[2, 4].map((s) => (
+                    <button
+                      key={s}
+                      onClick={() => setUpscaleScale(s)}
+                      className={`flex-1 rounded-lg border py-3 text-center text-sm font-semibold transition ${
+                        upscaleScale === s
+                          ? "border-primary bg-primary text-primary-foreground"
+                          : "border-border bg-muted text-muted-foreground hover:border-primary/50"
+                      }`}
+                    >
+                      {s}x
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <button
+                onClick={handleUpscale}
+                disabled={actionMutation.isPending}
+                className="w-full rounded-lg bg-primary px-3 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+              >
+                {actionMutation.isPending ? "Processing…" : "Upscale Image"}
               </button>
             </div>
           )}

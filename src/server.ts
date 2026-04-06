@@ -2221,8 +2221,12 @@ const studioRouter = createStudioRouter({
 });
 app.use("/api/studio", authMiddleware, studioRouter);
 
-// Creative Studio API routes (inpainting, AI image editing)
-const creativeRouter = createCreativeRouter({ mediaQueueRepo });
+// Creative Studio API routes (inpainting, AI image editing, sidecar tools)
+const creativeRouter = createCreativeRouter({
+  mediaQueueRepo,
+  copilotWrapper: copilot,
+  imageProcessingSidecarUrl: resolveSidecarUrl("image-processing", "IMAGE_PROCESSING_SIDECAR_URL", 5010),
+});
 app.use("/api/admin/creative", authMiddleware, creativeRouter);
 
 // Post Template API routes (Issue #809)

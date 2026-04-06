@@ -8,11 +8,13 @@
 import { Router } from "express";
 import multer from "multer";
 import sharp from "sharp";
+import QRCode from "qrcode";
 import path from "node:path";
 import os from "node:os";
 import fs from "node:fs";
 import { logger } from "../logging/logger.js";
 import type { MediaQueueRepository } from "../queue/media-queue-repository.js";
+import type { CopilotWrapperService } from "../copilot/index.js";
 
 const GALLERY_DIR = path.join(os.homedir(), ".openzigs", "gallery");
 
@@ -51,8 +53,36 @@ function validatePath(filePath: string): string {
   return resolved;
 }
 
+// ── Image generation models available on the Mac Mini sidecar ──────────────────
+export const IMAGE_GEN_MODELS = [
+  {
+    id: "flux-kontext",
+    name: "Flux Kontext",
+    description: "Text-guided semantic editing — best for inpainting",
+  },
+  {
+    id: "flux-dev",
+    name: "Flux Dev",
+    description: "High-quality 25-step image generation",
+  },
+  {
+    id: "flux-schnell",
+    name: "Flux Schnell",
+    description: "Fast 4-step model",
+  },
+  {
+    id: "z-image-turbo",
+    name: "Z-Image Turbo",
+    description: "Fast 4-step LoRA-compatible model",
+  },
+] as const;
+
+const VALID_IMAGE_MODEL_IDS = IMAGE_GEN_MODELS.map((m) => m.id);
+
 export interface CreativeRouterOptions {
   mediaQueueRepo: MediaQueueRepository;
+  copilotWrapper?: CopilotWrapperService;
+  imageProcessingSidecarUrl?: string;
 }
 
 // Multer: accept image + mask files, 20 MB each
@@ -61,8 +91,22 @@ const upload = multer({
   limits: { fileSize: 20 * 1024 * 1024 },
 });
 
+const PLATFORM_LIMITS: Record<string, { maxChars: number; maxHashtags: number; style: string }> = {
+  twitter: { maxChars: 280, maxHashtags: 3, style: "concise, punchy, conversational" },
+  instagram: { maxChars: 2200, maxHashtags: 30, style: "engaging, visual storytelling, emoji-friendly" },
+  linkedin: { maxChars: 3000, maxHashtags: 5, style: "professional, thought leadership, insightful" },
+  facebook: { maxChars: 63206, maxHashtags: 5, style: "conversational, community-oriented" },
+  pinterest: { maxChars: 500, maxHashtags: 20, style: "keyword-rich, SEO-optimized, descriptive" },
+  youtube: { maxChars: 5000, maxHashtags: 15, style: "detailed, keyword-optimized, hook in first line" },
+  reddit: { maxChars: 40000, maxHashtags: 0, style: "authentic, community-aware, no promotional language" },
+};
+
+const HEX_RE = /^#[0-9a-fA-F]{6}$/;
+
 export function createCreativeRouter({
   mediaQueueRepo,
+  copilotWrapper,
+  imageProcessingSidecarUrl,
 }: CreativeRouterOptions): Router {
   const router = Router();
 
@@ -103,6 +147,13 @@ export function createCreativeRouter({
         }
 
         const styleId = (req.body as Record<string, string>).style_id ?? "";
+        const requestedModel =
+          (req.body as Record<string, string>).model?.trim() ?? "";
+        const selectedModel = VALID_IMAGE_MODEL_IDS.includes(
+          requestedModel as (typeof VALID_IMAGE_MODEL_IDS)[number],
+        )
+          ? requestedModel
+          : "flux-kontext";
 
         // Convert uploaded image to base64
         const imageBase64 = imageFile.buffer.toString("base64");
@@ -110,15 +161,20 @@ export function createCreativeRouter({
         // Build prompt — prepend style instruction if specified
         const styledPrompt = styleId ? `${styleId} style: ${prompt}` : prompt;
 
-        // Create an img2img queue job targeting flux-kontext
+        // Kontext uses a slightly higher strength (semantic editing);
+        // other models use img2img style transfer strength.
+        const strength = selectedModel === "flux-kontext" ? 0.85 : 0.75;
+
+        // Create an img2img queue job. QueueMaster routes flux-kontext to
+        // /kontext-async and all other models to /img2img-async.
         const job = mediaQueueRepo.createJob({
           type: "img2img",
           payload: {
             prompt: styledPrompt,
             init_image: imageBase64,
-            strength: 0.85,
+            strength,
           },
-          model: "flux-kontext",
+          model: selectedModel,
           priority: 1,
         });
 
@@ -139,6 +195,62 @@ export function createCreativeRouter({
       }
     },
   );
+
+  // ── Image Model List ─────────────────────────────────────────
+
+  /** GET /image-models — list available image generation models on the Mac Mini sidecar */
+  router.get("/image-models", (_req, res) => {
+    res.json({ models: IMAGE_GEN_MODELS });
+  });
+
+  // ── AI Prompt Enhancement ─────────────────────────────────────
+
+  /**
+   * POST /enhance-prompt
+   * Uses the LLM to rewrite a raw inpainting prompt into a more descriptive,
+   * effective image generation prompt.
+   * Body: { prompt: string }
+   */
+  router.post("/enhance-prompt", async (req, res) => {
+    try {
+      const body = req.body as Record<string, string>;
+      const rawPrompt = body.prompt?.trim();
+      if (!rawPrompt) {
+        res.status(400).json({ error: "prompt is required" });
+        return;
+      }
+      if (rawPrompt.length > 2000) {
+        res.status(400).json({ error: "prompt exceeds 2000 characters" });
+        return;
+      }
+      if (!copilotWrapper) {
+        res.status(503).json({ error: "AI service not available" });
+        return;
+      }
+
+      const systemPrompt = [
+        "You are an expert at writing AI image generation prompts for inpainting workflows.",
+        "Improve the following prompt to be more descriptive and effective for AI image generation.",
+        "Keep the core intent exactly, but add specific visual details, lighting, texture, and composition guidance.",
+        "The prompt should describe WHAT should appear in the painted region.",
+        "Return ONLY the improved prompt text — no preamble, no quotes, no explanations.",
+        `\nOriginal prompt: ${rawPrompt}`,
+      ].join("\n");
+
+      let enhanced = "";
+      for await (const chunk of copilotWrapper.chat(systemPrompt, {
+        availableTools: [],
+      })) {
+        enhanced += chunk;
+      }
+
+      res.json({ enhancedPrompt: enhanced.trim() });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.error(`[CreativeRouter] Enhance-prompt error: ${msg}`);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
 
   // ── Image Manipulation Endpoints (Issue #811) ──────────────
 
@@ -428,6 +540,312 @@ export function createCreativeRouter({
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       logger.error(`[CreativeRouter] Watermark error: ${msg}`);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  // ── Background Removal (Issue #767) ─────────────────────────
+
+  /** POST /remove-background — AI background removal via image-processing sidecar */
+  router.post("/remove-background", async (req, res) => {
+    try {
+      if (!imageProcessingSidecarUrl) {
+        res.status(503).json({ error: "Image processing sidecar not configured" });
+        return;
+      }
+      const body = req.body as Record<string, unknown>;
+      const filePath = body.file_path as string | undefined;
+      if (!filePath || typeof filePath !== "string") {
+        res.status(400).json({ error: "file_path is required" });
+        return;
+      }
+      const model = (typeof body.model === "string" ? body.model : "u2net") as string;
+      const validModels = ["u2net", "u2net_human_seg", "isnet-general-use"];
+      if (!validModels.includes(model)) {
+        res.status(400).json({ error: `model must be one of: ${validModels.join(", ")}` });
+        return;
+      }
+      const alphaMatting = body.alpha_matting === true;
+
+      const sourcePath = validatePath(resolveImagePath(filePath));
+      if (!fs.existsSync(sourcePath)) {
+        res.status(404).json({ error: `File not found: ${filePath}` });
+        return;
+      }
+
+      const imageBuffer = fs.readFileSync(sourcePath);
+      const base64Image = imageBuffer.toString("base64");
+
+      const response = await fetch(`${imageProcessingSidecarUrl}/remove-background`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ image: base64Image, model, alpha_matting: alphaMatting }),
+        signal: AbortSignal.timeout(120_000),
+      });
+
+      if (!response.ok) {
+        const errText = await response.text().catch(() => "Unknown error");
+        res.status(502).json({ error: `Sidecar error (${response.status}): ${errText}` });
+        return;
+      }
+
+      const result = (await response.json()) as { image: string; width: number; height: number };
+      fs.mkdirSync(GALLERY_DIR, { recursive: true });
+      const baseName = path.basename(sourcePath, path.extname(sourcePath));
+      const outputPath = path.join(GALLERY_DIR, `${baseName}_nobg_${Date.now()}.png`);
+      fs.writeFileSync(outputPath, Buffer.from(result.image, "base64"));
+
+      res.json({ success: true, outputPath, model, width: result.width, height: result.height });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.error(`[CreativeRouter] Remove-background error: ${msg}`);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  // ── Image Upscale (Issue #768) ─────────────────────────────
+
+  /** POST /upscale — AI super-resolution via image-processing sidecar */
+  router.post("/upscale", async (req, res) => {
+    try {
+      if (!imageProcessingSidecarUrl) {
+        res.status(503).json({ error: "Image processing sidecar not configured" });
+        return;
+      }
+      const body = req.body as Record<string, unknown>;
+      const filePath = body.file_path as string | undefined;
+      if (!filePath || typeof filePath !== "string") {
+        res.status(400).json({ error: "file_path is required" });
+        return;
+      }
+      const scale = typeof body.scale === "number" ? body.scale : 2;
+      if (scale !== 2 && scale !== 4) {
+        res.status(400).json({ error: "scale must be 2 or 4" });
+        return;
+      }
+
+      const sourcePath = validatePath(resolveImagePath(filePath));
+      if (!fs.existsSync(sourcePath)) {
+        res.status(404).json({ error: `File not found: ${filePath}` });
+        return;
+      }
+
+      const imageBuffer = fs.readFileSync(sourcePath);
+      const base64Image = imageBuffer.toString("base64");
+      const ext = path.extname(sourcePath).slice(1) || "png";
+
+      const response = await fetch(`${imageProcessingSidecarUrl}/upscale`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ image: base64Image, format: ext, scale }),
+        signal: AbortSignal.timeout(120_000),
+      });
+
+      if (!response.ok) {
+        const errText = await response.text().catch(() => "Unknown error");
+        res.status(502).json({ error: `Sidecar error (${response.status}): ${errText}` });
+        return;
+      }
+
+      const result = (await response.json()) as { image: string; width: number; height: number };
+      fs.mkdirSync(GALLERY_DIR, { recursive: true });
+      const baseName = path.basename(sourcePath, path.extname(sourcePath));
+      const outputPath = path.join(GALLERY_DIR, `${baseName}_upscaled_${scale}x_${Date.now()}.png`);
+      fs.writeFileSync(outputPath, Buffer.from(result.image, "base64"));
+
+      res.json({ success: true, outputPath, scale, width: result.width, height: result.height });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.error(`[CreativeRouter] Upscale error: ${msg}`);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  // ── QR Code Generation (Issue #773) ────────────────────────
+
+  /** POST /qr-code — generate a QR code (PNG or SVG) */
+  router.post("/qr-code", async (req, res) => {
+    try {
+      const body = req.body as Record<string, unknown>;
+      const content = body.content as string | undefined;
+      if (!content || typeof content !== "string" || content.length < 1 || content.length > 4096) {
+        res.status(400).json({ error: "content is required (1-4096 chars)" });
+        return;
+      }
+      const format = (typeof body.format === "string" ? body.format : "png") as string;
+      if (!["png", "svg"].includes(format)) {
+        res.status(400).json({ error: "format must be png or svg" });
+        return;
+      }
+      const width = typeof body.width === "number" ? Math.min(2000, Math.max(100, body.width)) : 400;
+      const colorDark = typeof body.color_dark === "string" ? body.color_dark : "#000000";
+      const colorLight = typeof body.color_light === "string" ? body.color_light : "#ffffff";
+      if (!HEX_RE.test(colorDark) || !HEX_RE.test(colorLight)) {
+        res.status(400).json({ error: "Colors must be hex format (#RRGGBB)" });
+        return;
+      }
+      const errorCorrection = (typeof body.error_correction === "string" ? body.error_correction : "M") as "L" | "M" | "Q" | "H";
+      const margin = typeof body.margin === "number" ? Math.min(10, Math.max(0, body.margin)) : 4;
+
+      fs.mkdirSync(GALLERY_DIR, { recursive: true });
+
+      if (format === "svg") {
+        const svgString = await QRCode.toString(content, {
+          type: "svg",
+          width,
+          margin,
+          color: { dark: colorDark, light: colorLight },
+          errorCorrectionLevel: errorCorrection,
+        });
+        const outputPath = path.join(GALLERY_DIR, `qr_${Date.now()}.svg`);
+        fs.writeFileSync(outputPath, svgString);
+        res.json({ success: true, format: "svg", outputPath, content, width });
+      } else {
+        const outputPath = path.join(GALLERY_DIR, `qr_${Date.now()}.png`);
+        await QRCode.toFile(outputPath, content, {
+          width,
+          margin,
+          color: { dark: colorDark, light: colorLight },
+          errorCorrectionLevel: errorCorrection,
+        });
+        const stat = fs.statSync(outputPath);
+        res.json({ success: true, format: "png", outputPath, content, width, sizeBytes: stat.size });
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.error(`[CreativeRouter] QR code error: ${msg}`);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  // ── Social Caption Generation (Issue #772) ─────────────────
+
+  /** POST /caption — generate a platform-optimized caption via LLM */
+  router.post("/caption", async (req, res) => {
+    try {
+      if (!copilotWrapper) {
+        res.status(503).json({ error: "AI service not available" });
+        return;
+      }
+      const body = req.body as Record<string, unknown>;
+      const topic = body.topic as string | undefined;
+      const platform = body.platform as string | undefined;
+      if (!topic || typeof topic !== "string") {
+        res.status(400).json({ error: "topic is required" });
+        return;
+      }
+      if (!platform || !PLATFORM_LIMITS[platform]) {
+        res.status(400).json({ error: `platform must be one of: ${Object.keys(PLATFORM_LIMITS).join(", ")}` });
+        return;
+      }
+      const tone = typeof body.tone === "string" ? body.tone : "casual";
+      const includeCta = body.include_cta === true;
+      const includeEmoji = body.include_emoji !== false;
+      const context = typeof body.context === "string" ? body.context : "";
+
+      const limits = PLATFORM_LIMITS[platform];
+      const systemPrompt =
+        "You are an expert social media copywriter. Generate a single caption optimized for the specified platform. " +
+        "Follow the platform's character limits and style conventions exactly. " +
+        "Return ONLY the caption text — no explanations, no labels, no formatting.";
+      const userPrompt = [
+        `Platform: ${platform} (max ${limits.maxChars} chars, style: ${limits.style})`,
+        `Topic: ${topic}`,
+        `Tone: ${tone}`,
+        includeCta ? "Include a call-to-action." : "",
+        includeEmoji ? "Include relevant emojis." : "No emojis.",
+        context ? `Brand context: ${context}` : "",
+      ].filter(Boolean).join("\n");
+
+      let caption = "";
+      for await (const chunk of copilotWrapper.chat(`${systemPrompt}\n\nUser: ${userPrompt}`, { availableTools: [] })) {
+        caption += chunk;
+      }
+      caption = caption.trim();
+
+      res.json({
+        platform,
+        caption,
+        charCount: caption.length,
+        maxChars: limits.maxChars,
+        withinLimit: caption.length <= limits.maxChars,
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.error(`[CreativeRouter] Caption error: ${msg}`);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  // ── Hashtag Generation (Issue #772) ────────────────────────
+
+  /** POST /hashtags — generate platform-optimized hashtags via LLM */
+  router.post("/hashtags", async (req, res) => {
+    try {
+      if (!copilotWrapper) {
+        res.status(503).json({ error: "AI service not available" });
+        return;
+      }
+      const body = req.body as Record<string, unknown>;
+      const topic = body.topic as string | undefined;
+      const platform = body.platform as string | undefined;
+      if (!topic || typeof topic !== "string") {
+        res.status(400).json({ error: "topic is required" });
+        return;
+      }
+      const validPlatforms = ["twitter", "instagram", "linkedin", "facebook", "pinterest", "youtube"];
+      if (!platform || !validPlatforms.includes(platform)) {
+        res.status(400).json({ error: `platform must be one of: ${validPlatforms.join(", ")}` });
+        return;
+      }
+      const count = typeof body.count === "number" ? Math.min(30, Math.max(1, body.count)) : 10;
+      const includeTrending = body.include_trending !== false;
+      const nicheLevel = typeof body.niche_level === "string" ? body.niche_level : "medium";
+
+      const limits = PLATFORM_LIMITS[platform];
+      const maxTags = Math.min(count, limits.maxHashtags || 30);
+
+      const systemPrompt =
+        "You are a social media hashtag strategist. Generate hashtags optimized for the specified platform. " +
+        "Return ONLY a JSON array of objects with 'tag' (without #) and 'category' (broad/medium/niche) fields. " +
+        "No explanations — just the JSON array.";
+      const userPrompt = [
+        `Platform: ${platform}`,
+        `Topic: ${topic}`,
+        `Count: ${maxTags}`,
+        `Focus: ${nicheLevel} specificity`,
+        includeTrending ? "Include popular/trending tags where relevant." : "Focus on evergreen tags.",
+      ].join("\n");
+
+      let response = "";
+      for await (const chunk of copilotWrapper.chat(`${systemPrompt}\n\nUser: ${userPrompt}`, { availableTools: [] })) {
+        response += chunk;
+      }
+      response = response.trim();
+
+      let hashtags: Array<{ tag: string; category: string }>;
+      try {
+        const jsonMatch = response.match(/\[[\s\S]*\]/);
+        hashtags = jsonMatch ? JSON.parse(jsonMatch[0]) : [];
+      } catch {
+        const words = response.match(/#?\w+/g) ?? [];
+        hashtags = words.slice(0, maxTags).map((w) => ({
+          tag: w.replace(/^#/, ""),
+          category: nicheLevel,
+        }));
+      }
+
+      res.json({
+        platform,
+        hashtags: hashtags.slice(0, maxTags).map((h) => ({
+          tag: `#${h.tag.replace(/^#/, "")}`,
+          category: h.category,
+        })),
+        count: Math.min(hashtags.length, maxTags),
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.error(`[CreativeRouter] Hashtags error: ${msg}`);
       res.status(500).json({ error: msg });
     }
   });

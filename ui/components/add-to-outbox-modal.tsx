@@ -305,7 +305,10 @@ export function AddToOutboxModal({
   }
   const templatesQuery = useQuery<PostTemplate[]>({
     queryKey: ["post-templates"],
-    queryFn: () => fetchJson("/api/admin/templates"),
+    queryFn: () =>
+      fetchJson<{ templates: PostTemplate[] }>("/api/admin/templates").then(
+        (data) => data.templates,
+      ),
     enabled: activeTab === "template",
   });
 
