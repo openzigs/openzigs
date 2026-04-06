@@ -60,33 +60,35 @@ export default function InpaintingPage() {
     { id: "minimalist", name: "Minimalist" },
   ];
 
-  // ── Draw source image onto canvas after React renders the element ──
+  // ── Effect 1: Calculate canvas dimensions when image changes ──
   useEffect(() => {
     if (!sourceImage) return;
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-
     const img = new window.Image();
     img.onload = () => {
       const maxDim = 768;
       const scale = Math.min(maxDim / img.width, maxDim / img.height, 1);
       const w = Math.round(img.width * scale);
       const h = Math.round(img.height * scale);
-
-      if (canvas.width !== w || canvas.height !== h) {
-        setCanvasSize({ width: w, height: h });
-        canvas.width = w;
-        canvas.height = h;
-      }
-
-      const ctx = canvas.getContext("2d");
-      if (ctx) {
-        ctx.clearRect(0, 0, w, h);
-        ctx.drawImage(img, 0, 0, w, h);
-      }
+      setCanvasSize({ width: w, height: h });
     };
     img.src = sourceImage;
   }, [sourceImage]);
+
+  // ── Effect 2: Draw image on canvas AFTER React re-renders with new size ──
+  useEffect(() => {
+    if (!sourceImage) return;
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const img = new window.Image();
+    img.onload = () => {
+      const ctx = canvas.getContext("2d");
+      if (ctx) {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      }
+    };
+    img.src = sourceImage;
+  }, [sourceImage, canvasSize]);
 
   // ── Handle image upload ──
   const handleImageUpload = useCallback(
