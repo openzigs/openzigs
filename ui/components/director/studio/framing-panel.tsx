@@ -18,7 +18,12 @@ interface FramingPanelProps {
  * Horizontal crop offset slider for 9:16 framing of 16:9 source video.
  * Shows in the Scene Inspector when editing a Shorts video clip.
  */
-export function FramingPanel({ offset, onChange, fitMode = "cover", onFitModeChange }: FramingPanelProps) {
+export function FramingPanel({
+  offset,
+  onChange,
+  fitMode = "cover",
+  onFitModeChange,
+}: FramingPanelProps) {
   const [localOffset, setLocalOffset] = useState(offset);
 
   const handleChange = useCallback(
@@ -39,7 +44,9 @@ export function FramingPanel({ offset, onChange, fitMode = "cover", onFitModeCha
       <div className="mb-2 flex items-center justify-between">
         <div className="flex items-center gap-1.5">
           <Move className="h-3.5 w-3.5 text-muted-foreground" />
-          <p className="text-[11px] font-medium text-foreground">9:16 Framing</p>
+          <p className="text-[11px] font-medium text-foreground">
+            9:16 Framing
+          </p>
         </div>
         <button
           onClick={handleReset}
@@ -54,40 +61,42 @@ export function FramingPanel({ offset, onChange, fitMode = "cover", onFitModeCha
       {/* Fit mode toggle */}
       {onFitModeChange && (
         <>
-        <p className="mb-1.5 text-[9px] text-muted-foreground">
-          Choose how horizontal (16:9) footage fits a vertical (9:16) frame
-        </p>
-        <div className="mb-3 flex gap-1 rounded-md bg-muted p-0.5">
-          <button
-            onClick={() => onFitModeChange("contain")}
-            className={`flex flex-1 items-center justify-center gap-1.5 rounded px-2 py-1.5 text-[10px] font-medium transition ${
-              fitMode === "contain"
-                ? "bg-background text-foreground shadow-sm"
-                : "text-muted-foreground hover:text-foreground"
-            }`}
-            title="Show full frame with blurred background"
-          >
-            <Maximize2 className="h-3 w-3" />
-            Fit (Blur BG)
-          </button>
-          <button
-            onClick={() => onFitModeChange("cover")}
-            className={`flex flex-1 items-center justify-center gap-1.5 rounded px-2 py-1.5 text-[10px] font-medium transition ${
-              fitMode === "cover"
-                ? "bg-background text-foreground shadow-sm"
-                : "text-muted-foreground hover:text-foreground"
-            }`}
-            title="Crop to fill 9:16 frame"
-          >
-            <Crop className="h-3 w-3" />
-            Crop
-          </button>
-        </div>
+          <p className="mb-1.5 text-[9px] text-muted-foreground">
+            Choose how horizontal (16:9) footage fits a vertical (9:16) frame
+          </p>
+          <div className="mb-3 flex gap-1 rounded-md bg-muted p-0.5">
+            <button
+              onClick={() => onFitModeChange("contain")}
+              className={`flex flex-1 items-center justify-center gap-1.5 rounded px-2 py-1.5 text-[10px] font-medium transition ${
+                fitMode === "contain"
+                  ? "bg-background text-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+              title="Show full frame with blurred background"
+            >
+              <Maximize2 className="h-3 w-3" />
+              Fit (Blur BG)
+            </button>
+            <button
+              onClick={() => onFitModeChange("cover")}
+              className={`flex flex-1 items-center justify-center gap-1.5 rounded px-2 py-1.5 text-[10px] font-medium transition ${
+                fitMode === "cover"
+                  ? "bg-background text-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+              title="Crop to fill 9:16 frame"
+            >
+              <Crop className="h-3 w-3" />
+              Crop
+            </button>
+          </div>
         </>
       )}
 
       {/* Visual preview of crop region */}
-      <div className={`relative mb-3 h-12 overflow-hidden rounded bg-muted ${fitMode === "contain" ? "opacity-40" : ""}`}>
+      <div
+        className={`relative mb-3 h-12 overflow-hidden rounded bg-muted ${fitMode === "contain" ? "opacity-40" : ""}`}
+      >
         {/* 16:9 source representation */}
         <div className="absolute inset-0 flex items-center justify-center">
           <div className="relative h-full w-full bg-muted-foreground/10">

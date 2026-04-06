@@ -41,12 +41,18 @@ function buildTracks(manifest: DirectorManifest): TimelineTrack[] {
       case "intro_card":
       case "outro_card": {
         sceneCounter++;
-        const sourceFile = entry.source ? String(entry.source).split("/").pop() : undefined;
+        const sourceFile = entry.source
+          ? String(entry.source).split("/").pop()
+          : undefined;
         scenesEntries.push({
           timelineIndex: i,
           startFrame,
           durationFrames: dur,
-          label: entry.title ?? entry.scriptText?.slice(0, 30) ?? sourceFile ?? `Scene ${sceneCounter}`,
+          label:
+            entry.title ??
+            entry.scriptText?.slice(0, 30) ??
+            sourceFile ??
+            `Scene ${sceneCounter}`,
           color:
             entry.type === "intro_card"
               ? "bg-emerald-500/70"
@@ -72,7 +78,9 @@ function buildTracks(manifest: DirectorManifest): TimelineTrack[] {
           timelineIndex: i,
           startFrame,
           durationFrames: dur,
-          label: (entry as Record<string, unknown>).component as string ?? "Overlay",
+          label:
+            ((entry as Record<string, unknown>).component as string) ??
+            "Overlay",
           color: "bg-teal-500/70",
         });
         break;
@@ -86,7 +94,8 @@ function buildTracks(manifest: DirectorManifest): TimelineTrack[] {
   const vo = manifest.audioLayer?.voiceover;
   if (vo && (vo.src || vo.source)) {
     const totalFrames = timeline.reduce((max, e) => {
-      const end = (e.startAtFrame ?? 0) + (e.duration ?? e.durationInFrames ?? 0);
+      const end =
+        (e.startAtFrame ?? 0) + (e.duration ?? e.durationInFrames ?? 0);
       return Math.max(max, end);
     }, 0);
     const voStart = vo.startAtFrame ?? 0;
@@ -102,7 +111,8 @@ function buildTracks(manifest: DirectorManifest): TimelineTrack[] {
   // Music track
   if (manifest.audioLayer?.music) {
     const totalFrames = timeline.reduce((max, e) => {
-      const end = (e.startAtFrame ?? 0) + (e.duration ?? e.durationInFrames ?? 0);
+      const end =
+        (e.startAtFrame ?? 0) + (e.duration ?? e.durationInFrames ?? 0);
       return Math.max(max, end);
     }, 0);
     audioEntries.push({
@@ -115,10 +125,30 @@ function buildTracks(manifest: DirectorManifest): TimelineTrack[] {
   }
 
   return [
-    { id: "scenes", label: "Scenes", type: "scenes" as const, entries: scenesEntries },
-    { id: "voiceover", label: "Voiceover", type: "voiceover" as const, entries: voiceoverEntries },
-    { id: "overlay", label: "Overlays", type: "overlay" as const, entries: overlayEntries },
-    { id: "audio", label: "Audio", type: "audio" as const, entries: audioEntries },
+    {
+      id: "scenes",
+      label: "Scenes",
+      type: "scenes" as const,
+      entries: scenesEntries,
+    },
+    {
+      id: "voiceover",
+      label: "Voiceover",
+      type: "voiceover" as const,
+      entries: voiceoverEntries,
+    },
+    {
+      id: "overlay",
+      label: "Overlays",
+      type: "overlay" as const,
+      entries: overlayEntries,
+    },
+    {
+      id: "audio",
+      label: "Audio",
+      type: "audio" as const,
+      entries: audioEntries,
+    },
   ];
 }
 
@@ -128,18 +158,31 @@ export function StudioLayout({ draftId }: { draftId: string }) {
   const [error, setError] = useState<string | null>(null);
   const [currentFrame, setCurrentFrame] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
-  const [inspector, setInspector] = useState<InspectorState>({ sceneIndex: null, entry: null });
+  const [inspector, setInspector] = useState<InspectorState>({
+    sceneIndex: null,
+    entry: null,
+  });
   const [tracks, setTracks] = useState<TimelineTrack[]>([]);
   const [dirty, setDirty] = useState(false);
   const [lastSaved, setLastSaved] = useState<string | null>(null);
-  const [renderStatus, setRenderStatus] = useState<{ jobId: string; progress: number; status: string } | null>(null);
-  const playerRef = useRef<{ seekTo: (frame: number) => void; play: () => void; pause: () => void } | null>(null);
+  const [renderStatus, setRenderStatus] = useState<{
+    jobId: string;
+    progress: number;
+    status: string;
+  } | null>(null);
+  const playerRef = useRef<{
+    seekTo: (frame: number) => void;
+    play: () => void;
+    pause: () => void;
+  } | null>(null);
   const { socket } = useSocket();
 
   const loadDraft = useCallback(async () => {
     try {
       setLoading(true);
-      const data = await fetchJson<DraftFull>(`/api/admin/director/drafts/${draftId}`);
+      const data = await fetchJson<DraftFull>(
+        `/api/admin/director/drafts/${draftId}`,
+      );
       setDraft(data);
       if (data.manifest) {
         setTracks(buildTracks(data.manifest));
@@ -160,16 +203,20 @@ export function StudioLayout({ draftId }: { draftId: string }) {
   useEffect(() => {
     if (!socket) return;
 
-    const onProgress = (data: { jobId: string; progress: number; status: string }) => {
+    const onProgress = (data: {
+      jobId: string;
+      progress: number;
+      status: string;
+    }) => {
       setRenderStatus(data);
     };
 
-    const onComplete = (_data: { jobId: string; outputPath: string | null }) => {
+    const onComplete = (_data: {
+      jobId: string;
+      outputPath: string | null;
+    }) => {
       setRenderStatus(null);
-      showToast(
-        `Render complete! Your video is ready.`,
-        "success",
-      );
+      showToast(`Render complete! Your video is ready.`, "success");
       // Reload draft to reflect updated status
       loadDraft();
     };
@@ -201,13 +248,15 @@ export function StudioLayout({ draftId }: { draftId: string }) {
   }, [draft, draftId]);
 
   const handleManifestUpdate = useCallback((manifest: DirectorManifest) => {
-    setDraft((prev) => prev ? { ...prev, manifest } : prev);
+    setDraft((prev) => (prev ? { ...prev, manifest } : prev));
     setTracks(buildTracks(manifest));
     setDirty(true);
   }, []);
 
-  const hasIntro = draft?.manifest?.timeline?.some((e) => e.type === "intro_card") ?? false;
-  const hasOutro = draft?.manifest?.timeline?.some((e) => e.type === "outro_card") ?? false;
+  const hasIntro =
+    draft?.manifest?.timeline?.some((e) => e.type === "intro_card") ?? false;
+  const hasOutro =
+    draft?.manifest?.timeline?.some((e) => e.type === "outro_card") ?? false;
 
   const handleAddScene = useCallback(() => {
     if (!draft?.manifest) return;
@@ -233,14 +282,21 @@ export function StudioLayout({ draftId }: { draftId: string }) {
     if (insertAfterIdx < 0) {
       // Find last visual scene
       for (let i = timeline.length - 1; i >= 0; i--) {
-        if (visualTypes.has(timeline[i].type)) { insertAfterIdx = i; break; }
+        if (visualTypes.has(timeline[i].type)) {
+          insertAfterIdx = i;
+          break;
+        }
       }
     }
 
     const insertAt = insertAfterIdx >= 0 ? insertAfterIdx + 1 : timeline.length;
-    const prevEnd = insertAfterIdx >= 0
-      ? (timeline[insertAfterIdx].startAtFrame ?? 0) + (timeline[insertAfterIdx].duration ?? timeline[insertAfterIdx].durationInFrames ?? fps * 3)
-      : 0;
+    const prevEnd =
+      insertAfterIdx >= 0
+        ? (timeline[insertAfterIdx].startAtFrame ?? 0) +
+          (timeline[insertAfterIdx].duration ??
+            timeline[insertAfterIdx].durationInFrames ??
+            fps * 3)
+        : 0;
 
     const newScene: TimelineEntry = {
       type: "image_scene",
@@ -274,7 +330,10 @@ export function StudioLayout({ draftId }: { draftId: string }) {
       let sceneCount = 0;
       for (let i = 0; i < timeline.length; i++) {
         if (visualTypes.has(timeline[i].type)) {
-          if (sceneCount === sceneIndex) { targetIdx = i; break; }
+          if (sceneCount === sceneIndex) {
+            targetIdx = i;
+            break;
+          }
           sceneCount++;
         }
       }
@@ -293,7 +352,10 @@ export function StudioLayout({ draftId }: { draftId: string }) {
       // Clear inspector if deleted scene was selected
       if (inspector.sceneIndex === sceneIndex) {
         setInspector({ sceneIndex: null, entry: null });
-      } else if (inspector.sceneIndex !== null && inspector.sceneIndex > sceneIndex) {
+      } else if (
+        inspector.sceneIndex !== null &&
+        inspector.sceneIndex > sceneIndex
+      ) {
         setInspector((prev) => ({
           sceneIndex: (prev.sceneIndex ?? 1) - 1,
           entry: prev.entry,
@@ -338,10 +400,16 @@ export function StudioLayout({ draftId }: { draftId: string }) {
 
     // Only look at visual scene entries — overlays and transitions are positioned
     // relative to scenes and must not push the outro position further out.
-    const visualTypes = new Set(["image_scene", "video_clip", "title_card", "intro_card"]);
+    const visualTypes = new Set([
+      "image_scene",
+      "video_clip",
+      "title_card",
+      "intro_card",
+    ]);
     const lastSceneEnd = timeline.reduce((max, e) => {
       if (!visualTypes.has(e.type)) return max;
-      const end = (e.startAtFrame ?? 0) + (e.duration ?? e.durationInFrames ?? fps * 3);
+      const end =
+        (e.startAtFrame ?? 0) + (e.duration ?? e.durationInFrames ?? fps * 3);
       return Math.max(max, end);
     }, 0);
 
@@ -353,7 +421,10 @@ export function StudioLayout({ draftId }: { draftId: string }) {
       animation: "fade-out",
     };
 
-    handleManifestUpdate({ ...draft.manifest, timeline: [...timeline, outroEntry] });
+    handleManifestUpdate({
+      ...draft.manifest,
+      timeline: [...timeline, outroEntry],
+    });
   }, [draft, hasOutro, handleManifestUpdate]);
 
   const handleRemoveCard = useCallback(
@@ -390,10 +461,14 @@ export function StudioLayout({ draftId }: { draftId: string }) {
       fetchJson(`/api/admin/director/drafts/${draftId}`, {
         method: "PUT",
         body: JSON.stringify({ manifest: draft.manifest, title: draft.title }),
-      }).then(() => {
-        setDirty(false);
-        setLastSaved(new Date().toISOString());
-      }).catch(() => { /* silent — user can still manual save */ });
+      })
+        .then(() => {
+          setDirty(false);
+          setLastSaved(new Date().toISOString());
+        })
+        .catch(() => {
+          /* silent — user can still manual save */
+        });
     }, 30_000);
     return () => clearTimeout(timer);
   }, [dirty, draft, draftId]);
@@ -408,29 +483,32 @@ export function StudioLayout({ draftId }: { draftId: string }) {
     [],
   );
 
-  const handleFrameChange = useCallback((frame: number) => {
-    setCurrentFrame(frame);
+  const handleFrameChange = useCallback(
+    (frame: number) => {
+      setCurrentFrame(frame);
 
-    // Auto-sync inspector to the scene at the current frame during playback
-    if (!draft?.manifest?.timeline) return;
-    const timeline = draft.manifest.timeline;
-    const visualTypes = new Set(["image_scene", "video_clip"]);
-    let sceneIdx = 0;
-    for (const entry of timeline) {
-      const start = entry.startAtFrame ?? 0;
-      const dur = entry.duration ?? entry.durationInFrames ?? 0;
-      if (frame >= start && frame < start + dur) {
-        if (visualTypes.has(entry.type)) {
-          setInspector((prev) => {
-            if (prev.sceneIndex === sceneIdx) return prev;
-            return { sceneIndex: sceneIdx, entry };
-          });
+      // Auto-sync inspector to the scene at the current frame during playback
+      if (!draft?.manifest?.timeline) return;
+      const timeline = draft.manifest.timeline;
+      const visualTypes = new Set(["image_scene", "video_clip"]);
+      let sceneIdx = 0;
+      for (const entry of timeline) {
+        const start = entry.startAtFrame ?? 0;
+        const dur = entry.duration ?? entry.durationInFrames ?? 0;
+        if (frame >= start && frame < start + dur) {
+          if (visualTypes.has(entry.type)) {
+            setInspector((prev) => {
+              if (prev.sceneIndex === sceneIdx) return prev;
+              return { sceneIndex: sceneIdx, entry };
+            });
+          }
+          return;
         }
-        return;
+        if (visualTypes.has(entry.type)) sceneIdx++;
       }
-      if (visualTypes.has(entry.type)) sceneIdx++;
-    }
-  }, [draft?.manifest?.timeline]);
+    },
+    [draft?.manifest?.timeline],
+  );
 
   const handleSeek = useCallback((frame: number) => {
     setCurrentFrame(frame);
@@ -444,12 +522,24 @@ export function StudioLayout({ draftId }: { draftId: string }) {
       const fps = draft.manifest.composition?.fps ?? 30;
 
       // Collect visual scene timeline indices
-      const visualTypes = new Set(["image_scene", "video_clip", "title_card", "intro_card", "outro_card"]);
+      const visualTypes = new Set([
+        "image_scene",
+        "video_clip",
+        "title_card",
+        "intro_card",
+        "outro_card",
+      ]);
       const sceneIndices: number[] = [];
       for (let i = 0; i < timeline.length; i++) {
         if (visualTypes.has(timeline[i].type)) sceneIndices.push(i);
       }
-      if (fromIndex < 0 || fromIndex >= sceneIndices.length || toIndex < 0 || toIndex >= sceneIndices.length) return;
+      if (
+        fromIndex < 0 ||
+        fromIndex >= sceneIndices.length ||
+        toIndex < 0 ||
+        toIndex >= sceneIndices.length
+      )
+        return;
 
       const updated = [...timeline];
       const fromTlIdx = sceneIndices[fromIndex];
@@ -472,19 +562,31 @@ export function StudioLayout({ draftId }: { draftId: string }) {
 
   const totalFrames = draft?.manifest?.timeline
     ? (() => {
-        const visualTypes = new Set(["image_scene", "video_clip", "title_card", "intro_card", "outro_card"]);
-        return draft.manifest.timeline.reduce((max: number, e: TimelineEntry) => {
-          if (!visualTypes.has(e.type)) return max;
-          const end = (e.startAtFrame ?? 0) + (e.duration ?? e.durationInFrames ?? 0);
-          return Math.max(max, end);
-        }, 0);
+        const visualTypes = new Set([
+          "image_scene",
+          "video_clip",
+          "title_card",
+          "intro_card",
+          "outro_card",
+        ]);
+        return draft.manifest.timeline.reduce(
+          (max: number, e: TimelineEntry) => {
+            if (!visualTypes.has(e.type)) return max;
+            const end =
+              (e.startAtFrame ?? 0) + (e.duration ?? e.durationInFrames ?? 0);
+            return Math.max(max, end);
+          },
+          0,
+        );
       })()
     : 0;
 
   if (loading) {
     return (
       <div className="flex h-full items-center justify-center">
-        <div className="animate-pulse text-muted-foreground">Loading studio…</div>
+        <div className="animate-pulse text-muted-foreground">
+          Loading studio…
+        </div>
       </div>
     );
   }
@@ -527,7 +629,9 @@ export function StudioLayout({ draftId }: { draftId: string }) {
               style={{ width: `${Math.round(renderStatus.progress * 100)}%` }}
             />
           </div>
-          <span className="text-[10px] text-muted-foreground capitalize">{renderStatus.status}</span>
+          <span className="text-[10px] text-muted-foreground capitalize">
+            {renderStatus.status}
+          </span>
         </div>
       )}
 
@@ -570,22 +674,28 @@ export function StudioLayout({ draftId }: { draftId: string }) {
           {draft.manifest && (
             <div className="mt-4">
               <AudioManager
-                music={draft.manifest.audioLayer?.music ? {
-                  track: draft.manifest.audioLayer.music.track ?? "",
-                  volume: draft.manifest.audioLayer.music.volume ?? 0.3,
-                  loop: draft.manifest.audioLayer.music.loop ?? true,
-                } : null}
+                music={
+                  draft.manifest.audioLayer?.music
+                    ? {
+                        track: draft.manifest.audioLayer.music.track ?? "",
+                        volume: draft.manifest.audioLayer.music.volume ?? 0.3,
+                        loop: draft.manifest.audioLayer.music.loop ?? true,
+                      }
+                    : null
+                }
                 onMusicChange={(music) => {
                   if (!draft.manifest) return;
                   handleManifestUpdate({
                     ...draft.manifest,
                     audioLayer: {
                       ...draft.manifest.audioLayer,
-                      music: music ? {
-                        track: music.track,
-                        volume: music.volume,
-                        loop: music.loop,
-                      } : null,
+                      music: music
+                        ? {
+                            track: music.track,
+                            volume: music.volume,
+                            loop: music.loop,
+                          }
+                        : null,
                     },
                   });
                 }}
@@ -605,7 +715,9 @@ export function StudioLayout({ draftId }: { draftId: string }) {
       <div className="shrink-0 border-t border-border">
         {/* Intro/Outro controls */}
         <div className="flex items-center gap-2 border-b border-border px-4 py-1.5">
-          <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Cards</span>
+          <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">
+            Cards
+          </span>
           {hasIntro ? (
             <button
               onClick={() => handleRemoveCard("intro_card")}

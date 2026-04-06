@@ -68,12 +68,24 @@ function formatCount(n: number | string | undefined | null): string {
 }
 
 function formatDate(iso: string): string {
-  return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+  return new Date(iso).toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
 }
 
 // ── Stat Card ────────────────────────────────────────
 
-function StatCard({ icon: Icon, label, value }: { icon: typeof Eye; label: string; value: string }) {
+function StatCard({
+  icon: Icon,
+  label,
+  value,
+}: {
+  icon: typeof Eye;
+  label: string;
+  value: string;
+}) {
   return (
     <div className="rounded-lg border border-border bg-card p-4">
       <div className="flex items-center gap-2 text-muted-foreground">
@@ -94,7 +106,8 @@ export default function AnalyticsPage() {
 
   const channelQuery = useQuery({
     queryKey: ["yt-analytics-channel"],
-    queryFn: () => fetchJson<ChannelStats>("/api/admin/director/youtube/analytics/channel"),
+    queryFn: () =>
+      fetchJson<ChannelStats>("/api/admin/director/youtube/analytics/channel"),
     staleTime: 5 * 60 * 1000,
     retry: 1,
   });
@@ -102,13 +115,17 @@ export default function AnalyticsPage() {
   const videosQuery = useQuery({
     queryKey: ["yt-analytics-videos"],
     queryFn: () =>
-      fetchJson<VideosResponse>("/api/admin/director/youtube/analytics/videos?limit=50&sort=views&order=desc"),
+      fetchJson<VideosResponse>(
+        "/api/admin/director/youtube/analytics/videos?limit=50&sort=views&order=desc",
+      ),
     staleTime: 5 * 60 * 1000,
     retry: 1,
   });
 
   const cachedAt = channelQuery.data?._cachedAt ?? videosQuery.data?._cachedAt;
-  const isFromCache = !!(channelQuery.data?._cached || videosQuery.data?._cached);
+  const isFromCache = !!(
+    channelQuery.data?._cached || videosQuery.data?._cached
+  );
 
   const handleSort = (field: SortField) => {
     if (sortField === field) {
@@ -128,9 +145,17 @@ export default function AnalyticsPage() {
   const videos = (videosQuery.data?.videos ?? [])
     .filter((v) => v.title.toLowerCase().includes(searchQuery.toLowerCase()))
     .sort((a, b) => {
-      const aVal = sortField === "publishedAt" ? new Date(a.publishedAt).getTime() : a[sortField];
-      const bVal = sortField === "publishedAt" ? new Date(b.publishedAt).getTime() : b[sortField];
-      return sortOrder === "asc" ? (aVal as number) - (bVal as number) : (bVal as number) - (aVal as number);
+      const aVal =
+        sortField === "publishedAt"
+          ? new Date(a.publishedAt).getTime()
+          : a[sortField];
+      const bVal =
+        sortField === "publishedAt"
+          ? new Date(b.publishedAt).getTime()
+          : b[sortField];
+      return sortOrder === "asc"
+        ? (aVal as number) - (bVal as number)
+        : (bVal as number) - (aVal as number);
     });
 
   // Bar chart: top 10 by views
@@ -143,14 +168,21 @@ export default function AnalyticsPage() {
     }));
 
   const isLoading = channelQuery.isLoading || videosQuery.isLoading;
-  const hasNoData = channelQuery.isError && videosQuery.isError && !channelQuery.data && !videosQuery.data;
+  const hasNoData =
+    channelQuery.isError &&
+    videosQuery.isError &&
+    !channelQuery.data &&
+    !videosQuery.data;
 
   if (hasNoData) {
     return (
       <div className="flex min-h-[50vh] flex-col items-center justify-center gap-3 text-muted-foreground">
         <AlertCircle className="h-8 w-8" />
         <p className="text-sm">YouTube analytics unavailable</p>
-        <p className="text-xs">Make sure YouTube OAuth is configured and the YouTube MCP server is running.</p>
+        <p className="text-xs">
+          Make sure YouTube OAuth is configured and the YouTube MCP server is
+          running.
+        </p>
         <button
           onClick={refetchAll}
           className="mt-2 flex items-center gap-1 rounded-md bg-primary px-3 py-1.5 text-xs text-primary-foreground hover:bg-primary/90"
@@ -173,7 +205,8 @@ export default function AnalyticsPage() {
           {isFromCache && cachedAt && (
             <p className="mt-0.5 flex items-center gap-1 text-xs text-amber-500">
               <AlertCircle className="h-3 w-3" />
-              Showing cached data from {new Date(cachedAt).toLocaleString()} — live API unavailable
+              Showing cached data from {new Date(cachedAt).toLocaleString()} —
+              live API unavailable
             </p>
           )}
         </div>
@@ -196,19 +229,39 @@ export default function AnalyticsPage() {
         <div>
           <div className="mb-3 flex items-center gap-3">
             {channelQuery.data.thumbnailUrl && (
-              <img src={channelQuery.data.thumbnailUrl} alt="" className="h-10 w-10 rounded-full" />
+              <img
+                src={channelQuery.data.thumbnailUrl}
+                alt=""
+                className="h-10 w-10 rounded-full"
+              />
             )}
             <div>
-              <h2 className="text-sm font-semibold">{channelQuery.data.title}</h2>
+              <h2 className="text-sm font-semibold">
+                {channelQuery.data.title}
+              </h2>
               {channelQuery.data.description && (
-                <p className="text-xs text-muted-foreground line-clamp-1">{channelQuery.data.description}</p>
+                <p className="text-xs text-muted-foreground line-clamp-1">
+                  {channelQuery.data.description}
+                </p>
               )}
             </div>
           </div>
           <div className="grid grid-cols-3 gap-4">
-            <StatCard icon={Users} label="Subscribers" value={formatCount(channelQuery.data.subscriberCount)} />
-            <StatCard icon={Eye} label="Total Views" value={formatCount(channelQuery.data.viewCount)} />
-            <StatCard icon={Video} label="Videos" value={formatCount(channelQuery.data.videoCount)} />
+            <StatCard
+              icon={Users}
+              label="Subscribers"
+              value={formatCount(channelQuery.data.subscriberCount)}
+            />
+            <StatCard
+              icon={Eye}
+              label="Total Views"
+              value={formatCount(channelQuery.data.viewCount)}
+            />
+            <StatCard
+              icon={Video}
+              label="Videos"
+              value={formatCount(channelQuery.data.videoCount)}
+            />
           </div>
         </div>
       ) : null}
@@ -219,11 +272,27 @@ export default function AnalyticsPage() {
           <h3 className="mb-3 text-sm font-semibold">Top Videos by Views</h3>
           <ResponsiveContainer width="100%" height={280}>
             <BarChart data={topVideos} layout="vertical" margin={{ left: 120 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-              <XAxis type="number" tickFormatter={formatCount} tick={{ fontSize: 11 }} />
-              <YAxis type="category" dataKey="name" width={120} tick={{ fontSize: 11 }} />
+              <CartesianGrid
+                strokeDasharray="3 3"
+                stroke="hsl(var(--border))"
+              />
+              <XAxis
+                type="number"
+                tickFormatter={formatCount}
+                tick={{ fontSize: 11 }}
+              />
+              <YAxis
+                type="category"
+                dataKey="name"
+                width={120}
+                tick={{ fontSize: 11 }}
+              />
               <Tooltip formatter={(v) => formatCount(Number(v ?? 0))} />
-              <Bar dataKey="views" fill="hsl(var(--primary))" radius={[0, 4, 4, 0]} />
+              <Bar
+                dataKey="views"
+                fill="hsl(var(--primary))"
+                radius={[0, 4, 4, 0]}
+              />
             </BarChart>
           </ResponsiveContainer>
         </div>
@@ -256,23 +325,35 @@ export default function AnalyticsPage() {
                 <tr className="border-b border-border text-left text-muted-foreground">
                   <th className="px-4 py-2 font-medium">Video</th>
                   <th className="px-4 py-2">
-                    <button onClick={() => handleSort("viewCount")} className="flex items-center gap-1 font-medium hover:text-foreground">
+                    <button
+                      onClick={() => handleSort("viewCount")}
+                      className="flex items-center gap-1 font-medium hover:text-foreground"
+                    >
                       Views <ArrowUpDown className="h-3 w-3" />
                     </button>
                   </th>
                   <th className="px-4 py-2">
-                    <button onClick={() => handleSort("likeCount")} className="flex items-center gap-1 font-medium hover:text-foreground">
+                    <button
+                      onClick={() => handleSort("likeCount")}
+                      className="flex items-center gap-1 font-medium hover:text-foreground"
+                    >
                       Likes <ArrowUpDown className="h-3 w-3" />
                     </button>
                   </th>
                   <th className="px-4 py-2">
-                    <button onClick={() => handleSort("commentCount")} className="flex items-center gap-1 font-medium hover:text-foreground">
+                    <button
+                      onClick={() => handleSort("commentCount")}
+                      className="flex items-center gap-1 font-medium hover:text-foreground"
+                    >
                       Comments <ArrowUpDown className="h-3 w-3" />
                     </button>
                   </th>
                   <th className="px-4 py-2">Like %</th>
                   <th className="px-4 py-2">
-                    <button onClick={() => handleSort("publishedAt")} className="flex items-center gap-1 font-medium hover:text-foreground">
+                    <button
+                      onClick={() => handleSort("publishedAt")}
+                      className="flex items-center gap-1 font-medium hover:text-foreground"
+                    >
                       Published <ArrowUpDown className="h-3 w-3" />
                     </button>
                   </th>
@@ -280,26 +361,42 @@ export default function AnalyticsPage() {
               </thead>
               <tbody>
                 {videos.map((v) => (
-                  <tr key={v.videoId} className="border-b border-border last:border-0 hover:bg-muted/30">
+                  <tr
+                    key={v.videoId}
+                    className="border-b border-border last:border-0 hover:bg-muted/30"
+                  >
                     <td className="px-4 py-2">
                       <div className="flex items-center gap-2">
                         {v.thumbnailUrl && (
-                          <img src={v.thumbnailUrl} alt="" className="h-8 w-14 rounded object-cover" />
+                          <img
+                            src={v.thumbnailUrl}
+                            alt=""
+                            className="h-8 w-14 rounded object-cover"
+                          />
                         )}
-                        <span className="max-w-[200px] truncate font-medium text-foreground">{v.title}</span>
+                        <span className="max-w-[200px] truncate font-medium text-foreground">
+                          {v.title}
+                        </span>
                       </div>
                     </td>
                     <td className="px-4 py-2">{formatCount(v.viewCount)}</td>
                     <td className="px-4 py-2">{formatCount(v.likeCount)}</td>
                     <td className="px-4 py-2">{formatCount(v.commentCount)}</td>
                     <td className="px-4 py-2">{v.likeRatio.toFixed(1)}%</td>
-                    <td className="px-4 py-2 text-muted-foreground">{formatDate(v.publishedAt)}</td>
+                    <td className="px-4 py-2 text-muted-foreground">
+                      {formatDate(v.publishedAt)}
+                    </td>
                   </tr>
                 ))}
                 {videos.length === 0 && (
                   <tr>
-                    <td colSpan={6} className="px-4 py-8 text-center text-muted-foreground">
-                      {searchQuery ? "No videos match your search" : "No videos found"}
+                    <td
+                      colSpan={6}
+                      className="px-4 py-8 text-center text-muted-foreground"
+                    >
+                      {searchQuery
+                        ? "No videos match your search"
+                        : "No videos found"}
                     </td>
                   </tr>
                 )}

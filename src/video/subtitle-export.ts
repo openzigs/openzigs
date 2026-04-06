@@ -27,7 +27,9 @@ export interface ManifestForSubtitles {
  * Extract subtitle segments from a Director manifest's timeline.
  * Only scenes with `scriptText` contribute subtitle entries.
  */
-export function extractSubtitleSegments(manifest: ManifestForSubtitles): SubtitleSegment[] {
+export function extractSubtitleSegments(
+  manifest: ManifestForSubtitles,
+): SubtitleSegment[] {
   const timeline = manifest.timeline;
   if (!timeline || timeline.length === 0) return [];
 
@@ -36,7 +38,11 @@ export function extractSubtitleSegments(manifest: ManifestForSubtitles): Subtitl
 
   for (const scene of timeline) {
     const durationMs = getSceneDurationMs(scene, fps);
-    if (scene.scriptText && typeof scene.scriptText === "string" && scene.scriptText.trim()) {
+    if (
+      scene.scriptText &&
+      typeof scene.scriptText === "string" &&
+      scene.scriptText.trim()
+    ) {
       segments.push({ text: scene.scriptText.trim(), durationMs });
     }
   }
@@ -79,7 +85,9 @@ export function generateSrt(segments: SubtitleSegment[]): string {
     const endMs = currentMs + seg.durationMs;
 
     lines.push(String(i + 1));
-    lines.push(`${formatSrtTimestamp(startMs)} --> ${formatSrtTimestamp(endMs)}`);
+    lines.push(
+      `${formatSrtTimestamp(startMs)} --> ${formatSrtTimestamp(endMs)}`,
+    );
     lines.push(seg.text);
     lines.push("");
 
@@ -103,7 +111,9 @@ export function generateVtt(segments: SubtitleSegment[]): string {
     const startMs = currentMs;
     const endMs = currentMs + seg.durationMs;
 
-    lines.push(`${formatVttTimestamp(startMs)} --> ${formatVttTimestamp(endMs)}`);
+    lines.push(
+      `${formatVttTimestamp(startMs)} --> ${formatVttTimestamp(endMs)}`,
+    );
     lines.push(seg.text);
     lines.push("");
 
@@ -116,16 +126,25 @@ export function generateVtt(segments: SubtitleSegment[]): string {
 /**
  * Generate subtitles from a manifest in the specified format.
  */
-export function generateSubtitles(manifest: ManifestForSubtitles, format: "srt" | "vtt"): string {
+export function generateSubtitles(
+  manifest: ManifestForSubtitles,
+  format: "srt" | "vtt",
+): string {
   const segments = extractSubtitleSegments(manifest);
   return format === "srt" ? generateSrt(segments) : generateVtt(segments);
 }
 
-function getSceneDurationMs(scene: TimelineSceneForSubtitles, fps: number): number {
+function getSceneDurationMs(
+  scene: TimelineSceneForSubtitles,
+  fps: number,
+): number {
   if (typeof scene.duration === "number" && scene.duration > 0) {
     return scene.duration < 1000 ? scene.duration * 1000 : scene.duration;
   }
-  if (typeof scene.durationInFrames === "number" && scene.durationInFrames > 0) {
+  if (
+    typeof scene.durationInFrames === "number" &&
+    scene.durationInFrames > 0
+  ) {
     return (scene.durationInFrames / fps) * 1000;
   }
   return 5000;

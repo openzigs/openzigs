@@ -1,7 +1,16 @@
 "use client";
 
 import { useState } from "react";
-import { Film, Globe, FolderOpen, Scissors, Sparkles, MonitorUp, Palette, Layers } from "lucide-react";
+import {
+  Film,
+  Globe,
+  FolderOpen,
+  Scissors,
+  Sparkles,
+  MonitorUp,
+  Palette,
+  Layers,
+} from "lucide-react";
 import { DirectorWizard } from "@/components/director/director-wizard";
 import { BlogToVideoPanel } from "@/components/director/blog-to-video-panel";
 import { ShortsPanel } from "@/components/director/shorts-panel";
@@ -13,21 +22,36 @@ import { BatchRenderPanel } from "@/components/director/batch-render-panel";
 import { ToastContainer } from "@/components/toast";
 import { AskAiPanel, AskAiButton, PAGE_CONTEXTS } from "@/components/ask-ai";
 
-type DirectorTab = "wizard" | "blog" | "shorts" | "drafts" | "hero-reel" | "capture" | "brand-kit" | "batch-render";
+type DirectorTab =
+  | "wizard"
+  | "blog"
+  | "shorts"
+  | "drafts"
+  | "hero-reel"
+  | "capture"
+  | "brand-kit"
+  | "batch-render";
 
 export default function DirectorPage() {
   const [tab, setTab] = useState<DirectorTab>("wizard");
   const [askAiOpen, setAskAiOpen] = useState(false);
 
   return (
-    <main className={`mx-auto flex h-[calc(100vh-4rem)] flex-col px-6 py-10 lg:px-12 ${tab === "capture" ? "max-w-7xl" : "max-w-4xl"}`}>
+    <main
+      className={`mx-auto flex h-[calc(100vh-4rem)] flex-col px-6 py-10 lg:px-12 ${tab === "capture" ? "max-w-7xl" : "max-w-4xl"}`}
+    >
       <header className="mb-4 shrink-0">
-        <p className="text-sm uppercase tracking-[0.3em] text-muted-foreground">OpenZigs</p>
+        <p className="text-sm uppercase tracking-[0.3em] text-muted-foreground">
+          OpenZigs
+        </p>
         <div className="flex items-end justify-between">
           <div>
-            <h1 className="mt-1 text-3xl font-semibold text-foreground">Director Mode</h1>
+            <h1 className="mt-1 text-3xl font-semibold text-foreground">
+              Director Mode
+            </h1>
             <p className="mt-1 text-sm text-muted-foreground">
-              Produce AI-directed videos from raw clips, text documents, or blog posts.
+              Produce AI-directed videos from raw clips, text documents, or blog
+              posts.
             </p>
           </div>
           <AskAiButton onClick={() => setAskAiOpen(true)} />
@@ -88,8 +112,7 @@ export default function DirectorPage() {
               : "border-transparent text-muted-foreground hover:text-foreground"
           }`}
         >
-          <Sparkles className="h-4 w-4" />
-          ✨ Hero Reel
+          <Sparkles className="h-4 w-4" />✨ Hero Reel
         </button>
         <button
           onClick={() => setTab("capture")}
@@ -137,7 +160,11 @@ export default function DirectorPage() {
         {tab === "batch-render" && <BatchRenderPanel />}
       </div>
       <ToastContainer />
-      <AskAiPanel pageContext={PAGE_CONTEXTS["director"]} open={askAiOpen} onClose={() => setAskAiOpen(false)} />
+      <AskAiPanel
+        pageContext={PAGE_CONTEXTS["director"]}
+        open={askAiOpen}
+        onClose={() => setAskAiOpen(false)}
+      />
     </main>
   );
 }

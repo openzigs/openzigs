@@ -203,11 +203,9 @@ export const createStudioRouter = ({
         !req.headers["content-type"]?.includes("multipart/form-data") &&
         !req.headers["content-type"]?.includes("video/")
       ) {
-        res
-          .status(400)
-          .json({
-            error: "Expected multipart/form-data or video/* content-type",
-          });
+        res.status(400).json({
+          error: "Expected multipart/form-data or video/* content-type",
+        });
         return;
       }
 

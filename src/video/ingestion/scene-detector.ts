@@ -32,11 +32,20 @@ export async function extractKeyframes(
   await fs.mkdir(outputDir, { recursive: true });
 
   // Phase 1: Scene-change detection via ffmpeg
-  const sceneFrames = await extractSceneChangeFrames(videoPath, outputDir, sceneThreshold);
+  const sceneFrames = await extractSceneChangeFrames(
+    videoPath,
+    outputDir,
+    sceneThreshold,
+  );
 
   // Phase 2: Fallback interval extraction
   const duration = await getVideoDuration(videoPath);
-  const intervalFrames = await extractIntervalFrames(videoPath, outputDir, minInterval, duration);
+  const intervalFrames = await extractIntervalFrames(
+    videoPath,
+    outputDir,
+    minInterval,
+    duration,
+  );
 
   // Phase 3: Merge and deduplicate (within 2s window)
   const merged = mergeKeyframes(sceneFrames, intervalFrames, 2.0);
@@ -132,7 +141,9 @@ async function extractIntervalFrames(
           resolve();
         })
         .on("error", (err: Error) => {
-          logger.warn(`[SceneDetector] Interval extraction failed: ${err.message}`);
+          logger.warn(
+            `[SceneDetector] Interval extraction failed: ${err.message}`,
+          );
           resolve();
         })
         .run();
@@ -152,13 +163,16 @@ async function getVideoDuration(videoPath: string): Promise<number> {
   try {
     const ffmpeg = (await import("fluent-ffmpeg")).default;
     return new Promise<number>((resolve, _reject) => {
-      ffmpeg.ffprobe(videoPath, (err: Error | null, metadata: { format?: { duration?: number } }) => {
-        if (err) {
-          resolve(0);
-          return;
-        }
-        resolve(metadata?.format?.duration ?? 0);
-      });
+      ffmpeg.ffprobe(
+        videoPath,
+        (err: Error | null, metadata: { format?: { duration?: number } }) => {
+          if (err) {
+            resolve(0);
+            return;
+          }
+          resolve(metadata?.format?.duration ?? 0);
+        },
+      );
     });
   } catch {
     return 0;
@@ -174,7 +188,9 @@ function mergeKeyframes(
   dedupeWindowSec: number,
 ): KeyframeInfo[] {
   // Combine and sort by timestamp
-  const all = [...sceneFrames, ...intervalFrames].sort((a, b) => a.timestamp - b.timestamp);
+  const all = [...sceneFrames, ...intervalFrames].sort(
+    (a, b) => a.timestamp - b.timestamp,
+  );
 
   // Deduplicate: keep the one with the higher sceneScore if within the window
   const deduped: KeyframeInfo[] = [];

@@ -12,7 +12,12 @@ import { logger } from "../logging/logger.js";
 
 const execFileAsync = promisify(execFile);
 
-const THUMBNAIL_DIR = path.join(os.homedir(), ".openzigs", "video-output", "thumbnails");
+const THUMBNAIL_DIR = path.join(
+  os.homedir(),
+  ".openzigs",
+  "video-output",
+  "thumbnails",
+);
 
 /**
  * Generate a thumbnail for a video by extracting a single frame at 25% duration.
@@ -32,10 +37,14 @@ export async function generateThumbnail(
     await execFileAsync(
       "ffmpeg",
       [
-        "-ss", seekTime.toFixed(2),
-        "-i", videoPath,
-        "-vframes", "1",
-        "-q:v", "2",
+        "-ss",
+        seekTime.toFixed(2),
+        "-i",
+        videoPath,
+        "-vframes",
+        "1",
+        "-q:v",
+        "2",
         outputPath,
         "-y",
       ],
@@ -46,7 +55,9 @@ export async function generateThumbnail(
       return outputPath;
     }
 
-    logger.warn(`[ThumbnailGenerator] ffmpeg succeeded but output not found: ${outputPath}`);
+    logger.warn(
+      `[ThumbnailGenerator] ffmpeg succeeded but output not found: ${outputPath}`,
+    );
     return null;
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);

@@ -4,7 +4,15 @@ import { useState, useCallback, useRef, useEffect } from "react";
 import { fetchJson, buildMediaUrl } from "@/lib/api";
 import { ScreenRecorder } from "./screen-recorder";
 import { VideoTrimmer } from "./video-trimmer";
-import { Film, RefreshCw, Upload, X, Play, LayoutGrid, List as ListIcon } from "lucide-react";
+import {
+  Film,
+  RefreshCw,
+  Upload,
+  X,
+  Play,
+  LayoutGrid,
+  List as ListIcon,
+} from "lucide-react";
 import { showToast } from "@/components/toast";
 
 interface GalleryAsset {
@@ -50,7 +58,9 @@ export function CaptureAndTrimPanel() {
   const handleRecordingComplete = useCallback(
     async (assetId: string, _filename: string) => {
       try {
-        const asset = await fetchJson<GalleryAsset>(`/api/queue/assets/${assetId}`);
+        const asset = await fetchJson<GalleryAsset>(
+          `/api/queue/assets/${assetId}`,
+        );
         selectVideo(asset);
         await loadRecentVideos();
       } catch {
@@ -61,14 +71,17 @@ export function CaptureAndTrimPanel() {
   );
 
   // ── Video Selection with Unsaved Work Check ──
-  const selectVideo = useCallback((asset: GalleryAsset) => {
-    if (selectedAsset && selectedAsset.id !== asset.id && hasUnsavedWork) {
-      setPendingAsset(asset);
-      return;
-    }
-    setSelectedAsset(asset);
-    setHasUnsavedWork(false);
-  }, [selectedAsset, hasUnsavedWork]);
+  const selectVideo = useCallback(
+    (asset: GalleryAsset) => {
+      if (selectedAsset && selectedAsset.id !== asset.id && hasUnsavedWork) {
+        setPendingAsset(asset);
+        return;
+      }
+      setSelectedAsset(asset);
+      setHasUnsavedWork(false);
+    },
+    [selectedAsset, hasUnsavedWork],
+  );
 
   const confirmSwitchVideo = useCallback(() => {
     if (pendingAsset) {
@@ -100,54 +113,76 @@ export function CaptureAndTrimPanel() {
     }
   }, []);
 
-  const uploadVideoFile = useCallback(async (file: File) => {
-    if (!file.type.startsWith("video/")) {
-      showToast("Only video files are accepted", "error");
-      return;
-    }
-    setUploading(true);
-    try {
-      const token = process.env.NEXT_PUBLIC_OPENZIGS_TOKEN ?? "";
-      const response = await fetch(
-        `${process.env.NEXT_PUBLIC_OPENZIGS_API_BASE ?? ""}/api/studio/upload-recording`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": file.type,
-            ...(token ? { Authorization: `Bearer ${token}` } : {}),
-          },
-          body: file,
-        },
-      );
-      if (!response.ok) {
-        const data = await response.json().catch(() => ({ error: "Upload failed" }));
-        throw new Error((data as { error?: string }).error ?? `Upload failed: ${response.status}`);
+  const uploadVideoFile = useCallback(
+    async (file: File) => {
+      if (!file.type.startsWith("video/")) {
+        showToast("Only video files are accepted", "error");
+        return;
       }
-      const result = await response.json() as { assetId: string; filename: string };
-      showToast(`Uploaded: ${result.filename}`, "success");
-      const asset = await fetchJson<GalleryAsset>(`/api/queue/assets/${result.assetId}`);
-      selectVideo(asset);
-      await loadRecentVideos();
-    } catch (err) {
-      showToast(`Upload failed: ${err instanceof Error ? err.message : "Unknown error"}`, "error");
-    } finally {
-      setUploading(false);
-    }
-  }, [loadRecentVideos]);
+      setUploading(true);
+      try {
+        const token = process.env.NEXT_PUBLIC_OPENZIGS_TOKEN ?? "";
+        const response = await fetch(
+          `${process.env.NEXT_PUBLIC_OPENZIGS_API_BASE ?? ""}/api/studio/upload-recording`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": file.type,
+              ...(token ? { Authorization: `Bearer ${token}` } : {}),
+            },
+            body: file,
+          },
+        );
+        if (!response.ok) {
+          const data = await response
+            .json()
+            .catch(() => ({ error: "Upload failed" }));
+          throw new Error(
+            (data as { error?: string }).error ??
+              `Upload failed: ${response.status}`,
+          );
+        }
+        const result = (await response.json()) as {
+          assetId: string;
+          filename: string;
+        };
+        showToast(`Uploaded: ${result.filename}`, "success");
+        const asset = await fetchJson<GalleryAsset>(
+          `/api/queue/assets/${result.assetId}`,
+        );
+        selectVideo(asset);
+        await loadRecentVideos();
+      } catch (err) {
+        showToast(
+          `Upload failed: ${err instanceof Error ? err.message : "Unknown error"}`,
+          "error",
+        );
+      } finally {
+        setUploading(false);
+      }
+    },
+    [loadRecentVideos],
+  );
 
-  const handleDrop = useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setDragActive(false);
-    const file = e.dataTransfer.files?.[0];
-    if (file) uploadVideoFile(file);
-  }, [uploadVideoFile]);
+  const handleDrop = useCallback(
+    (e: React.DragEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      setDragActive(false);
+      const file = e.dataTransfer.files?.[0];
+      if (file) uploadVideoFile(file);
+    },
+    [uploadVideoFile],
+  );
 
-  const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) uploadVideoFile(file);
-    e.target.value = ""; // reset for re-selecting same file
-  }, [uploadVideoFile]);
+  const handleFileSelect = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (file) uploadVideoFile(file);
+      e.target.value = ""; // reset for re-selecting same file
+    },
+    [uploadVideoFile],
+  );
 
   const fmtDuration = (secs: number) => {
     const m = Math.floor(secs / 60);
@@ -156,7 +191,10 @@ export function CaptureAndTrimPanel() {
   };
 
   return (
-    <div className="h-full overflow-y-auto pb-8" data-testid="capture-and-trim-panel">
+    <div
+      className="h-full overflow-y-auto pb-8"
+      data-testid="capture-and-trim-panel"
+    >
       {/* Two-column layout: left = recorder + browser, right = trimmer */}
       <div className="flex gap-6 min-h-0">
         {/* Left Column: Recorder + Video Browser */}
@@ -169,8 +207,12 @@ export function CaptureAndTrimPanel() {
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <Film className="h-5 w-5 text-zinc-400" />
-                <h3 className="text-sm font-semibold text-zinc-200">Video Library</h3>
-                <span className="text-[10px] text-zinc-600">({recentVideos.length})</span>
+                <h3 className="text-sm font-semibold text-zinc-200">
+                  Video Library
+                </h3>
+                <span className="text-[10px] text-zinc-600">
+                  ({recentVideos.length})
+                </span>
               </div>
               <div className="flex items-center gap-2">
                 {/* View toggle */}
@@ -195,7 +237,9 @@ export function CaptureAndTrimPanel() {
                   disabled={loading}
                   className="flex items-center gap-1.5 text-xs text-zinc-400 hover:text-zinc-200 transition"
                 >
-                  <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
+                  <RefreshCw
+                    className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`}
+                  />
                   Refresh
                 </button>
               </div>
@@ -220,7 +264,9 @@ export function CaptureAndTrimPanel() {
                 <Upload className="h-5 w-5 text-zinc-500" />
               )}
               <p className="text-xs text-zinc-500">
-                {uploading ? "Uploading…" : "Drop video here or click to upload"}
+                {uploading
+                  ? "Uploading…"
+                  : "Drop video here or click to upload"}
               </p>
               <input
                 ref={fileInputRef}
@@ -266,7 +312,9 @@ export function CaptureAndTrimPanel() {
                       )}
                     </div>
                     <div className="px-2 py-1.5 bg-zinc-900">
-                      <p className="text-[11px] text-zinc-300 truncate">{v.filename}</p>
+                      <p className="text-[11px] text-zinc-300 truncate">
+                        {v.filename}
+                      </p>
                     </div>
                   </button>
                 ))}
@@ -294,13 +342,19 @@ export function CaptureAndTrimPanel() {
                       />
                     </div>
                     <div className="flex-1 min-w-0">
-                      <p className="text-xs text-zinc-300 truncate">{v.filename}</p>
+                      <p className="text-xs text-zinc-300 truncate">
+                        {v.filename}
+                      </p>
                       <div className="flex items-center gap-2 mt-0.5">
                         {v.duration_seconds != null && (
-                          <span className="text-[10px] text-zinc-500 font-mono">{fmtDuration(v.duration_seconds)}</span>
+                          <span className="text-[10px] text-zinc-500 font-mono">
+                            {fmtDuration(v.duration_seconds)}
+                          </span>
                         )}
                         {v.tags?.includes("screen-recording") && (
-                          <span className="rounded bg-red-600/60 px-1 py-0.5 text-[8px] text-white">REC</span>
+                          <span className="rounded bg-red-600/60 px-1 py-0.5 text-[8px] text-white">
+                            REC
+                          </span>
                         )}
                       </div>
                     </div>
@@ -311,7 +365,8 @@ export function CaptureAndTrimPanel() {
 
             {recentVideos.length === 0 && !loading && (
               <p className="text-xs text-zinc-600 text-center py-4">
-                No videos yet. Record your screen above or drag a video file here.
+                No videos yet. Record your screen above or drag a video file
+                here.
               </p>
             )}
           </div>
@@ -323,12 +378,16 @@ export function CaptureAndTrimPanel() {
           {pendingAsset && (
             <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
               <div className="rounded-lg border border-zinc-600 bg-zinc-900 p-5 max-w-sm shadow-xl space-y-3">
-                <h4 className="text-sm font-semibold text-zinc-200">Switch Video?</h4>
+                <h4 className="text-sm font-semibold text-zinc-200">
+                  Switch Video?
+                </h4>
                 <p className="text-xs text-zinc-400">
-                  You have unsaved cuts or edits on the current video. Switching will discard them.
+                  You have unsaved cuts or edits on the current video. Switching
+                  will discard them.
                 </p>
                 <p className="text-xs text-zinc-500 truncate">
-                  Loading: <span className="text-zinc-300">{pendingAsset.filename}</span>
+                  Loading:{" "}
+                  <span className="text-zinc-300">{pendingAsset.filename}</span>
                 </p>
                 <div className="flex gap-2 justify-end pt-1">
                   <button
@@ -352,10 +411,16 @@ export function CaptureAndTrimPanel() {
             <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <p className="text-xs text-zinc-400 truncate flex-1">
-                  Editing: <span className="text-zinc-200">{selectedAsset.filename}</span>
+                  Editing:{" "}
+                  <span className="text-zinc-200">
+                    {selectedAsset.filename}
+                  </span>
                 </p>
                 <button
-                  onClick={() => { setSelectedAsset(null); setHasUnsavedWork(false); }}
+                  onClick={() => {
+                    setSelectedAsset(null);
+                    setHasUnsavedWork(false);
+                  }}
                   className="text-zinc-500 hover:text-zinc-300 transition"
                 >
                   <X className="h-4 w-4" />
@@ -373,7 +438,9 @@ export function CaptureAndTrimPanel() {
             <div className="flex items-center justify-center h-full rounded-lg border border-zinc-700 bg-zinc-900/50">
               <div className="text-center px-8 py-16">
                 <Film className="h-10 w-10 text-zinc-700 mx-auto mb-3" />
-                <p className="text-sm text-zinc-500">Select a video to start editing</p>
+                <p className="text-sm text-zinc-500">
+                  Select a video to start editing
+                </p>
                 <p className="text-xs text-zinc-600 mt-1">
                   Record your screen, upload a file, or pick from your library
                 </p>

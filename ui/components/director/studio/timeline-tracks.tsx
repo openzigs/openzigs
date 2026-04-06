@@ -15,7 +15,12 @@ import {
   useSortable,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import type { TimelineTrack, TimelineTrackEntry, TimelineEntry, DirectorManifest } from "../types";
+import type {
+  TimelineTrack,
+  TimelineTrackEntry,
+  TimelineEntry,
+  DirectorManifest,
+} from "../types";
 
 interface TimelineTracksProps {
   tracks: TimelineTrack[];
@@ -46,7 +51,8 @@ function SortableEntry({ entry, totalFrames, onClick }: SortableEntryProps) {
   } = useSortable({ id: `scene-${entry.timelineIndex}` });
 
   const left = totalFrames > 0 ? (entry.startFrame / totalFrames) * 100 : 0;
-  const width = totalFrames > 0 ? (entry.durationFrames / totalFrames) * 100 : 0;
+  const width =
+    totalFrames > 0 ? (entry.durationFrames / totalFrames) * 100 : 0;
 
   const style = {
     left: `${left}%`,
@@ -129,10 +135,15 @@ export function TimelineTracks({
   const handleDragEnd = useCallback(
     (event: DragEndEvent) => {
       const { active, over } = event;
-      if (!over || active.id === over.id || !onReorderScenes || !scenesTrack) return;
+      if (!over || active.id === over.id || !onReorderScenes || !scenesTrack)
+        return;
 
-      const oldIdx = scenesTrack.entries.findIndex((e) => `scene-${e.timelineIndex}` === active.id);
-      const newIdx = scenesTrack.entries.findIndex((e) => `scene-${e.timelineIndex}` === over.id);
+      const oldIdx = scenesTrack.entries.findIndex(
+        (e) => `scene-${e.timelineIndex}` === active.id,
+      );
+      const newIdx = scenesTrack.entries.findIndex(
+        (e) => `scene-${e.timelineIndex}` === over.id,
+      );
       if (oldIdx === -1 || newIdx === -1) return;
 
       onReorderScenes(oldIdx, newIdx);
@@ -140,10 +151,14 @@ export function TimelineTracks({
     [onReorderScenes, scenesTrack],
   );
 
-  const playheadPercent = totalFrames > 0 ? (currentFrame / totalFrames) * 100 : 0;
+  const playheadPercent =
+    totalFrames > 0 ? (currentFrame / totalFrames) * 100 : 0;
 
   // Time markers
-  const markerCount = Math.min(10, Math.max(2, Math.floor(totalFrames / fps / 5)));
+  const markerCount = Math.min(
+    10,
+    Math.max(2, Math.floor(totalFrames / fps / 5)),
+  );
   const markers = Array.from({ length: markerCount + 1 }, (_, i) => {
     const frame = Math.round((i / markerCount) * totalFrames);
     const sec = frame / fps;
@@ -155,12 +170,19 @@ export function TimelineTracks({
   return (
     <div className="flex flex-col bg-muted/30" data-testid="timeline-tracks">
       {/* Time ruler */}
-      <div className="relative flex h-6 items-end border-b border-border px-0" ref={containerRef} onClick={handleTrackClick}>
+      <div
+        className="relative flex h-6 items-end border-b border-border px-0"
+        ref={containerRef}
+        onClick={handleTrackClick}
+      >
         {markers.map((m) => (
           <div
             key={m.frame}
             className="absolute bottom-0 text-[10px] text-muted-foreground"
-            style={{ left: totalFrames > 0 ? `${(m.frame / totalFrames) * 100}%` : "0%" }}
+            style={{
+              left:
+                totalFrames > 0 ? `${(m.frame / totalFrames) * 100}%` : "0%",
+            }}
           >
             <div className="h-2 w-px bg-border" />
             <span className="ml-0.5">{m.label}</span>
@@ -173,36 +195,62 @@ export function TimelineTracks({
       </div>
 
       {/* Tracks */}
-      <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+      <DndContext
+        sensors={sensors}
+        collisionDetection={closestCenter}
+        onDragEnd={handleDragEnd}
+      >
         <div className="relative max-h-[200px] overflow-y-auto">
           {tracks.map((track) => (
-            <div key={track.id} className="flex h-10 items-center border-b border-border last:border-0">
+            <div
+              key={track.id}
+              className="flex h-10 items-center border-b border-border last:border-0"
+            >
               <div className="w-24 shrink-0 border-r border-border px-2 text-[11px] font-medium text-muted-foreground truncate">
                 {track.label}
               </div>
-              <div className="relative flex-1 h-full" onClick={handleTrackClick}>
+              <div
+                className="relative flex-1 h-full"
+                onClick={handleTrackClick}
+              >
                 {track.type === "scenes" ? (
-                  <SortableContext items={sortableIds} strategy={horizontalListSortingStrategy}>
+                  <SortableContext
+                    items={sortableIds}
+                    strategy={horizontalListSortingStrategy}
+                  >
                     {track.entries.map((entry) => (
                       <SortableEntry
                         key={`${entry.timelineIndex}`}
                         entry={entry}
                         totalFrames={totalFrames}
-                        onClick={(e) => handleEntryClick(entry.timelineIndex, e)}
+                        onClick={(e) =>
+                          handleEntryClick(entry.timelineIndex, e)
+                        }
                       />
                     ))}
                   </SortableContext>
                 ) : (
                   track.entries.map((entry, i) => {
-                    const left = totalFrames > 0 ? (entry.startFrame / totalFrames) * 100 : 0;
-                    const width = totalFrames > 0 ? (entry.durationFrames / totalFrames) * 100 : 0;
+                    const left =
+                      totalFrames > 0
+                        ? (entry.startFrame / totalFrames) * 100
+                        : 0;
+                    const width =
+                      totalFrames > 0
+                        ? (entry.durationFrames / totalFrames) * 100
+                        : 0;
                     return (
                       <button
                         key={`${entry.timelineIndex}-${i}`}
                         className={`absolute top-1 bottom-1 rounded-sm ${entry.color} text-[10px] font-medium text-white px-1 truncate hover:brightness-110 transition cursor-pointer`}
-                        style={{ left: `${left}%`, width: `${Math.max(width, 0.5)}%` }}
+                        style={{
+                          left: `${left}%`,
+                          width: `${Math.max(width, 0.5)}%`,
+                        }}
                         title={entry.label}
-                        onClick={(e) => handleEntryClick(entry.timelineIndex, e)}
+                        onClick={(e) =>
+                          handleEntryClick(entry.timelineIndex, e)
+                        }
                       >
                         {entry.label}
                       </button>
