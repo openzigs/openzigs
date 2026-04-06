@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import {
   ArrowLeft,
   Save,
@@ -53,6 +53,22 @@ export function StudioToolbar({
     videoUrl?: string;
   } | null>(null);
   const [subtitleMenuOpen, setSubtitleMenuOpen] = useState(false);
+  const subtitleRef = useRef<HTMLDivElement>(null);
+
+  // Close subtitles dropdown on outside click
+  useEffect(() => {
+    if (!subtitleMenuOpen) return;
+    const handleClick = (e: MouseEvent) => {
+      if (
+        subtitleRef.current &&
+        !subtitleRef.current.contains(e.target as Node)
+      ) {
+        setSubtitleMenuOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [subtitleMenuOpen]);
 
   const handleSave = useCallback(async () => {
     setSaving(true);
@@ -217,7 +233,7 @@ export function StudioToolbar({
 
         {/* Export Subtitles */}
         {draftId && (
-          <div className="relative">
+          <div className="relative" ref={subtitleRef}>
             <button
               onClick={() => setSubtitleMenuOpen(!subtitleMenuOpen)}
               className="flex items-center gap-1.5 rounded-md bg-muted px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted/80 transition"

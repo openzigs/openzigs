@@ -14,13 +14,16 @@ tools:
   - web
   - github/*
   - context7/*
+  - cve-search-mcp/*
   - tavily/*
+  - playwright/*
 agents:
   - Research
   - Code Planner
   - Code Issue
   - Code Review
   - E2E Test
+  - UI Vision
 ---
 
 # Orchestrator Agent
@@ -40,10 +43,11 @@ Track progress through these phases using `#tool:todo`:
 3. **IMPLEMENT** — Call the Code Issue subagent to implement all issues (≥80% unit test coverage)
 4. **SECURITY AUDIT** — Run CVE dependency audit against the PR's dependency tree
 5. **E2E TEST** — If the PR includes UI changes, call the E2E Test subagent to write Playwright tests
-6. **REVIEW** — Call the Code Review subagent to review the resulting PR
-7. **FIX** — If review finds blocking issues, call Code Issue again to fix them
-8. **RE-REVIEW** — Call Code Review again to verify fixes (max 2 review cycles)
-9. **REPORT** — Summarize results to the user
+6. **UI VISION WALKTHROUGH** — *(conditional)* If user requested a walkthrough, run the UI Vision agent against the live app
+7. **REVIEW** — Call the Code Review subagent to review the resulting PR
+8. **FIX** — If review or walkthrough finds blocking issues, call Code Issue again to fix them
+9. **RE-REVIEW** — Call Code Review again to verify fixes (max 2 review cycles)
+10. **REPORT** — Summarize results to the user
 
 ## Phase Details
 
@@ -94,21 +98,10 @@ After the PR branch exists, run a CVE dependency audit against the project's dep
    ```
 2. **Audit via package manager** (this is a pnpm workspace — never use `npm audit`, it hangs without `package-lock.json`):
    ```bash
-   timeout 30 pnpm audit --audit-level=moderate || echo 'pnpm audit timed out or failed — proceeding'
+   pnpm audit --audit-level=moderate
    ```
-3. **Deep scan with osv-scanner** (optional — skip if not installed or if it times out):
-   ```bash
-   which osv-scanner && timeout 60 osv-scanner scan source --format json -r . 2>&1 | head -100 || echo 'osv-scanner not installed or timed out — skipping'
-   ```
-   If osv-scanner is not installed or exceeds 60 seconds, skip this step — `pnpm audit` is sufficient.
-4. **Look up any flagged CVE IDs** via the OSV.dev REST API (no auth required, no Docker needed):
-   ```bash
-   curl -s --max-time 10 https://api.osv.dev/v1/vulns/CVE-XXXX-XXXXX | jq '{id: .id, summary: .summary, severity: .severity}'
-   ```
-   To check a specific package+version:
-   ```bash
-   curl -s --max-time 10 -d '{"package":{"name":"PACKAGE","ecosystem":"npm"},"version":"VERSION"}' https://api.osv.dev/v1/query | jq '.vulns // [] | length'
-   ```
+3. **CVE lookup for critical direct dependencies** using `#tool:mcp_cve-search-mc_vul_vendor_product_cve` — check the top 5–10 direct production dependencies. Use the npm package name as `product` and the org/publisher as `vendor`.
+4. **Look up any flagged CVE IDs** using `#tool:mcp_cve-search-mc_vul_cve_search` to get full severity and CVSS scores.
 
 **Gate logic:**
 - **CVSS ≥ 7.0 (High/Critical)** → Block: open a GitHub comment on the PR flagging the issue. Do not proceed to E2E or Review until resolved.
@@ -133,31 +126,58 @@ If the PR includes UI changes (new pages, component updates, user-facing feature
 
 **Extract from the result**: Test count and acceptance criteria coverage.
 
-### Phase 5: REVIEW
+### Phase 6: UI VISION WALKTHROUGH (conditional)
+
+**Trigger detection** — Run this phase if the user's request contains any of:
+- The word "walkthrough", "walk through", "visually test", or "browser test"
+- Phrases like "make sure the UI works", "check the UI", "verify the UI"
+- An explicit ask like "include a walkthrough" or "do a walkthrough"
+
+**Also available on-demand** — If the Orchestrator is already active (e.g., the user says "now do a walkthrough" mid-session), run this phase immediately using the existing PR branch, then loop back through FIX → RE-REVIEW if bugs are found.
+
+**Prerequisites** — The development server must be running before the UI Vision agent can browse. Remind the user to start it if needed:
+```
+Please ensure the dev server is running before I launch the walkthrough:
+  pnpm dev       (backend — port 3000)
+  cd ui && pnpm dev   (UI — port 3001)
+```
+If the user confirms it is running, proceed. If they say it is not, pause and wait.
+
+Call the **UI Vision** subagent with `#tool:agent/runSubagent`:
+
+- **agentName**: `UI Vision`
+- **description**: `Visual walkthrough of PR #{N} changes`
+- **prompt**: *"Walk through the UI changes introduced in PR #{PR_NUMBER} (epic #{EPIC_NUMBER}). Read the ui-vision skill at `.github/skills/ui-vision/SKILL.md` for the full protocol. Target URL: {UI_URL — default http://localhost:3001}. Walk through every new screen, panel, or feature added by the PR. Screenshot after every significant action. Check browser console for errors after every API call. Document all bugs found using the Bug #{n} standard. When the walkthrough is complete, report the full bug list (or confirm no bugs found).*"
+
+**Extract from the result**: The bug list. If bugs are found, pass them into Phase 8 (FIX) before proceeding to REVIEW.
+
+**Skip this phase** if the user did not request a walkthrough and the request contains no walkthrough trigger words.
+
+### Phase 7: REVIEW
 
 Call the **Code Review** subagent with `#tool:agent/runSubagent`:
 
 - **agentName**: `Code Review`
 - **description**: `Reviewing PR #{N} against epic #{M}`
-- **prompt**: *"Review PR #{PR_NUMBER} against epic #{EPIC_NUMBER}. Read the code-review skill at `.github/skills/code-review/SKILL.md` for the full workflow. Check requirements, security (OWASP), code quality, performance, tests, and documentation. Execute Step 1b (Security Scanner Comments) — first run `grep -E '^\s*pull_request' .github/workflows/codeql.yml 2>/dev/null` to auto-detect if CodeQL runs on PRs. If it returns output, CodeQL runs on PRs: fetch scanner comments and treat any unresolved High/Critical CodeQL findings as blocking. If no output (file missing or PR trigger commented out), CodeQL is not a PR check: skip to Step 1c and rely on your manual OWASP review in Step 4 as the security gate. Also execute Step 1c (Prior Review Comments) — analyze all existing comments from human reviewers and GitHub Copilot. Validate each, note which are addressed vs. still open. Unresolved blocking human comments are blocking. Also execute Step 1d (CI Status) — run `gh pr checks` and verify every CI job is green. Only `api` and `ui` jobs appear (no CodeQL). ALL failing CI jobs are blocking, even pre-existing failures not introduced by this PR. The PR must fix them before approval. Publish a structured GitHub review. When done, report your verdict (APPROVE, COMMENT, or REQUEST_CHANGES) and list any blocking issues, including unresolved reviewer comments and failing CI jobs."*
+- **prompt**: *"Review PR #{PR_NUMBER} against epic #{EPIC_NUMBER}. Read the code-review skill at `.github/skills/code-review/SKILL.md` for the full workflow. Check requirements, security (OWASP), code quality, performance, tests, and documentation. Execute Step 1b (Security Scanner Comments) — fetch all review comments and check for any from `github-advanced-security`, `dependabot`, or other security bots. NOTE: CodeQL does NOT run on PRs in this repo (only on push-to-main and weekly cron), so scanner comments will typically not exist — if none are found, skip to Step 1c and rely on your manual OWASP review in Step 4 as the primary security gate. Do NOT wait for or block on missing CodeQL checks. Also execute Step 1c (Prior Review Comments) — analyze all existing comments from human reviewers and GitHub Copilot. Validate each, note which are addressed vs. still open. Unresolved blocking human comments are blocking. Also execute Step 1d (CI Status) — run `gh pr checks` and verify every CI job is green. Only `api` and `ui` jobs appear (no CodeQL). ALL failing CI jobs are blocking, even pre-existing failures not introduced by this PR. The PR must fix them before approval. Publish a structured GitHub review. When done, report your verdict (APPROVE, COMMENT, or REQUEST_CHANGES) and list any blocking issues, including unresolved reviewer comments and failing CI jobs."*
 
 **Extract from the result**: The verdict and any blocking issues.
 
-### Phase 6: FIX (conditional)
+### Phase 8: FIX (conditional)
 
-If the review verdict is **REQUEST_CHANGES** or there are blocking issues:
+If the review verdict is **REQUEST_CHANGES**, there are blocking review issues, **or Phase 6 (UI Vision) found bugs**:
 
 Call the **Code Issue** subagent again:
 
 - **agentName**: `Code Issue`
-- **description**: `Fixing review comments on PR #{N}`
-- **prompt**: *"Fix the review comments on PR #{PR_NUMBER}. Read the resolve-pr-comments skill at `.github/skills/resolve-pr-comments/SKILL.md`. Address all blocking issues: {list issues from review}. Run tests and lint after fixes. Push to the existing branch. When done, confirm the fixes are pushed."*
+- **description**: `Fixing review comments and walkthrough bugs on PR #{N}`
+- **prompt**: *"Fix the review comments and/or walkthrough bugs on PR #{PR_NUMBER}. Read the resolve-pr-comments skill at `.github/skills/resolve-pr-comments/SKILL.md`. Address all blocking issues: {list issues from review and/or bug list from walkthrough}. Run tests and lint after fixes. Push to the existing branch. When done, confirm the fixes are pushed."*
 
-### Phase 7: RE-REVIEW (conditional)
+### Phase 9: RE-REVIEW (conditional)
 
 If fixes were applied, call **Code Review** one more time with the same PR number. Limit to **2 total review cycles** to avoid infinite loops. If the second review still has blocking issues, report them to the user for manual resolution.
 
-### Phase 8: REPORT
+### Phase 10: REPORT
 
 Present a summary to the user:
 
@@ -187,6 +207,12 @@ Present a summary to the user:
 - Tests written: {count}
 - Acceptance criteria covered: {N}/{total}
 - Unmapped criteria: {list or "None"}
+
+### UI Vision Walkthrough (if applicable)
+- Screens walked: {count}
+- Bugs found: {count}
+- Bugs fixed: {count or "N/A"}
+- Outstanding visual issues: {list or "None"}
 
 ### CI Pipeline
 - All jobs green: {Yes/No}

@@ -158,6 +158,15 @@ import { QuizGenerator } from "./presenter/quiz-generator.js";
 import { RenderOrchestrator } from "./video/render-orchestrator.js";
 import { TrimWorker } from "./video/trim-worker.js";
 import { AnalyzeWorker } from "./video/analyze-worker.js";
+import { ClipExtractor } from "./video/clip-extractor.js";
+import { ReframeWorker } from "./video/reframe-worker.js";
+import { AudioCleaner } from "./video/audio-cleaner.js";
+import { BRollPipeline } from "./video/broll-pipeline.js";
+import { BrandTemplateRepository } from "./video/brand-templates.js";
+import {
+  AnalyticsCache,
+  AnalyticsAggregator,
+} from "./analytics/analytics-aggregator.js";
 import { RoomManager } from "./presenter/room-manager.js";
 import { ExpressPeerServer } from "peer";
 import { MediaQueueRepository } from "./queue/media-queue-repository.js";
@@ -171,6 +180,9 @@ import { MediaNotificationService } from "./queue/media-notification-service.js"
 import { createQueueRouter, createQueueCallbackRouter } from "./api/queue.js";
 import { createGalleryRouter } from "./api/gallery.js";
 import { createStudioRouter } from "./api/studio.js";
+import { createVideoPipelineRouter } from "./api/video-pipeline.js";
+import { createCalendarRouter } from "./api/calendar.js";
+import { createAnalyticsRouter } from "./api/analytics.js";
 import { createCreativeRouter } from "./api/creative.js";
 import { createTemplatesRouter } from "./api/templates.js";
 import {
@@ -1013,6 +1025,44 @@ const analyzeWorker = new AnalyzeWorker({
     process.env.OPENZIGS_AUDIO_SIDECAR_URL ?? "http://localhost:5006",
 });
 
+// ── Video Pipeline Modules (Epic #817) ──
+const clipExtractor = new ClipExtractor({
+  chat: (prompt, options) => {
+    return copilot.chat(prompt, {
+      tools: [],
+      attachments: options?.attachments,
+      model: options?.model,
+    });
+  },
+  audioSidecarUrl:
+    process.env.OPENZIGS_AUDIO_SIDECAR_URL ?? "http://localhost:5006",
+});
+const reframeWorker = new ReframeWorker({
+  chat: (prompt, options) => {
+    return copilot.chat(prompt, {
+      tools: [],
+      attachments: options?.attachments,
+      model: options?.model,
+    });
+  },
+});
+const audioCleaner = new AudioCleaner({
+  audioSidecarUrl:
+    process.env.OPENZIGS_AUDIO_SIDECAR_URL ?? "http://localhost:5006",
+});
+const brollPipeline = new BRollPipeline({
+  chat: (prompt) => {
+    return copilot.chat(prompt, { tools: [] });
+  },
+  audioSidecarUrl:
+    process.env.OPENZIGS_AUDIO_SIDECAR_URL ?? "http://localhost:5006",
+});
+const brandTemplateRepo = new BrandTemplateRepository(db);
+brandTemplateRepo.migrate();
+const analyticsCache = new AnalyticsCache(db);
+analyticsCache.migrate();
+const analyticsAggregator = new AnalyticsAggregator(analyticsCache);
+
 // Always include ~/.openzigs/seo-reports so the write-file tool can save
 // enhanced reports even when OPENZIGS_ALLOWED_DIRS is restricted.
 const mcpAllowedDirs = Array.from(
@@ -1079,6 +1129,10 @@ registerMcpTools(toolRegistry, {
   ),
   brandKitRepo,
   postTemplateRepo,
+  clipExtractor,
+  reframeWorker,
+  audioCleaner,
+  brollPipeline,
 });
 
 // ── Task Background Worker ──
@@ -2221,11 +2275,34 @@ const studioRouter = createStudioRouter({
 });
 app.use("/api/studio", authMiddleware, studioRouter);
 
+// Video Pipeline API routes (clip extraction, reframing, audio cleaning, B-Roll, NLE export) — Epic #817
+const videoPipelineRouter = createVideoPipelineRouter({
+  clipExtractor,
+  reframeWorker,
+  audioCleaner,
+  brollPipeline,
+});
+app.use("/api/studio/pipeline", authMiddleware, videoPipelineRouter);
+
+// Calendar Aggregation API — #823
+const calendarRouter = createCalendarRouter({ outboxRepo, scheduler });
+app.use("/api/admin/calendar", authMiddleware, calendarRouter);
+
+// Video Analytics API — #828
+const analyticsRouter = createAnalyticsRouter({
+  aggregator: analyticsAggregator,
+});
+app.use("/api/admin/video-analytics", authMiddleware, analyticsRouter);
+
 // Creative Studio API routes (inpainting, AI image editing, sidecar tools)
 const creativeRouter = createCreativeRouter({
   mediaQueueRepo,
   copilotWrapper: copilot,
-  imageProcessingSidecarUrl: resolveSidecarUrl("image-processing", "IMAGE_PROCESSING_SIDECAR_URL", 5010),
+  imageProcessingSidecarUrl: resolveSidecarUrl(
+    "image-processing",
+    "IMAGE_PROCESSING_SIDECAR_URL",
+    5010,
+  ),
 });
 // enhance-prompt accepts a base64 image in the JSON body — needs a higher limit
 app.use(
@@ -3051,6 +3128,56 @@ analyzeWorker.on("analyze:complete", (data: unknown) =>
 );
 analyzeWorker.on("analyze:failed", (data: unknown) =>
   io.emit("analyze:failed", data),
+);
+
+// Wire Video Pipeline Workers → Socket.IO event forwarding (Epic #817)
+clipExtractor.on("clip:queued", (data: unknown) =>
+  io.emit("clip:queued", data),
+);
+clipExtractor.on("clip:progress", (data: unknown) =>
+  io.emit("clip:progress", data),
+);
+clipExtractor.on("clip:complete", (data: unknown) =>
+  io.emit("clip:complete", data),
+);
+clipExtractor.on("clip:failed", (data: unknown) =>
+  io.emit("clip:failed", data),
+);
+reframeWorker.on("reframe:queued", (data: unknown) =>
+  io.emit("reframe:queued", data),
+);
+reframeWorker.on("reframe:progress", (data: unknown) =>
+  io.emit("reframe:progress", data),
+);
+reframeWorker.on("reframe:complete", (data: unknown) =>
+  io.emit("reframe:complete", data),
+);
+reframeWorker.on("reframe:failed", (data: unknown) =>
+  io.emit("reframe:failed", data),
+);
+audioCleaner.on("clean:queued", (data: unknown) =>
+  io.emit("clean:queued", data),
+);
+audioCleaner.on("clean:progress", (data: unknown) =>
+  io.emit("clean:progress", data),
+);
+audioCleaner.on("clean:complete", (data: unknown) =>
+  io.emit("clean:complete", data),
+);
+audioCleaner.on("clean:failed", (data: unknown) =>
+  io.emit("clean:failed", data),
+);
+brollPipeline.on("broll:queued", (data: unknown) =>
+  io.emit("broll:queued", data),
+);
+brollPipeline.on("broll:progress", (data: unknown) =>
+  io.emit("broll:progress", data),
+);
+brollPipeline.on("broll:complete", (data: unknown) =>
+  io.emit("broll:complete", data),
+);
+brollPipeline.on("broll:failed", (data: unknown) =>
+  io.emit("broll:failed", data),
 );
 
 // Wire NotificationDispatcher now that we have the Socket.IO server

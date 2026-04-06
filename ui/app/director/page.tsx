@@ -10,6 +10,7 @@ import {
   MonitorUp,
   Palette,
   Layers,
+  BarChart3,
 } from "lucide-react";
 import { DirectorWizard } from "@/components/director/director-wizard";
 import { BlogToVideoPanel } from "@/components/director/blog-to-video-panel";
@@ -19,6 +20,7 @@ import { HeroReelPanel } from "@/components/director/hero-reel-panel";
 import { CaptureAndTrimPanel } from "@/components/director/studio/capture-and-trim-panel";
 import { BrandKitEditor } from "@/components/director/brand-kit-editor";
 import { BatchRenderPanel } from "@/components/director/batch-render-panel";
+import { AnalyticsDashboard } from "@/components/analytics/analytics-dashboard";
 import { ToastContainer } from "@/components/toast";
 import { AskAiPanel, AskAiButton, PAGE_CONTEXTS } from "@/components/ask-ai";
 
@@ -30,7 +32,8 @@ type DirectorTab =
   | "hero-reel"
   | "capture"
   | "brand-kit"
-  | "batch-render";
+  | "batch-render"
+  | "analytics";
 
 export default function DirectorPage() {
   const [tab, setTab] = useState<DirectorTab>("wizard");
@@ -147,6 +150,17 @@ export default function DirectorPage() {
           <Layers className="h-4 w-4" />
           Batch Render
         </button>
+        <button
+          onClick={() => setTab("analytics")}
+          className={`flex items-center gap-1.5 px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+            tab === "analytics"
+              ? "border-primary text-primary"
+              : "border-transparent text-muted-foreground hover:text-foreground"
+          }`}
+        >
+          <BarChart3 className="h-4 w-4" />
+          Analytics
+        </button>
       </div>
 
       <div className="min-h-0 flex-1">
@@ -158,6 +172,7 @@ export default function DirectorPage() {
         {tab === "capture" && <CaptureAndTrimPanel />}
         {tab === "brand-kit" && <BrandKitEditor />}
         {tab === "batch-render" && <BatchRenderPanel />}
+        {tab === "analytics" && <AnalyticsDashboard />}
       </div>
       <ToastContainer />
       <AskAiPanel

@@ -1,13 +1,7 @@
 "use client";
 
 import { useState, useCallback } from "react";
-import {
-  Film,
-  Loader2,
-  Search,
-  Sparkles,
-  Clock,
-} from "lucide-react";
+import { Film, Loader2, Search, Sparkles, Clock } from "lucide-react";
 import { fetchJson } from "@/lib/api";
 import { showToast } from "@/components/toast";
 
@@ -32,7 +26,10 @@ function formatTime(seconds: number): string {
   return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
-export function BRollPanel({ draftId: _draftId, videoSource }: BRollPanelProps) {
+export function BRollPanel({
+  draftId: _draftId,
+  videoSource,
+}: BRollPanelProps) {
   const [loading, setLoading] = useState(false);
   const [suggestions, setSuggestions] = useState<BRollSuggestion[]>([]);
   const [density, setDensity] = useState<BRollDensity>("moderate");

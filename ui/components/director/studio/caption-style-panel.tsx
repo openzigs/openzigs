@@ -1,11 +1,32 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Subtitles, Eye, EyeOff } from "lucide-react";
+import { fetchJson } from "@/lib/api";
 import type { DirectorManifest, TimelineEntry } from "../types";
 
-type CaptionStyle = "pill" | "underline" | "boxed" | "karaoke";
 type CaptionPosition = "bottom" | "center" | "top";
+
+interface CaptionTemplate {
+  id: string;
+  name: string;
+  description: string;
+}
+
+const FALLBACK_STYLES: { value: string; label: string; preview: string }[] = [
+  {
+    value: "karaoke",
+    label: "Karaoke",
+    preview: "Word-by-word highlight with glow",
+  },
+  { value: "pill", label: "Pill", preview: "Active word in rounded badge" },
+  {
+    value: "underline",
+    label: "Underline",
+    preview: "Underline beneath active word",
+  },
+  { value: "boxed", label: "Boxed", preview: "Words in a background box" },
+];
 
 /**
  * Derive word-level frame timings from scene scriptText fields.
@@ -61,22 +82,6 @@ function deriveWordTimings(
   return results;
 }
 
-const STYLE_OPTIONS: { value: CaptionStyle; label: string; preview: string }[] =
-  [
-    {
-      value: "karaoke",
-      label: "Karaoke",
-      preview: "Word-by-word highlight with glow",
-    },
-    { value: "pill", label: "Pill", preview: "Active word in rounded badge" },
-    {
-      value: "underline",
-      label: "Underline",
-      preview: "Underline beneath active word",
-    },
-    { value: "boxed", label: "Boxed", preview: "Words in a background box" },
-  ];
-
 const POSITION_OPTIONS: { value: CaptionPosition; label: string }[] = [
   { value: "bottom", label: "Bottom" },
   { value: "center", label: "Center" },
@@ -107,7 +112,7 @@ function getCaptionProps(overlay: TimelineEntry | undefined) {
   if (!overlay) return undefined;
   return (overlay as Record<string, unknown>).props as
     | {
-        style?: CaptionStyle;
+        style?: string;
         fontSize?: number;
         position?: CaptionPosition;
         fontColor?: string;
@@ -121,6 +126,28 @@ export function CaptionStylePanel({
   manifest,
   onManifestUpdate,
 }: CaptionStylePanelProps) {
+  // Fetch caption templates from API, falling back to hardcoded styles
+  const [styleOptions, setStyleOptions] = useState(FALLBACK_STYLES);
+  useEffect(() => {
+    fetchJson<{ templates: CaptionTemplate[] }>(
+      "/api/studio/pipeline/caption-templates",
+    )
+      .then((res) => {
+        if (res.templates?.length) {
+          setStyleOptions(
+            res.templates.map((t) => ({
+              value: t.id,
+              label: t.name,
+              preview: t.description,
+            })),
+          );
+        }
+      })
+      .catch(() => {
+        /* keep fallback styles */
+      });
+  }, []);
+
   const captionOverlay = useMemo(
     () => findCaptionOverlay(manifest),
     [manifest],
@@ -290,7 +317,7 @@ export function CaptionStylePanel({
               Style
             </p>
             <div className="grid grid-cols-2 gap-1.5">
-              {STYLE_OPTIONS.map((opt) => (
+              {styleOptions.map((opt) => (
                 <button
                   key={opt.value}
                   onClick={() => updateOverlayProps({ style: opt.value })}

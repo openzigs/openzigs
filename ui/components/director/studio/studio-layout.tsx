@@ -11,6 +11,10 @@ import { CaptionStylePanel } from "./caption-style-panel";
 import { TimelineTracks } from "./timeline-tracks";
 import { AudioManager } from "./audio-manager";
 import { ShortsProposalPanel } from "./shorts-proposal-panel";
+import { ClipExtractorPanel } from "./clip-extractor-panel";
+import { AudioCleanerPanel } from "./audio-cleaner-panel";
+import { BRollPanel } from "./broll-panel";
+import { NLEExportPanel } from "./nle-export-panel";
 import { Plus, X } from "lucide-react";
 import type {
   DraftFull,
@@ -708,6 +712,32 @@ export function StudioLayout({ draftId }: { draftId: string }) {
           <div className="mt-4">
             <ShortsProposalPanel draftId={draftId} />
           </div>
+
+          {/* Clip Extractor */}
+          <div className="mt-4">
+            <ClipExtractorPanel draftId={draftId} />
+          </div>
+
+          {/* Audio Cleaner */}
+          <div className="mt-4">
+            <AudioCleanerPanel draftId={draftId} />
+          </div>
+
+          {/* B-Roll Suggestions */}
+          <div className="mt-4">
+            <BRollPanel draftId={draftId} />
+          </div>
+
+          {/* NLE Export */}
+          {draft.manifest && (
+            <div className="mt-4">
+              <NLEExportPanel
+                draftId={draftId}
+                manifest={draft.manifest as unknown as Record<string, unknown>}
+                title={draft.title}
+              />
+            </div>
+          )}
         </div>
       </div>
 

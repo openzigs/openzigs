@@ -7,13 +7,13 @@ import { NavBar } from "@/components/nav-bar";
 const spaceGrotesk = Space_Grotesk({
   subsets: ["latin"],
   variable: "--font-sans",
-  display: "swap"
+  display: "swap",
 });
 
 const jetBrains = JetBrains_Mono({
   subsets: ["latin"],
   variable: "--font-mono",
-  display: "swap"
+  display: "swap",
 });
 
 export const metadata: Metadata = {
@@ -21,15 +21,19 @@ export const metadata: Metadata = {
   description: "Monitor tools, approvals, and activity in OpenZigs.",
   icons: {
     icon: "/openzigs-icon.png",
-    apple: "/openzigs-icon.png"
-  }
+    apple: "/openzigs-icon.png",
+  },
 };
 
 export const viewport: Viewport = {
   viewportFit: "cover",
 };
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default function RootLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
   return (
     <html lang="en" suppressHydrationWarning>
       <body
@@ -38,7 +42,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       >
         <Providers>
           <NavBar />
-          <div className="flex min-h-0 flex-col overflow-y-auto">{children}</div>
+          <div className="flex min-h-0 flex-col overflow-y-auto">
+            {children}
+          </div>
           <footer className="border-t border-border bg-background/80 text-center text-xs py-2 text-muted-foreground">
             © Zylos Labs LLC
           </footer>

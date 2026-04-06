@@ -1,13 +1,7 @@
 "use client";
 
 import { useState, useCallback } from "react";
-import {
-  Scissors,
-  Loader2,
-  Sparkles,
-  Clock,
-  TrendingUp,
-} from "lucide-react";
+import { Scissors, Loader2, Sparkles, Clock, TrendingUp } from "lucide-react";
 import { fetchJson } from "@/lib/api";
 import { showToast } from "@/components/toast";
 

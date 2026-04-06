@@ -32,7 +32,9 @@ export const DirectorWizard = () => {
       case 1:
         return state.mode !== null;
       case 2:
-        return state.mode === "presentation" ? state.sourceFiles.length > 0 : state.clips.length > 0;
+        return state.mode === "presentation"
+          ? state.sourceFiles.length > 0
+          : state.clips.length > 0;
       case 3:
         return true; // template selection is optional (uses default)
       case 4:
@@ -103,9 +105,12 @@ export const DirectorWizard = () => {
     setState((s) => ({ ...s, quizEnabled }));
   }, []);
 
-  const setImageClipDurationSeconds = useCallback((imageClipDurationSeconds: number) => {
-    setState((s) => ({ ...s, imageClipDurationSeconds }));
-  }, []);
+  const setImageClipDurationSeconds = useCallback(
+    (imageClipDurationSeconds: number) => {
+      setState((s) => ({ ...s, imageClipDurationSeconds }));
+    },
+    [],
+  );
 
   const setBrandVoiceId = useCallback((brandVoiceId: string | null) => {
     setState((s) => ({ ...s, brandVoiceId }));
@@ -136,7 +141,7 @@ export const DirectorWizard = () => {
       // Only allow going to steps already visited or current + 1
       if (n >= 1 && n <= step) setStep(n);
     },
-    [step]
+    [step],
   );
 
   return (
@@ -203,7 +208,10 @@ export const DirectorWizard = () => {
           />
         )}
         {step === 5 && (
-          <VisualAssetsStep assets={state.visualAssets} onChange={setVisualAssets} />
+          <VisualAssetsStep
+            assets={state.visualAssets}
+            onChange={setVisualAssets}
+          />
         )}
         {step === 6 && (
           <ReviewProduceStep

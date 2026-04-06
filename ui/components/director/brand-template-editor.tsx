@@ -182,7 +182,11 @@ export function BrandTemplateEditor({ brandKitId }: { brandKitId: string }) {
       {/* Saved templates list */}
       {saved?.templates && saved.templates.length > 0 && (
         <SectionCard
-          title={<span className="inline-flex items-center gap-2"><Check className="w-4 h-4" /> Saved Templates</span>}
+          title={
+            <span className="inline-flex items-center gap-2">
+              <Check className="w-4 h-4" /> Saved Templates
+            </span>
+          }
         >
           <div className="space-y-2">
             {saved.templates.map((s) => {
