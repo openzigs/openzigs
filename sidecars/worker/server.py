@@ -848,6 +848,19 @@ async def generate(request: GenerateRequest):
     if status["is_busy"]:
         raise HTTPException(status_code=429, detail="Worker is busy")
 
+    # Audio generation requires mlx-community/LTX-2-dev-bf16 (~87 GB) which
+    # will be auto-downloaded on first use.  Reject audio jobs until the
+    # operator explicitly opts in by setting LTX_ALLOW_AUDIO=1.
+    if request.audio and not os.getenv("LTX_ALLOW_AUDIO", ""):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Audio generation is disabled. Set LTX_ALLOW_AUDIO=1 in the worker "
+                "environment to enable it (requires ~87 GB additional disk space for "
+                "mlx-community/LTX-2-dev-bf16)."
+            ),
+        )
+
     # Enforce frame limit strictly
     request.num_frames = min(request.num_frames, MAX_VIDEO_FRAMES)
 
