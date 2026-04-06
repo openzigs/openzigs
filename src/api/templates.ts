@@ -4,10 +4,29 @@
  */
 
 import { Router } from "express";
-import type { PostTemplateRepository } from "../creative/post-template-repository.js";
+import type {
+  PostTemplate,
+  PostTemplateRepository,
+} from "../creative/post-template-repository.js";
 
 export interface TemplatesRouterOptions {
   postTemplateRepo: PostTemplateRepository;
+}
+
+/** Serialize a PostTemplate to the REST API shape (snake_case). */
+function serializeTemplate(t: PostTemplate) {
+  return {
+    id: t.id,
+    name: t.name,
+    description: t.description,
+    platform: t.platform,
+    layout: t.layout,
+    content_template: t.contentTemplate,
+    brand_kit_id: t.brandKitId,
+    tags: t.tags,
+    created_at: t.createdAt,
+    updated_at: t.updatedAt,
+  };
 }
 
 export function createTemplatesRouter({
@@ -21,7 +40,7 @@ export function createTemplatesRouter({
       const platform = req.query.platform as string | undefined;
       const brandKitId = req.query.brand_kit_id as string | undefined;
       const templates = postTemplateRepo.list({ platform, brandKitId });
-      res.json({ templates });
+      res.json({ templates: templates.map(serializeTemplate) });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       res.status(500).json({ error: msg });
@@ -59,7 +78,7 @@ export function createTemplatesRouter({
         tags: Array.isArray(body.tags) ? (body.tags as string[]) : [],
       });
 
-      res.status(201).json(template);
+      res.status(201).json(serializeTemplate(template));
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       res.status(500).json({ error: msg });
@@ -74,7 +93,7 @@ export function createTemplatesRouter({
         res.status(404).json({ error: "Template not found" });
         return;
       }
-      res.json(template);
+      res.json(serializeTemplate(template));
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       res.status(500).json({ error: msg });
@@ -108,7 +127,7 @@ export function createTemplatesRouter({
         res.status(404).json({ error: "Template not found" });
         return;
       }
-      res.json(updated);
+      res.json(serializeTemplate(updated));
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       res.status(500).json({ error: msg });
