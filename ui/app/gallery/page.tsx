@@ -949,13 +949,20 @@ export default function GalleryPage() {
         />
       )}
 
-      {/* Image Actions Panel (Issue #812) */}
+      {/* Image Actions Panel (Issue #815) */}
       {imageActionsAsset && imageActionsAsset.type === "image" && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-          <div className="mx-4 w-full max-w-md">
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+          onClick={() => setImageActionsAsset(null)}
+        >
+          <div
+            className="mx-4 w-full max-w-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
             <ImageActionsPanel
               filePath={imageActionsAsset.file_path}
               filename={imageActionsAsset.filename}
+              imageUrl={assetUrl(imageActionsAsset)}
               onClose={() => setImageActionsAsset(null)}
             />
           </div>
