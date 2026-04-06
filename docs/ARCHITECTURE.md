@@ -43,6 +43,7 @@
 - [Distributed Media Queue, Worker Nodes & Asset Gallery](#distributed-media-queue-worker-nodes--asset-gallery-epic-325)
 - [Multi-Segment Video Generation Pipeline](#multi-segment-video-generation-pipeline-epic-780)
 - [Music Studio — Voice2Voice Pipeline & Smart Remix Lab](#music-studio--voice2voice-pipeline--smart-remix-lab-epic-380-389-402)
+- [Creative Studio — Design & Media Tools](#creative-studio--design--media-tools-epic-766)
 - [Character Lab — LoRA Training & Identity Consistency](#character-lab--lora-training--identity-consistency-epic-374)
 - [Autonomous Agent Testing Architecture](#autonomous-agent-testing-architecture)
 - [Studio Mode: Screen Capture, Trim & AI Auto-Cut](#studio-mode-screen-capture-trim--ai-auto-cut)
@@ -5939,6 +5940,82 @@ SoundFonts are loaded from `~/.openzigs/soundfonts/` and mapped by instrument ID
 | Sidecar Endpoints | `sidecars/music-studio/server.py` | `/remix/analyze`, `/remix/replace-stem`, `/remix/master`, voice reference CRUD |
 
 ### Tracking: [Epic #380](https://github.com/openzigs/openzigs/issues/380), [Epic #389](https://github.com/openzigs/openzigs/issues/389), [Epic #402](https://github.com/openzigs/openzigs/issues/402)
+
+## Creative Studio — Design & Media Tools (Epic #766)
+
+### Overview
+
+The Creative Studio adds a Canva-inspired suite of design and media processing tools, combining Node.js-native Sharp image manipulation with Python AI sidecars (Real-ESRGAN upscaling, rembg background removal) and LLM-powered content generation. The system spans 25 MCP tools across 10 tool modules, a SQLite-backed post template engine, an image processing sidecar, and two new UI pages (Visual Content Calendar, Inpainting Studio).
+
+### Architecture
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│                        MCP Tool Layer                        │
+│  ┌─────────────┐ ┌──────────────┐ ┌────────────────────────┐│
+│  │ Image Manip  │ │ Art Style    │ │ Social Caption/Hashtag ││
+│  │ (Sharp)      │ │ (12 presets) │ │ (LLM-powered)          ││
+│  ├─────────────┤ ├──────────────┤ ├────────────────────────┤│
+│  │ QR Code Gen  │ │ Audio Norm   │ │ Speech-to-Text (MLX)   ││
+│  │ (qrcode)     │ │ (FFmpeg)     │ │ (Whisper)              ││
+│  ├─────────────┤ ├──────────────┤ ├────────────────────────┤│
+│  │ Brand Kit    │ │ Post Template│ │ Image Upscale/BG Rmv   ││
+│  │ (SQLite)     │ │ (SQLite)     │ │ (sidecar proxy)        ││
+│  └─────────────┘ └──────────────┘ └────────────────────────┘│
+└──────────────────┬──────────────────────┬────────────────────┘
+                   │                      │
+    ┌──────────────▼──────────┐  ┌────────▼────────────────┐
+    │    Post Template Repo   │  │  Image Processing Sidecar│
+    │  (better-sqlite3, CRUD, │  │  (FastAPI, port 5010)    │
+    │   variable substitution)│  │  Real-ESRGAN + rembg     │
+    └─────────────────────────┘  └──────────────────────────┘
+```
+
+### MCP Tools (25 tools across 10 modules)
+
+| Module | Tools | Description |
+|--------|-------|-------------|
+| `image-manipulation-tools.ts` | `resize-image`, `crop-image`, `convert-image`, `filter-image`, `watermark-image` | Sharp-based image processing with path validation |
+| `image-upscale-tools.ts` | `upscale-image` | Proxies to image processing sidecar for Real-ESRGAN 2x/4x |
+| `background-removal-tools.ts` | `remove-background` | Proxies to sidecar for rembg AI background removal |
+| `art-style-tools.ts` | `list-art-styles`, `apply-art-style` | 12 prompt template presets (Photorealistic, Anime, Oil Painting, etc.) |
+| `audio-normalization-tools.ts` | `normalize-audio` | FFmpeg loudnorm two-pass EBU R128 normalization |
+| `social-caption-tools.ts` | `generate-social-caption`, `generate-hashtags` | LLM-powered platform-optimized captions and hashtags |
+| `qr-code-tools.ts` | `generate-qr-code` | PNG, SVG, and terminal ASCII QR codes |
+| `speech-to-text-tools.ts` | `speech-to-text` | Whisper MLX transcription (text/SRT/VTT/JSON) |
+| `post-template-tools.ts` | `create-post-template`, `get-post-template`, `list-post-templates`, `update-post-template`, `delete-post-template`, `apply-post-template` | CRUD + variable substitution for reusable post templates |
+| `brand-kit-tools.ts` | `create-brand-kit`, `get-brand-kit`, `list-brand-kits`, `update-brand-kit`, `delete-brand-kit` | Brand visual identity presets (colors, fonts, logos) |
+
+### Image Processing Sidecar
+
+FastAPI server (`sidecars/image-processing/server.py`) running on port 5010:
+
+- **Auth**: `CALLBACK_SECRET` env var enforced via HTTP middleware on all POST endpoints
+- **Endpoints**: `POST /upscale` (Real-ESRGAN), `POST /remove-background` (rembg), `GET /health`
+- **Safety**: Base64 payload fields capped at ~50 MB (`max_length=67_108_864`) to prevent memory-exhaustion DoS
+- **Models**: Lazy-loaded on first request to minimize startup time
+
+### Post Template Repository
+
+SQLite-backed (`src/creative/post-template-repository.ts`) with:
+- CRUD operations for templates with platform targeting, layout, brand kit binding, and tags
+- `applyTemplate()` performs `{{variable}}` substitution using `String.replaceAll()` (no regex, ReDoS-safe)
+- Foreign key to `brand_kits` table with `ON DELETE SET NULL`
+
+### Security Considerations
+
+- **Path traversal prevention**: `validatePath()` in image manipulation tools resolves paths via `path.resolve()` then checks `startsWith(allowedDir + path.sep)` against an allowlist
+- **Sidecar auth**: Bearer token middleware rejects unauthenticated requests when `CALLBACK_SECRET` is set
+- **Payload limits**: Pydantic `max_length` on base64 fields prevents memory-exhaustion attacks
+
+### UI Pages
+
+| Page | Route | Description |
+|------|-------|-------------|
+| Visual Content Calendar | `/calendar` | FullCalendar integration with outbox, drag-and-drop rescheduling |
+| Inpainting Studio | `/inpainting` | Canvas-based mask painting for AI inpainting with art style integration |
+
+### Tracking: [Epic #766](https://github.com/openzigs/openzigs/issues/766)
 
 ## Character Lab — LoRA Training & Identity Consistency (Epic #374)
 

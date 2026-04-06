@@ -61,6 +61,16 @@ import { createIngestWebsiteTool } from "./tools/knowledge-ingest-website.js";
 import { createCompetitorMonitorTool } from "./tools/competitive-monitor.js";
 import { createWebExtractTool } from "./tools/web-extract.js";
 import { createWebMapTool } from "./tools/web-map.js";
+import { createImageManipulationTools } from "./tools/image-manipulation-tools.js";
+import { createImageUpscaleTools } from "./tools/image-upscale-tools.js";
+import { createBackgroundRemovalTools } from "./tools/background-removal-tools.js";
+import { createArtStyleTools } from "./tools/art-style-tools.js";
+import { createAudioNormalizationTools } from "./tools/audio-normalization-tools.js";
+import { createSpeechToTextTools } from "./tools/speech-to-text-tools.js";
+import { createQrCodeTools } from "./tools/qr-code-tools.js";
+import { createSocialCaptionTools } from "./tools/social-caption-tools.js";
+import { createBrandKitTools } from "./tools/brand-kit-tools.js";
+import { createPostTemplateTools } from "./tools/post-template-tools.js";
 import { createFirecrawlSearchTool } from "./tools/firecrawl-search.js";
 import { getFirecrawlClient } from "../browser/firecrawl-client.js";
 import { createLeadExtractTool } from "./tools/lead-extract.js";
@@ -159,6 +169,12 @@ export type McpServerOptions = {
   serperApiKey?: string;
   /** Tasks config for orchestration mode default. */
   tasksConfig?: import("../config/index.js").TasksConfig;
+  /** Image processing sidecar URL (Real-ESRGAN + rembg). */
+  imageProcessingSidecarUrl?: string;
+  /** Brand Kit Repository for brand kit tools. */
+  brandKitRepo?: import("../video/brand-kit.js").BrandKitRepository;
+  /** Post Template Repository for post template tools. */
+  postTemplateRepo?: import("../creative/post-template-repository.js").PostTemplateRepository;
 };
 
 export type RegisterMcpToolsOptions = Pick<
@@ -208,6 +224,9 @@ export type RegisterMcpToolsOptions = Pick<
   | "outboxRepo"
   | "serperApiKey"
   | "tasksConfig"
+  | "imageProcessingSidecarUrl"
+  | "brandKitRepo"
+  | "postTemplateRepo"
 >;
 
 const readFileSchema = z.object({ path: z.string() });
@@ -1008,6 +1027,91 @@ export const registerMcpTools = (
       memoryManager: options.memoryManager,
     });
     for (const tool of memTools) {
+      registerTool(tool);
+    }
+  }
+
+  // ── Creative Studio Tools (Epic #766) ──
+
+  // Image Manipulation (Sharp) — #768
+  const imgManipTools = createImageManipulationTools();
+  for (const tool of imgManipTools) {
+    registerTool(tool);
+  }
+
+  // Image Upscaling (Real-ESRGAN sidecar) — #767
+  if (options.imageProcessingSidecarUrl) {
+    const upscaleTools = createImageUpscaleTools({
+      sidecarUrl: options.imageProcessingSidecarUrl,
+    });
+    for (const tool of upscaleTools) {
+      registerTool(tool);
+    }
+  }
+
+  // Background Removal (rembg sidecar) — #769
+  if (options.imageProcessingSidecarUrl) {
+    const bgRemovalTools = createBackgroundRemovalTools({
+      sidecarUrl: options.imageProcessingSidecarUrl,
+    });
+    for (const tool of bgRemovalTools) {
+      registerTool(tool);
+    }
+  }
+
+  // Art Style Picker for Flux — #770
+  const artTools = createArtStyleTools();
+  for (const tool of artTools) {
+    registerTool(tool);
+  }
+
+  // Audio Normalization (FFmpeg loudnorm) — #771
+  const audioNormTools = createAudioNormalizationTools();
+  for (const tool of audioNormTools) {
+    registerTool(tool);
+  }
+
+  // Speech-to-Text (Whisper MLX) — #775
+  if (options.audioSidecarUrl) {
+    const sttTools = createSpeechToTextTools({
+      audioSidecarUrl: options.audioSidecarUrl,
+    });
+    for (const tool of sttTools) {
+      registerTool(tool);
+    }
+  }
+
+  // QR Code Generator — #773
+  const qrTools = createQrCodeTools();
+  for (const tool of qrTools) {
+    registerTool(tool);
+  }
+
+  // Social Caption & Hashtag Generator — #772
+  const captionTools = createSocialCaptionTools({
+    copilotWrapper: options.copilot,
+    outboxRepo: options.outboxRepo,
+  });
+  for (const tool of captionTools) {
+    registerTool(tool);
+  }
+
+  // Brand Kit Tools — #778
+  if (options.brandKitRepo) {
+    const bkTools = createBrandKitTools({
+      brandKitRepo: options.brandKitRepo,
+    });
+    for (const tool of bkTools) {
+      registerTool(tool);
+    }
+  }
+
+  // Post Template Tools — #776
+  if (options.postTemplateRepo) {
+    const ptTools = createPostTemplateTools({
+      postTemplateRepo: options.postTemplateRepo,
+    });
+    for (const tool of ptTools) {
       registerTool(tool);
     }
   }

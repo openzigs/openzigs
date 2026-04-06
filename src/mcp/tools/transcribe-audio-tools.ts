@@ -164,31 +164,49 @@ export const createTranscribeAudioTools = ({
           );
 
           // Save transcript as physical file to ~/.openzigs/knowledge/
-          const KNOWLEDGE_DIR = path.join(os.homedir(), ".openzigs", "knowledge");
+          const KNOWLEDGE_DIR = path.join(
+            os.homedir(),
+            ".openzigs",
+            "knowledge",
+          );
           const transcriptBaseName = filename.replace(/\.[^.]+$/, "");
-          const transcriptFilePath = path.join(KNOWLEDGE_DIR, `${transcriptBaseName}.transcript.txt`);
+          const transcriptFilePath = path.join(
+            KNOWLEDGE_DIR,
+            `${transcriptBaseName}.transcript.txt`,
+          );
           try {
             await fs.mkdir(KNOWLEDGE_DIR, { recursive: true });
             await fs.writeFile(transcriptFilePath, result.text, "utf-8");
             lines.push("", `> Transcript file saved to: ${transcriptFilePath}`);
-            logger.info(`transcribe-audio: saved transcript file to ${transcriptFilePath}`);
+            logger.info(
+              `transcribe-audio: saved transcript file to ${transcriptFilePath}`,
+            );
           } catch (fileErr) {
-            logger.warn(`transcribe-audio: failed to save transcript file: ${fileErr instanceof Error ? fileErr.message : String(fileErr)}`);
+            logger.warn(
+              `transcribe-audio: failed to save transcript file: ${fileErr instanceof Error ? fileErr.message : String(fileErr)}`,
+            );
           }
 
           // Auto-ingest transcript into the Knowledge vector store
           if (knowledgeService && result.text.length > 0) {
             try {
               const docId = `transcript:${transcriptBaseName}`;
-              const title = `YouTube Transcript: ${filename.replace(/^\d+-/, "").replace(/\.[^.]+$/, "").replace(/[_-]+/g, " ")}`;
+              const title = `YouTube Transcript: ${filename
+                .replace(/^\d+-/, "")
+                .replace(/\.[^.]+$/, "")
+                .replace(/[_-]+/g, " ")}`;
               await knowledgeService.ingestText(docId, title, result.text, {
                 category: "media",
                 visibility: "internal",
               });
               lines.push(`> Transcript indexed in Knowledge as "${title}"`);
-              logger.info(`transcribe-audio: ingested transcript into Knowledge as ${docId}`);
+              logger.info(
+                `transcribe-audio: ingested transcript into Knowledge as ${docId}`,
+              );
             } catch (kErr) {
-              logger.warn(`transcribe-audio: knowledge ingestion failed: ${kErr instanceof Error ? kErr.message : String(kErr)}`);
+              logger.warn(
+                `transcribe-audio: knowledge ingestion failed: ${kErr instanceof Error ? kErr.message : String(kErr)}`,
+              );
             }
           }
 

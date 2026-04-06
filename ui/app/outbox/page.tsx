@@ -35,8 +35,20 @@ import {
 
 // ── Types ───────────────────────────────────────────────────
 
-type OutboxStatus = "pending" | "processing" | "published" | "failed" | "canceled";
-type OutboxPlatform = "twitter" | "pinterest" | "linkedin" | "youtube" | "reddit" | "instagram" | "facebook";
+type OutboxStatus =
+  | "pending"
+  | "processing"
+  | "published"
+  | "failed"
+  | "canceled";
+type OutboxPlatform =
+  | "twitter"
+  | "pinterest"
+  | "linkedin"
+  | "youtube"
+  | "reddit"
+  | "instagram"
+  | "facebook";
 type OutboxAssetType = "image" | "video" | "audio" | "document" | "text";
 
 interface OutboxAttachment {
@@ -90,12 +102,35 @@ interface ChannelsResponse {
 
 // ── Constants ───────────────────────────────────────────────
 
-const STATUS_CONFIG: Record<OutboxStatus, { label: string; color: string; icon: React.ElementType }> = {
-  pending: { label: "Pending", color: "bg-amber-500/15 text-amber-400 border-amber-500/30", icon: Clock },
-  processing: { label: "Processing", color: "bg-blue-500/15 text-blue-400 border-blue-500/30", icon: Loader2 },
-  published: { label: "Published", color: "bg-emerald-500/15 text-emerald-400 border-emerald-500/30", icon: CheckCircle2 },
-  failed: { label: "Failed", color: "bg-red-500/15 text-red-400 border-red-500/30", icon: XCircle },
-  canceled: { label: "Canceled", color: "bg-zinc-500/15 text-zinc-400 border-zinc-500/30", icon: Ban },
+const STATUS_CONFIG: Record<
+  OutboxStatus,
+  { label: string; color: string; icon: React.ElementType }
+> = {
+  pending: {
+    label: "Pending",
+    color: "bg-amber-500/15 text-amber-400 border-amber-500/30",
+    icon: Clock,
+  },
+  processing: {
+    label: "Processing",
+    color: "bg-blue-500/15 text-blue-400 border-blue-500/30",
+    icon: Loader2,
+  },
+  published: {
+    label: "Published",
+    color: "bg-emerald-500/15 text-emerald-400 border-emerald-500/30",
+    icon: CheckCircle2,
+  },
+  failed: {
+    label: "Failed",
+    color: "bg-red-500/15 text-red-400 border-red-500/30",
+    icon: XCircle,
+  },
+  canceled: {
+    label: "Canceled",
+    color: "bg-zinc-500/15 text-zinc-400 border-zinc-500/30",
+    icon: Ban,
+  },
 };
 
 const PLATFORM_LABELS: Record<OutboxPlatform, string> = {
@@ -116,8 +151,22 @@ const ASSET_TYPE_ICONS: Record<OutboxAssetType, React.ElementType> = {
   text: Type,
 };
 
-const ALL_STATUSES: OutboxStatus[] = ["pending", "processing", "published", "failed", "canceled"];
-const ALL_PLATFORMS: OutboxPlatform[] = ["twitter", "pinterest", "linkedin", "youtube", "reddit", "instagram", "facebook"];
+const ALL_STATUSES: OutboxStatus[] = [
+  "pending",
+  "processing",
+  "published",
+  "failed",
+  "canceled",
+];
+const ALL_PLATFORMS: OutboxPlatform[] = [
+  "twitter",
+  "pinterest",
+  "linkedin",
+  "youtube",
+  "reddit",
+  "instagram",
+  "facebook",
+];
 
 // ── Helpers ─────────────────────────────────────────────────
 
@@ -147,12 +196,16 @@ function formatScheduledTime(iso: string): string {
 export default function OutboxPage() {
   const queryClient = useQueryClient();
   const [statusFilter, setStatusFilter] = useState<OutboxStatus | "all">("all");
-  const [platformFilter, setPlatformFilter] = useState<OutboxPlatform | "all">("all");
+  const [platformFilter, setPlatformFilter] = useState<OutboxPlatform | "all">(
+    "all",
+  );
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [expandedError, setExpandedError] = useState<string | null>(null);
   const [showNewItemModal, setShowNewItemModal] = useState(false);
   const [editingItem, setEditingItem] = useState<OutboxItem | null>(null);
-  const [notifySelections, setNotifySelections] = useState<Record<string, Set<string>>>({});
+  const [notifySelections, setNotifySelections] = useState<
+    Record<string, Set<string>>
+  >({});
 
   // ── Queries ───────────────────────────────────────────────
 
@@ -173,7 +226,10 @@ export default function OutboxPage() {
     refetchInterval: 10_000,
   });
 
-  const { data: listData, isLoading } = useQuery<{ items: OutboxItem[]; total: number }>({
+  const { data: listData, isLoading } = useQuery<{
+    items: OutboxItem[];
+    total: number;
+  }>({
     queryKey: ["outbox-items", statusFilter, platformFilter],
     queryFn: () => {
       const params = new URLSearchParams();
@@ -188,7 +244,8 @@ export default function OutboxPage() {
   // ── Mutations ─────────────────────────────────────────────
 
   const retryMutation = useMutation({
-    mutationFn: (id: string) => fetchJson(`/api/admin/outbox/${id}/retry`, { method: "POST" }),
+    mutationFn: (id: string) =>
+      fetchJson(`/api/admin/outbox/${id}/retry`, { method: "POST" }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["outbox-items"] });
       queryClient.invalidateQueries({ queryKey: ["outbox-stats"] });
@@ -198,7 +255,8 @@ export default function OutboxPage() {
   });
 
   const cancelMutation = useMutation({
-    mutationFn: (id: string) => fetchJson(`/api/admin/outbox/${id}/cancel`, { method: "POST" }),
+    mutationFn: (id: string) =>
+      fetchJson(`/api/admin/outbox/${id}/cancel`, { method: "POST" }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["outbox-items"] });
       queryClient.invalidateQueries({ queryKey: ["outbox-stats"] });
@@ -208,7 +266,13 @@ export default function OutboxPage() {
   });
 
   const publishMutation = useMutation({
-    mutationFn: ({ id, notifyChannels }: { id: string; notifyChannels?: string[] }) =>
+    mutationFn: ({
+      id,
+      notifyChannels,
+    }: {
+      id: string;
+      notifyChannels?: string[];
+    }) =>
       fetchJson(`/api/admin/outbox/${id}/publish`, {
         method: "POST",
         body: JSON.stringify(notifyChannels?.length ? { notifyChannels } : {}),
@@ -222,7 +286,8 @@ export default function OutboxPage() {
   });
 
   const deleteMutation = useMutation({
-    mutationFn: (id: string) => fetchJson(`/api/admin/outbox/${id}`, { method: "DELETE" }),
+    mutationFn: (id: string) =>
+      fetchJson(`/api/admin/outbox/${id}`, { method: "DELETE" }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["outbox-items"] });
       queryClient.invalidateQueries({ queryKey: ["outbox-stats"] });
@@ -233,7 +298,14 @@ export default function OutboxPage() {
   });
 
   const items = listData?.items ?? [];
-  const stats = statsData ?? { pending: 0, processing: 0, published: 0, failed: 0, canceled: 0, total: 0 };
+  const stats = statsData ?? {
+    pending: 0,
+    processing: 0,
+    published: 0,
+    failed: 0,
+    canceled: 0,
+    total: 0,
+  };
 
   return (
     <main className="px-6 py-10 lg:px-12">
@@ -242,7 +314,9 @@ export default function OutboxPage() {
       {/* ── Header ──────────────────────────────────────────── */}
       <div className="mb-8 flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold text-foreground">Publishing Outbox</h1>
+          <h1 className="text-3xl font-bold text-foreground">
+            Publishing Outbox
+          </h1>
           <p className="mt-1 text-sm text-muted-foreground">
             Queue content for autonomous publishing across platforms
           </p>
@@ -269,20 +343,30 @@ export default function OutboxPage() {
               type="button"
               onClick={() => setStatusFilter(statusFilter === s ? "all" : s)}
               className={`rounded-xl border p-4 text-left transition-colors ${
-                statusFilter === s ? cfg.color + " ring-1 ring-current" : "border-border bg-card hover:bg-muted/40"
+                statusFilter === s
+                  ? cfg.color + " ring-1 ring-current"
+                  : "border-border bg-card hover:bg-muted/40"
               }`}
             >
               <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-wider text-muted-foreground">
-                <Icon className={`h-3.5 w-3.5 ${s === "processing" ? "animate-spin" : ""}`} />
+                <Icon
+                  className={`h-3.5 w-3.5 ${s === "processing" ? "animate-spin" : ""}`}
+                />
                 {cfg.label}
               </div>
-              <div className="mt-1 text-2xl font-bold text-card-foreground">{count}</div>
+              <div className="mt-1 text-2xl font-bold text-card-foreground">
+                {count}
+              </div>
             </button>
           );
         })}
         <div className="rounded-xl border border-border bg-card p-4">
-          <div className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Total</div>
-          <div className="mt-1 text-2xl font-bold text-card-foreground">{stats.total}</div>
+          <div className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+            Total
+          </div>
+          <div className="mt-1 text-2xl font-bold text-card-foreground">
+            {stats.total}
+          </div>
         </div>
       </div>
 
@@ -291,12 +375,16 @@ export default function OutboxPage() {
         <Filter className="h-4 w-4 text-muted-foreground" />
         <select
           value={platformFilter}
-          onChange={(e) => setPlatformFilter(e.target.value as OutboxPlatform | "all")}
+          onChange={(e) =>
+            setPlatformFilter(e.target.value as OutboxPlatform | "all")
+          }
           className="rounded-lg border border-border bg-card px-3 py-1.5 text-sm text-card-foreground"
         >
           <option value="all">All Platforms</option>
           {ALL_PLATFORMS.map((p) => (
-            <option key={p} value={p}>{PLATFORM_LABELS[p]}</option>
+            <option key={p} value={p}>
+              {PLATFORM_LABELS[p]}
+            </option>
           ))}
         </select>
       </div>
@@ -311,7 +399,9 @@ export default function OutboxPage() {
           <div className="py-12 text-center text-sm text-muted-foreground">
             <Send className="mx-auto mb-3 h-8 w-8 opacity-40" />
             <p>No items in the outbox</p>
-            <p className="mt-1 text-xs">Queue text, files, gallery assets, or URLs for publishing</p>
+            <p className="mt-1 text-xs">
+              Queue text, files, gallery assets, or URLs for publishing
+            </p>
             <button
               type="button"
               onClick={() => setShowNewItemModal(true)}
@@ -333,7 +423,10 @@ export default function OutboxPage() {
               const isEditable = isPending || isCanceled;
 
               return (
-                <div key={item.id} className="flex items-start gap-4 py-4 first:pt-0 last:pb-0">
+                <div
+                  key={item.id}
+                  className="flex items-start gap-4 py-4 first:pt-0 last:pb-0"
+                >
                   {/* Asset type icon */}
                   <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-muted/60">
                     <AssetIcon className="h-5 w-5 text-muted-foreground" />
@@ -342,8 +435,12 @@ export default function OutboxPage() {
                   {/* Content */}
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
-                      <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-medium ${statusCfg.color}`}>
-                        <StatusIcon className={`h-3 w-3 ${item.status === "processing" ? "animate-spin" : ""}`} />
+                      <span
+                        className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-medium ${statusCfg.color}`}
+                      >
+                        <StatusIcon
+                          className={`h-3 w-3 ${item.status === "processing" ? "animate-spin" : ""}`}
+                        />
                         {statusCfg.label}
                       </span>
                       <span className="rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">
@@ -356,20 +453,29 @@ export default function OutboxPage() {
                       )}
                     </div>
                     {item.title && (
-                      <p className="mt-1 text-sm font-medium text-card-foreground">{item.title}</p>
+                      <p className="mt-1 text-sm font-medium text-card-foreground">
+                        {item.title}
+                      </p>
                     )}
                     {item.contentBody && (
-                      <p className="mt-0.5 line-clamp-2 text-xs text-muted-foreground font-mono">{item.contentBody}</p>
+                      <p className="mt-0.5 line-clamp-2 text-xs text-muted-foreground font-mono">
+                        {item.contentBody}
+                      </p>
                     )}
                     {item.attachments.length > 0 && (
                       <div className="mt-0.5 flex items-center gap-1 text-xs text-muted-foreground">
                         <Paperclip className="h-3 w-3" />
-                        {item.attachments.length} file{item.attachments.length > 1 ? "s" : ""}
+                        {item.attachments.length} file
+                        {item.attachments.length > 1 ? "s" : ""}
                       </div>
                     )}
-                    <p className="mt-1 line-clamp-2 text-sm text-card-foreground">{item.agentContext}</p>
+                    <p className="mt-1 line-clamp-2 text-sm text-card-foreground">
+                      {item.agentContext}
+                    </p>
                     <div className="mt-1.5 flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
-                      <span title={new Date(item.scheduledTime).toLocaleString()}>
+                      <span
+                        title={new Date(item.scheduledTime).toLocaleString()}
+                      >
                         <Clock className="mr-0.5 inline h-3 w-3" />
                         {formatScheduledTime(item.scheduledTime)}
                       </span>
@@ -391,11 +497,17 @@ export default function OutboxPage() {
                     {isFailed && item.error && (
                       <button
                         type="button"
-                        onClick={() => setExpandedError(expandedError === item.id ? null : item.id)}
+                        onClick={() =>
+                          setExpandedError(
+                            expandedError === item.id ? null : item.id,
+                          )
+                        }
                         className="mt-2 flex items-center gap-1 text-xs text-red-400 hover:text-red-300"
                       >
                         <AlertTriangle className="h-3 w-3" />
-                        {expandedError === item.id ? "Hide error" : "Show error"}
+                        {expandedError === item.id
+                          ? "Hide error"
+                          : "Show error"}
                       </button>
                     )}
                     {expandedError === item.id && item.error && (
@@ -422,13 +534,20 @@ export default function OutboxPage() {
                         {availableNotifyChannels.length > 0 && (
                           <div className="flex items-center gap-2 mr-1">
                             {availableNotifyChannels.map((ch) => (
-                              <label key={ch} className="flex items-center gap-1 text-xs text-muted-foreground cursor-pointer select-none">
+                              <label
+                                key={ch}
+                                className="flex items-center gap-1 text-xs text-muted-foreground cursor-pointer select-none"
+                              >
                                 <input
                                   type="checkbox"
-                                  checked={notifySelections[item.id]?.has(ch) ?? false}
+                                  checked={
+                                    notifySelections[item.id]?.has(ch) ?? false
+                                  }
                                   onChange={(e) => {
                                     setNotifySelections((prev) => {
-                                      const current = new Set(prev[item.id] ?? []);
+                                      const current = new Set(
+                                        prev[item.id] ?? [],
+                                      );
                                       if (e.target.checked) current.add(ch);
                                       else current.delete(ch);
                                       return { ...prev, [item.id]: current };
@@ -444,10 +563,21 @@ export default function OutboxPage() {
                         )}
                         <button
                           type="button"
-                          title={notifySelections[item.id]?.size ? "Publish + Notify" : "Publish Now"}
+                          title={
+                            notifySelections[item.id]?.size
+                              ? "Publish + Notify"
+                              : "Publish Now"
+                          }
                           onClick={() => {
-                            const channels = Array.from(notifySelections[item.id] ?? []);
-                            publishMutation.mutate({ id: item.id, notifyChannels: channels.length ? channels : undefined });
+                            const channels = Array.from(
+                              notifySelections[item.id] ?? [],
+                            );
+                            publishMutation.mutate({
+                              id: item.id,
+                              notifyChannels: channels.length
+                                ? channels
+                                : undefined,
+                            });
                           }}
                           disabled={publishMutation.isPending}
                           className="rounded-lg p-2 text-muted-foreground hover:bg-muted hover:text-emerald-400"

@@ -898,21 +898,34 @@ export class QueueMaster extends EventEmitter {
       endpoint = "/generate-async";
     }
 
+    const isKontext = job.requiredModel === "flux-kontext";
+
+    // Kontext only accepts: prompt, image, seed, aspect_ratio.
+    // Other models accept the full parameter set.
     const body: Record<string, unknown> = {
       job_id: job.id,
       callback_url: this.config.callbackUrl,
       prompt: job.payload.prompt,
-      width: job.payload.width ?? 1024,
-      height: job.payload.height ?? 576,
-      steps: job.payload.steps,
-      guidance_scale: job.payload.guidance_scale,
       seed: job.payload.seed,
       model: job.requiredModel,
+      ...(!isKontext
+        ? {
+            width: job.payload.width ?? 1024,
+            height: job.payload.height ?? 576,
+            steps: job.payload.steps,
+            guidance_scale: job.payload.guidance_scale,
+          }
+        : {}),
     };
 
     if (job.type === "img2img" && job.payload.init_image) {
       body.image = job.payload.init_image;
-      body.strength = job.payload.strength ?? 0.8;
+      if (!isKontext) {
+        body.strength = job.payload.strength ?? 0.8;
+        if (job.payload.mask) {
+          body.mask = job.payload.mask;
+        }
+      }
     }
 
     if (job.payload.lora_paths?.length) {

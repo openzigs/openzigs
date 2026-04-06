@@ -21,7 +21,9 @@ const trimVideoSchema = z.object({
 });
 
 const analyzeVideoSchema = z.object({
-  asset_id: z.string().describe("Gallery asset ID of the video to analyze for redundancy"),
+  asset_id: z
+    .string()
+    .describe("Gallery asset ID of the video to analyze for redundancy"),
 });
 
 // ── Factory ─────────────────────────────────────────────────
@@ -47,7 +49,10 @@ export const createStudioTools = ({
       inputSchema: {
         type: "object",
         properties: {
-          asset_id: { type: "string", description: "Gallery asset ID of the video to trim" },
+          asset_id: {
+            type: "string",
+            description: "Gallery asset ID of the video to trim",
+          },
           start_time: { type: "number", description: "Start time in seconds" },
           end_time: { type: "number", description: "End time in seconds" },
         },
@@ -61,17 +66,26 @@ export const createStudioTools = ({
           const input = trimVideoSchema.parse(args);
 
           if (input.end_time <= input.start_time) {
-            return { text: "end_time must be greater than start_time", isError: true };
+            return {
+              text: "end_time must be greater than start_time",
+              isError: true,
+            };
           }
 
           const asset = mediaQueueRepo.getAsset(input.asset_id);
           if (!asset) {
-            return { text: `Asset '${input.asset_id}' not found in gallery`, isError: true };
+            return {
+              text: `Asset '${input.asset_id}' not found in gallery`,
+              isError: true,
+            };
           }
 
           const inputPath = asset.file_path as string;
           if (!fs.existsSync(inputPath)) {
-            return { text: `Asset file not found on disk: ${inputPath}`, isError: true };
+            return {
+              text: `Asset file not found on disk: ${inputPath}`,
+              isError: true,
+            };
           }
 
           const ext = path.extname(inputPath);
@@ -103,22 +117,31 @@ export const createStudioTools = ({
             });
 
             return {
-              text: JSON.stringify({
-                status: "complete",
-                trimJobId: jobId,
-                newAssetId,
-                filename: outputFilename,
-                duration: `${input.end_time - input.start_time}s`,
-                size: stat.size,
-              }, null, 2),
+              text: JSON.stringify(
+                {
+                  status: "complete",
+                  trimJobId: jobId,
+                  newAssetId,
+                  filename: outputFilename,
+                  duration: `${input.end_time - input.start_time}s`,
+                  size: stat.size,
+                },
+                null,
+                2,
+              ),
             };
           } catch (waitErr) {
             return {
-              text: JSON.stringify({
-                status: "submitted",
-                trimJobId: jobId,
-                message: "Trim job submitted but did not complete within timeout. Check status via GET /api/studio/trim/:jobId",
-              }, null, 2),
+              text: JSON.stringify(
+                {
+                  status: "submitted",
+                  trimJobId: jobId,
+                  message:
+                    "Trim job submitted but did not complete within timeout. Check status via GET /api/studio/trim/:jobId",
+                },
+                null,
+                2,
+              ),
             };
           }
         } catch (err) {
@@ -136,7 +159,10 @@ export const createStudioTools = ({
       inputSchema: {
         type: "object",
         properties: {
-          asset_id: { type: "string", description: "Gallery asset ID of the video to analyze" },
+          asset_id: {
+            type: "string",
+            description: "Gallery asset ID of the video to analyze",
+          },
         },
         required: ["asset_id"],
       },
@@ -149,12 +175,18 @@ export const createStudioTools = ({
 
           const asset = mediaQueueRepo.getAsset(input.asset_id);
           if (!asset) {
-            return { text: `Asset '${input.asset_id}' not found in gallery`, isError: true };
+            return {
+              text: `Asset '${input.asset_id}' not found in gallery`,
+              isError: true,
+            };
           }
 
           const inputPath = asset.file_path as string;
           if (!fs.existsSync(inputPath)) {
-            return { text: `Asset file not found on disk: ${inputPath}`, isError: true };
+            return {
+              text: `Asset file not found on disk: ${inputPath}`,
+              isError: true,
+            };
           }
 
           const jobId = await analyzeWorker.submit({
@@ -166,20 +198,29 @@ export const createStudioTools = ({
           try {
             const job = await analyzeWorker.waitForCompletion(jobId, 300_000);
             return {
-              text: JSON.stringify({
-                status: "complete",
-                analyzeJobId: jobId,
-                suggestedCuts: job.suggestedCuts,
-                totalCuts: job.suggestedCuts.length,
-              }, null, 2),
+              text: JSON.stringify(
+                {
+                  status: "complete",
+                  analyzeJobId: jobId,
+                  suggestedCuts: job.suggestedCuts,
+                  totalCuts: job.suggestedCuts.length,
+                },
+                null,
+                2,
+              ),
             };
           } catch (waitErr) {
             return {
-              text: JSON.stringify({
-                status: "submitted",
-                analyzeJobId: jobId,
-                message: "Analysis submitted but did not complete within timeout. Check status via GET /api/studio/analyze/:jobId",
-              }, null, 2),
+              text: JSON.stringify(
+                {
+                  status: "submitted",
+                  analyzeJobId: jobId,
+                  message:
+                    "Analysis submitted but did not complete within timeout. Check status via GET /api/studio/analyze/:jobId",
+                },
+                null,
+                2,
+              ),
             };
           }
         } catch (err) {

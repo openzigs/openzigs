@@ -1,6 +1,10 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import Database from "better-sqlite3";
-import { OutboxRepository, type OutboxPlatform, type OutboxAttachment } from "./outbox-repository.js";
+import {
+  OutboxRepository,
+  type OutboxPlatform,
+  type OutboxAttachment,
+} from "./outbox-repository.js";
 
 function createTestDb(): Database.Database {
   const db = new Database(":memory:");
@@ -9,7 +13,10 @@ function createTestDb(): Database.Database {
   return db;
 }
 
-function createRepo(db: Database.Database, clock?: () => Date): OutboxRepository {
+function createRepo(
+  db: Database.Database,
+  clock?: () => Date,
+): OutboxRepository {
   const repo = new OutboxRepository(db, clock);
   repo.migrate();
   return repo;
@@ -30,17 +37,21 @@ describe("OutboxRepository", () => {
 
   describe("migrate()", () => {
     it("creates the outbox_queue table", () => {
-      const tables = db.prepare(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name='outbox_queue'",
-      ).all();
+      const tables = db
+        .prepare(
+          "SELECT name FROM sqlite_master WHERE type='table' AND name='outbox_queue'",
+        )
+        .all();
       expect(tables).toHaveLength(1);
     });
 
     it("is idempotent — can run migrate twice", () => {
       repo.migrate();
-      const tables = db.prepare(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name='outbox_queue'",
-      ).all();
+      const tables = db
+        .prepare(
+          "SELECT name FROM sqlite_master WHERE type='table' AND name='outbox_queue'",
+        )
+        .all();
       expect(tables).toHaveLength(1);
     });
 
@@ -70,7 +81,9 @@ describe("OutboxRepository", () => {
       `);
       const repo2 = new OutboxRepository(db2, () => NOW);
       repo2.migrate(); // should add title, content_body, attachments
-      const cols = db2.prepare("PRAGMA table_info(outbox_queue)").all() as Array<{ name: string }>;
+      const cols = db2
+        .prepare("PRAGMA table_info(outbox_queue)")
+        .all() as Array<{ name: string }>;
       const colNames = cols.map((c) => c.name);
       expect(colNames).toContain("title");
       expect(colNames).toContain("content_body");
@@ -109,12 +122,18 @@ describe("OutboxRepository", () => {
         platform: "youtube",
         scheduledTime: FUTURE,
         agentContext: "Upload this tech review",
-        platformMetadata: { youtube_title: "Tech Review", youtube_tags: ["tech"] },
+        platformMetadata: {
+          youtube_title: "Tech Review",
+          youtube_tags: ["tech"],
+        },
         maxRetries: 5,
       });
 
       expect(item.assetType).toBe("video");
-      expect(item.platformMetadata).toEqual({ youtube_title: "Tech Review", youtube_tags: ["tech"] });
+      expect(item.platformMetadata).toEqual({
+        youtube_title: "Tech Review",
+        youtube_tags: ["tech"],
+      });
       expect(item.maxRetries).toBe(5);
     });
 
@@ -130,8 +149,16 @@ describe("OutboxRepository", () => {
 
     it("inserts with title, content_body, and attachments", () => {
       const attachments: OutboxAttachment[] = [
-        { filePath: "/home/user/post.md", filename: "post.md", assetType: "document" },
-        { filePath: "/home/user/banner.png", filename: "banner.png", assetType: "image" },
+        {
+          filePath: "/home/user/post.md",
+          filename: "post.md",
+          assetType: "document",
+        },
+        {
+          filePath: "/home/user/banner.png",
+          filename: "banner.png",
+          assetType: "image",
+        },
       ];
       const item = repo.insert({
         title: "My Pinterest Post",
@@ -183,9 +210,21 @@ describe("OutboxRepository", () => {
 
   describe("list()", () => {
     beforeEach(() => {
-      repo.insert({ platform: "twitter", scheduledTime: PAST, agentContext: "t1" });
-      repo.insert({ platform: "pinterest", scheduledTime: PAST, agentContext: "t2" });
-      repo.insert({ platform: "twitter", scheduledTime: FUTURE, agentContext: "t3" });
+      repo.insert({
+        platform: "twitter",
+        scheduledTime: PAST,
+        agentContext: "t1",
+      });
+      repo.insert({
+        platform: "pinterest",
+        scheduledTime: PAST,
+        agentContext: "t2",
+      });
+      repo.insert({
+        platform: "twitter",
+        scheduledTime: FUTURE,
+        agentContext: "t3",
+      });
     });
 
     it("returns all items with default filters", () => {
@@ -216,9 +255,21 @@ describe("OutboxRepository", () => {
 
   describe("getStats()", () => {
     it("returns correct counts by status", () => {
-      repo.insert({ platform: "twitter", scheduledTime: PAST, agentContext: "a" });
-      repo.insert({ platform: "twitter", scheduledTime: PAST, agentContext: "b" });
-      repo.insert({ platform: "pinterest", scheduledTime: PAST, agentContext: "c" });
+      repo.insert({
+        platform: "twitter",
+        scheduledTime: PAST,
+        agentContext: "a",
+      });
+      repo.insert({
+        platform: "twitter",
+        scheduledTime: PAST,
+        agentContext: "b",
+      });
+      repo.insert({
+        platform: "pinterest",
+        scheduledTime: PAST,
+        agentContext: "c",
+      });
 
       const stats = repo.getStats();
       expect(stats.pending).toBe(3);
@@ -237,8 +288,16 @@ describe("OutboxRepository", () => {
 
   describe("claimPending()", () => {
     it("claims items whose scheduled_time has passed", () => {
-      repo.insert({ platform: "twitter", scheduledTime: PAST, agentContext: "past" });
-      repo.insert({ platform: "twitter", scheduledTime: FUTURE, agentContext: "future" });
+      repo.insert({
+        platform: "twitter",
+        scheduledTime: PAST,
+        agentContext: "past",
+      });
+      repo.insert({
+        platform: "twitter",
+        scheduledTime: FUTURE,
+        agentContext: "future",
+      });
 
       const claimed = repo.claimPending(10);
       expect(claimed).toHaveLength(1);
@@ -248,7 +307,11 @@ describe("OutboxRepository", () => {
 
     it("respects batch size limit", () => {
       for (let i = 0; i < 5; i++) {
-        repo.insert({ platform: "twitter", scheduledTime: PAST, agentContext: `item-${i}` });
+        repo.insert({
+          platform: "twitter",
+          scheduledTime: PAST,
+          agentContext: `item-${i}`,
+        });
       }
       const claimed = repo.claimPending(3);
       expect(claimed).toHaveLength(3);
@@ -261,7 +324,11 @@ describe("OutboxRepository", () => {
     });
 
     it("does not claim already processing items", () => {
-      repo.insert({ platform: "twitter", scheduledTime: PAST, agentContext: "a" });
+      repo.insert({
+        platform: "twitter",
+        scheduledTime: PAST,
+        agentContext: "a",
+      });
       const first = repo.claimPending(10);
       expect(first).toHaveLength(1);
 
@@ -277,10 +344,17 @@ describe("OutboxRepository", () => {
 
   describe("markPublished()", () => {
     it("transitions processing → published", () => {
-      const item = repo.insert({ platform: "twitter", scheduledTime: PAST, agentContext: "test" });
+      const item = repo.insert({
+        platform: "twitter",
+        scheduledTime: PAST,
+        agentContext: "test",
+      });
       repo.claimPending(1);
 
-      const published = repo.markPublished(item.id, "https://twitter.com/status/123");
+      const published = repo.markPublished(
+        item.id,
+        "https://twitter.com/status/123",
+      );
       expect(published).not.toBeNull();
       expect(published!.status).toBe("published");
       expect(published!.publishedUrl).toBe("https://twitter.com/status/123");
@@ -288,7 +362,11 @@ describe("OutboxRepository", () => {
     });
 
     it("returns null if item is not in processing status", () => {
-      const item = repo.insert({ platform: "twitter", scheduledTime: PAST, agentContext: "test" });
+      const item = repo.insert({
+        platform: "twitter",
+        scheduledTime: PAST,
+        agentContext: "test",
+      });
       const result = repo.markPublished(item.id, "https://twitter.com/123");
       expect(result).toBeNull();
     });
@@ -296,7 +374,11 @@ describe("OutboxRepository", () => {
 
   describe("markFailed()", () => {
     it("transitions processing → failed with error", () => {
-      const item = repo.insert({ platform: "twitter", scheduledTime: PAST, agentContext: "test" });
+      const item = repo.insert({
+        platform: "twitter",
+        scheduledTime: PAST,
+        agentContext: "test",
+      });
       repo.claimPending(1);
 
       const failed = repo.markFailed(item.id, "API rate limit exceeded");
@@ -309,7 +391,11 @@ describe("OutboxRepository", () => {
 
   describe("retry()", () => {
     it("transitions failed → pending", () => {
-      const item = repo.insert({ platform: "twitter", scheduledTime: PAST, agentContext: "test" });
+      const item = repo.insert({
+        platform: "twitter",
+        scheduledTime: PAST,
+        agentContext: "test",
+      });
       repo.claimPending(1);
       repo.markFailed(item.id, "error");
 
@@ -320,7 +406,11 @@ describe("OutboxRepository", () => {
     });
 
     it("returns null if item is not in failed status", () => {
-      const item = repo.insert({ platform: "twitter", scheduledTime: PAST, agentContext: "test" });
+      const item = repo.insert({
+        platform: "twitter",
+        scheduledTime: PAST,
+        agentContext: "test",
+      });
       const result = repo.retry(item.id);
       expect(result).toBeNull();
     });
@@ -328,14 +418,22 @@ describe("OutboxRepository", () => {
 
   describe("cancel()", () => {
     it("cancels a pending item", () => {
-      const item = repo.insert({ platform: "twitter", scheduledTime: FUTURE, agentContext: "test" });
+      const item = repo.insert({
+        platform: "twitter",
+        scheduledTime: FUTURE,
+        agentContext: "test",
+      });
       const canceled = repo.cancel(item.id);
       expect(canceled).not.toBeNull();
       expect(canceled!.status).toBe("canceled");
     });
 
     it("cancels a failed item", () => {
-      const item = repo.insert({ platform: "twitter", scheduledTime: PAST, agentContext: "test" });
+      const item = repo.insert({
+        platform: "twitter",
+        scheduledTime: PAST,
+        agentContext: "test",
+      });
       repo.claimPending(1);
       repo.markFailed(item.id, "err");
 
@@ -345,7 +443,11 @@ describe("OutboxRepository", () => {
     });
 
     it("returns null for processing items", () => {
-      const item = repo.insert({ platform: "twitter", scheduledTime: PAST, agentContext: "test" });
+      const item = repo.insert({
+        platform: "twitter",
+        scheduledTime: PAST,
+        agentContext: "test",
+      });
       repo.claimPending(1);
       const result = repo.cancel(item.id);
       expect(result).toBeNull();
@@ -354,7 +456,11 @@ describe("OutboxRepository", () => {
 
   describe("delete()", () => {
     it("removes an item from the database", () => {
-      const item = repo.insert({ platform: "twitter", scheduledTime: PAST, agentContext: "test" });
+      const item = repo.insert({
+        platform: "twitter",
+        scheduledTime: PAST,
+        agentContext: "test",
+      });
       expect(repo.delete(item.id)).toBe(true);
       expect(repo.getById(item.id)).toBeNull();
     });
@@ -366,15 +472,26 @@ describe("OutboxRepository", () => {
 
   describe("update()", () => {
     it("updates contentBody and title on a pending item", () => {
-      const item = repo.insert({ platform: "twitter", scheduledTime: FUTURE, agentContext: "original" });
-      const updated = repo.update(item.id, { contentBody: "new content", title: "new title" });
+      const item = repo.insert({
+        platform: "twitter",
+        scheduledTime: FUTURE,
+        agentContext: "original",
+      });
+      const updated = repo.update(item.id, {
+        contentBody: "new content",
+        title: "new title",
+      });
       expect(updated).not.toBeNull();
       expect(updated!.contentBody).toBe("new content");
       expect(updated!.title).toBe("new title");
     });
 
     it("updates scheduledTime", () => {
-      const item = repo.insert({ platform: "twitter", scheduledTime: FUTURE, agentContext: "test" });
+      const item = repo.insert({
+        platform: "twitter",
+        scheduledTime: FUTURE,
+        agentContext: "test",
+      });
       const newTime = new Date("2026-03-20T09:00:00Z");
       const updated = repo.update(item.id, { scheduledTime: newTime });
       expect(updated).not.toBeNull();
@@ -382,29 +499,47 @@ describe("OutboxRepository", () => {
     });
 
     it("updates agentContext", () => {
-      const item = repo.insert({ platform: "twitter", scheduledTime: FUTURE, agentContext: "old" });
+      const item = repo.insert({
+        platform: "twitter",
+        scheduledTime: FUTURE,
+        agentContext: "old",
+      });
       const updated = repo.update(item.id, { agentContext: "new context" });
       expect(updated).not.toBeNull();
       expect(updated!.agentContext).toBe("new context");
     });
 
     it("updates canceled items", () => {
-      const item = repo.insert({ platform: "twitter", scheduledTime: FUTURE, agentContext: "test" });
+      const item = repo.insert({
+        platform: "twitter",
+        scheduledTime: FUTURE,
+        agentContext: "test",
+      });
       repo.cancel(item.id);
-      const updated = repo.update(item.id, { contentBody: "edited while canceled" });
+      const updated = repo.update(item.id, {
+        contentBody: "edited while canceled",
+      });
       expect(updated).not.toBeNull();
       expect(updated!.contentBody).toBe("edited while canceled");
     });
 
     it("returns null for processing items", () => {
-      const item = repo.insert({ platform: "twitter", scheduledTime: PAST, agentContext: "test" });
+      const item = repo.insert({
+        platform: "twitter",
+        scheduledTime: PAST,
+        agentContext: "test",
+      });
       repo.claimPending(1);
       const result = repo.update(item.id, { contentBody: "nope" });
       expect(result).toBeNull();
     });
 
     it("returns null for published items", () => {
-      const item = repo.insert({ platform: "twitter", scheduledTime: PAST, agentContext: "test" });
+      const item = repo.insert({
+        platform: "twitter",
+        scheduledTime: PAST,
+        agentContext: "test",
+      });
       repo.claimPending(1);
       repo.markPublished(item.id, "https://example.com");
       const result = repo.update(item.id, { contentBody: "nope" });
@@ -417,7 +552,11 @@ describe("OutboxRepository", () => {
     });
 
     it("updates attachments and platformMetadata", () => {
-      const item = repo.insert({ platform: "twitter", scheduledTime: FUTURE, agentContext: "test" });
+      const item = repo.insert({
+        platform: "twitter",
+        scheduledTime: FUTURE,
+        agentContext: "test",
+      });
       const attachments = [{ filePath: "/tmp/img.png", filename: "img.png" }];
       const updated = repo.update(item.id, {
         attachments,
@@ -429,9 +568,98 @@ describe("OutboxRepository", () => {
     });
 
     it("sets updated_at to the clock time", () => {
-      const item = repo.insert({ platform: "twitter", scheduledTime: FUTURE, agentContext: "test" });
+      const item = repo.insert({
+        platform: "twitter",
+        scheduledTime: FUTURE,
+        agentContext: "test",
+      });
       const updated = repo.update(item.id, { title: "new" });
       expect(updated!.updatedAt.toISOString()).toBe(NOW.toISOString());
+    });
+  });
+
+  describe("v3 migration: template_id and brand_kit_id (Issue #810)", () => {
+    it("adds template_id and brand_kit_id columns on existing table", () => {
+      const db2 = createTestDb();
+      db2.exec(`
+        CREATE TABLE outbox_queue (
+          id TEXT PRIMARY KEY,
+          asset_id TEXT,
+          asset_url TEXT,
+          asset_type TEXT NOT NULL DEFAULT 'image',
+          title TEXT,
+          content_body TEXT,
+          attachments TEXT NOT NULL DEFAULT '[]',
+          platform TEXT NOT NULL,
+          scheduled_time TEXT NOT NULL,
+          agent_context TEXT NOT NULL DEFAULT '',
+          platform_metadata TEXT NOT NULL DEFAULT '{}',
+          status TEXT NOT NULL DEFAULT 'pending',
+          error TEXT,
+          published_url TEXT,
+          retry_count INTEGER NOT NULL DEFAULT 0,
+          max_retries INTEGER NOT NULL DEFAULT 3,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          started_at TEXT,
+          completed_at TEXT
+        );
+      `);
+      const repo2 = new OutboxRepository(db2, () => NOW);
+      repo2.migrate();
+      const cols = db2
+        .prepare("PRAGMA table_info(outbox_queue)")
+        .all() as Array<{ name: string }>;
+      const colNames = cols.map((c) => c.name);
+      expect(colNames).toContain("template_id");
+      expect(colNames).toContain("brand_kit_id");
+    });
+
+    it("inserts with template_id and brand_kit_id", () => {
+      const item = repo.insert({
+        platform: "twitter",
+        scheduledTime: FUTURE,
+        agentContext: "test",
+        templateId: "tmpl-123",
+        brandKitId: "bk-456",
+      });
+      expect(item.templateId).toBe("tmpl-123");
+      expect(item.brandKitId).toBe("bk-456");
+    });
+
+    it("inserts with null template_id and brand_kit_id by default", () => {
+      const item = repo.insert({
+        platform: "twitter",
+        scheduledTime: FUTURE,
+        agentContext: "test",
+      });
+      expect(item.templateId).toBeNull();
+      expect(item.brandKitId).toBeNull();
+    });
+
+    it("updates template_id and brand_kit_id", () => {
+      const item = repo.insert({
+        platform: "twitter",
+        scheduledTime: FUTURE,
+        agentContext: "test",
+      });
+      const updated = repo.update(item.id, {
+        templateId: "tmpl-new",
+        brandKitId: "bk-new",
+      });
+      expect(updated!.templateId).toBe("tmpl-new");
+      expect(updated!.brandKitId).toBe("bk-new");
+    });
+
+    it("can clear template_id by setting to null", () => {
+      const item = repo.insert({
+        platform: "twitter",
+        scheduledTime: FUTURE,
+        agentContext: "test",
+        templateId: "tmpl-123",
+      });
+      const updated = repo.update(item.id, { templateId: null });
+      expect(updated!.templateId).toBeNull();
     });
   });
 });

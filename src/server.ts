@@ -164,11 +164,15 @@ import { MediaQueueRepository } from "./queue/media-queue-repository.js";
 import { OutboxRepository } from "./outbox/outbox-repository.js";
 import { OutboxPoller } from "./outbox/outbox-poller.js";
 import { createOutboxRouter } from "./api/outbox.js";
+import { BrandKitRepository } from "./video/brand-kit.js";
+import { PostTemplateRepository } from "./creative/post-template-repository.js";
 import { QueueMaster } from "./queue/queue-master.js";
 import { MediaNotificationService } from "./queue/media-notification-service.js";
 import { createQueueRouter, createQueueCallbackRouter } from "./api/queue.js";
 import { createGalleryRouter } from "./api/gallery.js";
 import { createStudioRouter } from "./api/studio.js";
+import { createCreativeRouter } from "./api/creative.js";
+import { createTemplatesRouter } from "./api/templates.js";
 import {
   createCharacterRouter,
   setCharacterIO,
@@ -280,6 +284,10 @@ videoPresetsRepo.migrate();
 // ── Outbox Publishing Queue (Epic #458) ──
 const outboxRepo = new OutboxRepository(db);
 outboxRepo.migrate();
+const brandKitRepo = new BrandKitRepository(db);
+brandKitRepo.migrate();
+const postTemplateRepo = new PostTemplateRepository(db);
+postTemplateRepo.migrate();
 const outboxPoller = new OutboxPoller({
   outboxRepo,
   taskEngine,
@@ -1064,6 +1072,13 @@ registerMcpTools(toolRegistry, {
   memoryManager,
   outboxRepo,
   tasksConfig: config.tasks,
+  imageProcessingSidecarUrl: resolveSidecarUrl(
+    "image-processing",
+    "IMAGE_PROCESSING_SIDECAR_URL",
+    5010,
+  ),
+  brandKitRepo,
+  postTemplateRepo,
 });
 
 // ── Task Background Worker ──
@@ -2205,6 +2220,24 @@ const studioRouter = createStudioRouter({
   mediaQueueRepo,
 });
 app.use("/api/studio", authMiddleware, studioRouter);
+
+// Creative Studio API routes (inpainting, AI image editing, sidecar tools)
+const creativeRouter = createCreativeRouter({
+  mediaQueueRepo,
+  copilotWrapper: copilot,
+  imageProcessingSidecarUrl: resolveSidecarUrl("image-processing", "IMAGE_PROCESSING_SIDECAR_URL", 5010),
+});
+// enhance-prompt accepts a base64 image in the JSON body — needs a higher limit
+app.use(
+  "/api/admin/creative/enhance-prompt",
+  authMiddleware,
+  express.json({ limit: "20mb" }),
+);
+app.use("/api/admin/creative", authMiddleware, creativeRouter);
+
+// Post Template API routes (Issue #809)
+const templatesRouter = createTemplatesRouter({ postTemplateRepo });
+app.use("/api/admin/templates", authMiddleware, templatesRouter);
 
 // Character API routes (LoRA character profiles + training)
 const characterRouter = createCharacterRouter({ characterRepo, copilot });

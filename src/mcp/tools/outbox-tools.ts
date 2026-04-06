@@ -4,16 +4,27 @@ import type { OutboxRepository } from "../../outbox/outbox-repository.js";
 import type { Server as SocketIOServer } from "socket.io";
 
 const popNextQueueItemSchema = z.object({
-  item_id: z.string().optional().describe(
-    "Specific outbox item ID to retrieve. If omitted, returns the oldest processing item.",
-  ),
+  item_id: z
+    .string()
+    .optional()
+    .describe(
+      "Specific outbox item ID to retrieve. If omitted, returns the oldest processing item.",
+    ),
 });
 
 const updateOutboxStatusSchema = z.object({
   item_id: z.string().describe("The outbox item ID"),
-  status: z.enum(["published", "failed"]).describe("New status: published or failed"),
-  published_url: z.string().optional().describe("URL of the published post (required when status=published)"),
-  error: z.string().optional().describe("Error reason (required when status=failed)"),
+  status: z
+    .enum(["published", "failed"])
+    .describe("New status: published or failed"),
+  published_url: z
+    .string()
+    .optional()
+    .describe("URL of the published post (required when status=published)"),
+  error: z
+    .string()
+    .optional()
+    .describe("Error reason (required when status=failed)"),
 });
 
 export type OutboxToolsOptions = {
@@ -21,7 +32,10 @@ export type OutboxToolsOptions = {
   io?: SocketIOServer;
 };
 
-export const createOutboxTools = ({ outboxRepo, io }: OutboxToolsOptions): ToolDefinition[] => {
+export const createOutboxTools = ({
+  outboxRepo,
+  io,
+}: OutboxToolsOptions): ToolDefinition[] => {
   const emitUpdate = () => {
     if (io) {
       io.emit("outbox:updated");
@@ -52,7 +66,10 @@ export const createOutboxTools = ({ outboxRepo, io }: OutboxToolsOptions): ToolD
           if (input.item_id) {
             const item = outboxRepo.getById(input.item_id);
             if (!item) {
-              return { text: `Outbox item '${input.item_id}' not found.`, isError: true };
+              return {
+                text: `Outbox item '${input.item_id}' not found.`,
+                isError: true,
+              };
             }
             if (item.status !== "processing") {
               return {

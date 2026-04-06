@@ -5,7 +5,12 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 import crypto from "node:crypto";
-import type { OutboxRepository, OutboxPlatform, OutboxAssetType, UpdateOutboxInput } from "../outbox/outbox-repository.js";
+import type {
+  OutboxRepository,
+  OutboxPlatform,
+  OutboxAssetType,
+  UpdateOutboxInput,
+} from "../outbox/outbox-repository.js";
 import type { CopilotWrapper } from "../copilot/copilot-wrapper.js";
 import type { MediaQueueRepository } from "../queue/media-queue-repository.js";
 import type { TaskEngine } from "../tasks/task-engine.js";
@@ -13,8 +18,22 @@ import { logger } from "../logging/logger.js";
 
 // ── Validation schemas ──────────────────────────────────────
 
-const VALID_PLATFORMS = ["twitter", "pinterest", "linkedin", "youtube", "reddit", "instagram", "facebook"] as const;
-const VALID_ASSET_TYPES = ["image", "video", "audio", "document", "text"] as const;
+const VALID_PLATFORMS = [
+  "twitter",
+  "pinterest",
+  "linkedin",
+  "youtube",
+  "reddit",
+  "instagram",
+  "facebook",
+] as const;
+const VALID_ASSET_TYPES = [
+  "image",
+  "video",
+  "audio",
+  "document",
+  "text",
+] as const;
 
 const attachmentSchema = z.object({
   filePath: z.string(),
@@ -30,7 +49,9 @@ const createOutboxSchema = z.object({
   content_body: z.string().nullable().optional(),
   attachments: z.array(attachmentSchema).optional().default([]),
   platform: z.enum(VALID_PLATFORMS),
-  scheduled_time: z.string().refine((v) => !isNaN(Date.parse(v)), "Invalid ISO 8601 timestamp"),
+  scheduled_time: z
+    .string()
+    .refine((v) => !isNaN(Date.parse(v)), "Invalid ISO 8601 timestamp"),
   agent_context: z.string().min(1, "Agent context is required"),
   platform_metadata: z.record(z.unknown()).optional().default({}),
   max_retries: z.number().min(0).max(10).optional(),
@@ -40,7 +61,10 @@ const updateOutboxSchema = z.object({
   title: z.string().nullable().optional(),
   content_body: z.string().nullable().optional(),
   agent_context: z.string().min(1).optional(),
-  scheduled_time: z.string().refine((v) => !isNaN(Date.parse(v)), "Invalid ISO 8601 timestamp").optional(),
+  scheduled_time: z
+    .string()
+    .refine((v) => !isNaN(Date.parse(v)), "Invalid ISO 8601 timestamp")
+    .optional(),
   asset_url: z.string().nullable().optional(),
   asset_id: z.string().nullable().optional(),
   asset_type: z.enum(VALID_ASSET_TYPES).optional(),
@@ -53,7 +77,9 @@ const batchCreateSchema = z.object({
 });
 
 const listQuerySchema = z.object({
-  status: z.enum(["pending", "processing", "published", "failed", "canceled"]).optional(),
+  status: z
+    .enum(["pending", "processing", "published", "failed", "canceled"])
+    .optional(),
   platform: z.enum(VALID_PLATFORMS).optional(),
   limit: z.coerce.number().min(1).max(200).optional(),
   offset: z.coerce.number().min(0).optional(),
@@ -61,38 +87,55 @@ const listQuerySchema = z.object({
 
 const generatePreviewSchema = z.object({
   url: z.string().url("Must be a valid URL"),
-  platforms: z.array(z.enum(VALID_PLATFORMS)).min(1, "At least one platform is required"),
+  platforms: z
+    .array(z.enum(VALID_PLATFORMS))
+    .min(1, "At least one platform is required"),
   model: z.string().optional(),
-  imageSource: z.enum(["extract", "generate", "none"]).optional().default("extract"),
+  imageSource: z
+    .enum(["extract", "generate", "none"])
+    .optional()
+    .default("extract"),
 });
 
 const enhanceTextSchema = z.object({
   text: z.string().min(1, "Text is required"),
-  platforms: z.array(z.enum(VALID_PLATFORMS)).min(1, "At least one platform is required"),
+  platforms: z
+    .array(z.enum(VALID_PLATFORMS))
+    .min(1, "At least one platform is required"),
   model: z.string().optional(),
 });
 
 const saveImagesSchema = z.object({
-  images: z.array(z.object({
-    url: z.string().url(),
-    filename: z.string().optional(),
-  })).min(1).max(10),
+  images: z
+    .array(
+      z.object({
+        url: z.string().url(),
+        filename: z.string().optional(),
+      }),
+    )
+    .min(1)
+    .max(10),
 });
 
 const enhanceContentSchema = z.object({
-  platforms: z.array(z.enum(VALID_PLATFORMS)).min(1, "At least one platform is required"),
+  platforms: z
+    .array(z.enum(VALID_PLATFORMS))
+    .min(1, "At least one platform is required"),
   model: z.string().optional(),
   assetFilename: z.string().optional(),
   assetType: z.string().optional(),
   assetPrompt: z.string().optional(),
-  attachments: z.array(z.object({ filename: z.string(), assetType: z.string().optional() })).optional(),
+  attachments: z
+    .array(z.object({ filename: z.string(), assetType: z.string().optional() }))
+    .optional(),
   context: z.string().optional(),
 });
 
 /** Platform character / format constraints used in the LLM prompt. */
 const PLATFORM_CONSTRAINTS: Record<string, string> = {
   twitter: "Max 280 characters. Concise, punchy. Hashtags optional (1-3).",
-  linkedin: "Max 3000 characters. Professional tone. Can use paragraphs and line breaks.",
+  linkedin:
+    "Max 3000 characters. Professional tone. Can use paragraphs and line breaks.",
   pinterest: "Pin description max 500 characters. Keyword-rich for SEO.",
   reddit: "Title max 300 characters. Body as markdown. Match subreddit tone.",
   youtube: "Title max 100 characters. Description max 5000 characters.",
@@ -100,16 +143,30 @@ const PLATFORM_CONSTRAINTS: Record<string, string> = {
 
 /** Map platform names to the env vars required for publishing. */
 const PLATFORM_CREDENTIALS: Record<string, string[]> = {
-  twitter: ["TWITTER_BEARER_TOKEN", "TWITTER_API_KEY", "TWITTER_API_SECRET", "TWITTER_ACCESS_TOKEN", "TWITTER_ACCESS_TOKEN_SECRET"],
+  twitter: [
+    "TWITTER_BEARER_TOKEN",
+    "TWITTER_API_KEY",
+    "TWITTER_API_SECRET",
+    "TWITTER_ACCESS_TOKEN",
+    "TWITTER_ACCESS_TOKEN_SECRET",
+  ],
   pinterest: ["PINTEREST_ACCESS_TOKEN"],
   linkedin: ["LINKEDIN_ACCESS_TOKEN"],
   youtube: ["YOUTUBE_API_KEY"],
   reddit: ["REDDIT_CLIENT_ID", "REDDIT_CLIENT_SECRET"],
-  instagram: ["INSTAGRAM_ACCESS_TOKEN", "FACEBOOK_APP_ID", "FACEBOOK_APP_SECRET"],
+  instagram: [
+    "INSTAGRAM_ACCESS_TOKEN",
+    "FACEBOOK_APP_ID",
+    "FACEBOOK_APP_SECRET",
+  ],
   facebook: ["FACEBOOK_PAGE_TOKEN"],
 };
 
-const PINTEREST_REPORTS_DIR = path.join(os.homedir(), ".openzigs", "pinterest-reports");
+const PINTEREST_REPORTS_DIR = path.join(
+  os.homedir(),
+  ".openzigs",
+  "pinterest-reports",
+);
 const GALLERY_DIR = path.join(os.homedir(), ".openzigs", "gallery");
 
 // ── Router factory ──────────────────────────────────────────
@@ -121,14 +178,20 @@ export type OutboxRouterOptions = {
   taskEngine?: TaskEngine;
 };
 
-export const createOutboxRouter = ({ outboxRepo, copilotWrapper, mediaQueueRepo, taskEngine }: OutboxRouterOptions): Router => {
+export const createOutboxRouter = ({
+  outboxRepo,
+  copilotWrapper,
+  mediaQueueRepo,
+  taskEngine,
+}: OutboxRouterOptions): Router => {
   const router = Router();
 
   // GET /api/admin/outbox/connected-platforms — Which platforms have credentials
   router.get("/connected-platforms", (_req, res) => {
     const result: { platform: string; connected: boolean }[] = [];
     for (const [platform, envVars] of Object.entries(PLATFORM_CREDENTIALS)) {
-      const connected = envVars.length === 0 || envVars.every((v) => !!process.env[v]?.trim());
+      const connected =
+        envVars.length === 0 || envVars.every((v) => !!process.env[v]?.trim());
       result.push({ platform, connected });
     }
     return res.json({ platforms: result });
@@ -139,12 +202,16 @@ export const createOutboxRouter = ({ outboxRepo, copilotWrapper, mediaQueueRepo,
     try {
       const parsed = listQuerySchema.safeParse(req.query);
       if (!parsed.success) {
-        return res.status(400).json({ error: parsed.error.issues.map((i) => i.message).join(", ") });
+        return res.status(400).json({
+          error: parsed.error.issues.map((i) => i.message).join(", "),
+        });
       }
       const items = outboxRepo.list(parsed.data);
       return res.json({ items, total: items.length });
     } catch (err) {
-      return res.status(500).json({ error: err instanceof Error ? err.message : "Internal error" });
+      return res
+        .status(500)
+        .json({ error: err instanceof Error ? err.message : "Internal error" });
     }
   });
 
@@ -154,20 +221,25 @@ export const createOutboxRouter = ({ outboxRepo, copilotWrapper, mediaQueueRepo,
       const stats = outboxRepo.getStats();
       return res.json(stats);
     } catch (err) {
-      return res.status(500).json({ error: err instanceof Error ? err.message : "Internal error" });
+      return res
+        .status(500)
+        .json({ error: err instanceof Error ? err.message : "Internal error" });
     }
   });
 
   // GET /api/admin/outbox/browse — Browse local files for attachment selection
   router.get("/browse", async (req, res) => {
     try {
-      const dirParam = typeof req.query.dir === "string" ? req.query.dir : os.homedir();
+      const dirParam =
+        typeof req.query.dir === "string" ? req.query.dir : os.homedir();
       const resolved = path.resolve(dirParam);
 
       // Security: only allow paths under the user's home directory
       const home = os.homedir();
       if (!resolved.startsWith(home)) {
-        return res.status(403).json({ error: "Access denied: path must be under home directory" });
+        return res
+          .status(403)
+          .json({ error: "Access denied: path must be under home directory" });
       }
 
       const entries = await fs.readdir(resolved, { withFileTypes: true });
@@ -185,7 +257,9 @@ export const createOutboxRouter = ({ outboxRepo, copilotWrapper, mediaQueueRepo,
 
       return res.json({ dir: resolved, parent: path.dirname(resolved), items });
     } catch (err) {
-      return res.status(500).json({ error: err instanceof Error ? err.message : "Internal error" });
+      return res
+        .status(500)
+        .json({ error: err instanceof Error ? err.message : "Internal error" });
     }
   });
 
@@ -197,7 +271,9 @@ export const createOutboxRouter = ({ outboxRepo, copilotWrapper, mediaQueueRepo,
     try {
       const parsed = generatePreviewSchema.safeParse(req.body);
       if (!parsed.success) {
-        return res.status(400).json({ error: parsed.error.issues.map((i) => i.message).join(", ") });
+        return res.status(400).json({
+          error: parsed.error.issues.map((i) => i.message).join(", "),
+        });
       }
       const { url, platforms, model, imageSource } = parsed.data;
 
@@ -227,7 +303,10 @@ export const createOutboxRouter = ({ outboxRepo, copilotWrapper, mediaQueueRepo,
       }
 
       const constraintsBlock = platforms
-        .map((p) => `- ${p}: ${PLATFORM_CONSTRAINTS[p] ?? "No specific constraints."}`)
+        .map(
+          (p) =>
+            `- ${p}: ${PLATFORM_CONSTRAINTS[p] ?? "No specific constraints."}`,
+        )
         .join("\n");
 
       const prompt = [
@@ -240,14 +319,16 @@ export const createOutboxRouter = ({ outboxRepo, copilotWrapper, mediaQueueRepo,
         `Generate platform-appropriate post text AND publishing instructions for each platform below.`,
         `Platform constraints:`,
         constraintsBlock,
-        pinterestSeoBlock ? `\nPinterest SEO context (use to optimize pin description with high-performing keywords):\n${pinterestSeoBlock}` : "",
+        pinterestSeoBlock
+          ? `\nPinterest SEO context (use to optimize pin description with high-performing keywords):\n${pinterestSeoBlock}`
+          : "",
         ``,
         `Return ONLY a valid JSON object (no markdown fences, no explanation) with this exact shape:`,
         `{`,
         `  "previews": {`,
         `    "<platform>": {`,
         `      "text": "<post text>",`,
-        `      "publishingInstructions": "<specific instructions for autonomous AI agent to publish on this platform, e.g. target audience, hashtags, subreddit for Reddit, best time to post, etc. For Pinterest do NOT suggest a board name.>"`,  
+        `      "publishingInstructions": "<specific instructions for autonomous AI agent to publish on this platform, e.g. target audience, hashtags, subreddit for Reddit, best time to post, etc. For Pinterest do NOT suggest a board name.>"`,
         `    }`,
         `  }`,
         imageSource === "generate"
@@ -267,14 +348,18 @@ export const createOutboxRouter = ({ outboxRepo, copilotWrapper, mediaQueueRepo,
       // Extract JSON from the response (handle markdown fences)
       const jsonMatch = result.match(/\{[\s\S]*\}/);
       if (!jsonMatch) {
-        return res.status(502).json({ error: "AI did not return valid JSON", raw: result });
+        return res
+          .status(502)
+          .json({ error: "AI did not return valid JSON", raw: result });
       }
 
       let aiResult: Record<string, unknown>;
       try {
         aiResult = JSON.parse(jsonMatch[0]);
       } catch {
-        return res.status(502).json({ error: "AI returned invalid JSON", raw: result });
+        return res
+          .status(502)
+          .json({ error: "AI returned invalid JSON", raw: result });
       }
 
       // Attach extracted images to the response
@@ -283,16 +368,28 @@ export const createOutboxRouter = ({ outboxRepo, copilotWrapper, mediaQueueRepo,
       }
 
       // ── Generate image from prompt if requested ──────────────────────────
-      const imagePromptStr = typeof aiResult.imagePrompt === "string" ? aiResult.imagePrompt : null;
+      const imagePromptStr =
+        typeof aiResult.imagePrompt === "string" ? aiResult.imagePrompt : null;
       if (imageSource === "generate" && imagePromptStr) {
         try {
-          const { ImageGenService } = await import("../video/generators/image-gen-service.js");
+          const { ImageGenService } =
+            await import("../video/generators/image-gen-service.js");
           const userConfig = await ImageGenService.loadUserImageGenConfig();
-          const imageGenOutputDir = path.join(os.homedir(), ".openzigs", "gallery");
+          const imageGenOutputDir = path.join(
+            os.homedir(),
+            ".openzigs",
+            "gallery",
+          );
           await fs.mkdir(imageGenOutputDir, { recursive: true });
-          const svc = new ImageGenService({ ...userConfig, outputDir: imageGenOutputDir });
+          const svc = new ImageGenService({
+            ...userConfig,
+            outputDir: imageGenOutputDir,
+          });
 
-          const genResult = await svc.generateImage(imagePromptStr, { width: 1024, height: 1024 });
+          const genResult = await svc.generateImage(imagePromptStr, {
+            width: 1024,
+            height: 1024,
+          });
 
           const filename = path.basename(genResult.filePath);
           const imageUrl = `/api/queue/assets/file/${encodeURIComponent(filename)}`;
@@ -321,7 +418,9 @@ export const createOutboxRouter = ({ outboxRepo, copilotWrapper, mediaQueueRepo,
 
       return res.json(aiResult);
     } catch (err) {
-      return res.status(500).json({ error: err instanceof Error ? err.message : "Internal error" });
+      return res
+        .status(500)
+        .json({ error: err instanceof Error ? err.message : "Internal error" });
     }
   });
 
@@ -333,17 +432,24 @@ export const createOutboxRouter = ({ outboxRepo, copilotWrapper, mediaQueueRepo,
     try {
       const parsed = enhanceTextSchema.safeParse(req.body);
       if (!parsed.success) {
-        return res.status(400).json({ error: parsed.error.issues.map((i) => i.message).join(", ") });
+        return res.status(400).json({
+          error: parsed.error.issues.map((i) => i.message).join(", "),
+        });
       }
       const { text, platforms: targetPlatforms, model } = parsed.data;
 
       const constraintsBlock = targetPlatforms
-        .map((p) => `- ${p}: ${PLATFORM_CONSTRAINTS[p] ?? "No specific constraints."}`)
+        .map(
+          (p) =>
+            `- ${p}: ${PLATFORM_CONSTRAINTS[p] ?? "No specific constraints."}`,
+        )
         .join("\n");
 
       const mentionHints: Record<string, string> = {
-        twitter: "Use @ for mentions (e.g. @username). Hashtags use # (e.g. #topic).",
-        linkedin: "Use @ for mentions. No hashtags required but can use # for topics.",
+        twitter:
+          "Use @ for mentions (e.g. @username). Hashtags use # (e.g. #topic).",
+        linkedin:
+          "Use @ for mentions. No hashtags required but can use # for topics.",
         pinterest: "No @ mentions. Focus on keyword-rich descriptions for SEO.",
         reddit: "Use u/ for user mentions and r/ for subreddits.",
         youtube: "Use @ for channel mentions.",
@@ -400,7 +506,9 @@ export const createOutboxRouter = ({ outboxRepo, copilotWrapper, mediaQueueRepo,
       const aiResult = JSON.parse(jsonMatch[0]);
       return res.json(aiResult);
     } catch (err) {
-      return res.status(500).json({ error: err instanceof Error ? err.message : "Internal error" });
+      return res
+        .status(500)
+        .json({ error: err instanceof Error ? err.message : "Internal error" });
     }
   });
 
@@ -412,9 +520,19 @@ export const createOutboxRouter = ({ outboxRepo, copilotWrapper, mediaQueueRepo,
     try {
       const parsed = enhanceContentSchema.safeParse(req.body);
       if (!parsed.success) {
-        return res.status(400).json({ error: parsed.error.issues.map((i) => i.message).join(", ") });
+        return res.status(400).json({
+          error: parsed.error.issues.map((i) => i.message).join(", "),
+        });
       }
-      const { platforms: targetPlatforms, model, assetFilename, assetType, assetPrompt, attachments, context } = parsed.data;
+      const {
+        platforms: targetPlatforms,
+        model,
+        assetFilename,
+        assetType,
+        assetPrompt,
+        attachments,
+        context,
+      } = parsed.data;
 
       // Gather Pinterest SEO context if needed
       let pinterestSeoBlock = "";
@@ -423,21 +541,34 @@ export const createOutboxRouter = ({ outboxRepo, copilotWrapper, mediaQueueRepo,
       }
 
       const constraintsBlock = targetPlatforms
-        .map((p) => `- ${p}: ${PLATFORM_CONSTRAINTS[p] ?? "No specific constraints."}`)
+        .map(
+          (p) =>
+            `- ${p}: ${PLATFORM_CONSTRAINTS[p] ?? "No specific constraints."}`,
+        )
         .join("\n");
 
       const platformPublishingGuidance: Record<string, string> = {
-        twitter: "For images: write a short tweet (max 280 chars) with relevant hashtags. For video: write a tweet to accompany the video.",
-        linkedin: "Write a professional post describing the content. Use line breaks and emojis for readability.",
-        pinterest: "Write a keyword-rich pin description (max 500 chars) optimized for Pinterest SEO. Include relevant keywords for search discovery. Do NOT suggest a board name — the correct board will be determined automatically at publish time via the Pinterest API.",
-        reddit: "Suggest a subreddit and title. Keep it conversational and match community tone.",
-        youtube: "Write a title (max 100 chars) and description. Include relevant tags.",
-        instagram: "Write an engaging caption with relevant hashtags. Images must be at publicly accessible URLs (JPEG format preferred). Max 2,200 characters.",
-        facebook: "Write a post suitable for a Facebook Page. Can include text, links, or images. Keep it engaging and on-brand.",
+        twitter:
+          "For images: write a short tweet (max 280 chars) with relevant hashtags. For video: write a tweet to accompany the video.",
+        linkedin:
+          "Write a professional post describing the content. Use line breaks and emojis for readability.",
+        pinterest:
+          "Write a keyword-rich pin description (max 500 chars) optimized for Pinterest SEO. Include relevant keywords for search discovery. Do NOT suggest a board name — the correct board will be determined automatically at publish time via the Pinterest API.",
+        reddit:
+          "Suggest a subreddit and title. Keep it conversational and match community tone.",
+        youtube:
+          "Write a title (max 100 chars) and description. Include relevant tags.",
+        instagram:
+          "Write an engaging caption with relevant hashtags. Images must be at publicly accessible URLs (JPEG format preferred). Max 2,200 characters.",
+        facebook:
+          "Write a post suitable for a Facebook Page. Can include text, links, or images. Keep it engaging and on-brand.",
       };
 
       const publishingGuidanceBlock = targetPlatforms
-        .map((p) => `- ${p}: ${platformPublishingGuidance[p] ?? "Write appropriate accompanying text."}`)
+        .map(
+          (p) =>
+            `- ${p}: ${platformPublishingGuidance[p] ?? "Write appropriate accompanying text."}`,
+        )
         .join("\n");
 
       // Build asset description
@@ -446,7 +577,9 @@ export const createOutboxRouter = ({ outboxRepo, copilotWrapper, mediaQueueRepo,
       if (assetType) assetParts.push(`Type: ${assetType}`);
       if (assetPrompt) assetParts.push(`Description/Prompt: ${assetPrompt}`);
       if (attachments && attachments.length > 0) {
-        assetParts.push(`Files: ${attachments.map((a) => `${a.filename} (${a.assetType ?? "unknown"})`).join(", ")}`);
+        assetParts.push(
+          `Files: ${attachments.map((a) => `${a.filename} (${a.assetType ?? "unknown"})`).join(", ")}`,
+        );
       }
       if (context) assetParts.push(`User context: ${context}`);
 
@@ -463,7 +596,9 @@ export const createOutboxRouter = ({ outboxRepo, copilotWrapper, mediaQueueRepo,
         ``,
         `Platform-specific publishing guidance:`,
         publishingGuidanceBlock,
-        pinterestSeoBlock ? `\nPinterest SEO context (use to optimize with high-performing keywords):\n${pinterestSeoBlock}` : "",
+        pinterestSeoBlock
+          ? `\nPinterest SEO context (use to optimize with high-performing keywords):\n${pinterestSeoBlock}`
+          : "",
         ``,
         `For each platform, generate:`,
         `1. "text" — The post/caption/description text to accompany this media`,
@@ -494,7 +629,9 @@ export const createOutboxRouter = ({ outboxRepo, copilotWrapper, mediaQueueRepo,
       const aiResult = JSON.parse(jsonMatch[0]);
       return res.json(aiResult);
     } catch (err) {
-      return res.status(500).json({ error: err instanceof Error ? err.message : "Internal error" });
+      return res
+        .status(500)
+        .json({ error: err instanceof Error ? err.message : "Internal error" });
     }
   });
 
@@ -506,24 +643,45 @@ export const createOutboxRouter = ({ outboxRepo, copilotWrapper, mediaQueueRepo,
     try {
       const parsed = saveImagesSchema.safeParse(req.body);
       if (!parsed.success) {
-        return res.status(400).json({ error: parsed.error.issues.map((i) => i.message).join(", ") });
+        return res.status(400).json({
+          error: parsed.error.issues.map((i) => i.message).join(", "),
+        });
       }
 
       await fs.mkdir(GALLERY_DIR, { recursive: true });
 
-      const saved: { url: string; assetId: string; filePath: string; filename: string }[] = [];
+      const saved: {
+        url: string;
+        assetId: string;
+        filePath: string;
+        filename: string;
+      }[] = [];
       for (const img of parsed.data.images) {
         try {
           const imgResp = await fetch(img.url, {
-            headers: { "User-Agent": "OpenZigsBot/1.0 (+https://openzigs.com)" },
+            headers: {
+              "User-Agent": "OpenZigsBot/1.0 (+https://openzigs.com)",
+            },
             signal: AbortSignal.timeout(30_000),
           });
           if (!imgResp.ok) continue;
 
-          const contentType = imgResp.headers.get("content-type") ?? "image/jpeg";
-          const ext = contentType.includes("png") ? "png" : contentType.includes("webp") ? "webp" : contentType.includes("gif") ? "gif" : "jpg";
-          const safeName = img.filename ? path.basename(img.filename) : `extracted-${crypto.randomUUID().slice(0, 8)}.${ext}`;
-          const filePath = path.join(GALLERY_DIR, `upload-${Date.now()}-${safeName}`);
+          const contentType =
+            imgResp.headers.get("content-type") ?? "image/jpeg";
+          const ext = contentType.includes("png")
+            ? "png"
+            : contentType.includes("webp")
+              ? "webp"
+              : contentType.includes("gif")
+                ? "gif"
+                : "jpg";
+          const safeName = img.filename
+            ? path.basename(img.filename)
+            : `extracted-${crypto.randomUUID().slice(0, 8)}.${ext}`;
+          const filePath = path.join(
+            GALLERY_DIR,
+            `upload-${Date.now()}-${safeName}`,
+          );
 
           const buffer = Buffer.from(await imgResp.arrayBuffer());
           await fs.writeFile(filePath, buffer);
@@ -546,7 +704,9 @@ export const createOutboxRouter = ({ outboxRepo, copilotWrapper, mediaQueueRepo,
 
       return res.json({ saved });
     } catch (err) {
-      return res.status(500).json({ error: err instanceof Error ? err.message : "Internal error" });
+      return res
+        .status(500)
+        .json({ error: err instanceof Error ? err.message : "Internal error" });
     }
   });
 
@@ -557,7 +717,9 @@ export const createOutboxRouter = ({ outboxRepo, copilotWrapper, mediaQueueRepo,
       if (!item) return res.status(404).json({ error: "Not found" });
       return res.json(item);
     } catch (err) {
-      return res.status(500).json({ error: err instanceof Error ? err.message : "Internal error" });
+      return res
+        .status(500)
+        .json({ error: err instanceof Error ? err.message : "Internal error" });
     }
   });
 
@@ -566,7 +728,9 @@ export const createOutboxRouter = ({ outboxRepo, copilotWrapper, mediaQueueRepo,
     try {
       const parsed = createOutboxSchema.safeParse(req.body);
       if (!parsed.success) {
-        return res.status(400).json({ error: parsed.error.issues.map((i) => i.message).join(", ") });
+        return res.status(400).json({
+          error: parsed.error.issues.map((i) => i.message).join(", "),
+        });
       }
       const data = parsed.data;
       const item = outboxRepo.insert({
@@ -584,7 +748,9 @@ export const createOutboxRouter = ({ outboxRepo, copilotWrapper, mediaQueueRepo,
       });
       return res.status(201).json(item);
     } catch (err) {
-      return res.status(500).json({ error: err instanceof Error ? err.message : "Internal error" });
+      return res
+        .status(500)
+        .json({ error: err instanceof Error ? err.message : "Internal error" });
     }
   });
 
@@ -593,7 +759,9 @@ export const createOutboxRouter = ({ outboxRepo, copilotWrapper, mediaQueueRepo,
     try {
       const parsed = batchCreateSchema.safeParse(req.body);
       if (!parsed.success) {
-        return res.status(400).json({ error: parsed.error.issues.map((i) => i.message).join(", ") });
+        return res.status(400).json({
+          error: parsed.error.issues.map((i) => i.message).join(", "),
+        });
       }
       const created = parsed.data.items.map((data) =>
         outboxRepo.insert({
@@ -612,7 +780,9 @@ export const createOutboxRouter = ({ outboxRepo, copilotWrapper, mediaQueueRepo,
       );
       return res.status(201).json({ items: created, count: created.length });
     } catch (err) {
-      return res.status(500).json({ error: err instanceof Error ? err.message : "Internal error" });
+      return res
+        .status(500)
+        .json({ error: err instanceof Error ? err.message : "Internal error" });
     }
   });
 
@@ -621,27 +791,40 @@ export const createOutboxRouter = ({ outboxRepo, copilotWrapper, mediaQueueRepo,
     try {
       const parsed = updateOutboxSchema.safeParse(req.body);
       if (!parsed.success) {
-        return res.status(400).json({ error: parsed.error.issues.map((i) => i.message).join(", ") });
+        return res.status(400).json({
+          error: parsed.error.issues.map((i) => i.message).join(", "),
+        });
       }
       const data = parsed.data;
       const updateInput: UpdateOutboxInput = {};
       if (data.title !== undefined) updateInput.title = data.title;
-      if (data.content_body !== undefined) updateInput.contentBody = data.content_body;
-      if (data.agent_context !== undefined) updateInput.agentContext = data.agent_context;
-      if (data.scheduled_time !== undefined) updateInput.scheduledTime = new Date(data.scheduled_time);
+      if (data.content_body !== undefined)
+        updateInput.contentBody = data.content_body;
+      if (data.agent_context !== undefined)
+        updateInput.agentContext = data.agent_context;
+      if (data.scheduled_time !== undefined)
+        updateInput.scheduledTime = new Date(data.scheduled_time);
       if (data.asset_url !== undefined) updateInput.assetUrl = data.asset_url;
       if (data.asset_id !== undefined) updateInput.assetId = data.asset_id;
-      if (data.asset_type !== undefined) updateInput.assetType = data.asset_type as OutboxAssetType;
-      if (data.attachments !== undefined) updateInput.attachments = data.attachments;
-      if (data.platform_metadata !== undefined) updateInput.platformMetadata = data.platform_metadata;
+      if (data.asset_type !== undefined)
+        updateInput.assetType = data.asset_type as OutboxAssetType;
+      if (data.attachments !== undefined)
+        updateInput.attachments = data.attachments;
+      if (data.platform_metadata !== undefined)
+        updateInput.platformMetadata = data.platform_metadata;
 
       const item = outboxRepo.update(req.params.id, updateInput);
       if (!item) {
-        return res.status(400).json({ error: "Cannot update: item not found or not in editable state (pending/canceled)" });
+        return res.status(400).json({
+          error:
+            "Cannot update: item not found or not in editable state (pending/canceled)",
+        });
       }
       return res.json(item);
     } catch (err) {
-      return res.status(500).json({ error: err instanceof Error ? err.message : "Internal error" });
+      return res
+        .status(500)
+        .json({ error: err instanceof Error ? err.message : "Internal error" });
     }
   });
 
@@ -649,10 +832,15 @@ export const createOutboxRouter = ({ outboxRepo, copilotWrapper, mediaQueueRepo,
   router.post("/:id/retry", (req, res) => {
     try {
       const item = outboxRepo.retry(req.params.id);
-      if (!item) return res.status(400).json({ error: "Cannot retry: item not found or not in failed status" });
+      if (!item)
+        return res.status(400).json({
+          error: "Cannot retry: item not found or not in failed status",
+        });
       return res.json(item);
     } catch (err) {
-      return res.status(500).json({ error: err instanceof Error ? err.message : "Internal error" });
+      return res
+        .status(500)
+        .json({ error: err instanceof Error ? err.message : "Internal error" });
     }
   });
 
@@ -660,10 +848,16 @@ export const createOutboxRouter = ({ outboxRepo, copilotWrapper, mediaQueueRepo,
   router.post("/:id/cancel", (req, res) => {
     try {
       const item = outboxRepo.cancel(req.params.id);
-      if (!item) return res.status(400).json({ error: "Cannot cancel: item not found or not in pending/failed status" });
+      if (!item)
+        return res.status(400).json({
+          error:
+            "Cannot cancel: item not found or not in pending/failed status",
+        });
       return res.json(item);
     } catch (err) {
-      return res.status(500).json({ error: err instanceof Error ? err.message : "Internal error" });
+      return res
+        .status(500)
+        .json({ error: err instanceof Error ? err.message : "Internal error" });
     }
   });
 
@@ -677,13 +871,20 @@ export const createOutboxRouter = ({ outboxRepo, copilotWrapper, mediaQueueRepo,
       const item = outboxRepo.getById(req.params.id);
       if (!item) return res.status(404).json({ error: "Item not found" });
       if (item.status !== "pending") {
-        return res.status(400).json({ error: `Cannot publish: item is ${item.status}, must be pending` });
+        return res.status(400).json({
+          error: `Cannot publish: item is ${item.status}, must be pending`,
+        });
       }
 
       // Parse optional notification channels from body
-      const body = (req.body && typeof req.body === "object") ? req.body as Record<string, unknown> : {};
+      const body =
+        req.body && typeof req.body === "object"
+          ? (req.body as Record<string, unknown>)
+          : {};
       const notifyChannels = Array.isArray(body.notifyChannels)
-        ? (body.notifyChannels as string[]).filter(c => c === "telegram" || c === "discord")
+        ? (body.notifyChannels as string[]).filter(
+            (c) => c === "telegram" || c === "discord",
+          )
         : [];
 
       // Claim the item (mark as processing)
@@ -701,9 +902,15 @@ export const createOutboxRouter = ({ outboxRepo, copilotWrapper, mediaQueueRepo,
       const goal = [
         `Publish content to ${item.platform}.`,
         item.agentContext,
-        item.contentBody ? `Pre-approved content (use exactly as-is):\n${item.contentBody}` : null,
+        item.contentBody
+          ? `Pre-approved content (use exactly as-is):\n${item.contentBody}`
+          : null,
         item.assetUrl ? `Asset URL: ${item.assetUrl}` : null,
-        resolvedAssetPath ? `Image file path: ${resolvedAssetPath}` : (item.assetId ? `Asset ID: ${item.assetId}` : null),
+        resolvedAssetPath
+          ? `Image file path: ${resolvedAssetPath}`
+          : item.assetId
+            ? `Asset ID: ${item.assetId}`
+            : null,
         item.attachments && item.attachments.length > 0
           ? `Attachments (include these with the post):\n${item.attachments.map((a) => `- ${a.filename} (${a.filePath})`).join("\n")}`
           : null,
@@ -712,12 +919,19 @@ export const createOutboxRouter = ({ outboxRepo, copilotWrapper, mediaQueueRepo,
         item.platform === "pinterest"
           ? `IMPORTANT: You MUST call pinterest-list-boards FIRST to get the user's actual boards. IGNORE any board name mentioned anywhere in these instructions — they are AI-generated suggestions and likely wrong. Use ONLY a board_id returned by pinterest-list-boards. The user's board is retrieved from the API, not from the publishing instructions. Pick the most relevant board from the list, or use the first one if unsure.`
           : null,
-        notifyChannels.length > 0 ? `Notify via: ${notifyChannels.join(", ")}` : null,
+        notifyChannels.length > 0
+          ? `Notify via: ${notifyChannels.join(", ")}`
+          : null,
       ]
         .filter(Boolean)
         .join("\n");
 
-      const autoApprove = ["update-outbox-status", "pinterest-list-boards", "fb_publish_post", "publish_media"];
+      const autoApprove = [
+        "update-outbox-status",
+        "pinterest-list-boards",
+        "fb_publish_post",
+        "publish_media",
+      ];
       if (notifyChannels.length > 0) autoApprove.push("send-notification");
 
       taskEngine.submit(
@@ -748,11 +962,15 @@ export const createOutboxRouter = ({ outboxRepo, copilotWrapper, mediaQueueRepo,
         { mode: "background" },
       );
 
-      logger.info(`Outbox publish-now submitted for item ${item.id} → ${item.platform}`);
+      logger.info(
+        `Outbox publish-now submitted for item ${item.id} → ${item.platform}`,
+      );
       const updated = outboxRepo.getById(item.id);
       return res.json(updated);
     } catch (err) {
-      return res.status(500).json({ error: err instanceof Error ? err.message : "Internal error" });
+      return res
+        .status(500)
+        .json({ error: err instanceof Error ? err.message : "Internal error" });
     }
   });
 
@@ -763,7 +981,9 @@ export const createOutboxRouter = ({ outboxRepo, copilotWrapper, mediaQueueRepo,
       if (!deleted) return res.status(404).json({ error: "Not found" });
       return res.json({ ok: true });
     } catch (err) {
-      return res.status(500).json({ error: err instanceof Error ? err.message : "Internal error" });
+      return res
+        .status(500)
+        .json({ error: err instanceof Error ? err.message : "Internal error" });
     }
   });
 
@@ -808,10 +1028,10 @@ function extractImagesFromHtml(html: string, baseUrl: string): string[] {
   while ((imgMatch = imgTagPattern.exec(html)) !== null) {
     const src = imgMatch[1];
     // Skip common non-content images
-    if (/\.(svg|ico)(\?|$)/i.test(src)) continue;                         // icons
+    if (/\.(svg|ico)(\?|$)/i.test(src)) continue; // icons
     if (/gravatar\.com|pixel|tracker|analytics|beacon/i.test(src)) continue; // tracking
-    if (/data:image/i.test(src)) continue;                                 // inline data URIs
-    if (/1x1|spacer|blank/i.test(src)) continue;                          // spacer pixels
+    if (/data:image/i.test(src)) continue; // inline data URIs
+    if (/1x1|spacer|blank/i.test(src)) continue; // spacer pixels
 
     // Check for explicit tiny dimensions in the tag (skip icons/badges)
     const fullTag = imgMatch[0];
@@ -888,7 +1108,10 @@ function extractTextFromHtml(html: string): string {
     .replace(/&nbsp;/g, " ")
     .replace(/&amp;/g, "&");
   // Normalize whitespace
-  text = text.replace(/[ \t]+/g, " ").replace(/\n\s*\n/g, "\n").trim();
+  text = text
+    .replace(/[ \t]+/g, " ")
+    .replace(/\n\s*\n/g, "\n")
+    .trim();
   // Truncate to ~4000 chars to avoid bloating the prompt
   return text.length > 4000 ? text.slice(0, 4000) + "..." : text;
 }
@@ -898,14 +1121,22 @@ async function loadPinterestSeoContext(): Promise<string> {
   try {
     if (!fsSync.existsSync(PINTEREST_REPORTS_DIR)) return "";
 
-    const files = fsSync.readdirSync(PINTEREST_REPORTS_DIR)
-      .filter((f) => (f.startsWith("seo-analysis-") || f.startsWith("keyword-metrics-")) && f.endsWith(".json"))
+    const files = fsSync
+      .readdirSync(PINTEREST_REPORTS_DIR)
+      .filter(
+        (f) =>
+          (f.startsWith("seo-analysis-") || f.startsWith("keyword-metrics-")) &&
+          f.endsWith(".json"),
+      )
       .sort()
       .reverse();
 
     if (files.length === 0) return "";
 
-    const content = fsSync.readFileSync(path.join(PINTEREST_REPORTS_DIR, files[0]), "utf-8");
+    const content = fsSync.readFileSync(
+      path.join(PINTEREST_REPORTS_DIR, files[0]),
+      "utf-8",
+    );
     const data = JSON.parse(content) as Record<string, unknown>;
 
     // Extract top keywords from the report

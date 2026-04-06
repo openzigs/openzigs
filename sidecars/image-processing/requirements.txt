@@ -1,0 +1,8 @@
+fastapi>=0.104.0
+uvicorn>=0.24.0
+Pillow>=10.0.0
+numpy>=1.24.0
+rembg>=2.0.50
+realesrgan>=0.3.0
+basicsr>=1.4.2
+torch>=2.0.0

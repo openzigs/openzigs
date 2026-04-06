@@ -173,7 +173,9 @@ export const createApp = (
   // /api/social/webhooks needs a custom parser that captures raw body for HMAC verification.
   // Skip the global 1mb parser for both prefixes so they aren't rejected or double-parsed.
   const skipGlobalParser = (p: string) =>
-    p.startsWith("/api/queue") || p.startsWith("/api/social/webhooks");
+    p.startsWith("/api/queue") ||
+    p.startsWith("/api/social/webhooks") ||
+    p.startsWith("/api/admin/creative/enhance-prompt");
   app.use((req, res, next) => {
     if (skipGlobalParser(req.path)) return next();
     express.json({ limit: "1mb" })(req, res, next);

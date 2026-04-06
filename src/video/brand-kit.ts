@@ -75,29 +75,47 @@ export class BrandKitRepository {
 
   create(kit: Omit<BrandKit, "createdAt" | "updatedAt">): BrandKit {
     const now = new Date().toISOString();
-    this.db.prepare(
-      `INSERT INTO brand_kits (id, name, primary_color, secondary_color, accent_color, font_family,
+    this.db
+      .prepare(
+        `INSERT INTO brand_kits (id, name, primary_color, secondary_color, accent_color, font_family,
         logo_path, watermark_path, intro_template_id, outro_template_id, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).run(
-      kit.id, kit.name, kit.primaryColor, kit.secondaryColor, kit.accentColor,
-      kit.fontFamily, kit.logoPath ?? null, kit.watermarkPath ?? null,
-      kit.introTemplateId ?? null, kit.outroTemplateId ?? null, now, now,
-    );
+      )
+      .run(
+        kit.id,
+        kit.name,
+        kit.primaryColor,
+        kit.secondaryColor,
+        kit.accentColor,
+        kit.fontFamily,
+        kit.logoPath ?? null,
+        kit.watermarkPath ?? null,
+        kit.introTemplateId ?? null,
+        kit.outroTemplateId ?? null,
+        now,
+        now,
+      );
     return { ...kit, createdAt: now, updatedAt: now };
   }
 
   getById(id: string): BrandKit | null {
-    const row = this.db.prepare(`SELECT * FROM brand_kits WHERE id = ?`).get(id) as BrandKitRow | undefined;
+    const row = this.db
+      .prepare(`SELECT * FROM brand_kits WHERE id = ?`)
+      .get(id) as BrandKitRow | undefined;
     return row ? rowToKit(row) : null;
   }
 
   getAll(): BrandKit[] {
-    const rows = this.db.prepare(`SELECT * FROM brand_kits ORDER BY name ASC`).all() as BrandKitRow[];
+    const rows = this.db
+      .prepare(`SELECT * FROM brand_kits ORDER BY name ASC`)
+      .all() as BrandKitRow[];
     return rows.map(rowToKit);
   }
 
-  update(id: string, fields: Partial<Omit<BrandKit, "id" | "createdAt" | "updatedAt">>): BrandKit | null {
+  update(
+    id: string,
+    fields: Partial<Omit<BrandKit, "id" | "createdAt" | "updatedAt">>,
+  ): BrandKit | null {
     const existing = this.getById(id);
     if (!existing) return null;
 
@@ -108,27 +126,49 @@ export class BrandKitRepository {
       secondaryColor: fields.secondaryColor ?? existing.secondaryColor,
       accentColor: fields.accentColor ?? existing.accentColor,
       fontFamily: fields.fontFamily ?? existing.fontFamily,
-      logoPath: fields.logoPath !== undefined ? fields.logoPath : existing.logoPath,
-      watermarkPath: fields.watermarkPath !== undefined ? fields.watermarkPath : existing.watermarkPath,
-      introTemplateId: fields.introTemplateId !== undefined ? fields.introTemplateId : existing.introTemplateId,
-      outroTemplateId: fields.outroTemplateId !== undefined ? fields.outroTemplateId : existing.outroTemplateId,
+      logoPath:
+        fields.logoPath !== undefined ? fields.logoPath : existing.logoPath,
+      watermarkPath:
+        fields.watermarkPath !== undefined
+          ? fields.watermarkPath
+          : existing.watermarkPath,
+      introTemplateId:
+        fields.introTemplateId !== undefined
+          ? fields.introTemplateId
+          : existing.introTemplateId,
+      outroTemplateId:
+        fields.outroTemplateId !== undefined
+          ? fields.outroTemplateId
+          : existing.outroTemplateId,
     };
 
-    this.db.prepare(
-      `UPDATE brand_kits SET name = ?, primary_color = ?, secondary_color = ?, accent_color = ?,
+    this.db
+      .prepare(
+        `UPDATE brand_kits SET name = ?, primary_color = ?, secondary_color = ?, accent_color = ?,
         font_family = ?, logo_path = ?, watermark_path = ?, intro_template_id = ?,
         outro_template_id = ?, updated_at = ? WHERE id = ?`,
-    ).run(
-      merged.name, merged.primaryColor, merged.secondaryColor, merged.accentColor,
-      merged.fontFamily, merged.logoPath, merged.watermarkPath,
-      merged.introTemplateId, merged.outroTemplateId, now, id,
-    );
+      )
+      .run(
+        merged.name,
+        merged.primaryColor,
+        merged.secondaryColor,
+        merged.accentColor,
+        merged.fontFamily,
+        merged.logoPath,
+        merged.watermarkPath,
+        merged.introTemplateId,
+        merged.outroTemplateId,
+        now,
+        id,
+      );
 
     return { ...existing, ...merged, updatedAt: now };
   }
 
   delete(id: string): boolean {
-    const result = this.db.prepare(`DELETE FROM brand_kits WHERE id = ?`).run(id);
+    const result = this.db
+      .prepare(`DELETE FROM brand_kits WHERE id = ?`)
+      .run(id);
     return result.changes > 0;
   }
 }

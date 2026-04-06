@@ -12,6 +12,7 @@ import { OutboxRepository } from "../outbox/outbox-repository.js";
 import { WebhookRepository } from "../webhooks/webhook-repository.js";
 import { YouTubePublishRepository } from "../video/youtube-publish-repository.js";
 import { BrandKitRepository } from "../video/brand-kit.js";
+import { PostTemplateRepository } from "../creative/post-template-repository.js";
 
 export type DatabaseOptions = {
   dbPath?: string;
@@ -21,7 +22,9 @@ const defaultDbPath = () => path.join(os.homedir(), ".openzigs", "openzigs.db");
 
 let sharedDb: Database.Database | null = null;
 
-export const getDatabase = (options: DatabaseOptions = {}): Database.Database => {
+export const getDatabase = (
+  options: DatabaseOptions = {},
+): Database.Database => {
   if (sharedDb) {
     return sharedDb;
   }
@@ -70,6 +73,10 @@ export const getDatabase = (options: DatabaseOptions = {}): Database.Database =>
   // Run Brand Kit migration (brand_kits table)
   const brandKitRepo = new BrandKitRepository(db);
   brandKitRepo.migrate();
+
+  // Run Post Template migration (post_templates table)
+  const postTemplateRepo = new PostTemplateRepository(db);
+  postTemplateRepo.migrate();
 
   // Run Webhook migration (webhooks table)
   const webhookRepo = new WebhookRepository(db);
@@ -172,15 +179,23 @@ const initSchema = (db: Database.Database) => {
     .prepare("PRAGMA table_info(voice_profiles)")
     .all() as Array<{ name: string }>;
 
-  const hasSampleSteps = voiceProfileColumns.some((col) => col.name === "sample_steps");
+  const hasSampleSteps = voiceProfileColumns.some(
+    (col) => col.name === "sample_steps",
+  );
   if (!hasSampleSteps) {
-    db.exec("ALTER TABLE voice_profiles ADD COLUMN sample_steps INTEGER NOT NULL DEFAULT 32");
+    db.exec(
+      "ALTER TABLE voice_profiles ADD COLUMN sample_steps INTEGER NOT NULL DEFAULT 32",
+    );
   }
 
   // ── F5-TTS schema extensions ──
-  const hasEngineType = voiceProfileColumns.some((col) => col.name === "engine_type");
+  const hasEngineType = voiceProfileColumns.some(
+    (col) => col.name === "engine_type",
+  );
   if (!hasEngineType) {
-    db.exec("ALTER TABLE voice_profiles ADD COLUMN engine_type TEXT NOT NULL DEFAULT 'sovits'");
+    db.exec(
+      "ALTER TABLE voice_profiles ADD COLUMN engine_type TEXT NOT NULL DEFAULT 'sovits'",
+    );
   }
 
   db.exec(`

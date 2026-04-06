@@ -18,12 +18,14 @@ export const Dashboard = () => {
 
   const toolsQuery = useQuery({
     queryKey: ["tools"],
-    queryFn: () => fetchJson<{ tools: Record<string, ToolInfo[]> }>("/api/tools")
+    queryFn: () =>
+      fetchJson<{ tools: Record<string, ToolInfo[]> }>("/api/tools"),
   });
 
   const approvalsQuery = useQuery({
     queryKey: ["approvals"],
-    queryFn: () => fetchJson<{ approvals: Approval[] }>("/api/approvals?status=pending")
+    queryFn: () =>
+      fetchJson<{ approvals: Approval[] }>("/api/approvals?status=pending"),
   });
 
   const logsQuery = useQuery({
@@ -32,44 +34,75 @@ export const Dashboard = () => {
       const params = new URLSearchParams({ limit: "8" });
       if (logCategory !== "all") params.set("category", logCategory);
       if (logLevel !== "all") params.set("level", logLevel);
-      return fetchJson<{ entries: AuditEntry[] }>(`/api/logs?${params.toString()}`);
-    }
+      return fetchJson<{ entries: AuditEntry[] }>(
+        `/api/logs?${params.toString()}`,
+      );
+    },
   });
 
   const healthQuery = useQuery({
     queryKey: ["health"],
-    queryFn: () => fetchJson<{ status: string }>("/api/health")
+    queryFn: () => fetchJson<{ status: string }>("/api/health"),
   });
 
   type AutomationItem = {
-    job: { id: string; name: string; cronExpression: string; timezone: string; enabled: boolean; runCount: number; lastRunAt: string | null };
-    prompt: { name: string; suggestedSkill: string | null; template: string; stages: number } | null;
+    job: {
+      id: string;
+      name: string;
+      cronExpression: string;
+      timezone: string;
+      enabled: boolean;
+      runCount: number;
+      lastRunAt: string | null;
+    };
+    prompt: {
+      name: string;
+      suggestedSkill: string | null;
+      template: string;
+      stages: number;
+    } | null;
     skillName: string | null;
-    lastExecution: { taskId: string; status: string; startedAt: string | null; completedAt: string | null; duration: number | null } | null;
+    lastExecution: {
+      taskId: string;
+      status: string;
+      startedAt: string | null;
+      completedAt: string | null;
+      duration: number | null;
+    } | null;
   };
 
   const automationsQuery = useQuery({
     queryKey: ["automations"],
-    queryFn: () => fetchJson<{ automations: AutomationItem[] }>("/api/admin/automations"),
+    queryFn: () =>
+      fetchJson<{ automations: AutomationItem[] }>("/api/admin/automations"),
   });
 
   const decisionMutation = useMutation({
     mutationFn: ({ id, approved }: { id: string; approved: boolean }) =>
       fetchJson(`/api/approvals/${id}/decision`, {
         method: "POST",
-        body: JSON.stringify({ approved, decidedBy: "web-ui", decidedVia: "web" })
+        body: JSON.stringify({
+          approved,
+          decidedBy: "web-ui",
+          decidedVia: "web",
+        }),
       }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["approvals"] })
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["approvals"] }),
   });
 
   useEffect(() => {
     if (!socket) return;
 
-    const refreshApprovals = () => queryClient.invalidateQueries({ queryKey: ["approvals"] });
-    const refreshTools = () => queryClient.invalidateQueries({ queryKey: ["tools"] });
+    const refreshApprovals = () =>
+      queryClient.invalidateQueries({ queryKey: ["approvals"] });
+    const refreshTools = () =>
+      queryClient.invalidateQueries({ queryKey: ["tools"] });
     const onJobExecuted = (data: { jobName?: string; success?: boolean }) => {
       const name = data.jobName ?? "Job";
-      showToast(`${name} ${data.success ? "completed" : "failed"}`, data.success ? "success" : "error");
+      showToast(
+        `${name} ${data.success ? "completed" : "failed"}`,
+        data.success ? "success" : "error",
+      );
     };
 
     socket.on("approval:request", refreshApprovals);
@@ -88,12 +121,19 @@ export const Dashboard = () => {
   const toolGroups = toolsQuery.data?.tools;
 
   const statusText = healthQuery.isSuccess
-    ? connected ? "Connected" : "Polling"
-    : healthQuery.isError ? "Needs auth" : "Connecting";
+    ? connected
+      ? "Connected"
+      : "Polling"
+    : healthQuery.isError
+      ? "Needs auth"
+      : "Connecting";
 
   const toolCount = useMemo(() => {
     if (!toolGroups) return 0;
-    return Object.values(toolGroups).reduce((acc, group) => acc + group.length, 0);
+    return Object.values(toolGroups).reduce(
+      (acc, group) => acc + group.length,
+      0,
+    );
   }, [toolGroups]);
 
   const pendingApprovals = approvalsQuery.data?.approvals ?? [];
@@ -115,7 +155,9 @@ export const Dashboard = () => {
       <header className="rounded-2xl bg-foreground p-6 text-background shadow-panel">
         <div className="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
           <div>
-            <p className="text-sm uppercase tracking-[0.3em] text-muted-foreground">OpenZigs</p>
+            <p className="text-sm uppercase tracking-[0.3em] text-muted-foreground">
+              OpenZigs
+            </p>
             <h1 className="mt-2 text-4xl font-semibold">Control Panel</h1>
             <p className="mt-2 text-sm text-muted-foreground">
               Monitor approvals, tool controls, and audit activity in real time.
@@ -155,20 +197,34 @@ export const Dashboard = () => {
                 <option value="error">Error</option>
                 <option value="security">Security</option>
               </select>
-              <Button variant="default" size="sm" onClick={handleExport} className="rounded-full">
+              <Button
+                variant="default"
+                size="sm"
+                onClick={handleExport}
+                className="rounded-full"
+              >
                 Export JSON
               </Button>
             </div>
             <div className="space-y-3">
               {recentLogs.length === 0 ? (
-                <p className="text-sm text-muted-foreground">No activity yet.</p>
+                <p className="text-sm text-muted-foreground">
+                  No activity yet.
+                </p>
               ) : (
                 recentLogs.map((log) => (
-                  <div key={log.id} className="rounded-xl border border-border bg-card p-3">
+                  <div
+                    key={log.id}
+                    className="rounded-xl border border-border bg-card p-3"
+                  >
                     <div className="flex items-center justify-between">
                       <div>
-                        <p className="text-sm font-semibold text-foreground">{log.event}</p>
-                        <p className="text-xs text-muted-foreground">{log.category} · {log.level}</p>
+                        <p className="text-sm font-semibold text-foreground">
+                          {log.event}
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          {log.category} · {log.level}
+                        </p>
                       </div>
                       <span className="text-xs text-muted-foreground">
                         {new Date(log.timestamp).toLocaleTimeString()}
@@ -185,12 +241,20 @@ export const Dashboard = () => {
           <SectionCard title="Snapshot">
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="rounded-xl border border-border bg-card p-4">
-                <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Tools</p>
-                <p className="mt-2 text-2xl font-semibold text-foreground">{toolCount}</p>
+                <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
+                  Tools
+                </p>
+                <p className="mt-2 text-2xl font-semibold text-foreground">
+                  {toolCount}
+                </p>
               </div>
               <div className="rounded-xl border border-border bg-card p-4">
-                <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Approvals</p>
-                <p className="mt-2 text-2xl font-semibold text-foreground">{pendingApprovals.length}</p>
+                <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
+                  Approvals
+                </p>
+                <p className="mt-2 text-2xl font-semibold text-foreground">
+                  {pendingApprovals.length}
+                </p>
               </div>
             </div>
           </SectionCard>
@@ -202,8 +266,13 @@ export const Dashboard = () => {
               if (active.length === 0) {
                 return (
                   <div className="text-center">
-                    <p className="text-sm text-muted-foreground">No active automations.</p>
-                    <Link href="/scheduler" className="mt-2 inline-block text-xs font-semibold text-primary hover:underline">
+                    <p className="text-sm text-muted-foreground">
+                      No active automations.
+                    </p>
+                    <Link
+                      href="/scheduler"
+                      className="mt-2 inline-block text-xs font-semibold text-primary hover:underline"
+                    >
                       + Create Automation
                     </Link>
                   </div>
@@ -212,24 +281,44 @@ export const Dashboard = () => {
               return (
                 <div className="space-y-3">
                   {active.slice(0, 5).map((a) => (
-                    <div key={a.job.id} className="rounded-xl border border-border bg-card p-3">
+                    <div
+                      key={a.job.id}
+                      className="rounded-xl border border-border bg-card p-3"
+                    >
                       <div className="flex items-center justify-between">
-                        <p className="text-sm font-semibold text-foreground">{a.job.name}</p>
+                        <p className="text-sm font-semibold text-foreground">
+                          {a.job.name}
+                        </p>
                         {a.lastExecution && (
-                          <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${a.lastExecution.status === "completed" ? "bg-emerald-500/10 text-emerald-600" : a.lastExecution.status === "failed" ? "bg-destructive/10 text-destructive" : "bg-muted text-muted-foreground"}`}>
+                          <span
+                            className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${a.lastExecution.status === "completed" ? "bg-emerald-500/10 text-emerald-600" : a.lastExecution.status === "failed" ? "bg-destructive/10 text-destructive" : "bg-muted text-muted-foreground"}`}
+                          >
                             {a.lastExecution.status}
                           </span>
                         )}
                       </div>
                       <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
-                        {a.skillName && <span className="rounded bg-emerald-500/10 px-1.5 py-0.5 text-emerald-600 dark:text-emerald-400">★ {a.skillName}</span>}
+                        {a.skillName && (
+                          <span className="rounded bg-emerald-500/10 px-1.5 py-0.5 text-emerald-600 dark:text-emerald-400">
+                            ★ {a.skillName}
+                          </span>
+                        )}
                         {a.prompt && <span>📝 {a.prompt.name}</span>}
-                        <code className="rounded bg-muted px-1 font-mono">{a.job.cronExpression}</code>
-                        {a.job.lastRunAt && <span>Last: {new Date(a.job.lastRunAt).toLocaleString()}</span>}
+                        <code className="rounded bg-muted px-1 font-mono">
+                          {a.job.cronExpression}
+                        </code>
+                        {a.job.lastRunAt && (
+                          <span>
+                            Last: {new Date(a.job.lastRunAt).toLocaleString()}
+                          </span>
+                        )}
                       </div>
                     </div>
                   ))}
-                  <Link href="/scheduler" className="block text-center text-xs font-semibold text-primary hover:underline">
+                  <Link
+                    href="/scheduler"
+                    className="block text-center text-xs font-semibold text-primary hover:underline"
+                  >
                     View all automations →
                   </Link>
                 </div>
@@ -240,27 +329,57 @@ export const Dashboard = () => {
           <SectionCard title="Pending Approvals">
             <div className="space-y-4">
               {pendingApprovals.length === 0 ? (
-                <p className="text-sm text-muted-foreground">No approvals waiting.</p>
+                <p className="text-sm text-muted-foreground">
+                  No approvals waiting.
+                </p>
               ) : (
                 pendingApprovals.map((approval) => (
-                  <div key={approval.id} className="rounded-xl border border-border bg-card p-4">
+                  <div
+                    key={approval.id}
+                    className="rounded-xl border border-border bg-card p-4"
+                  >
                     <div className="flex items-center justify-between">
                       <div>
-                        <p className="text-sm font-semibold text-foreground">{approval.tool}</p>
-                        <p className="text-xs text-muted-foreground">{approval.explanation}</p>
+                        <p className="text-sm font-semibold text-foreground">
+                          {approval.tool}
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          {approval.explanation}
+                        </p>
                       </div>
                       <span className="rounded-full bg-accent/15 px-3 py-1 text-[10px] font-semibold uppercase text-accent">
                         {approval.riskLevel}
                       </span>
                     </div>
                     {approval.preview ? (
-                      <p className="mt-2 text-xs text-muted-foreground">{approval.preview}</p>
+                      <p className="mt-2 text-xs text-muted-foreground">
+                        {approval.preview}
+                      </p>
                     ) : null}
                     <div className="mt-3 flex items-center gap-2">
-                      <Button size="sm" className="rounded-full" onClick={() => decisionMutation.mutate({ id: approval.id, approved: true })}>
+                      <Button
+                        size="sm"
+                        className="rounded-full"
+                        onClick={() =>
+                          decisionMutation.mutate({
+                            id: approval.id,
+                            approved: true,
+                          })
+                        }
+                      >
                         Approve
                       </Button>
-                      <Button variant="outline" size="sm" className="rounded-full" onClick={() => decisionMutation.mutate({ id: approval.id, approved: false })}>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="rounded-full"
+                        onClick={() =>
+                          decisionMutation.mutate({
+                            id: approval.id,
+                            approved: false,
+                          })
+                        }
+                      >
                         Reject
                       </Button>
                     </div>

@@ -3,11 +3,23 @@ import os from "node:os";
 import path from "node:path";
 import fs from "node:fs/promises";
 import { CopilotClient, defineTool } from "@github/copilot-sdk";
-import { secureDirOptions, secureFileOptions, chmodSecureFile } from "../config/file-permissions.js";
+import {
+  secureDirOptions,
+  secureFileOptions,
+  chmodSecureFile,
+} from "../config/file-permissions.js";
 import type { ToolDefinition, ToolRegistry } from "../mcp/tool-registry.js";
-import { ALWAYS_ON_TOOLS, ESSENTIAL_TOOLS, CONTEXTUAL_TOOLS } from "../mcp/constants.js";
+import {
+  ALWAYS_ON_TOOLS,
+  ESSENTIAL_TOOLS,
+  CONTEXTUAL_TOOLS,
+} from "../mcp/constants.js";
 import { TokenTracker } from "./token-tracker.js";
-import type { TokenUsage, TokenUsageEvent, CompactionEvent } from "./token-tracker.js";
+import type {
+  TokenUsage,
+  TokenUsageEvent,
+  CompactionEvent,
+} from "./token-tracker.js";
 
 export type { TokenUsage, TokenUsageEvent, CompactionEvent };
 
@@ -32,9 +44,26 @@ export type ReasoningEffort = "low" | "medium" | "high" | "xhigh";
 
 // ── BYOK Provider Config ──
 export type ProviderConfig =
-  | { type: "openai"; baseUrl: string; apiKey?: string; bearerToken?: string; wireApi?: "openai" | "anthropic" }
-  | { type: "azure"; baseUrl: string; apiKey?: string; bearerToken?: string; azure?: { apiVersion?: string } }
-  | { type: "anthropic"; baseUrl: string; apiKey?: string; bearerToken?: string }
+  | {
+      type: "openai";
+      baseUrl: string;
+      apiKey?: string;
+      bearerToken?: string;
+      wireApi?: "openai" | "anthropic";
+    }
+  | {
+      type: "azure";
+      baseUrl: string;
+      apiKey?: string;
+      bearerToken?: string;
+      azure?: { apiVersion?: string };
+    }
+  | {
+      type: "anthropic";
+      baseUrl: string;
+      apiKey?: string;
+      bearerToken?: string;
+    }
   | { type: "ollama"; baseUrl: string };
 
 // ── Native Custom Agent Definition ──
@@ -50,8 +79,24 @@ export type CustomAgentDefinition = {
 
 // ── Native MCP Server Definition (SDK-level) ──
 export type NativeMcpServerDefinition =
-  | { type: "local" | "stdio"; command: string; args?: string[]; env?: Record<string, string>; cwd?: string; tools?: string[]; disabledTools?: string[]; timeout?: number }
-  | { type: "http" | "sse"; url: string; headers?: Record<string, string>; tools?: string[]; disabledTools?: string[]; timeout?: number };
+  | {
+      type: "local" | "stdio";
+      command: string;
+      args?: string[];
+      env?: Record<string, string>;
+      cwd?: string;
+      tools?: string[];
+      disabledTools?: string[];
+      timeout?: number;
+    }
+  | {
+      type: "http" | "sse";
+      url: string;
+      headers?: Record<string, string>;
+      tools?: string[];
+      disabledTools?: string[];
+      timeout?: number;
+    };
 
 type DeviceAuthResult = {
   token: string;
@@ -66,9 +111,17 @@ type AuthState = {
   obtainedAt: number;
 };
 
-type PermissionRequest = { kind: string; toolName?: string; toolArgs?: unknown };
-type PermissionResponse = { kind: "approved" | "denied-by-rules" | "denied-by-user" };
-type PermissionRequestHandler = (request: PermissionRequest) => Promise<PermissionResponse>;
+type PermissionRequest = {
+  kind: string;
+  toolName?: string;
+  toolArgs?: unknown;
+};
+type PermissionResponse = {
+  kind: "approved" | "denied-by-rules" | "denied-by-user";
+};
+type PermissionRequestHandler = (
+  request: PermissionRequest,
+) => Promise<PermissionResponse>;
 
 export type InfiniteSessionConfig = {
   enabled?: boolean;
@@ -95,7 +148,7 @@ type SessionCreateConfig = {
   skillDirectories?: string[];
   onUserInputRequest?: (
     request: { question: string; choices?: string[]; allowFreeform?: boolean },
-    context: { sessionId: string }
+    context: { sessionId: string },
   ) => Promise<{ answer: string; wasFreeform?: boolean }>;
   disabledSkills?: string[];
   enableSubagents?: boolean;
@@ -111,7 +164,7 @@ export type SdkSessionContext = {
 
 export type SdkSessionMetadata = {
   sessionId: string;
-  startTime: string;   // ISO
+  startTime: string; // ISO
   modifiedTime: string; // ISO
   summary?: string;
   isRemote: boolean;
@@ -135,7 +188,12 @@ export type SdkSessionEvent = {
 };
 
 export type SdkSessionLifecycleEvent = {
-  type: "session.created" | "session.deleted" | "session.updated" | "session.foreground" | "session.background";
+  type:
+    | "session.created"
+    | "session.deleted"
+    | "session.updated"
+    | "session.foreground"
+    | "session.background";
   sessionId: string;
   metadata?: {
     startTime: string;
@@ -183,8 +241,11 @@ export type SubagentEvent =
 type CopilotSessionLike = {
   readonly sessionId: string;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  on: (event: string, handler: (event: any) => void) => (() => void);
-  sendAndWait: (input: { prompt: string; attachments?: SdkAttachment[] }, timeout?: number) => Promise<unknown>;
+  on: (event: string, handler: (event: any) => void) => () => void;
+  sendAndWait: (
+    input: { prompt: string; attachments?: SdkAttachment[] },
+    timeout?: number,
+  ) => Promise<unknown>;
   destroy: () => Promise<void>;
   getMessages?: () => Promise<SdkSessionEvent[]>;
 };
@@ -210,16 +271,22 @@ export type CopilotModel = {
 type CopilotClientLike = {
   start?: () => Promise<void>;
   createSession: (config: SessionCreateConfig) => Promise<CopilotSessionLike>;
-  resumeSession?: (sessionId: string, config?: Omit<SessionCreateConfig, "sessionId">) => Promise<CopilotSessionLike>;
+  resumeSession?: (
+    sessionId: string,
+    config?: Omit<SessionCreateConfig, "sessionId">,
+  ) => Promise<CopilotSessionLike>;
   stop?: () => Promise<Error[]>;
-  startDeviceAuth?: (input: { clientId: string; scopes: string[] }) => Promise<DeviceAuthInfo>;
+  startDeviceAuth?: (input: {
+    clientId: string;
+    scopes: string[];
+  }) => Promise<DeviceAuthInfo>;
   waitForAuth?: (input: { timeoutMs: number }) => Promise<unknown>;
   listModels?: () => Promise<CopilotModel[]>;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   listSessions?: (filter?: SdkSessionListFilter) => Promise<any[]>;
   deleteSession?: (sessionId: string) => Promise<void>;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  on?: (...args: any[]) => (() => void);
+  on?: (...args: any[]) => () => void;
 };
 
 export type SystemMessageConfig = {
@@ -248,7 +315,7 @@ export type UserInputResponse = {
 
 export type UserInputHandler = (
   request: UserInputRequest,
-  sessionId: string
+  sessionId: string,
 ) => Promise<UserInputResponse>;
 
 export type HookPreToolUseInput = {
@@ -298,10 +365,16 @@ export type HookErrorInput = {
 
 export type HooksConfig = {
   onPreToolUse?: (input: HookPreToolUseInput) => Promise<HookPreToolUseResult>;
-  onPostToolUse?: (input: HookPostToolUseInput) => Promise<HookPostToolUseResult>;
-  onSessionStart?: (input: HookSessionStartInput) => Promise<{ additionalContext?: string } | null>;
+  onPostToolUse?: (
+    input: HookPostToolUseInput,
+  ) => Promise<HookPostToolUseResult>;
+  onSessionStart?: (
+    input: HookSessionStartInput,
+  ) => Promise<{ additionalContext?: string } | null>;
   onSessionEnd?: (input: HookSessionEndInput) => Promise<null>;
-  onErrorOccurred?: (input: HookErrorInput) => Promise<{ errorHandling: "retry" | "abort" } | null>;
+  onErrorOccurred?: (
+    input: HookErrorInput,
+  ) => Promise<{ errorHandling: "retry" | "abort" } | null>;
 };
 
 export type ChatOptions = {
@@ -447,10 +520,14 @@ const readAuthState = async (authPath: string): Promise<AuthState | null> => {
       token: parsed.token,
       refreshToken: parsed.refreshToken,
       expiresAt: parsed.expiresAt,
-      obtainedAt: parsed.obtainedAt ?? Date.now()
+      obtainedAt: parsed.obtainedAt ?? Date.now(),
     };
   } catch (error) {
-    if (error instanceof Error && "code" in error && (error as { code?: string }).code === "ENOENT") {
+    if (
+      error instanceof Error &&
+      "code" in error &&
+      (error as { code?: string }).code === "ENOENT"
+    ) {
       return null;
     }
     throw error;
@@ -459,7 +536,11 @@ const readAuthState = async (authPath: string): Promise<AuthState | null> => {
 
 const writeAuthState = async (authPath: string, state: AuthState) => {
   await fs.mkdir(path.dirname(authPath), secureDirOptions());
-  await fs.writeFile(authPath, JSON.stringify(state, null, 2), secureFileOptions());
+  await fs.writeFile(
+    authPath,
+    JSON.stringify(state, null, 2),
+    secureFileOptions(),
+  );
   await chmodSecureFile(authPath);
 };
 
@@ -468,23 +549,30 @@ const normalizeAuthResult = (result: unknown): DeviceAuthResult => {
     throw new Error("Device flow auth returned empty result");
   }
 
-  const token = "token" in result && typeof (result as { token?: string }).token === "string"
-    ? (result as { token: string }).token
-    : "accessToken" in result && typeof (result as { accessToken?: string }).accessToken === "string"
-      ? (result as { accessToken: string }).accessToken
-      : "";
+  const token =
+    "token" in result &&
+    typeof (result as { token?: string }).token === "string"
+      ? (result as { token: string }).token
+      : "accessToken" in result &&
+          typeof (result as { accessToken?: string }).accessToken === "string"
+        ? (result as { accessToken: string }).accessToken
+        : "";
 
   if (!token) {
     throw new Error("Device flow auth did not return a token");
   }
 
-  const expiresAt = "expiresAt" in result && typeof (result as { expiresAt?: number }).expiresAt === "number"
-    ? (result as { expiresAt: number }).expiresAt
-    : undefined;
+  const expiresAt =
+    "expiresAt" in result &&
+    typeof (result as { expiresAt?: number }).expiresAt === "number"
+      ? (result as { expiresAt: number }).expiresAt
+      : undefined;
 
-  const refreshToken = "refreshToken" in result && typeof (result as { refreshToken?: string }).refreshToken === "string"
-    ? (result as { refreshToken: string }).refreshToken
-    : undefined;
+  const refreshToken =
+    "refreshToken" in result &&
+    typeof (result as { refreshToken?: string }).refreshToken === "string"
+      ? (result as { refreshToken: string }).refreshToken
+      : undefined;
 
   return { token, refreshToken, expiresAt };
 };
@@ -576,7 +664,10 @@ class AsyncQueue<T> {
   }
 }
 
-export class CopilotWrapperService extends EventEmitter implements CopilotWrapper {
+export class CopilotWrapperService
+  extends EventEmitter
+  implements CopilotWrapper
+{
   private client: CopilotClientLike;
   private toolRegistry?: ToolRegistry;
   private authPath: string;
@@ -602,8 +693,14 @@ export class CopilotWrapperService extends EventEmitter implements CopilotWrappe
   private skillDirectoriesConfig: string[];
   private sessionCache = new Map<string, CopilotSessionLike>();
   private sessionConfigSignatures = new Map<string, string>();
-  private sessionCreationPromises = new Map<string, Promise<CopilotSessionLike>>();
-  private modelCapabilitiesCache = new Map<string, { supportsReasoning: boolean }>();
+  private sessionCreationPromises = new Map<
+    string,
+    Promise<CopilotSessionLike>
+  >();
+  private modelCapabilitiesCache = new Map<
+    string,
+    { supportsReasoning: boolean }
+  >();
   private analytics: SessionAnalytics = {
     sessionsCreated: 0,
     sessionsResumed: 0,
@@ -719,7 +816,9 @@ export class CopilotWrapperService extends EventEmitter implements CopilotWrappe
     }
   }
 
-  setNativeMcpServers(servers: Record<string, NativeMcpServerDefinition>): void {
+  setNativeMcpServers(
+    servers: Record<string, NativeMcpServerDefinition>,
+  ): void {
     this.nativeMcpServersConfig = { ...servers };
     // MCP server changes invalidate all cached sessions
     void this.clearAllSessions();
@@ -736,22 +835,25 @@ export class CopilotWrapperService extends EventEmitter implements CopilotWrappe
     }
 
     if (!this.client.startDeviceAuth || !this.client.waitForAuth) {
-      throw new Error("The provided client does not support device flow authentication");
+      throw new Error(
+        "The provided client does not support device flow authentication",
+      );
     }
 
     const authInfo = await this.client.startDeviceAuth({
       clientId: this.clientId,
-      scopes: ["copilot", "read:user"]
+      scopes: ["copilot", "read:user"],
     });
 
-    this.pendingAuth = this.client.waitForAuth({ timeoutMs: this.authTimeoutMs })
+    this.pendingAuth = this.client
+      .waitForAuth({ timeoutMs: this.authTimeoutMs })
       .then((result) => {
         const normalized = normalizeAuthResult(result);
         const state: AuthState = {
           token: normalized.token,
           refreshToken: normalized.refreshToken,
           expiresAt: normalized.expiresAt,
-          obtainedAt: Date.now()
+          obtainedAt: Date.now(),
         };
         return writeAuthState(this.authPath, state).then(() => state);
       });
@@ -780,7 +882,7 @@ export class CopilotWrapperService extends EventEmitter implements CopilotWrappe
     if (this.startFailed) {
       throw new Error(
         "Copilot SDK is unavailable. The Copilot CLI may be outdated or missing. " +
-        "Please update your GitHub Copilot extension to get CLI version 0.0.394 or later."
+          "Please update your GitHub Copilot extension to get CLI version 0.0.394 or later.",
       );
     }
 
@@ -797,7 +899,8 @@ export class CopilotWrapperService extends EventEmitter implements CopilotWrappe
       for (const essential of ESSENTIAL_TOOLS) {
         scopedSet.add(essential);
       }
-      const allTools = options?.tools ?? this.toolRegistry?.listAllTools() ?? [];
+      const allTools =
+        options?.tools ?? this.toolRegistry?.listAllTools() ?? [];
       toolList = allTools.filter((t) => scopedSet.has(t.name));
     } else {
       toolList = options?.tools ?? this.toolRegistry?.listEnabledTools() ?? [];
@@ -848,8 +951,8 @@ export class CopilotWrapperService extends EventEmitter implements CopilotWrappe
             const msg = err instanceof Error ? err.message : String(err);
             return `[Tool Error] ${msg}`;
           }
-        }
-      })
+        },
+      }),
     );
 
     // Inject memory context into system message when available
@@ -862,7 +965,10 @@ export class CopilotWrapperService extends EventEmitter implements CopilotWrappe
           const combined = existing
             ? `${existing}\n\n${memoryContext}`
             : memoryContext;
-          effectiveSystemMessage = { mode: effectiveSystemMessage?.mode ?? "append", content: combined };
+          effectiveSystemMessage = {
+            mode: effectiveSystemMessage?.mode ?? "append",
+            content: combined,
+          };
         }
       } catch (err) {
         // Memory context is best-effort — don't block chat on failures
@@ -886,7 +992,7 @@ export class CopilotWrapperService extends EventEmitter implements CopilotWrappe
         autoApproveTools: options?.autoApproveTools,
         disabledSkills: options?.disabledSkills,
         enableSubagents: options?.enableSubagents,
-      }
+      },
     );
 
     const queue = new AsyncQueue<string>();
@@ -905,10 +1011,12 @@ export class CopilotWrapperService extends EventEmitter implements CopilotWrappe
     });
 
     try {
-      void this.sendWithRetries(session, message, options?.attachments).catch((error) => {
-        sendError = error;
-        queue.end();
-      });
+      void this.sendWithRetries(session, message, options?.attachments).catch(
+        (error) => {
+          sendError = error;
+          queue.end();
+        },
+      );
 
       yield* this.streamQueue(queue, () => {
         if (sendError) {
@@ -963,7 +1071,9 @@ export class CopilotWrapperService extends EventEmitter implements CopilotWrappe
     // If we haven't fetched model info yet, fall back to a well-known list of reasoning models.
     // This prevents errors when the model cache hasn't been populated.
     const lower = modelId.toLowerCase();
-    return lower.startsWith("o1") || lower.startsWith("o3") || lower.startsWith("o4");
+    return (
+      lower.startsWith("o1") || lower.startsWith("o3") || lower.startsWith("o4")
+    );
   }
 
   async listModels(): Promise<CopilotModel[]> {
@@ -977,8 +1087,10 @@ export class CopilotWrapperService extends EventEmitter implements CopilotWrappe
     const models = await this.client.listModels();
     // Cache model capabilities for reasoning-effort gating
     for (const model of models) {
-      const supportsReasoning = model.capabilities?.supports?.reasoningEffort === true
-        || (model.supportedReasoningEfforts != null && model.supportedReasoningEfforts.length > 0);
+      const supportsReasoning =
+        model.capabilities?.supports?.reasoningEffort === true ||
+        (model.supportedReasoningEfforts != null &&
+          model.supportedReasoningEfforts.length > 0);
       this.modelCapabilitiesCache.set(model.id, { supportsReasoning });
     }
     return models;
@@ -1003,36 +1115,52 @@ export class CopilotWrapperService extends EventEmitter implements CopilotWrappe
       await Promise.race([
         this.client.start(),
         new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error("Copilot CLI start timed out after 10s")), 10_000)
-        )
+          setTimeout(
+            () => reject(new Error("Copilot CLI start timed out after 10s")),
+            10_000,
+          ),
+        ),
       ]);
       this.started = true;
 
       // Subscribe to client-level lifecycle events (Phase 4)
       if (this.client.on) {
-        this.lifecycleUnsubscribe = this.client.on((event: SdkSessionLifecycleEvent) => {
-          const MAX_LIFECYCLE_EVENTS = 200;
-          if (this.analytics.lifecycleEvents.length >= MAX_LIFECYCLE_EVENTS) {
-            this.analytics.lifecycleEvents.splice(0, this.analytics.lifecycleEvents.length - MAX_LIFECYCLE_EVENTS + 1);
-          }
-          this.analytics.lifecycleEvents.push(event);
-          this.analytics.lastUpdated = new Date().toISOString();
-          this.emit("session:lifecycle", event);
-        });
+        this.lifecycleUnsubscribe = this.client.on(
+          (event: SdkSessionLifecycleEvent) => {
+            const MAX_LIFECYCLE_EVENTS = 200;
+            if (this.analytics.lifecycleEvents.length >= MAX_LIFECYCLE_EVENTS) {
+              this.analytics.lifecycleEvents.splice(
+                0,
+                this.analytics.lifecycleEvents.length -
+                  MAX_LIFECYCLE_EVENTS +
+                  1,
+              );
+            }
+            this.analytics.lifecycleEvents.push(event);
+            this.analytics.lastUpdated = new Date().toISOString();
+            this.emit("session:lifecycle", event);
+          },
+        );
       }
     } catch {
       this.startFailed = true;
     }
   }
 
-  private async sendWithRetries(session: CopilotSessionLike, prompt: string, attachments?: SdkAttachment[]) {
+  private async sendWithRetries(
+    session: CopilotSessionLike,
+    prompt: string,
+    attachments?: SdkAttachment[],
+  ) {
     const maxRetries = 3;
     let attempt = 0;
 
     // eslint-disable-next-line no-constant-condition
     while (true) {
       try {
-        const input: { prompt: string; attachments?: SdkAttachment[] } = { prompt };
+        const input: { prompt: string; attachments?: SdkAttachment[] } = {
+          prompt,
+        };
         if (attachments && attachments.length > 0) {
           input.attachments = attachments;
         }
@@ -1050,7 +1178,10 @@ export class CopilotWrapperService extends EventEmitter implements CopilotWrappe
         }
 
         if (isRateLimitError(error)) {
-          const delay = Math.min(1000 * Math.pow(2, attempt) + Math.random() * 1000, 60_000);
+          const delay = Math.min(
+            1000 * Math.pow(2, attempt) + Math.random() * 1000,
+            60_000,
+          );
           await sleep(delay);
           continue;
         }
@@ -1069,7 +1200,11 @@ export class CopilotWrapperService extends EventEmitter implements CopilotWrappe
     try {
       await fs.unlink(this.authPath);
     } catch (error) {
-      if (error instanceof Error && "code" in error && (error as { code?: string }).code === "ENOENT") {
+      if (
+        error instanceof Error &&
+        "code" in error &&
+        (error as { code?: string }).code === "ENOENT"
+      ) {
         return;
       }
       throw error;
@@ -1085,7 +1220,7 @@ export class CopilotWrapperService extends EventEmitter implements CopilotWrappe
    */
   private mergeCustomAgents(
     defaults: CustomAgentDefinition[],
-    overrides?: CustomAgentDefinition[]
+    overrides?: CustomAgentDefinition[],
   ): CustomAgentDefinition[] {
     if (!overrides?.length) return defaults;
     if (!defaults.length) return overrides;
@@ -1112,23 +1247,27 @@ export class CopilotWrapperService extends EventEmitter implements CopilotWrappe
       autoApproveTools?: string[];
       disabledSkills?: string[];
       enableSubagents?: boolean;
-    }
+    },
   ): SessionCreateConfig {
     const effectiveHooks = this.hooksConfig;
     const closureAutoApproveTools = extra?.autoApproveTools;
-    const effectiveUserInput = extra?.onUserInputRequest ?? this.userInputHandler;
-    const effectiveWorkingDirectory = extra?.workingDirectory ?? this.defaultWorkingDirectory;
+    const effectiveUserInput =
+      extra?.onUserInputRequest ?? this.userInputHandler;
+    const effectiveWorkingDirectory =
+      extra?.workingDirectory ?? this.defaultWorkingDirectory;
     // Only include reasoning effort when the model actually supports it.
     // Non-reasoning models (gpt-4.1, claude-sonnet-4, etc.) reject this parameter.
-    const rawReasoningEffort = extra?.reasoningEffort ?? this.defaultReasoningEffort;
-    const effectiveReasoningEffort = rawReasoningEffort && this.modelSupportsReasoning(model)
-      ? rawReasoningEffort
-      : undefined;
+    const rawReasoningEffort =
+      extra?.reasoningEffort ?? this.defaultReasoningEffort;
+    const effectiveReasoningEffort =
+      rawReasoningEffort && this.modelSupportsReasoning(model)
+        ? rawReasoningEffort
+        : undefined;
 
     // Merge per-call agent overrides with defaults (per-call wins on name collision)
     const mergedAgents = this.mergeCustomAgents(
       this.customAgentsConfig,
-      extra?.customAgents
+      extra?.customAgents,
     );
     // Merge per-call MCP server overrides with defaults (per-call wins on key collision)
     const mergedMcpServers = {
@@ -1154,41 +1293,61 @@ export class CopilotWrapperService extends EventEmitter implements CopilotWrappe
       model,
       streaming: true,
       tools,
-      ...(this.infiniteSessionsConfig ? { infiniteSessions: this.infiniteSessionsConfig } : {}),
+      ...(this.infiniteSessionsConfig
+        ? { infiniteSessions: this.infiniteSessionsConfig }
+        : {}),
       ...(extra?.systemMessage ? { systemMessage: extra.systemMessage } : {}),
-      ...(effectiveWorkingDirectory ? { workingDirectory: effectiveWorkingDirectory } : {}),
-      ...(effectiveReasoningEffort ? { reasoningEffort: effectiveReasoningEffort } : {}),
+      ...(effectiveWorkingDirectory
+        ? { workingDirectory: effectiveWorkingDirectory }
+        : {}),
+      ...(effectiveReasoningEffort
+        ? { reasoningEffort: effectiveReasoningEffort }
+        : {}),
       ...(this.providerConfig ? { provider: this.providerConfig } : {}),
       ...(mergedAgents.length > 0 ? { customAgents: mergedAgents } : {}),
-      ...(Object.keys(sdkMcpServers).length > 0 ? { mcpServers: sdkMcpServers } : {}),
-      ...(this.skillDirectoriesConfig.length > 0 ? { skillDirectories: this.skillDirectoriesConfig } : {}),
-      ...(extra?.disabledSkills?.length ? { disabledSkills: extra.disabledSkills } : {}),
+      ...(Object.keys(sdkMcpServers).length > 0
+        ? { mcpServers: sdkMcpServers }
+        : {}),
+      ...(this.skillDirectoriesConfig.length > 0
+        ? { skillDirectories: this.skillDirectoriesConfig }
+        : {}),
+      ...(extra?.disabledSkills?.length
+        ? { disabledSkills: extra.disabledSkills }
+        : {}),
       ...(extra?.enableSubagents ? { enableSubagents: true } : {}),
-      ...(effectiveHooks ? {
-        hooks: {
-          ...effectiveHooks,
-          onPreToolUse: effectiveHooks.onPreToolUse
-            ? async (input: Omit<HookPreToolUseInput, "context">) => {
-                return effectiveHooks.onPreToolUse!({
-                  ...input,
-                  context: {
-                    sessionId: sessionId ?? "ephemeral",
-                    // Closure-captured auto-approve list survives JSON-RPC boundaries
-                    // (AsyncLocalStorage context is lost across vscode-jsonrpc dispatches).
-                    autoApproveTools: closureAutoApproveTools,
-                  },
-                });
-              }
-            : undefined,
-        }
-      } : {}),
-      ...(extra?.availableTools ? { availableTools: extra.availableTools } : {}),
+      ...(effectiveHooks
+        ? {
+            hooks: {
+              ...effectiveHooks,
+              onPreToolUse: effectiveHooks.onPreToolUse
+                ? async (input: Omit<HookPreToolUseInput, "context">) => {
+                    return effectiveHooks.onPreToolUse!({
+                      ...input,
+                      context: {
+                        sessionId: sessionId ?? "ephemeral",
+                        // Closure-captured auto-approve list survives JSON-RPC boundaries
+                        // (AsyncLocalStorage context is lost across vscode-jsonrpc dispatches).
+                        autoApproveTools: closureAutoApproveTools,
+                      },
+                    });
+                  }
+                : undefined,
+            },
+          }
+        : {}),
+      ...(extra?.availableTools
+        ? { availableTools: extra.availableTools }
+        : {}),
       ...(extra?.excludedTools ? { excludedTools: extra.excludedTools } : {}),
       ...(effectiveUserInput
         ? {
             onUserInputRequest: async (
-              request: { question: string; choices?: string[]; allowFreeform?: boolean },
-              context: { sessionId: string }
+              request: {
+                question: string;
+                choices?: string[];
+                allowFreeform?: boolean;
+              },
+              context: { sessionId: string },
             ) => effectiveUserInput(request, context.sessionId),
           }
         : {}),
@@ -1197,7 +1356,7 @@ export class CopilotWrapperService extends EventEmitter implements CopilotWrappe
           return this.permissionHandler(request);
         }
         return { kind: "approved" };
-      }
+      },
     };
   }
 
@@ -1221,18 +1380,25 @@ export class CopilotWrapperService extends EventEmitter implements CopilotWrappe
       autoApproveTools?: string[];
       disabledSkills?: string[];
       enableSubagents?: boolean;
-    }
+    },
   ): Promise<CopilotSessionLike> {
-    const requestedSignature = this.computeSessionConfigSignature(model, tools, extra);
+    const requestedSignature = this.computeSessionConfigSignature(
+      model,
+      tools,
+      extra,
+    );
 
     if (!conversationId) {
       // No conversationId — ephemeral session (backward compatible)
-      return this.client.createSession(this.buildSessionConfig(model, tools, undefined, extra));
+      return this.client.createSession(
+        this.buildSessionConfig(model, tools, undefined, extra),
+      );
     }
 
     const cached = this.sessionCache.get(conversationId);
     if (cached) {
-      const existingSignature = this.sessionConfigSignatures.get(conversationId);
+      const existingSignature =
+        this.sessionConfigSignatures.get(conversationId);
       if (existingSignature === requestedSignature) {
         return cached;
       }
@@ -1257,20 +1423,20 @@ export class CopilotWrapperService extends EventEmitter implements CopilotWrappe
           try {
             session = await this.client.resumeSession(
               conversationId,
-              this.buildSessionConfig(model, tools, undefined, extra)
+              this.buildSessionConfig(model, tools, undefined, extra),
             );
             this.analytics.sessionsResumed++;
           } catch (resumeError) {
             // It's useful to log why resume failed, even if we fall back gracefully.
             // console.warn(`Failed to resume session ${conversationId}, creating a new one. Error:`, resumeError);
             session = await this.client.createSession(
-              this.buildSessionConfig(model, tools, conversationId, extra)
+              this.buildSessionConfig(model, tools, conversationId, extra),
             );
             this.analytics.sessionsCreated++;
           }
         } else {
           session = await this.client.createSession(
-            this.buildSessionConfig(model, tools, conversationId, extra)
+            this.buildSessionConfig(model, tools, conversationId, extra),
           );
           this.analytics.sessionsCreated++;
         }
@@ -1303,7 +1469,7 @@ export class CopilotWrapperService extends EventEmitter implements CopilotWrappe
       mcpServers?: Record<string, NativeMcpServerDefinition>;
       autoApproveTools?: string[];
       enableSubagents?: boolean;
-    }
+    },
   ): string {
     const toolNames = (tools as Array<{ name?: string }>)
       .map((t) => t.name ?? "")
@@ -1324,7 +1490,10 @@ export class CopilotWrapperService extends EventEmitter implements CopilotWrappe
     });
   }
 
-  private async *streamQueue(queue: AsyncQueue<string>, onEnd: () => void): AsyncGenerator<string> {
+  private async *streamQueue(
+    queue: AsyncQueue<string>,
+    onEnd: () => void,
+  ): AsyncGenerator<string> {
     try {
       // eslint-disable-next-line no-constant-condition
       while (true) {
@@ -1344,14 +1513,24 @@ export class CopilotWrapperService extends EventEmitter implements CopilotWrappe
    * Called once per session creation — event handlers are long-lived
    * (unlike the per-call delta/idle handlers which are unsubscribed).
    */
-  private wireSessionEvents(session: CopilotSessionLike, sessionId: string): void {
+  private wireSessionEvents(
+    session: CopilotSessionLike,
+    sessionId: string,
+  ): void {
     // Track token usage from the SDK's assistant.usage event
-    session.on("assistant.usage", (event: { data?: { inputTokens?: number; outputTokens?: number } }) => {
-      const inputTokens = event.data?.inputTokens ?? 0;
-      const outputTokens = event.data?.outputTokens ?? 0;
-      const usageEvent = this.tokenTracker.record(sessionId, inputTokens, outputTokens);
-      this.emit("token:usage", usageEvent);
-    });
+    session.on(
+      "assistant.usage",
+      (event: { data?: { inputTokens?: number; outputTokens?: number } }) => {
+        const inputTokens = event.data?.inputTokens ?? 0;
+        const outputTokens = event.data?.outputTokens ?? 0;
+        const usageEvent = this.tokenTracker.record(
+          sessionId,
+          inputTokens,
+          outputTokens,
+        );
+        this.emit("token:usage", usageEvent);
+      },
+    );
 
     // Track context compaction lifecycle events (infinite sessions)
     session.on("compaction_start", () => {
@@ -1362,53 +1541,71 @@ export class CopilotWrapperService extends EventEmitter implements CopilotWrappe
     });
 
     session.on("compaction_complete", () => {
-      const compactionEvent: CompactionEvent = { sessionId, status: "completed" };
+      const compactionEvent: CompactionEvent = {
+        sessionId,
+        status: "completed",
+      };
       this.emit("context:compaction", compactionEvent);
     });
 
     // ── Subagent lifecycle events (SDK-native delegation) ──
-    session.on("subagent.started", (event: { data?: { agentName?: string; parentSessionId?: string } }) => {
-      const payload: SubagentStartedEvent = {
-        sessionId,
-        agentName: event.data?.agentName ?? "unknown",
-        parentSessionId: event.data?.parentSessionId,
-      };
-      this.emit("subagent:started", payload);
-    });
+    session.on(
+      "subagent.started",
+      (event: { data?: { agentName?: string; parentSessionId?: string } }) => {
+        const payload: SubagentStartedEvent = {
+          sessionId,
+          agentName: event.data?.agentName ?? "unknown",
+          parentSessionId: event.data?.parentSessionId,
+        };
+        this.emit("subagent:started", payload);
+      },
+    );
 
-    session.on("subagent.completed", (event: { data?: { agentName?: string; summary?: string } }) => {
-      const payload: SubagentCompletedEvent = {
-        sessionId,
-        agentName: event.data?.agentName ?? "unknown",
-        summary: event.data?.summary,
-      };
-      this.emit("subagent:completed", payload);
-    });
+    session.on(
+      "subagent.completed",
+      (event: { data?: { agentName?: string; summary?: string } }) => {
+        const payload: SubagentCompletedEvent = {
+          sessionId,
+          agentName: event.data?.agentName ?? "unknown",
+          summary: event.data?.summary,
+        };
+        this.emit("subagent:completed", payload);
+      },
+    );
 
-    session.on("subagent.failed", (event: { data?: { agentName?: string; error?: string } }) => {
-      const payload: SubagentFailedEvent = {
-        sessionId,
-        agentName: event.data?.agentName ?? "unknown",
-        error: event.data?.error ?? "Unknown error",
-      };
-      this.emit("subagent:failed", payload);
-    });
+    session.on(
+      "subagent.failed",
+      (event: { data?: { agentName?: string; error?: string } }) => {
+        const payload: SubagentFailedEvent = {
+          sessionId,
+          agentName: event.data?.agentName ?? "unknown",
+          error: event.data?.error ?? "Unknown error",
+        };
+        this.emit("subagent:failed", payload);
+      },
+    );
 
-    session.on("subagent.selected", (event: { data?: { agentName?: string } }) => {
-      const payload: SubagentSelectedEvent = {
-        sessionId,
-        agentName: event.data?.agentName ?? "unknown",
-      };
-      this.emit("subagent:selected", payload);
-    });
+    session.on(
+      "subagent.selected",
+      (event: { data?: { agentName?: string } }) => {
+        const payload: SubagentSelectedEvent = {
+          sessionId,
+          agentName: event.data?.agentName ?? "unknown",
+        };
+        this.emit("subagent:selected", payload);
+      },
+    );
 
-    session.on("subagent.deselected", (event: { data?: { agentName?: string } }) => {
-      const payload: SubagentDeselectedEvent = {
-        sessionId,
-        agentName: event.data?.agentName ?? "unknown",
-      };
-      this.emit("subagent:deselected", payload);
-    });
+    session.on(
+      "subagent.deselected",
+      (event: { data?: { agentName?: string } }) => {
+        const payload: SubagentDeselectedEvent = {
+          sessionId,
+          agentName: event.data?.agentName ?? "unknown",
+        };
+        this.emit("subagent:deselected", payload);
+      },
+    );
   }
 
   /** Get accumulated token usage for a session (non-destructive). */
@@ -1423,7 +1620,9 @@ export class CopilotWrapperService extends EventEmitter implements CopilotWrappe
 
   // ── Phase 1: SDK Session Listing ──
 
-  async listSdkSessions(filter?: SdkSessionListFilter): Promise<SdkSessionMetadata[]> {
+  async listSdkSessions(
+    filter?: SdkSessionListFilter,
+  ): Promise<SdkSessionMetadata[]> {
     await this.ensureStarted();
     if (this.startFailed || !this.client.listSessions) {
       return [];
@@ -1431,8 +1630,14 @@ export class CopilotWrapperService extends EventEmitter implements CopilotWrappe
     const raw = await this.client.listSessions(filter);
     return raw.map((s) => ({
       sessionId: String(s.sessionId ?? ""),
-      startTime: s.startTime instanceof Date ? s.startTime.toISOString() : String(s.startTime ?? ""),
-      modifiedTime: s.modifiedTime instanceof Date ? s.modifiedTime.toISOString() : String(s.modifiedTime ?? ""),
+      startTime:
+        s.startTime instanceof Date
+          ? s.startTime.toISOString()
+          : String(s.startTime ?? ""),
+      modifiedTime:
+        s.modifiedTime instanceof Date
+          ? s.modifiedTime.toISOString()
+          : String(s.modifiedTime ?? ""),
       summary: s.summary ?? undefined,
       isRemote: Boolean(s.isRemote),
       context: s.context ?? undefined,
@@ -1484,10 +1689,13 @@ export class CopilotWrapperService extends EventEmitter implements CopilotWrappe
       return events.map((e) => ({
         id: String((e as Record<string, unknown>).id ?? ""),
         timestamp: String((e as Record<string, unknown>).timestamp ?? ""),
-        parentId: ((e as Record<string, unknown>).parentId as string | null) ?? null,
+        parentId:
+          ((e as Record<string, unknown>).parentId as string | null) ?? null,
         ephemeral: Boolean((e as Record<string, unknown>).ephemeral),
         type: String((e as Record<string, unknown>).type ?? "unknown"),
-        data: ((e as Record<string, unknown>).data as Record<string, unknown>) ?? {},
+        data:
+          ((e as Record<string, unknown>).data as Record<string, unknown>) ??
+          {},
       }));
     } finally {
       if (needsCleanup && session) {
@@ -1499,7 +1707,10 @@ export class CopilotWrapperService extends EventEmitter implements CopilotWrappe
   // ── Phase 4: Session Analytics ──
 
   getSessionAnalytics(): SessionAnalytics {
-    return { ...this.analytics, lifecycleEvents: [...this.analytics.lifecycleEvents] };
+    return {
+      ...this.analytics,
+      lifecycleEvents: [...this.analytics.lifecycleEvents],
+    };
   }
 
   resetSessionAnalytics(): void {
