@@ -47,6 +47,7 @@
 - [Document Intelligence Tools](#document-intelligence-tools)
 - [Personal Assistant Tools](#personal-assistant-tools)
 - [Granular Tool Control](#granular-tool-control)
+- [Creative Studio](#creative-studio)
 - [Director Mode (Video Production)](#director-mode-video-production)
 - [Director Studio & Advanced Compositing](#director-studio--advanced-compositing)
 - [Advanced Director Mode (Voice Cloning & Visual Injection)](#advanced-director-mode-voice-cloning--visual-injection)
@@ -474,6 +475,9 @@ The OpenZigs UI is a **Next.js** application with a navigation bar providing acc
 | **Music Studio** | `/music-studio` | AI Voice2Voice pipeline &amp; Smart Remix Lab — stem separation, voice conversion, instrument replacement, and auto-mastering |
 | **Director** | `/director` | AI video production wizard, blog-to-YouTube, timeline studio, and capture & trim |
 | **Director Studio** | `/director/studio/[id]` | Full timeline editor with player preview, scene inspector, drag-and-drop reordering, and YouTube direct publishing |
+| **Content Calendar** | `/calendar` | Visual FullCalendar content schedule synced with Outbox — drag-to-reschedule, click-to-edit, upcoming events panel |
+| **Inpainting Studio** | `/inpainting` | Canvas-based AI image editing — paint a mask, describe the change, queue Flux Kontext inpainting via the media queue |
+| **Outbox** | `/outbox` | Scheduled social post queue — review, edit, and publish pending outbox items across platforms |
 
 ### Chat
 
@@ -1832,6 +1836,18 @@ Create reusable brand kits for consistent video styling:
 3. The live **Preview** shows your color swatches and font.
 4. Brand kits are stored in SQLite and available across all productions.
 
+#### Brand Kit MCP Tools
+
+Brand kits can also be managed programmatically via chat using the following MCP tools:
+
+- **`list-brand-kits`** — List all saved brand kits
+- **`get-brand-kit`** — Retrieve a specific brand kit by ID
+- **`create-brand-kit`** — Create a new brand kit with name, colors, fonts, and tone
+- **`update-brand-kit`** — Update fields on an existing brand kit
+- **`delete-brand-kit`** — Delete a brand kit by ID
+
+Brand kits created via MCP tools are shared with the Director UI and the Post Template system.
+
 ### Creative Studio
 
 The Creative Studio provides Canva-inspired design and media tools accessible via MCP chat commands.
@@ -1887,17 +1903,25 @@ Create reusable templates for social media posts with `{{variable}}` placeholder
 Navigate to `/calendar` to manage your content schedule:
 
 1. View scheduled outbox posts on a monthly/weekly/daily calendar (FullCalendar).
-2. Drag and drop posts to reschedule them.
-3. Click a post to view details or edit.
+2. **Drag and drop** posts to reschedule them — the outbox item's `scheduled_time` is updated automatically.
+3. **Hover** over an event to see a floating tooltip with platform name and status color.
+4. **Click** any pending post to open the edit modal — update title, content body, and scheduled time inline.
+5. The **Upcoming (14 days)** panel on the right shows all scheduled posts in chronological list order.
+
+> **Note:** Only posts in `pending` status can be edited. Posts that are `processing` or `published` are read-only.
 
 #### Inpainting Studio
 
 Navigate to `/inpainting` for AI-powered image editing:
 
-1. Upload or select an image from the gallery.
-2. Paint a mask over the area to modify using the canvas tools.
-3. Choose an art style and enter a prompt describing the desired change.
-4. Submit for AI inpainting.
+1. **Upload** an image (PNG, JPEG, WebP — max 20 MB).
+2. **Paint a mask** over the area to replace using the red brush tool. Adjust brush size with the slider. Click **Clear** to reset the mask.
+3. **Enter a prompt** describing what should appear in the masked area.
+4. Optionally choose an **art style** (Photorealistic, Oil Painting, Watercolor, Anime, etc.) to apply style modifiers to the prompt.
+5. Click **Generate Inpainting** — the job is queued via the media queue using the **Flux Kontext** model on the Mac Mini image-gen sidecar.
+6. The page polls for completion automatically. When the job finishes, the result image appears with a **Download** button.
+
+> **Requires:** The Mac Mini image-gen sidecar with Flux Kontext loaded (Apple Silicon only). Without the sidecar online, jobs queue but remain in `pending` status. No external LLM APIs are needed — all inference is local.
 
 ### Batch Render Queue
 
