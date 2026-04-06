@@ -4,6 +4,7 @@
  */
 
 import { Router } from "express";
+import rateLimit from "express-rate-limit";
 import * as z from "zod";
 import path from "node:path";
 import os from "node:os";
@@ -221,7 +222,14 @@ export const createVideoPipelineRouter = (
   });
 
   // ── POST /export — Export manifest to FCP XML or EDL ──
-  router.post("/export", (req, res) => {
+  const exportLimiter = rateLimit({
+    windowMs: 60 * 1000,
+    max: 30,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: "Too many export requests, please try again later" },
+  });
+  router.post("/export", exportLimiter, (req, res) => {
     try {
       const input = exportRequestSchema.parse(req.body);
       const manifest = input.manifest as DirectorManifestForExport;
