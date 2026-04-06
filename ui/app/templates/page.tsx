@@ -7,6 +7,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { fetchJson } from "@/lib/api";
 import { SectionCard } from "@/components/section-card";
 import { ToastContainer, showToast } from "@/components/toast";
+import { InlineModelPicker } from "@/components/model-picker-select";
 import {
   Plus,
   Pencil,
@@ -16,6 +17,9 @@ import {
   X,
   FileText,
   Copy,
+  Sparkles,
+  ChevronDown,
+  ChevronUp,
 } from "lucide-react";
 
 // ── Types ─────────────────────────────────────────────────────
@@ -75,6 +79,12 @@ export default function TemplatesPage() {
   const [formContent, setFormContent] = useState("");
   const [formBrandKit, setFormBrandKit] = useState<string | null>(null);
   const [formTags, setFormTags] = useState("");
+
+  // AI generate state
+  const [aiPanelOpen, setAiPanelOpen] = useState(false);
+  const [aiPrompt, setAiPrompt] = useState("");
+  const [aiVarsInput, setAiVarsInput] = useState("");
+  const [aiModel, setAiModel] = useState("");
 
   // Preview state
   const [previewId, setPreviewId] = useState<string | null>(null);
@@ -177,6 +187,25 @@ export default function TemplatesPage() {
     onError: (err: Error) => showToast(err.message, "error"),
   });
 
+  const generateTemplateMutation = useMutation({
+    mutationFn: (body: {
+      prompt: string;
+      platform: string;
+      variables: string[];
+      model?: string;
+    }) =>
+      fetchJson<{ template: string }>("/api/admin/creative/generate-template", {
+        method: "POST",
+        body: JSON.stringify(body),
+      }),
+    onSuccess: (data) => {
+      setFormContent(data.template);
+      setAiPanelOpen(false);
+      showToast("Template generated — review and save", "success");
+    },
+    onError: (err: Error) => showToast(err.message, "error"),
+  });
+
   // ── Helpers ────────────────────────────────────────────────
 
   function resetForm() {
@@ -188,6 +217,10 @@ export default function TemplatesPage() {
     setFormContent("");
     setFormBrandKit(null);
     setFormTags("");
+    setAiPanelOpen(false);
+    setAiPrompt("");
+    setAiVarsInput("");
+    setAiModel("");
   }
 
   function openEditor(t?: PostTemplate) {
@@ -358,7 +391,8 @@ export default function TemplatesPage() {
       {isEditorOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
           <div
-            className="mx-4 w-full max-w-lg rounded-xl border border-border bg-card p-5 shadow-2xl"
+            className="mx-4 w-full max-w-xl rounded-xl border border-border bg-card p-5 shadow-2xl"
+            style={{ maxHeight: "90vh", overflowY: "auto" }}
             onClick={(e) => e.stopPropagation()}
           >
             <div className="mb-4 flex items-center justify-between">
@@ -420,9 +454,112 @@ export default function TemplatesPage() {
                 </div>
               </div>
               <div>
-                <label className="mb-1 block text-xs text-muted-foreground">
-                  Content Template
-                </label>
+                <div className="mb-1 flex items-center justify-between">
+                  <label className="text-xs text-muted-foreground">
+                    Content Template
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setAiPanelOpen((v) => !v)}
+                    className="flex items-center gap-1 rounded-md border border-primary/40 bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary hover:bg-primary/20"
+                  >
+                    <Sparkles className="h-3 w-3" />
+                    AI Generate
+                    {aiPanelOpen ? (
+                      <ChevronUp className="h-3 w-3" />
+                    ) : (
+                      <ChevronDown className="h-3 w-3" />
+                    )}
+                  </button>
+                </div>
+
+                {/* AI Generate Panel */}
+                {aiPanelOpen && (
+                  <div className="mb-3 space-y-2 rounded-lg border border-primary/20 bg-primary/5 p-3">
+                    <p className="text-xs font-medium text-primary">
+                      Describe what you want — AI will write the template
+                    </p>
+                    <textarea
+                      value={aiPrompt}
+                      onChange={(e) => setAiPrompt(e.target.value)}
+                      rows={3}
+                      placeholder={`e.g. "A weekly promo post highlighting a sale item with a discount code and brand hashtag"`}
+                      className="w-full rounded border border-border bg-background px-2.5 py-1.5 text-sm"
+                    />
+                    <div>
+                      <label className="mb-1 block text-xs text-muted-foreground">
+                        Variables to include{" "}
+                        <span className="text-muted-foreground/60">
+                          (comma-separated, optional — leave blank to let AI decide)
+                        </span>
+                      </label>
+                      <input
+                        type="text"
+                        value={aiVarsInput}
+                        onChange={(e) => setAiVarsInput(e.target.value)}
+                        placeholder="product_name, discount_code, brand"
+                        className="w-full rounded border border-border bg-background px-2.5 py-1.5 text-sm"
+                      />
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <label className="text-xs text-muted-foreground">
+                        Model:
+                      </label>
+                      <InlineModelPicker
+                        value={aiModel}
+                        onChange={setAiModel}
+                      />
+                    </div>
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (!aiPrompt.trim()) {
+                            showToast("Enter a description first", "error");
+                            return;
+                          }
+                          const vars = aiVarsInput
+                            .split(",")
+                            .map((v) => v.trim())
+                            .filter(Boolean);
+                          generateTemplateMutation.mutate({
+                            prompt: aiPrompt.trim(),
+                            platform: formPlatform,
+                            variables: vars,
+                            model: aiModel || undefined,
+                          });
+                        }}
+                        disabled={generateTemplateMutation.isPending}
+                        className="flex-1 rounded-lg bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+                      >
+                        {generateTemplateMutation.isPending ? (
+                          <span className="flex items-center justify-center gap-1.5">
+                            <span className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-current border-t-transparent" />
+                            Generating…
+                          </span>
+                        ) : (
+                          <span className="flex items-center justify-center gap-1.5">
+                            <Sparkles className="h-3.5 w-3.5" />
+                            Generate
+                          </span>
+                        )}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setAiPanelOpen(false)}
+                        className="rounded-lg border border-border px-3 py-1.5 text-sm text-muted-foreground hover:bg-muted"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                    {formContent && (
+                      <p className="text-xs text-amber-500">
+                        Generating will replace the current content template.
+                      </p>
+                    )}
+                  </div>
+                )}
+
                 <textarea
                   value={formContent}
                   onChange={(e) => setFormContent(e.target.value)}

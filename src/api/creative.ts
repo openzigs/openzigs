@@ -91,14 +91,45 @@ const upload = multer({
   limits: { fileSize: 20 * 1024 * 1024 },
 });
 
-const PLATFORM_LIMITS: Record<string, { maxChars: number; maxHashtags: number; style: string }> = {
-  twitter: { maxChars: 280, maxHashtags: 3, style: "concise, punchy, conversational" },
-  instagram: { maxChars: 2200, maxHashtags: 30, style: "engaging, visual storytelling, emoji-friendly" },
-  linkedin: { maxChars: 3000, maxHashtags: 5, style: "professional, thought leadership, insightful" },
-  facebook: { maxChars: 63206, maxHashtags: 5, style: "conversational, community-oriented" },
-  pinterest: { maxChars: 500, maxHashtags: 20, style: "keyword-rich, SEO-optimized, descriptive" },
-  youtube: { maxChars: 5000, maxHashtags: 15, style: "detailed, keyword-optimized, hook in first line" },
-  reddit: { maxChars: 40000, maxHashtags: 0, style: "authentic, community-aware, no promotional language" },
+const PLATFORM_LIMITS: Record<
+  string,
+  { maxChars: number; maxHashtags: number; style: string }
+> = {
+  twitter: {
+    maxChars: 280,
+    maxHashtags: 3,
+    style: "concise, punchy, conversational",
+  },
+  instagram: {
+    maxChars: 2200,
+    maxHashtags: 30,
+    style: "engaging, visual storytelling, emoji-friendly",
+  },
+  linkedin: {
+    maxChars: 3000,
+    maxHashtags: 5,
+    style: "professional, thought leadership, insightful",
+  },
+  facebook: {
+    maxChars: 63206,
+    maxHashtags: 5,
+    style: "conversational, community-oriented",
+  },
+  pinterest: {
+    maxChars: 500,
+    maxHashtags: 20,
+    style: "keyword-rich, SEO-optimized, descriptive",
+  },
+  youtube: {
+    maxChars: 5000,
+    maxHashtags: 15,
+    style: "detailed, keyword-optimized, hook in first line",
+  },
+  reddit: {
+    maxChars: 40000,
+    maxHashtags: 0,
+    style: "authentic, community-aware, no promotional language",
+  },
 };
 
 const HEX_RE = /^#[0-9a-fA-F]{6}$/;
@@ -550,7 +581,9 @@ export function createCreativeRouter({
   router.post("/remove-background", async (req, res) => {
     try {
       if (!imageProcessingSidecarUrl) {
-        res.status(503).json({ error: "Image processing sidecar not configured" });
+        res
+          .status(503)
+          .json({ error: "Image processing sidecar not configured" });
         return;
       }
       const body = req.body as Record<string, unknown>;
@@ -559,10 +592,14 @@ export function createCreativeRouter({
         res.status(400).json({ error: "file_path is required" });
         return;
       }
-      const model = (typeof body.model === "string" ? body.model : "u2net") as string;
+      const model = (
+        typeof body.model === "string" ? body.model : "u2net"
+      ) as string;
       const validModels = ["u2net", "u2net_human_seg", "isnet-general-use"];
       if (!validModels.includes(model)) {
-        res.status(400).json({ error: `model must be one of: ${validModels.join(", ")}` });
+        res
+          .status(400)
+          .json({ error: `model must be one of: ${validModels.join(", ")}` });
         return;
       }
       const alphaMatting = body.alpha_matting === true;
@@ -576,26 +613,48 @@ export function createCreativeRouter({
       const imageBuffer = fs.readFileSync(sourcePath);
       const base64Image = imageBuffer.toString("base64");
 
-      const response = await fetch(`${imageProcessingSidecarUrl}/remove-background`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ image: base64Image, model, alpha_matting: alphaMatting }),
-        signal: AbortSignal.timeout(120_000),
-      });
+      const response = await fetch(
+        `${imageProcessingSidecarUrl}/remove-background`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            image: base64Image,
+            model,
+            alpha_matting: alphaMatting,
+          }),
+          signal: AbortSignal.timeout(120_000),
+        },
+      );
 
       if (!response.ok) {
         const errText = await response.text().catch(() => "Unknown error");
-        res.status(502).json({ error: `Sidecar error (${response.status}): ${errText}` });
+        res
+          .status(502)
+          .json({ error: `Sidecar error (${response.status}): ${errText}` });
         return;
       }
 
-      const result = (await response.json()) as { image: string; width: number; height: number };
+      const result = (await response.json()) as {
+        image: string;
+        width: number;
+        height: number;
+      };
       fs.mkdirSync(GALLERY_DIR, { recursive: true });
       const baseName = path.basename(sourcePath, path.extname(sourcePath));
-      const outputPath = path.join(GALLERY_DIR, `${baseName}_nobg_${Date.now()}.png`);
+      const outputPath = path.join(
+        GALLERY_DIR,
+        `${baseName}_nobg_${Date.now()}.png`,
+      );
       fs.writeFileSync(outputPath, Buffer.from(result.image, "base64"));
 
-      res.json({ success: true, outputPath, model, width: result.width, height: result.height });
+      res.json({
+        success: true,
+        outputPath,
+        model,
+        width: result.width,
+        height: result.height,
+      });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       logger.error(`[CreativeRouter] Remove-background error: ${msg}`);
@@ -609,7 +668,9 @@ export function createCreativeRouter({
   router.post("/upscale", async (req, res) => {
     try {
       if (!imageProcessingSidecarUrl) {
-        res.status(503).json({ error: "Image processing sidecar not configured" });
+        res
+          .status(503)
+          .json({ error: "Image processing sidecar not configured" });
         return;
       }
       const body = req.body as Record<string, unknown>;
@@ -643,17 +704,32 @@ export function createCreativeRouter({
 
       if (!response.ok) {
         const errText = await response.text().catch(() => "Unknown error");
-        res.status(502).json({ error: `Sidecar error (${response.status}): ${errText}` });
+        res
+          .status(502)
+          .json({ error: `Sidecar error (${response.status}): ${errText}` });
         return;
       }
 
-      const result = (await response.json()) as { image: string; width: number; height: number };
+      const result = (await response.json()) as {
+        image: string;
+        width: number;
+        height: number;
+      };
       fs.mkdirSync(GALLERY_DIR, { recursive: true });
       const baseName = path.basename(sourcePath, path.extname(sourcePath));
-      const outputPath = path.join(GALLERY_DIR, `${baseName}_upscaled_${scale}x_${Date.now()}.png`);
+      const outputPath = path.join(
+        GALLERY_DIR,
+        `${baseName}_upscaled_${scale}x_${Date.now()}.png`,
+      );
       fs.writeFileSync(outputPath, Buffer.from(result.image, "base64"));
 
-      res.json({ success: true, outputPath, scale, width: result.width, height: result.height });
+      res.json({
+        success: true,
+        outputPath,
+        scale,
+        width: result.width,
+        height: result.height,
+      });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       logger.error(`[CreativeRouter] Upscale error: ${msg}`);
@@ -668,24 +744,41 @@ export function createCreativeRouter({
     try {
       const body = req.body as Record<string, unknown>;
       const content = body.content as string | undefined;
-      if (!content || typeof content !== "string" || content.length < 1 || content.length > 4096) {
+      if (
+        !content ||
+        typeof content !== "string" ||
+        content.length < 1 ||
+        content.length > 4096
+      ) {
         res.status(400).json({ error: "content is required (1-4096 chars)" });
         return;
       }
-      const format = (typeof body.format === "string" ? body.format : "png") as string;
+      const format = (
+        typeof body.format === "string" ? body.format : "png"
+      ) as string;
       if (!["png", "svg"].includes(format)) {
         res.status(400).json({ error: "format must be png or svg" });
         return;
       }
-      const width = typeof body.width === "number" ? Math.min(2000, Math.max(100, body.width)) : 400;
-      const colorDark = typeof body.color_dark === "string" ? body.color_dark : "#000000";
-      const colorLight = typeof body.color_light === "string" ? body.color_light : "#ffffff";
+      const width =
+        typeof body.width === "number"
+          ? Math.min(2000, Math.max(100, body.width))
+          : 400;
+      const colorDark =
+        typeof body.color_dark === "string" ? body.color_dark : "#000000";
+      const colorLight =
+        typeof body.color_light === "string" ? body.color_light : "#ffffff";
       if (!HEX_RE.test(colorDark) || !HEX_RE.test(colorLight)) {
         res.status(400).json({ error: "Colors must be hex format (#RRGGBB)" });
         return;
       }
-      const errorCorrection = (typeof body.error_correction === "string" ? body.error_correction : "M") as "L" | "M" | "Q" | "H";
-      const margin = typeof body.margin === "number" ? Math.min(10, Math.max(0, body.margin)) : 4;
+      const errorCorrection = (
+        typeof body.error_correction === "string" ? body.error_correction : "M"
+      ) as "L" | "M" | "Q" | "H";
+      const margin =
+        typeof body.margin === "number"
+          ? Math.min(10, Math.max(0, body.margin))
+          : 4;
 
       fs.mkdirSync(GALLERY_DIR, { recursive: true });
 
@@ -709,7 +802,14 @@ export function createCreativeRouter({
           errorCorrectionLevel: errorCorrection,
         });
         const stat = fs.statSync(outputPath);
-        res.json({ success: true, format: "png", outputPath, content, width, sizeBytes: stat.size });
+        res.json({
+          success: true,
+          format: "png",
+          outputPath,
+          content,
+          width,
+          sizeBytes: stat.size,
+        });
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -735,7 +835,11 @@ export function createCreativeRouter({
         return;
       }
       if (!platform || !PLATFORM_LIMITS[platform]) {
-        res.status(400).json({ error: `platform must be one of: ${Object.keys(PLATFORM_LIMITS).join(", ")}` });
+        res
+          .status(400)
+          .json({
+            error: `platform must be one of: ${Object.keys(PLATFORM_LIMITS).join(", ")}`,
+          });
         return;
       }
       const tone = typeof body.tone === "string" ? body.tone : "casual";
@@ -755,10 +859,15 @@ export function createCreativeRouter({
         includeCta ? "Include a call-to-action." : "",
         includeEmoji ? "Include relevant emojis." : "No emojis.",
         context ? `Brand context: ${context}` : "",
-      ].filter(Boolean).join("\n");
+      ]
+        .filter(Boolean)
+        .join("\n");
 
       let caption = "";
-      for await (const chunk of copilotWrapper.chat(`${systemPrompt}\n\nUser: ${userPrompt}`, { availableTools: [] })) {
+      for await (const chunk of copilotWrapper.chat(
+        `${systemPrompt}\n\nUser: ${userPrompt}`,
+        { availableTools: [] },
+      )) {
         caption += chunk;
       }
       caption = caption.trim();
@@ -793,14 +902,29 @@ export function createCreativeRouter({
         res.status(400).json({ error: "topic is required" });
         return;
       }
-      const validPlatforms = ["twitter", "instagram", "linkedin", "facebook", "pinterest", "youtube"];
+      const validPlatforms = [
+        "twitter",
+        "instagram",
+        "linkedin",
+        "facebook",
+        "pinterest",
+        "youtube",
+      ];
       if (!platform || !validPlatforms.includes(platform)) {
-        res.status(400).json({ error: `platform must be one of: ${validPlatforms.join(", ")}` });
+        res
+          .status(400)
+          .json({
+            error: `platform must be one of: ${validPlatforms.join(", ")}`,
+          });
         return;
       }
-      const count = typeof body.count === "number" ? Math.min(30, Math.max(1, body.count)) : 10;
+      const count =
+        typeof body.count === "number"
+          ? Math.min(30, Math.max(1, body.count))
+          : 10;
       const includeTrending = body.include_trending !== false;
-      const nicheLevel = typeof body.niche_level === "string" ? body.niche_level : "medium";
+      const nicheLevel =
+        typeof body.niche_level === "string" ? body.niche_level : "medium";
 
       const limits = PLATFORM_LIMITS[platform];
       const maxTags = Math.min(count, limits.maxHashtags || 30);
@@ -814,11 +938,16 @@ export function createCreativeRouter({
         `Topic: ${topic}`,
         `Count: ${maxTags}`,
         `Focus: ${nicheLevel} specificity`,
-        includeTrending ? "Include popular/trending tags where relevant." : "Focus on evergreen tags.",
+        includeTrending
+          ? "Include popular/trending tags where relevant."
+          : "Focus on evergreen tags.",
       ].join("\n");
 
       let response = "";
-      for await (const chunk of copilotWrapper.chat(`${systemPrompt}\n\nUser: ${userPrompt}`, { availableTools: [] })) {
+      for await (const chunk of copilotWrapper.chat(
+        `${systemPrompt}\n\nUser: ${userPrompt}`,
+        { availableTools: [] },
+      )) {
         response += chunk;
       }
       response = response.trim();
@@ -846,6 +975,70 @@ export function createCreativeRouter({
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       logger.error(`[CreativeRouter] Hashtags error: ${msg}`);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  /** POST /generate-template — generate a post template body via LLM */
+  router.post("/generate-template", async (req, res) => {
+    try {
+      if (!copilotWrapper) {
+        res.status(503).json({ error: "AI service not available" });
+        return;
+      }
+      const body = req.body as Record<string, unknown>;
+      const prompt = body.prompt as string | undefined;
+      const platform = body.platform as string | undefined;
+      const variables = Array.isArray(body.variables)
+        ? (body.variables as string[])
+        : [];
+      const model =
+        typeof body.model === "string" && body.model ? body.model : undefined;
+
+      if (!prompt || typeof prompt !== "string") {
+        res.status(400).json({ error: "prompt is required" });
+        return;
+      }
+      if (!platform || typeof platform !== "string") {
+        res.status(400).json({ error: "platform is required" });
+        return;
+      }
+
+      const limits = PLATFORM_LIMITS[platform] ?? {
+        maxChars: 2200,
+        style: "general",
+      };
+
+      const variableInstructions =
+        variables.length > 0
+          ? `The template MUST use these exact variable placeholders where appropriate: ${variables.map((v) => `{{${v}}}`).join(", ")}. Do not invent other variables.`
+          : "You may introduce {{variable_name}} placeholders for any values that would naturally vary (e.g. {{product_name}}, {{brand}}, {{promo_code}}). Use 1–4 variables at most.";
+
+      const systemPrompt =
+        "You are an expert social media copywriter. Generate a reusable post template optimized for the specified platform. " +
+        "A template uses {{variable_name}} syntax for values that will be filled in later. " +
+        "Return ONLY the template text — no explanations, no labels, no markdown fences, no extra commentary.";
+
+      const userPrompt = [
+        `Platform: ${platform} (max ${limits.maxChars} chars, style: ${limits.style})`,
+        `Description / goal: ${prompt}`,
+        variableInstructions,
+        "Write the complete template now:",
+      ].join("\n");
+
+      let template = "";
+      for await (const chunk of copilotWrapper.chat(
+        `${systemPrompt}\n\nUser: ${userPrompt}`,
+        { availableTools: [], ...(model ? { model } : {}) },
+      )) {
+        template += chunk;
+      }
+      template = template.trim();
+
+      res.json({ template });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.error(`[CreativeRouter] Generate-template error: ${msg}`);
       res.status(500).json({ error: msg });
     }
   });

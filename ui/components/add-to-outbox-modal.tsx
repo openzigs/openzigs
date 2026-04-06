@@ -341,6 +341,15 @@ export function AddToOutboxModal({
     ? extractTemplateVars(selectedTemplate.content_template)
     : [];
 
+  // Resolved content: substitute all filled vars into the template client-side.
+  // Used both for preview and for the submitted content_body — no server round-trip needed.
+  const resolvedTemplateContent = selectedTemplate
+    ? selectedTemplate.content_template.replace(
+        /\{\{(\w+)\}\}/g,
+        (_, key: string) => templateVars[key] ?? `{{${key}}}`,
+      )
+    : "";
+
   // Brand kits query
   interface BrandKitOption {
     id: string;
@@ -693,9 +702,9 @@ export function AddToOutboxModal({
         if (selectedTemplate?.brand_kit_id) {
           payload.brand_kit_id = selectedTemplate.brand_kit_id;
         }
-        // If template was applied, use the resolved content
-        if (applyTemplateMutation.data?.content) {
-          payload.content_body = applyTemplateMutation.data.content;
+        // Use the client-side resolved content (vars substituted) as the post body
+        if (resolvedTemplateContent) {
+          payload.content_body = resolvedTemplateContent;
         }
       }
 
@@ -739,7 +748,7 @@ export function AddToOutboxModal({
           : activeTab === "url"
             ? assetUrl.trim().length > 0
             : activeTab === "template"
-              ? selectedTemplateId !== null
+              ? selectedTemplateId !== null && resolvedTemplateContent.trim().length > 0
               : false);
 
   return (
@@ -1704,60 +1713,52 @@ export function AddToOutboxModal({
                       </button>
                     </div>
 
-                    {/* Variable inputs + live preview */}
-                    {templatePlaceholders.length > 0 ? (
-                      <>
-                        <div className="space-y-2">
-                          <label className="block text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                            Fill in Variables
-                          </label>
-                          {templatePlaceholders.map((varName) => (
-                            <div key={varName} className="flex items-center gap-2">
-                              <span className="w-28 shrink-0 rounded bg-muted px-2 py-1 font-mono text-xs text-muted-foreground">
-                                {`{{${varName}}}`}
-                              </span>
-                              <input
-                                type="text"
-                                value={templateVars[varName] ?? ""}
-                                onChange={(e) =>
-                                  setTemplateVars((prev) => ({
-                                    ...prev,
-                                    [varName]: e.target.value,
-                                  }))
-                                }
-                                placeholder={varName}
-                                className="flex-1 rounded-lg border border-border bg-background px-3 py-1.5 text-sm text-foreground placeholder:text-muted-foreground"
-                              />
-                            </div>
-                          ))}
-                        </div>
-
-                        {/* Live preview — renders as vars are filled */}
-                        <div className="rounded-lg border border-border bg-muted/30 p-3">
-                          <p className="mb-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                            Preview
-                          </p>
-                          <p className="whitespace-pre-wrap text-sm text-foreground">
-                            {selectedTemplate?.content_template.replace(
-                              /\{\{(\w+)\}\}/g,
-                              (_, key) =>
-                                templateVars[key]
-                                  ? `\u200b${templateVars[key]}\u200b`
-                                  : `{{${key}}}`,
-                            )}
-                          </p>
-                        </div>
-                      </>
-                    ) : (
-                      /* No variables — show content directly */
-                      <div className="rounded-lg border border-border bg-muted/30 p-3">
-                        <p className="mb-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                          Content
-                        </p>
-                        <p className="whitespace-pre-wrap text-sm text-foreground">
-                          {selectedTemplate?.content_template}
-                        </p>
+                    {/* Variable inputs (only if template has placeholders) */}
+                    {templatePlaceholders.length > 0 && (
+                      <div className="space-y-2">
+                        <label className="block text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                          Fill in Variables
+                        </label>
+                        {templatePlaceholders.map((varName) => (
+                          <div key={varName} className="flex items-center gap-2">
+                            <span className="w-28 shrink-0 rounded bg-muted px-2 py-1 font-mono text-xs text-muted-foreground">
+                              {`{{${varName}}}`}
+                            </span>
+                            <input
+                              type="text"
+                              value={templateVars[varName] ?? ""}
+                              onChange={(e) =>
+                                setTemplateVars((prev) => ({
+                                  ...prev,
+                                  [varName]: e.target.value,
+                                }))
+                              }
+                              placeholder={varName}
+                              className="flex-1 rounded-lg border border-border bg-background px-3 py-1.5 text-sm text-foreground placeholder:text-muted-foreground"
+                            />
+                          </div>
+                        ))}
                       </div>
+                    )}
+
+                    {/* Content preview — always visible, updates live as vars are filled */}
+                    <div className="rounded-lg border border-border bg-muted/30 p-3">
+                      <p className="mb-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                        {templatePlaceholders.length > 0 ? "Preview" : "Content"}
+                      </p>
+                      <p className="whitespace-pre-wrap text-sm text-foreground">
+                        {resolvedTemplateContent || (
+                          <span className="italic text-muted-foreground">
+                            No content in this template.
+                          </span>
+                        )}
+                      </p>
+                    </div>
+
+                    {templatePlaceholders.length > 0 && (
+                      <p className="text-xs text-muted-foreground">
+                        Fill in the variables above — the preview updates live and will be used as the post content.
+                      </p>
                     )}
                   </div>
                 )}

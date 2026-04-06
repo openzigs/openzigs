@@ -12,7 +12,17 @@ let tmpDir: string;
 let testImagePath: string;
 let testWatermarkPath: string;
 
-function createTestApp() {
+function createMockCopilotWrapper(
+  response = "a tabby cat with detailed fur texture, warm natural lighting",
+) {
+  return {
+    chat: vi.fn(async function* () {
+      yield response;
+    }),
+  };
+}
+
+function createTestApp(withCopilot = false) {
   const mockMediaQueueRepo = {
     createJob: vi.fn(() => ({
       id: "job-1",
@@ -25,9 +35,12 @@ function createTestApp() {
     "/creative",
     createCreativeRouter({
       mediaQueueRepo: mockMediaQueueRepo as never,
+      copilotWrapper: withCopilot
+        ? (createMockCopilotWrapper() as never)
+        : undefined,
     }),
   );
-  return app;
+  return { app, mockMediaQueueRepo };
 }
 
 describe("Creative Image Manipulation API (Issue #811)", () => {
@@ -63,7 +76,7 @@ describe("Creative Image Manipulation API (Issue #811)", () => {
       .png()
       .toFile(testWatermarkPath);
 
-    app = createTestApp();
+    ({ app } = createTestApp());
   });
 
   afterEach(() => {
@@ -218,5 +231,136 @@ describe("Creative Image Manipulation API (Issue #811)", () => {
         });
       expect(res.status).toBe(404);
     });
+  });
+});
+
+describe("Creative — GET /image-models", () => {
+  it("returns the list of available image generation models", async () => {
+    const { app } = createTestApp();
+    const res = await request(app).get("/creative/image-models");
+    expect(res.status).toBe(200);
+    expect(res.body.models).toBeInstanceOf(Array);
+    expect(res.body.models.length).toBeGreaterThan(0);
+    const modelIds = res.body.models.map((m: { id: string }) => m.id);
+    expect(modelIds).toContain("flux-kontext");
+    for (const model of res.body.models) {
+      expect(model).toHaveProperty("id");
+      expect(model).toHaveProperty("name");
+      expect(model).toHaveProperty("description");
+    }
+  });
+});
+
+describe("Creative — POST /enhance-prompt", () => {
+  it("returns 503 when no copilotWrapper is configured", async () => {
+    const { app } = createTestApp(false);
+    const res = await request(app)
+      .post("/creative/enhance-prompt")
+      .send({ prompt: "a cat" });
+    expect(res.status).toBe(503);
+    expect(res.body.error).toContain("not available");
+  });
+
+  it("returns the enhanced prompt when copilotWrapper is available", async () => {
+    const { app } = createTestApp(true);
+    const res = await request(app)
+      .post("/creative/enhance-prompt")
+      .send({ prompt: "a cat" });
+    expect(res.status).toBe(200);
+    expect(res.body.enhancedPrompt).toBeTruthy();
+    expect(typeof res.body.enhancedPrompt).toBe("string");
+  });
+
+  it("returns 400 when prompt is missing", async () => {
+    const { app } = createTestApp(true);
+    const res = await request(app).post("/creative/enhance-prompt").send({});
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("prompt is required");
+  });
+
+  it("returns 400 when prompt exceeds 2000 characters", async () => {
+    const { app } = createTestApp(true);
+    const res = await request(app)
+      .post("/creative/enhance-prompt")
+      .send({ prompt: "a".repeat(2001) });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("2000");
+  });
+});
+
+describe("Creative — POST /inpaint model selection", () => {
+  let tmpTestDir: string;
+
+  beforeEach(() => {
+    tmpTestDir = fs.mkdtempSync(
+      path.join(os.homedir(), ".openzigs", "test-inpaint-"),
+    );
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpTestDir, { recursive: true, force: true });
+  });
+
+  async function buildSmallPng(): Promise<Buffer> {
+    return sharp({
+      create: {
+        width: 10,
+        height: 10,
+        channels: 3,
+        background: { r: 0, g: 0, b: 255 },
+      },
+    })
+      .png()
+      .toBuffer();
+  }
+
+  it("defaults to flux-kontext when no model is specified", async () => {
+    const { app, mockMediaQueueRepo } = createTestApp();
+    const imgBuf = await buildSmallPng();
+    const res = await request(app)
+      .post("/creative/inpaint")
+      .attach("image", imgBuf, {
+        filename: "test.png",
+        contentType: "image/png",
+      })
+      .field("prompt", "a golden retriever");
+    expect(res.status).toBe(202);
+    expect(mockMediaQueueRepo.createJob).toHaveBeenCalledWith(
+      expect.objectContaining({ model: "flux-kontext" }),
+    );
+  });
+
+  it("uses the specified valid model", async () => {
+    const { app, mockMediaQueueRepo } = createTestApp();
+    const imgBuf = await buildSmallPng();
+    const res = await request(app)
+      .post("/creative/inpaint")
+      .attach("image", imgBuf, {
+        filename: "test.png",
+        contentType: "image/png",
+      })
+      .field("prompt", "a golden retriever")
+      .field("model", "flux-dev");
+    expect(res.status).toBe(202);
+    expect(mockMediaQueueRepo.createJob).toHaveBeenCalledWith(
+      expect.objectContaining({ model: "flux-dev" }),
+    );
+  });
+
+  it("falls back to flux-kontext for an unknown model", async () => {
+    const { app, mockMediaQueueRepo } = createTestApp();
+    const imgBuf = await buildSmallPng();
+    const res = await request(app)
+      .post("/creative/inpaint")
+      .attach("image", imgBuf, {
+        filename: "test.png",
+        contentType: "image/png",
+      })
+      .field("prompt", "a golden retriever")
+      .field("model", "fake-model-xyz");
+    expect(res.status).toBe(202);
+    expect(mockMediaQueueRepo.createJob).toHaveBeenCalledWith(
+      expect.objectContaining({ model: "flux-kontext" }),
+    );
   });
 });

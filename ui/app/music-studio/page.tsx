@@ -7,9 +7,16 @@ import { useSocket } from "@/lib/socket-context";
 import { SectionCard } from "@/components/section-card";
 import { ToastContainer, showToast } from "@/components/toast";
 import { MultiTrackView } from "@/components/music-studio/MultiTrackView";
-import { ControlPanel, type Voice2VoiceParams } from "@/components/music-studio/ControlPanel";
+import {
+  ControlPanel,
+  type Voice2VoiceParams,
+} from "@/components/music-studio/ControlPanel";
 import { PipelineStatus } from "@/components/music-studio/PipelineStatus";
-import { EffectsRack, DEFAULT_EFFECTS, type EffectsState } from "@/components/music-studio/EffectsRack";
+import {
+  EffectsRack,
+  DEFAULT_EFFECTS,
+  type EffectsState,
+} from "@/components/music-studio/EffectsRack";
 import { SpectrogramView } from "@/components/music-studio/SpectrogramView";
 import { SmartRemixLab } from "@/components/music-studio/SmartRemixLab";
 import { Music, Disc3, Wand2, Pencil, Check, X } from "lucide-react";
@@ -66,17 +73,28 @@ export default function MusicStudioPage() {
   useEffect(() => {
     if (!socket) return;
 
-    const onGlobalComplete = (data: { jobId: string; type?: string; resultUrl?: string }) => {
+    const onGlobalComplete = (data: {
+      jobId: string;
+      type?: string;
+      resultUrl?: string;
+    }) => {
       if (data.type !== "voice2voice") return;
       // Only notify if this is NOT already being handled by PipelineStatus
       if (activeJobRef.current === data.jobId) return;
-      showToast(`Voice2Voice job complete! Result ready in Audio Assets.`, "success");
+      showToast(
+        `Voice2Voice job complete! Result ready in Audio Assets.`,
+        "success",
+      );
       // Refresh the asset list so the new result appears
-      void queryClient.invalidateQueries({ queryKey: ["gallery-audio-assets"] });
+      void queryClient.invalidateQueries({
+        queryKey: ["gallery-audio-assets"],
+      });
     };
 
     socket.on("queue:job:complete", onGlobalComplete);
-    return () => { socket.off("queue:job:complete", onGlobalComplete); };
+    return () => {
+      socket.off("queue:job:complete", onGlobalComplete);
+    };
   }, [socket, queryClient]);
 
   // Fetch audio assets from the gallery
@@ -84,7 +102,7 @@ export default function MusicStudioPage() {
     queryKey: ["gallery-audio-assets"],
     queryFn: () =>
       fetchJson<{ assets: GalleryAsset[]; total: number }>(
-        "/api/queue/assets?type=audio&limit=100"
+        "/api/queue/assets?type=audio&limit=100",
       ),
     refetchInterval: 10_000,
   });
@@ -123,7 +141,10 @@ export default function MusicStudioPage() {
       showToast("Voice2Voice job submitted", "success");
     },
     onError: (err) => {
-      showToast(`Failed to submit job: ${err instanceof Error ? err.message : String(err)}`, "error");
+      showToast(
+        `Failed to submit job: ${err instanceof Error ? err.message : String(err)}`,
+        "error",
+      );
     },
   });
 
@@ -131,7 +152,7 @@ export default function MusicStudioPage() {
     (params: Voice2VoiceParams) => {
       submitJob.mutate(params);
     },
-    [submitJob]
+    [submitJob],
   );
 
   const handlePipelineComplete = useCallback(
@@ -158,10 +179,12 @@ export default function MusicStudioPage() {
       if (result.galleryAssetId) {
         showToast(`Result saved as asset ${result.galleryAssetId}`, "info");
         // Refresh gallery so the new asset appears immediately
-        void queryClient.invalidateQueries({ queryKey: ["gallery-audio-assets"] });
+        void queryClient.invalidateQueries({
+          queryKey: ["gallery-audio-assets"],
+        });
       }
     },
-    [queryClient]
+    [queryClient],
   );
 
   const handlePipelineError = useCallback((error: string) => {
@@ -180,10 +203,15 @@ export default function MusicStudioPage() {
     onSuccess: () => {
       showToast("Asset renamed", "success");
       setRenamingAssetId(null);
-      void queryClient.invalidateQueries({ queryKey: ["gallery-audio-assets"] });
+      void queryClient.invalidateQueries({
+        queryKey: ["gallery-audio-assets"],
+      });
     },
     onError: (err) => {
-      showToast(`Rename failed: ${err instanceof Error ? err.message : String(err)}`, "error");
+      showToast(
+        `Rename failed: ${err instanceof Error ? err.message : String(err)}`,
+        "error",
+      );
     },
   });
 
@@ -193,43 +221,46 @@ export default function MusicStudioPage() {
         renameAsset.mutate({ id: assetId, filename: renameValue.trim() });
       }
     },
-    [renameValue, renameAsset]
+    [renameValue, renameAsset],
   );
 
   // Load audio asset into waveform viewer
-  const loadAssetAsTrack = useCallback((assetId: string, filename: string) => {
-    const url = buildMediaUrl(`/api/queue/assets/file/${filename}`);
-    const exists = tracks.some((t) => t.url === url);
-    if (exists) {
-      showToast("Track already loaded", "info");
-      return;
-    }
+  const loadAssetAsTrack = useCallback(
+    (assetId: string, filename: string) => {
+      const url = buildMediaUrl(`/api/queue/assets/file/${filename}`);
+      const exists = tracks.some((t) => t.url === url);
+      if (exists) {
+        showToast("Track already loaded", "info");
+        return;
+      }
 
-    const colors = [
-      { color: "#6366f1", progressColor: "#818cf8" },
-      { color: "#f59e0b", progressColor: "#fbbf24" },
-      { color: "#ec4899", progressColor: "#f472b6" },
-      { color: "#8b5cf6", progressColor: "#a78bfa" },
-    ];
-    const colorIdx = tracks.length % colors.length;
+      const colors = [
+        { color: "#6366f1", progressColor: "#818cf8" },
+        { color: "#f59e0b", progressColor: "#fbbf24" },
+        { color: "#ec4899", progressColor: "#f472b6" },
+        { color: "#8b5cf6", progressColor: "#a78bfa" },
+      ];
+      const colorIdx = tracks.length % colors.length;
 
-    setTracks((prev) => [
-      ...prev,
-      {
-        id: assetId,
-        label: filename,
-        url,
-        ...colors[colorIdx],
-        muted: false,
-        volume: 1,
-      },
-    ]);
+      setTracks((prev) => [
+        ...prev,
+        {
+          id: assetId,
+          label: filename,
+          url,
+          ...colors[colorIdx],
+          muted: false,
+          volume: 1,
+        },
+      ]);
 
-    // Show spectrogram for the first loaded track
-    if (tracks.length === 0) {
-      setSpectrogramUrl(url);
-    }
-  }, [tracks]);
+      // Show spectrogram for the first loaded track
+      if (tracks.length === 0) {
+        setSpectrogramUrl(url);
+      }
+    },
+    [tracks],
+  );
 
   return (
     <main className="mx-auto max-w-7xl space-y-6 p-4 md:p-6">
@@ -276,128 +307,158 @@ export default function MusicStudioPage() {
       </div>
 
       {/* Remix Lab Tab */}
-      {tab === "remix" && (
-        <SmartRemixLab audioAssets={audioAssets} />
-      )}
+      {tab === "remix" && <SmartRemixLab audioAssets={audioAssets} />}
 
       {/* Voice2Voice Tab */}
       {tab === "voice2voice" && (
-      <div className="grid gap-6 lg:grid-cols-3">
-        {/* Left Column: DAW + Pipeline Status */}
-        <div className="space-y-6 lg:col-span-2">
-          {/* DAW Waveform View */}
-          <SectionCard title="Waveform View">
-            {tracks.length > 0 ? (
-              <MultiTrackView
-                tracks={tracks}
-                onTracksChange={setTracks}
-                playbackRate={effects.playbackRate}
-                showTimeline
-              />
-            ) : (
-              <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-zinc-700 bg-zinc-950 py-16 text-center">
-                <Music className="mb-3 h-10 w-10 text-zinc-600" />
-                <p className="text-sm text-zinc-400">No tracks loaded</p>
-                <p className="mt-1 text-xs text-zinc-600">
-                  Select an audio asset below or process a Voice2Voice job
-                </p>
-              </div>
-            )}
-          </SectionCard>
-
-          {/* Pipeline Progress */}
-          {activeJobId && (
-            <PipelineStatus
-              jobId={activeJobId}
-              onComplete={handlePipelineComplete}
-              onError={handlePipelineError}
-            />
-          )}
-
-          {/* Spectrogram */}
-          {spectrogramUrl && (
-            <SectionCard title="Spectrogram">
-              <SpectrogramView url={spectrogramUrl} height={150} />
+        <div className="grid gap-6 lg:grid-cols-3">
+          {/* Left Column: DAW + Pipeline Status */}
+          <div className="space-y-6 lg:col-span-2">
+            {/* DAW Waveform View */}
+            <SectionCard title="Waveform View">
+              {tracks.length > 0 ? (
+                <MultiTrackView
+                  tracks={tracks}
+                  onTracksChange={setTracks}
+                  playbackRate={effects.playbackRate}
+                  showTimeline
+                />
+              ) : (
+                <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-zinc-700 bg-zinc-950 py-16 text-center">
+                  <Music className="mb-3 h-10 w-10 text-zinc-600" />
+                  <p className="text-sm text-zinc-400">No tracks loaded</p>
+                  <p className="mt-1 text-xs text-zinc-600">
+                    Select an audio asset below or process a Voice2Voice job
+                  </p>
+                </div>
+              )}
             </SectionCard>
-          )}
 
-          {/* Audio Asset Browser */}
-          <SectionCard title="Audio Assets">
-            {(assetsData?.assets ?? []).length > 0 ? (
-              <div className="max-h-64 space-y-1 overflow-y-auto">
-                {(assetsData?.assets ?? []).map((asset) => (
-                  <div
-                    key={asset.id}
-                    className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm hover:bg-zinc-800"
-                  >
-                    {renamingAssetId === asset.id ? (
-                      <div className="flex flex-1 items-center gap-2">
-                        <input
-                          type="text"
-                          value={renameValue}
-                          onChange={(e) => setRenameValue(e.target.value)}
-                          onKeyDown={(e) => { if (e.key === "Enter") handleRenameSubmit(asset.id); if (e.key === "Escape") setRenamingAssetId(null); }}
-                          className="flex-1 rounded border border-zinc-600 bg-zinc-900 px-2 py-1 text-sm text-zinc-200 outline-none focus:border-indigo-500"
-                          autoFocus
-                        />
-                        <button onClick={() => handleRenameSubmit(asset.id)} className="text-emerald-400 hover:text-emerald-300"><Check className="h-4 w-4" /></button>
-                        <button onClick={() => setRenamingAssetId(null)} className="text-zinc-400 hover:text-zinc-300"><X className="h-4 w-4" /></button>
-                      </div>
-                    ) : (
-                      <>
-                        <button
-                          onClick={() => loadAssetAsTrack(asset.id, asset.filename)}
-                          className="flex min-w-0 flex-1 items-center gap-3 text-left"
-                        >
-                          <Music className="h-4 w-4 shrink-0 text-indigo-400" />
-                          <div className="min-w-0 flex-1">
-                            <p className="truncate text-zinc-200">{asset.filename}</p>
-                            {asset.prompt && (
-                              <p className="truncate text-xs text-zinc-500">{asset.prompt}</p>
-                            )}
-                          </div>
-                        </button>
-                        {asset.duration_seconds != null && (
-                          <span className="shrink-0 font-mono text-xs text-zinc-500">
-                            {Math.floor(asset.duration_seconds / 60)}:{String(Math.floor(asset.duration_seconds % 60)).padStart(2, "0")}
-                          </span>
-                        )}
-                        <button
-                          onClick={(e) => { e.stopPropagation(); setRenamingAssetId(asset.id); setRenameValue(asset.filename); }}
-                          className="shrink-0 text-zinc-500 hover:text-zinc-300"
-                          title="Rename"
-                        >
-                          <Pencil className="h-3.5 w-3.5" />
-                        </button>
-                      </>
-                    )}
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <p className="py-8 text-center text-sm text-zinc-500">
-                No audio assets in gallery. Generate music first in the Gallery or Director.
-              </p>
+            {/* Pipeline Progress */}
+            {activeJobId && (
+              <PipelineStatus
+                jobId={activeJobId}
+                onComplete={handlePipelineComplete}
+                onError={handlePipelineError}
+              />
             )}
-          </SectionCard>
-        </div>
 
-        {/* Right Column: Control Panel + Effects */}
-        <div className="space-y-6">
-          <ControlPanel
-            audioAssets={audioAssets}
-            onSubmit={handleSubmit}
-            isProcessing={!!activeJobId}
-          />
+            {/* Spectrogram */}
+            {spectrogramUrl && (
+              <SectionCard title="Spectrogram">
+                <SpectrogramView url={spectrogramUrl} height={150} />
+              </SectionCard>
+            )}
 
-          {/* Effects Rack */}
-          <SectionCard title="Effects Rack">
-            <EffectsRack effects={effects} onChange={setEffects} />
-          </SectionCard>
+            {/* Audio Asset Browser */}
+            <SectionCard title="Audio Assets">
+              {(assetsData?.assets ?? []).length > 0 ? (
+                <div className="max-h-64 space-y-1 overflow-y-auto">
+                  {(assetsData?.assets ?? []).map((asset) => (
+                    <div
+                      key={asset.id}
+                      className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm hover:bg-zinc-800"
+                    >
+                      {renamingAssetId === asset.id ? (
+                        <div className="flex flex-1 items-center gap-2">
+                          <input
+                            type="text"
+                            value={renameValue}
+                            onChange={(e) => setRenameValue(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter")
+                                handleRenameSubmit(asset.id);
+                              if (e.key === "Escape") setRenamingAssetId(null);
+                            }}
+                            className="flex-1 rounded border border-zinc-600 bg-zinc-900 px-2 py-1 text-sm text-zinc-200 outline-none focus:border-indigo-500"
+                            autoFocus
+                          />
+                          <button
+                            onClick={() => handleRenameSubmit(asset.id)}
+                            className="text-emerald-400 hover:text-emerald-300"
+                          >
+                            <Check className="h-4 w-4" />
+                          </button>
+                          <button
+                            onClick={() => setRenamingAssetId(null)}
+                            className="text-zinc-400 hover:text-zinc-300"
+                          >
+                            <X className="h-4 w-4" />
+                          </button>
+                        </div>
+                      ) : (
+                        <>
+                          <button
+                            onClick={() =>
+                              loadAssetAsTrack(asset.id, asset.filename)
+                            }
+                            className="flex min-w-0 flex-1 items-center gap-3 text-left"
+                          >
+                            <Music className="h-4 w-4 shrink-0 text-indigo-400" />
+                            <div className="min-w-0 flex-1">
+                              <p className="truncate text-zinc-200">
+                                {asset.filename}
+                              </p>
+                              {asset.prompt && (
+                                <p className="truncate text-xs text-zinc-500">
+                                  {asset.prompt}
+                                </p>
+                              )}
+                            </div>
+                          </button>
+                          {asset.duration_seconds != null && (
+                            <span className="shrink-0 font-mono text-xs text-zinc-500">
+                              {Math.floor(asset.duration_seconds / 60)}:
+                              {String(
+                                Math.floor(asset.duration_seconds % 60),
+                              ).padStart(2, "0")}
+                            </span>
+                          )}
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setRenamingAssetId(asset.id);
+                              setRenameValue(asset.filename);
+                            }}
+                            className="shrink-0 text-zinc-500 hover:text-zinc-300"
+                            title="Rename"
+                          >
+                            <Pencil className="h-3.5 w-3.5" />
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="py-8 text-center text-sm text-zinc-500">
+                  No audio assets in gallery. Generate music first in the
+                  Gallery or Director.
+                </p>
+              )}
+            </SectionCard>
+          </div>
+
+          {/* Right Column: Control Panel + Effects */}
+          <div className="space-y-6">
+            <ControlPanel
+              audioAssets={audioAssets}
+              onSubmit={handleSubmit}
+              isProcessing={!!activeJobId}
+            />
+
+            {/* Effects Rack */}
+            <SectionCard title="Effects Rack">
+              <EffectsRack effects={effects} onChange={setEffects} />
+            </SectionCard>
+          </div>
         </div>
-      </div>
       )}
-      <AskAiPanel pageContext={PAGE_CONTEXTS["music-studio"]} open={askAiOpen} onClose={() => setAskAiOpen(false)} />
+      <AskAiPanel
+        pageContext={PAGE_CONTEXTS["music-studio"]}
+        open={askAiOpen}
+        onClose={() => setAskAiOpen(false)}
+      />
     </main>
   );
 }

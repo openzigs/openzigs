@@ -18,6 +18,8 @@ import {
   Palette,
   ImageIcon,
   X,
+  Sparkles,
+  ChevronDown,
 } from "lucide-react";
 
 // ── Types ───────────────────────────────────────────────────
@@ -49,6 +51,8 @@ interface GalleryAsset {
 
 export default function InpaintingPage() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  // Separate canvas for clean mask tracking — image pixels never bleed in
+  const maskCanvasRef = useRef<HTMLCanvasElement>(null);
   const [sourceImage, setSourceImage] = useState<string | null>(null);
   const [sourceFile, setSourceFile] = useState<File | null>(null);
   const [brushSize, setBrushSize] = useState(20);
@@ -58,6 +62,32 @@ export default function InpaintingPage() {
   const [resultImage, setResultImage] = useState<string | null>(null);
   const [canvasSize, setCanvasSize] = useState({ width: 512, height: 512 });
   const [showGalleryPicker, setShowGalleryPicker] = useState(false);
+  const [selectedModel, setSelectedModel] = useState("flux-kontext");
+  const [isEnhancing, setIsEnhancing] = useState(false);
+
+  // ── Available image generation models (must match sidecar MODEL_REGISTRY) ──
+  const IMAGE_GEN_MODELS = [
+    {
+      id: "flux-kontext",
+      name: "Flux Kontext",
+      description: "Text-guided semantic editing — recommended",
+    },
+    {
+      id: "flux-dev",
+      name: "Flux Dev",
+      description: "High-quality 25-step model",
+    },
+    {
+      id: "flux-schnell",
+      name: "Flux Schnell",
+      description: "Fast 4-step model",
+    },
+    {
+      id: "z-image-turbo",
+      name: "Z-Image Turbo",
+      description: "Fast LoRA-compatible model",
+    },
+  ];
 
   // ── Art styles from the art-style-tools ──
   const artStyles = [
@@ -70,6 +100,110 @@ export default function InpaintingPage() {
     { id: "comic-book", name: "Comic Book" },
     { id: "minimalist", name: "Minimalist" },
   ];
+
+  // ── API base / auth (declared before compositeWithMask so the closure captures them) ──
+  const apiBase =
+    process.env.NEXT_PUBLIC_OPENZIGS_API_BASE ?? "http://localhost:3000";
+  const authToken = process.env.NEXT_PUBLIC_OPENZIGS_TOKEN ?? "";
+
+  // ── Composite model result with original image using the painted mask ──
+  // This ensures only the brushed area in the source image changes,
+  // preserving the rest of the original exactly. No new models needed —
+  // the mask is applied client-side after the model runs.
+  const compositeWithMask = useCallback(
+    async (resultUrl: string): Promise<string> => {
+      const canvas = canvasRef.current;
+      // Use the clean mask canvas so we read only brush strokes, not image pixels
+      const maskCanvas = maskCanvasRef.current;
+      if (!canvas || !maskCanvas || !sourceImage) return resultUrl;
+
+      const maskCtx = maskCanvas.getContext("2d");
+      if (!maskCtx) return resultUrl;
+
+      // Check if anything was painted — reads from the pure mask canvas
+      const maskData = maskCtx.getImageData(
+        0,
+        0,
+        maskCanvas.width,
+        maskCanvas.height,
+      );
+      let hasMask = false;
+      for (let i = 0; i < maskData.data.length; i += 4) {
+        // Opaque red on transparent canvas: R > 128, A > 0 is sufficient
+        if (maskData.data[i] > 128 && maskData.data[i + 3] > 0) {
+          hasMask = true;
+          break;
+        }
+      }
+      if (!hasMask) return resultUrl;
+
+      // Fetch result image as blob to avoid CORS tainting the canvas
+      const headers: Record<string, string> = {};
+      if (authToken) headers["Authorization"] = `Bearer ${authToken}`;
+      const resultBlob = await fetch(resultUrl, { headers }).then((r) =>
+        r.blob(),
+      );
+      const resultObjectUrl = URL.createObjectURL(resultBlob);
+
+      try {
+        // Load original image
+        const origImg = await new Promise<HTMLImageElement>((res, rej) => {
+          const img = new window.Image();
+          img.onload = () => res(img);
+          img.onerror = rej;
+          img.src = sourceImage;
+        });
+
+        // Load result image
+        const resultImg = await new Promise<HTMLImageElement>((res, rej) => {
+          const img = new window.Image();
+          img.onload = () => res(img);
+          img.onerror = rej;
+          img.src = resultObjectUrl;
+        });
+
+        const w = canvas.width;
+        const h = canvas.height;
+
+        // Draw original at canvas scale
+        const origCanvas = document.createElement("canvas");
+        origCanvas.width = w;
+        origCanvas.height = h;
+        const origCtx = origCanvas.getContext("2d")!;
+        origCtx.drawImage(origImg, 0, 0, w, h);
+        const origPixels = origCtx.getImageData(0, 0, w, h);
+
+        // Draw result at canvas scale
+        const resultCanvas = document.createElement("canvas");
+        resultCanvas.width = w;
+        resultCanvas.height = h;
+        const resultCtx = resultCanvas.getContext("2d")!;
+        resultCtx.drawImage(resultImg, 0, 0, w, h);
+        const resultPixels = resultCtx.getImageData(0, 0, w, h);
+
+        // Composite: use result pixels where mask is painted, original elsewhere
+        const finalData = origCtx.createImageData(w, h);
+        for (let i = 0; i < maskData.data.length; i += 4) {
+          const isMasked = maskData.data[i] > 128 && maskData.data[i + 3] > 0;
+          const src = isMasked ? resultPixels : origPixels;
+          finalData.data[i] = src.data[i];
+          finalData.data[i + 1] = src.data[i + 1];
+          finalData.data[i + 2] = src.data[i + 2];
+          finalData.data[i + 3] = src.data[i + 3];
+        }
+
+        const compositeCanvas = document.createElement("canvas");
+        compositeCanvas.width = w;
+        compositeCanvas.height = h;
+        const compositeCtx = compositeCanvas.getContext("2d")!;
+        compositeCtx.putImageData(finalData, 0, 0);
+        return compositeCanvas.toDataURL("image/png");
+      } finally {
+        URL.revokeObjectURL(resultObjectUrl);
+      }
+    },
+    [sourceImage, authToken],
+  );
 
   // ── Effect 1: Calculate canvas dimensions when image changes ──
   useEffect(() => {
@@ -136,10 +270,22 @@ export default function InpaintingPage() {
       const scaleY = canvas.height / rect.height;
       const x = (e.clientX - rect.left) * scaleX;
       const y = (e.clientY - rect.top) * scaleY;
+      // Paint semi-transparent red on display canvas (visual feedback)
       ctx.beginPath();
       ctx.arc(x, y, brushSize / 2, 0, Math.PI * 2);
       ctx.fillStyle = "rgba(255, 0, 0, 0.4)";
       ctx.fill();
+      // Paint opaque red on mask canvas (clean, no image pixel blending)
+      const maskCanvas = maskCanvasRef.current;
+      if (maskCanvas) {
+        const mctx = maskCanvas.getContext("2d");
+        if (mctx) {
+          mctx.beginPath();
+          mctx.arc(x, y, brushSize / 2, 0, Math.PI * 2);
+          mctx.fillStyle = "rgba(255, 0, 0, 1)";
+          mctx.fill();
+        }
+      }
     },
     [brushSize],
   );
@@ -160,6 +306,16 @@ export default function InpaintingPage() {
       ctx.arc(x, y, brushSize / 2, 0, Math.PI * 2);
       ctx.fillStyle = "rgba(255, 0, 0, 0.4)";
       ctx.fill();
+      const maskCanvas = maskCanvasRef.current;
+      if (maskCanvas) {
+        const mctx = maskCanvas.getContext("2d");
+        if (mctx) {
+          mctx.beginPath();
+          mctx.arc(x, y, brushSize / 2, 0, Math.PI * 2);
+          mctx.fillStyle = "rgba(255, 0, 0, 1)";
+          mctx.fill();
+        }
+      }
     },
     [isDrawing, brushSize],
   );
@@ -179,6 +335,12 @@ export default function InpaintingPage() {
       ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
     };
     img.src = sourceImage;
+    // Also clear the clean mask canvas
+    const maskCanvas = maskCanvasRef.current;
+    if (maskCanvas) {
+      const mctx = maskCanvas.getContext("2d");
+      mctx?.clearRect(0, 0, maskCanvas.width, maskCanvas.height);
+    }
   }, [sourceImage]);
 
   // ── Gallery picker query (Issue #815) ──
@@ -213,9 +375,40 @@ export default function InpaintingPage() {
   }, []);
 
   // ── Generate inpainting ──
-  const apiBase =
-    process.env.NEXT_PUBLIC_OPENZIGS_API_BASE ?? "http://localhost:3000";
-  const authToken = process.env.NEXT_PUBLIC_OPENZIGS_TOKEN ?? "";
+
+  // Enhance prompt with AI
+  const enhancePrompt = useCallback(async () => {
+    if (!prompt.trim() || isEnhancing) return;
+    setIsEnhancing(true);
+    try {
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+      };
+      if (authToken) headers["Authorization"] = `Bearer ${authToken}`;
+      const res = await fetch(`${apiBase}/api/admin/creative/enhance-prompt`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ prompt }),
+      });
+      if (!res.ok) {
+        const { error } = (await res.json()) as { error: string };
+        showToast(error || "Failed to enhance prompt", "error");
+        return;
+      }
+      const { enhancedPrompt } = (await res.json()) as {
+        enhancedPrompt: string;
+      };
+      setPrompt(enhancedPrompt);
+      showToast("Prompt enhanced!", "success");
+    } catch (err) {
+      showToast(
+        `Enhance failed: ${err instanceof Error ? err.message : String(err)}`,
+        "error",
+      );
+    } finally {
+      setIsEnhancing(false);
+    }
+  }, [prompt, isEnhancing, apiBase, authToken]);
 
   const inpaint = useMutation({
     mutationFn: async () => {
@@ -225,32 +418,41 @@ export default function InpaintingPage() {
       const formData = new FormData();
       formData.append("image", sourceFile);
       formData.append("prompt", prompt);
+      formData.append("model", selectedModel);
       if (selectedStyle) formData.append("style_id", selectedStyle);
 
-      // Extract mask from canvas (red areas)
-      const canvas = canvasRef.current;
-      if (canvas) {
-        const maskCanvas = document.createElement("canvas");
-        maskCanvas.width = canvas.width;
-        maskCanvas.height = canvas.height;
+      // Extract mask from the clean mask canvas (not the display canvas)
+      const maskCanvas = maskCanvasRef.current;
+      if (maskCanvas) {
         const maskCtx = maskCanvas.getContext("2d")!;
-        const ctx = canvas.getContext("2d")!;
-        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-        const maskData = maskCtx.createImageData(canvas.width, canvas.height);
+        const imageData = maskCtx.getImageData(
+          0,
+          0,
+          maskCanvas.width,
+          maskCanvas.height,
+        );
+        const outCanvas = document.createElement("canvas");
+        outCanvas.width = maskCanvas.width;
+        outCanvas.height = maskCanvas.height;
+        const outCtx = outCanvas.getContext("2d")!;
+        const maskData = outCtx.createImageData(
+          maskCanvas.width,
+          maskCanvas.height,
+        );
 
         for (let i = 0; i < imageData.data.length; i += 4) {
           const r = imageData.data[i];
-          const g = imageData.data[i + 1];
-          const isMask = r > 200 && g < 100;
+          const a = imageData.data[i + 3];
+          const isMask = r > 128 && a > 0;
           maskData.data[i] = isMask ? 255 : 0;
           maskData.data[i + 1] = isMask ? 255 : 0;
           maskData.data[i + 2] = isMask ? 255 : 0;
           maskData.data[i + 3] = 255;
         }
-        maskCtx.putImageData(maskData, 0, 0);
+        outCtx.putImageData(maskData, 0, 0);
 
         const maskBlob = await new Promise<Blob>((resolve) =>
-          maskCanvas.toBlob((b) => resolve(b!), "image/png"),
+          outCanvas.toBlob((b) => resolve(b!), "image/png"),
         );
         formData.append("mask", maskBlob, "mask.png");
       }
@@ -290,18 +492,30 @@ export default function InpaintingPage() {
         }
       }
 
-      throw new Error("Inpainting timed out — check the Queue page for status");
+      throw new Error(
+        "Generation is taking longer than expected. The result will appear in the Gallery when complete — you can safely leave this page.",
+      );
     },
-    onSuccess: (job) => {
-      showToast("Inpainting complete!", "success");
+    onSuccess: async (job) => {
+      let rawUrl: string | null = null;
       if (job.result?.asset_id) {
-        setResultImage(
-          `${apiBase}/api/queue/assets/${job.result.asset_id}/file`,
-        );
+        rawUrl = `${apiBase}/api/queue/assets/${job.result.asset_id}/file`;
       } else if (job.result?.file_path) {
         const filename = job.result.file_path.split("/").pop();
-        setResultImage(`${apiBase}/api/admin/gallery/file/${filename}`);
+        rawUrl = `${apiBase}/api/admin/gallery/file/${filename}`;
       }
+      if (!rawUrl) return;
+
+      // Composite: apply result only in the painted mask region
+      // (no new model needed — mask compositing is client-side)
+      try {
+        const composited = await compositeWithMask(rawUrl);
+        setResultImage(composited);
+      } catch {
+        // Fall back to raw result if compositing fails
+        setResultImage(rawUrl);
+      }
+      showToast("Generation complete!", "success");
     },
     onError: (err: Error) => {
       showToast(`Inpainting failed: ${err.message}`, "error");
@@ -317,9 +531,25 @@ export default function InpaintingPage() {
           <h1 className="text-2xl font-bold">Inpainting Studio</h1>
         </div>
         <p className="text-sm text-zinc-400">
-          Upload an image, paint over the areas you want to replace, describe
-          what you want, and let AI fill it in.
+          Upload an image, paint a mask over the area to change, describe what
+          should appear, and generate. The result is composited back — only the
+          painted region changes.
         </p>
+
+        {/* Leave-page notice shown while generation is in-flight */}
+        {inpaint.isPending && (
+          <div className="flex items-start gap-3 rounded-lg border border-blue-800/60 bg-blue-950/40 px-4 py-3 text-sm text-blue-300">
+            <span className="mt-0.5 text-base leading-none">💡</span>
+            <span>
+              Your image is being generated — you can safely leave this page.
+              The result will appear in the{" "}
+              <a href="/gallery" className="underline hover:text-blue-200">
+                Gallery
+              </a>{" "}
+              automatically when it&apos;s ready.
+            </span>
+          </div>
+        )}
 
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
           {/* Left: Canvas + Controls */}
@@ -370,6 +600,13 @@ export default function InpaintingPage() {
                     onMouseLeave={stopDrawing}
                   />
                 </div>
+                {/* Hidden mask canvas — tracks only brush strokes (no image blending) */}
+                <canvas
+                  ref={maskCanvasRef}
+                  width={canvasSize.width}
+                  height={canvasSize.height}
+                  className="hidden"
+                />
 
                 {!sourceImage && (
                   <div className="flex h-64 items-center justify-center rounded-lg border-2 border-dashed border-zinc-700 text-sm text-zinc-500">
@@ -411,24 +648,43 @@ export default function InpaintingPage() {
             )}
           </div>
 
-          {/* Right: Prompt + Style + Result */}
+          {/* Right: Prompt + Style + Model + Result */}
           <div className="space-y-4">
             <SectionCard
               title={
                 <span className="flex items-center gap-2">
                   <Palette className="h-4 w-4" />
-                  Inpainting Prompt
+                  Generation Settings
                 </span>
               }
             >
               <div className="space-y-4">
-                <textarea
-                  value={prompt}
-                  onChange={(e) => setPrompt(e.target.value)}
-                  placeholder="Describe what should replace the masked area..."
-                  className="h-24 w-full resize-none rounded-lg border border-zinc-700 bg-zinc-800 p-3 text-sm focus:border-purple-500 focus:outline-none"
-                />
+                {/* Prompt with AI Enhance */}
+                <div>
+                  <div className="mb-1 flex items-center justify-between">
+                    <label className="text-xs text-zinc-400">
+                      What should replace the painted area?
+                    </label>
+                    <button
+                      type="button"
+                      onClick={enhancePrompt}
+                      disabled={!prompt.trim() || isEnhancing}
+                      className="flex items-center gap-1.5 rounded px-2 py-1 text-xs text-purple-400 transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:text-zinc-600"
+                      title="Rewrite your prompt for better AI results"
+                    >
+                      <Sparkles className="h-3 w-3" />
+                      {isEnhancing ? "Enhancing..." : "Enhance with AI"}
+                    </button>
+                  </div>
+                  <textarea
+                    value={prompt}
+                    onChange={(e) => setPrompt(e.target.value)}
+                    placeholder="e.g. a tabby cat sitting and looking at the camera"
+                    className="h-24 w-full resize-none rounded-lg border border-zinc-700 bg-zinc-800 p-3 text-sm focus:border-purple-500 focus:outline-none"
+                  />
+                </div>
 
+                {/* Art Style */}
                 <div>
                   <label className="mb-1 block text-xs text-zinc-400">
                     Art Style
@@ -446,17 +702,46 @@ export default function InpaintingPage() {
                   </select>
                 </div>
 
+                {/* Model Picker */}
+                <div>
+                  <label className="mb-1 block text-xs text-zinc-400">
+                    Image Model
+                  </label>
+                  <div className="relative">
+                    <select
+                      value={selectedModel}
+                      onChange={(e) => setSelectedModel(e.target.value)}
+                      className="w-full appearance-none rounded border border-zinc-700 bg-zinc-800 px-3 py-2 pr-8 text-sm"
+                    >
+                      {IMAGE_GEN_MODELS.map((m) => (
+                        <option key={m.id} value={m.id}>
+                          {m.name}
+                        </option>
+                      ))}
+                    </select>
+                    <ChevronDown className="pointer-events-none absolute right-2 top-2.5 h-4 w-4 text-zinc-500" />
+                  </div>
+                  <p className="mt-1 text-xs text-zinc-500">
+                    {
+                      IMAGE_GEN_MODELS.find((m) => m.id === selectedModel)
+                        ?.description
+                    }
+                  </p>
+                </div>
+
                 <button
                   onClick={() => inpaint.mutate()}
                   disabled={!sourceImage || !prompt || inpaint.isPending}
                   className="flex w-full items-center justify-center gap-2 rounded-lg bg-purple-600 px-4 py-2.5 font-medium transition hover:bg-purple-500 disabled:cursor-not-allowed disabled:bg-zinc-700"
                 >
                   {inpaint.isPending ? (
-                    <span className="animate-pulse">Generating...</span>
+                    <span className="animate-pulse">
+                      Generating — safe to leave page…
+                    </span>
                   ) : (
                     <>
                       <Paintbrush className="h-4 w-4" />
-                      Generate Inpainting
+                      Generate
                     </>
                   )}
                 </button>

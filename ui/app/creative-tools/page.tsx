@@ -12,9 +12,7 @@ import {
   MessageSquareText,
   Hash,
   Copy,
-  Download,
   Loader2,
-  Send,
 } from "lucide-react";
 
 // ── Types ─────────────────────────────────────────────────────
@@ -73,7 +71,9 @@ export default function CreativeToolsPage() {
   const [qrWidth, setQrWidth] = useState(400);
   const [qrColorDark, setQrColorDark] = useState("#000000");
   const [qrColorLight, setQrColorLight] = useState("#ffffff");
-  const [qrErrorCorrection, setQrErrorCorrection] = useState<"L" | "M" | "Q" | "H">("M");
+  const [qrErrorCorrection, setQrErrorCorrection] = useState<
+    "L" | "M" | "Q" | "H"
+  >("M");
   const [qrResult, setQrResult] = useState<QrResult | null>(null);
 
   // Caption state
@@ -83,7 +83,9 @@ export default function CreativeToolsPage() {
   const [captionCta, setCaptionCta] = useState(false);
   const [captionEmoji, setCaptionEmoji] = useState(true);
   const [captionContext, setCaptionContext] = useState("");
-  const [captionResult, setCaptionResult] = useState<CaptionResult | null>(null);
+  const [captionResult, setCaptionResult] = useState<CaptionResult | null>(
+    null,
+  );
 
   // Hashtag state
   const [hashtagTopic, setHashtagTopic] = useState("");
@@ -91,7 +93,9 @@ export default function CreativeToolsPage() {
   const [hashtagCount, setHashtagCount] = useState(10);
   const [hashtagNiche, setHashtagNiche] = useState("medium");
   const [hashtagTrending, setHashtagTrending] = useState(true);
-  const [hashtagResult, setHashtagResult] = useState<HashtagResult | null>(null);
+  const [hashtagResult, setHashtagResult] = useState<HashtagResult | null>(
+    null,
+  );
 
   // Mutations
   const qrMutation = useMutation({
@@ -148,7 +152,16 @@ export default function CreativeToolsPage() {
     <main className="mx-auto max-w-4xl space-y-6 p-6">
       <ToastContainer />
 
-      <SectionCard title={<span>Creative Tools <span className="text-sm font-normal text-muted-foreground">— QR codes, captions, and hashtags</span></span>}>
+      <SectionCard
+        title={
+          <span>
+            Creative Tools{" "}
+            <span className="text-sm font-normal text-muted-foreground">
+              — QR codes, captions, and hashtags
+            </span>
+          </span>
+        }
+      >
         {/* Tab bar */}
         <div className="mb-6 flex gap-2 border-b border-border pb-3">
           {tabs.map(({ key, label, icon: Icon }) => (
@@ -172,7 +185,9 @@ export default function CreativeToolsPage() {
           <div className="grid gap-6 md:grid-cols-2">
             <div className="space-y-4">
               <div>
-                <label className="mb-1 block text-sm font-medium">Content</label>
+                <label className="mb-1 block text-sm font-medium">
+                  Content
+                </label>
                 <textarea
                   value={qrContent}
                   onChange={(e) => setQrContent(e.target.value)}
@@ -183,7 +198,9 @@ export default function CreativeToolsPage() {
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="mb-1 block text-xs text-muted-foreground">Format</label>
+                  <label className="mb-1 block text-xs text-muted-foreground">
+                    Format
+                  </label>
                   <div className="flex gap-2">
                     {(["png", "svg"] as const).map((f) => (
                       <button
@@ -216,7 +233,9 @@ export default function CreativeToolsPage() {
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="mb-1 block text-xs text-muted-foreground">Dark Color</label>
+                  <label className="mb-1 block text-xs text-muted-foreground">
+                    Dark Color
+                  </label>
                   <div className="flex items-center gap-2">
                     <input
                       type="color"
@@ -224,11 +243,15 @@ export default function CreativeToolsPage() {
                       onChange={(e) => setQrColorDark(e.target.value)}
                       className="h-8 w-8 cursor-pointer rounded border border-border"
                     />
-                    <span className="text-xs text-muted-foreground">{qrColorDark}</span>
+                    <span className="text-xs text-muted-foreground">
+                      {qrColorDark}
+                    </span>
                   </div>
                 </div>
                 <div>
-                  <label className="mb-1 block text-xs text-muted-foreground">Light Color</label>
+                  <label className="mb-1 block text-xs text-muted-foreground">
+                    Light Color
+                  </label>
                   <div className="flex items-center gap-2">
                     <input
                       type="color"
@@ -236,12 +259,16 @@ export default function CreativeToolsPage() {
                       onChange={(e) => setQrColorLight(e.target.value)}
                       className="h-8 w-8 cursor-pointer rounded border border-border"
                     />
-                    <span className="text-xs text-muted-foreground">{qrColorLight}</span>
+                    <span className="text-xs text-muted-foreground">
+                      {qrColorLight}
+                    </span>
                   </div>
                 </div>
               </div>
               <div>
-                <label className="mb-1 block text-xs text-muted-foreground">Error Correction</label>
+                <label className="mb-1 block text-xs text-muted-foreground">
+                  Error Correction
+                </label>
                 <div className="flex gap-1.5">
                   {(["L", "M", "Q", "H"] as const).map((ec) => (
                     <button
@@ -253,7 +280,15 @@ export default function CreativeToolsPage() {
                           : "bg-muted text-muted-foreground"
                       }`}
                     >
-                      {ec} ({ec === "L" ? "7%" : ec === "M" ? "15%" : ec === "Q" ? "25%" : "30%"})
+                      {ec} (
+                      {ec === "L"
+                        ? "7%"
+                        : ec === "M"
+                          ? "15%"
+                          : ec === "Q"
+                            ? "25%"
+                            : "30%"}
+                      )
                     </button>
                   ))}
                 </div>
@@ -289,9 +324,14 @@ export default function CreativeToolsPage() {
               {qrResult ? (
                 <div className="space-y-3 text-center">
                   <p className="text-xs text-muted-foreground">
-                    {qrResult.format.toUpperCase()} &middot; {qrResult.sizeBytes ? `${(qrResult.sizeBytes / 1024).toFixed(1)} KB` : "Saved"}
+                    {qrResult.format.toUpperCase()} &middot;{" "}
+                    {qrResult.sizeBytes
+                      ? `${(qrResult.sizeBytes / 1024).toFixed(1)} KB`
+                      : "Saved"}
                   </p>
-                  <p className="text-xs font-medium text-foreground">Saved to Gallery</p>
+                  <p className="text-xs font-medium text-foreground">
+                    Saved to Gallery
+                  </p>
                   <button
                     onClick={() => copyToClipboard(qrResult.outputPath)}
                     className="flex items-center gap-1 text-xs text-primary hover:underline"
@@ -300,7 +340,9 @@ export default function CreativeToolsPage() {
                   </button>
                 </div>
               ) : (
-                <p className="text-sm text-muted-foreground">QR preview will appear here</p>
+                <p className="text-sm text-muted-foreground">
+                  QR preview will appear here
+                </p>
               )}
             </div>
           </div>
@@ -312,7 +354,9 @@ export default function CreativeToolsPage() {
             <div className="grid gap-4 md:grid-cols-2">
               <div className="space-y-3">
                 <div>
-                  <label className="mb-1 block text-sm font-medium">Topic</label>
+                  <label className="mb-1 block text-sm font-medium">
+                    Topic
+                  </label>
                   <textarea
                     value={captionTopic}
                     onChange={(e) => setCaptionTopic(e.target.value)}
@@ -322,7 +366,9 @@ export default function CreativeToolsPage() {
                   />
                 </div>
                 <div>
-                  <label className="mb-1 block text-xs text-muted-foreground">Platform</label>
+                  <label className="mb-1 block text-xs text-muted-foreground">
+                    Platform
+                  </label>
                   <div className="flex flex-wrap gap-1.5">
                     {PLATFORMS.map((p) => (
                       <button
@@ -340,7 +386,9 @@ export default function CreativeToolsPage() {
                   </div>
                 </div>
                 <div>
-                  <label className="mb-1 block text-xs text-muted-foreground">Tone</label>
+                  <label className="mb-1 block text-xs text-muted-foreground">
+                    Tone
+                  </label>
                   <div className="flex flex-wrap gap-1.5">
                     {TONES.map((t) => (
                       <button
@@ -379,7 +427,8 @@ export default function CreativeToolsPage() {
                 </div>
                 <div>
                   <label className="mb-1 block text-xs text-muted-foreground">
-                    Context <span className="text-muted-foreground/60">(optional)</span>
+                    Context{" "}
+                    <span className="text-muted-foreground/60">(optional)</span>
                   </label>
                   <input
                     type="text"
@@ -429,7 +478,9 @@ export default function CreativeToolsPage() {
                         {captionResult.charCount}/{captionResult.maxChars}
                       </span>
                     </div>
-                    <p className="mb-3 whitespace-pre-wrap text-sm">{captionResult.caption}</p>
+                    <p className="mb-3 whitespace-pre-wrap text-sm">
+                      {captionResult.caption}
+                    </p>
                     <button
                       onClick={() => copyToClipboard(captionResult.caption)}
                       className="flex items-center gap-1.5 rounded-lg bg-muted px-3 py-1.5 text-xs font-medium text-muted-foreground hover:bg-muted/80"
@@ -439,7 +490,9 @@ export default function CreativeToolsPage() {
                   </div>
                 ) : (
                   <div className="flex h-full items-center justify-center rounded-lg border border-dashed border-border bg-muted/30 p-6">
-                    <p className="text-sm text-muted-foreground">Generated caption will appear here</p>
+                    <p className="text-sm text-muted-foreground">
+                      Generated caption will appear here
+                    </p>
                   </div>
                 )}
               </div>
@@ -462,7 +515,9 @@ export default function CreativeToolsPage() {
                 />
               </div>
               <div>
-                <label className="mb-1 block text-xs text-muted-foreground">Platform</label>
+                <label className="mb-1 block text-xs text-muted-foreground">
+                  Platform
+                </label>
                 <div className="flex flex-wrap gap-1.5">
                   {PLATFORMS.map((p) => (
                     <button
@@ -493,7 +548,9 @@ export default function CreativeToolsPage() {
                 />
               </div>
               <div>
-                <label className="mb-1 block text-xs text-muted-foreground">Specificity</label>
+                <label className="mb-1 block text-xs text-muted-foreground">
+                  Specificity
+                </label>
                 <div className="flex gap-2">
                   {(["broad", "medium", "niche"] as const).map((n) => (
                     <button
@@ -550,11 +607,14 @@ export default function CreativeToolsPage() {
                 <div className="rounded-lg border border-border bg-muted/30 p-4">
                   <div className="mb-3 flex items-center justify-between">
                     <span className="text-xs font-medium capitalize text-muted-foreground">
-                      {hashtagResult.platform} &middot; {hashtagResult.count} tags
+                      {hashtagResult.platform} &middot; {hashtagResult.count}{" "}
+                      tags
                     </span>
                     <button
                       onClick={() =>
-                        copyToClipboard(hashtagResult.hashtags.map((h) => h.tag).join(" "))
+                        copyToClipboard(
+                          hashtagResult.hashtags.map((h) => h.tag).join(" "),
+                        )
                       }
                       className="flex items-center gap-1 text-xs text-primary hover:underline"
                     >
@@ -582,7 +642,9 @@ export default function CreativeToolsPage() {
                 </div>
               ) : (
                 <div className="flex h-full items-center justify-center rounded-lg border border-dashed border-border bg-muted/30 p-6">
-                  <p className="text-sm text-muted-foreground">Generated hashtags will appear here</p>
+                  <p className="text-sm text-muted-foreground">
+                    Generated hashtags will appear here
+                  </p>
                 </div>
               )}
             </div>
