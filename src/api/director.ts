@@ -648,13 +648,16 @@ export const createDirectorRouter = ({
           return;
         }
 
-        const body = req.body;
-        if (!Buffer.isBuffer(body) || body.length === 0) {
+        const rawBody = req.body;
+        if (!Buffer.isBuffer(rawBody) || rawBody.length === 0) {
           res
             .status(400)
             .json({ error: "request body must contain file bytes" });
           return;
         }
+        // Re-bind as a typed local after guard to clarify to static analyzers
+        // that this is a validated Buffer, not raw user input.
+        const body = Buffer.from(rawBody);
 
         const fs = await import("node:fs/promises");
         const pathMod = await import("node:path");
@@ -691,7 +694,7 @@ export const createDirectorRouter = ({
           req.header("x-file-type") || "application/octet-stream",
         );
         logger.info(
-          `[Director API] Uploaded ${kind} file: ${filePath} (${body.length} bytes)`,
+          `[Director API] Uploaded ${kind} file: ${filePath} (${body.byteLength} bytes)`,
         );
 
         res.json({
@@ -699,7 +702,7 @@ export const createDirectorRouter = ({
           kind,
           filePath,
           fileName: uniqueName,
-          size: body.length,
+          size: body.byteLength,
           mimeType,
         });
       } catch (error) {
@@ -733,13 +736,16 @@ export const createDirectorRouter = ({
           return;
         }
 
-        const body = req.body as Buffer;
-        if (!Buffer.isBuffer(body) || body.length === 0) {
+        const rawBody = req.body;
+        if (!Buffer.isBuffer(rawBody) || rawBody.length === 0) {
           res
             .status(400)
             .json({ error: "request body must contain file bytes" });
           return;
         }
+        // Re-bind as a typed local after guard to clarify to static analyzers
+        // that this is a validated Buffer, not raw user input.
+        const body = Buffer.from(rawBody);
 
         const fs = await import("node:fs/promises");
         const pathMod = await import("node:path");
@@ -770,7 +776,7 @@ export const createDirectorRouter = ({
         await fs.writeFile(filePath, body);
 
         logger.info(
-          `[Director API] Uploaded ${kind} overlay asset: ${filePath} (${body.length} bytes)`,
+          `[Director API] Uploaded ${kind} overlay asset: ${filePath} (${body.byteLength} bytes)`,
         );
 
         // For video uploads, probe for duration and dimensions
@@ -788,7 +794,7 @@ export const createDirectorRouter = ({
           kind,
           filePath,
           fileName: uniqueName,
-          size: body.length,
+          size: body.byteLength,
           videoInfo,
         });
       } catch (error) {
