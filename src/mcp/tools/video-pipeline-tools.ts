@@ -26,6 +26,41 @@ import {
 
 // ── Schemas ─────────────────────────────────────────────────
 
+/**
+ * Extract a single frame from a video using ffmpeg.
+ * Returns the path to the extracted frame, or null on failure.
+ */
+async function extractFrameFromVideo(
+  videoPath: string,
+  outputDir: string,
+): Promise<string | null> {
+  const { execFile } = await import("node:child_process");
+  const { promisify } = await import("node:util");
+  const execFileAsync = promisify(execFile);
+  const { nanoid } = await import("nanoid");
+
+  const framePath = path.join(outputDir, `frame_${nanoid(8)}.jpg`);
+
+  try {
+    await execFileAsync("ffmpeg", [
+      "-i",
+      videoPath,
+      "-ss",
+      "1",
+      "-vframes",
+      "1",
+      "-q:v",
+      "2",
+      "-y",
+      framePath,
+    ]);
+    if (fs.existsSync(framePath)) return framePath;
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 const clipVideoSchema = z.object({
   source: z.string().describe("File path or YouTube URL of the source video"),
   prompt: z
@@ -668,19 +703,86 @@ export const createVideoPipelineTools = (
           return { text: `Source not found: ${input.source}`, isError: true };
         }
 
+        const { compositeThumbnail } =
+          await import("../../video/thumbnails/thumbnail-compositor.js");
+        const { nanoid } = await import("nanoid");
+
+        const thumbnailDir = path.join(
+          os.homedir(),
+          ".openzigs",
+          "video-output",
+          "thumbnails",
+        );
+        if (!fs.existsSync(thumbnailDir)) {
+          fs.mkdirSync(thumbnailDir, { recursive: true });
+        }
+
+        // Extract a frame from the video to use as background
+        const framePath = await extractFrameFromVideo(
+          input.source,
+          thumbnailDir,
+        );
+        if (!framePath) {
+          return {
+            text: "Failed to extract frame from video. Ensure ffmpeg is installed.",
+            isError: true,
+          };
+        }
+
+        const titleText =
+          input.title ??
+          path.basename(input.source, path.extname(input.source));
+        const overlayText = input.text_overlay ?? titleText;
+        const variantCount = input.count ?? 3;
+
+        const placements: Array<"top" | "center" | "bottom"> = [
+          "bottom",
+          "top",
+          "center",
+        ];
+        const overlays: Array<
+          "arrows" | "circles" | "emoji" | "badge" | undefined
+        > = [undefined, "badge", "emoji", "arrows", "circles", undefined];
+
+        const results: {
+          path: string;
+          variant: number;
+          placement: string;
+        }[] = [];
+
+        for (let i = 0; i < variantCount; i++) {
+          const id = nanoid(8);
+          const outputPath = path.join(thumbnailDir, `thumb_${id}.jpg`);
+          const placement = placements[i % placements.length];
+          const overlay = overlays[i % overlays.length];
+
+          await compositeThumbnail({
+            backgroundPath: framePath,
+            textLines: [overlayText.toUpperCase()],
+            textPlacement: placement,
+            textColor: "#ffffff",
+            outputPath,
+            outputFormat: "jpeg",
+            clickbaitOverlay: overlay,
+          });
+
+          results.push({
+            path: outputPath,
+            variant: i + 1,
+            placement,
+          });
+        }
+
         return {
           text: JSON.stringify(
             {
-              status: "configured",
+              status: "complete",
               source: input.source,
               template: input.template,
-              title: input.title,
-              textOverlay: input.text_overlay,
-              count: input.count,
-              message:
-                "Thumbnail configuration ready. " +
-                "Use the Director Studio thumbnail panel for interactive generation, " +
-                "or POST to /api/studio/thumbnails/batch for batch generation.",
+              title: titleText,
+              thumbnailCount: results.length,
+              thumbnails: results,
+              outputDir: thumbnailDir,
             },
             null,
             2,

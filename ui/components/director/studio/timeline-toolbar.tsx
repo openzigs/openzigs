@@ -6,6 +6,7 @@ interface TimelineToolbarProps {
   zoom: number;
   onZoomIn: () => void;
   onZoomOut: () => void;
+  onZoomChange?: (zoom: number) => void;
   snapEnabled: boolean;
   onToggleSnap: () => void;
   onSplitAtPlayhead: () => void;
@@ -23,6 +24,7 @@ export function TimelineToolbar({
   zoom,
   onZoomIn,
   onZoomOut,
+  onZoomChange,
   snapEnabled,
   onToggleSnap,
   onSplitAtPlayhead,
@@ -118,8 +120,13 @@ export function TimelineToolbar({
         value={Math.round(zoom * 100)}
         onChange={(e) => {
           const newZoom = Number(e.target.value) / 100;
-          if (newZoom > zoom) onZoomIn();
-          else if (newZoom < zoom) onZoomOut();
+          if (onZoomChange) {
+            onZoomChange(newZoom);
+          } else if (newZoom > zoom) {
+            onZoomIn();
+          } else if (newZoom < zoom) {
+            onZoomOut();
+          }
         }}
         className="w-20 accent-blue-500"
         title="Zoom"

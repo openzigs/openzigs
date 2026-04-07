@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import {
   Film,
   Globe,
@@ -17,7 +18,6 @@ import { BlogToVideoPanel } from "@/components/director/blog-to-video-panel";
 import { ShortsPanel } from "@/components/director/shorts-panel";
 import { DraftsPanel } from "@/components/director/drafts-panel";
 import { HeroReelPanel } from "@/components/director/hero-reel-panel";
-import { CaptureAndTrimPanel } from "@/components/director/studio/capture-and-trim-panel";
 import { BrandKitEditor } from "@/components/director/brand-kit-editor";
 import { BatchRenderPanel } from "@/components/director/batch-render-panel";
 import { AnalyticsDashboard } from "@/components/analytics/analytics-dashboard";
@@ -30,19 +30,17 @@ type DirectorTab =
   | "shorts"
   | "drafts"
   | "hero-reel"
-  | "capture"
   | "brand-kit"
   | "batch-render"
   | "analytics";
 
 export default function DirectorPage() {
+  const router = useRouter();
   const [tab, setTab] = useState<DirectorTab>("wizard");
   const [askAiOpen, setAskAiOpen] = useState(false);
 
   return (
-    <main
-      className={`mx-auto flex h-[calc(100vh-4rem)] flex-col px-6 py-10 lg:px-12 ${tab === "capture" ? "max-w-7xl" : "max-w-4xl"}`}
-    >
+    <main className="mx-auto flex h-[calc(100vh-4rem)] max-w-4xl flex-col px-6 py-10 lg:px-12">
       <header className="mb-4 shrink-0">
         <p className="text-sm uppercase tracking-[0.3em] text-muted-foreground">
           OpenZigs
@@ -118,15 +116,11 @@ export default function DirectorPage() {
           <Sparkles className="h-4 w-4" />✨ Hero Reel
         </button>
         <button
-          onClick={() => setTab("capture")}
-          className={`flex items-center gap-1.5 px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
-            tab === "capture"
-              ? "border-primary text-primary"
-              : "border-transparent text-muted-foreground hover:text-foreground"
-          }`}
+          onClick={() => router.push("/director/studio")}
+          className="flex items-center gap-1.5 px-4 py-2 text-sm font-medium border-b-2 border-transparent text-muted-foreground hover:text-foreground transition-colors"
         >
           <MonitorUp className="h-4 w-4" />
-          Capture &amp; Trim
+          Studio
         </button>
         <button
           onClick={() => setTab("brand-kit")}
@@ -169,7 +163,6 @@ export default function DirectorPage() {
         {tab === "shorts" && <ShortsPanel />}
         {tab === "drafts" && <DraftsPanel />}
         {tab === "hero-reel" && <HeroReelPanel />}
-        {tab === "capture" && <CaptureAndTrimPanel />}
         {tab === "brand-kit" && <BrandKitEditor />}
         {tab === "batch-render" && <BatchRenderPanel />}
         {tab === "analytics" && <AnalyticsDashboard />}

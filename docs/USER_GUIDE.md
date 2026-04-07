@@ -4800,9 +4800,17 @@ The Director page at `/director` now has a tabbed layout:
 |-----|------|-------------|
 | **Video Wizard** | Film | The original Director wizard — ingest clips, pick a template, review/produce |
 | **Blog to YouTube** | Globe | Convert any blog post URL into a fully produced video |
+| **YouTube Shorts** | Scissors | Create viral 9:16 shorts from any long-form video |
 | **My Drafts** | FolderOpen | Browse, reopen, and delete saved drafts |
+| **✨ Hero Reel** | Sparkles | AI-generated hero reel from raw footage |
+| **Capture & Trim** | MonitorUp | In-app screen recorder, video gallery, and AI auto-cut trimmer |
+| **Brand Kit** | Palette | Manage brand kits (colors, fonts, logos) and brand template editor |
+| **Batch Render** | Layers | Queue multiple drafts for batch rendering |
+| **Analytics** | BarChart3 | Cross-platform video analytics dashboard — KPI summary, platform breakdown, best posting times heatmap |
 
 The **My Drafts** tab lists all saved drafts with thumbnail, production mode badge (e.g. WIZARD, PRESENTATION), status, and relative timestamp. Click any draft to reopen it in the Studio. Delete with the trash icon.
+
+The **Analytics** tab renders the `AnalyticsDashboard` component, which pulls from `/api/admin/video-analytics/summary` and `/api/admin/video-analytics/best-times`. It shows a period selector (7d / 30d / 90d / all), KPI cards (views, engagements, engagement rate), platform breakdown table, and a best-posting-times heatmap.
 
 ### Director Studio (Timeline Editor)
 
@@ -4835,6 +4843,22 @@ The Studio provides a three-panel layout:
   - **Category selector** — Choose from 15 YouTube video categories.
   - **Publish history** — The "Publishes" dropdown shows all past upload attempts with status (uploading/published/failed) and direct YouTube links.
   - After a successful publish, the Publish button changes to "View on YouTube" with a direct link.
+
+### Studio Pipeline Panels (Right Sidebar)
+
+The Studio right sidebar contains several panels stacked vertically below the Scene Inspector. These panels connect to the [Video Pipeline Tools](#video-pipeline-tools-opusclip-feature-parity) backend and provide a GUI for common editing operations without leaving the Studio:
+
+| Panel | Description |
+|-------|-------------|
+| **Global Caption Settings** | Toggle animated captions on/off. When on: choose from 6 brand templates (Hormozi, Minimal, TikTok, News, Podcast, Corporate), set position (top/center/bottom), and adjust font size. Templates are fetched from `/api/studio/pipeline/caption-templates`. |
+| **Music Manager** | Attach or change background music. Enter a relative file path or browse the audio library. Adjust volume (0–100%) and loop toggle. |
+| **Shorts Generator** | Propose and render 30–90 second YouTube Shorts from the current draft. Set max count (1–5) and click **Generate Proposals**. Accept/reject proposals before rendering. |
+| **Clip Extractor** | AI-powered clip extraction from the current draft's source video. Set clip count, min/max duration, and style (highlight/react/summarize/teaser). Jobs stream progress via Socket.IO. |
+| **Audio Cleaner** | Remove filler words, trim silence, denoise, and normalize loudness. Choose aggressiveness (gentle/moderate/aggressive). Progress reported via `clean:progress` events. |
+| **B-Roll Panel** | Analyze narration for B-Roll insertion points. Set density (sparse/moderate/dense) and transition style. Review and approve suggestions before applying. |
+| **NLE Export** | Export the manifest as **FCP XML** (Premiere Pro, Final Cut Pro, DaVinci Resolve) or **EDL** (CMX3600 — universal NLE). File saved to `~/.openzigs/exports/` and downloaded automatically. |
+
+All pipeline panels use the `draftId` from the current Studio session and communicate with the backend via REST and Socket.IO.
 
 ### Blog-to-YouTube Pipeline
 

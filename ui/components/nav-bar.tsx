@@ -33,7 +33,8 @@ const NAV_GROUPS: NavGroup[] = [
     icon: <Film className="h-3.5 w-3.5" />,
     items: [
       { href: "/director", label: "Director" },
-      { href: "/director/analytics", label: "Analytics" },
+      { href: "/director/analytics", label: "YT Analytics" },
+      { href: "/analytics", label: "Analytics" },
       { href: "/presenter", label: "Presenter" },
       { href: "/gallery", label: "Gallery" },
       { href: "/characters", label: "Characters" },

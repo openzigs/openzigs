@@ -12,9 +12,11 @@ import {
   Pencil,
   Check,
   X,
+  Brain,
 } from "lucide-react";
 import { fetchJson } from "@/lib/api";
 import { showToast } from "@/components/toast";
+import { InlineModelPicker } from "@/components/model-picker-select";
 
 interface ShortProposal {
   startTime: number;
@@ -44,25 +46,37 @@ export function ShortsProposalPanel({ draftId }: ShortsProposalPanelProps) {
   const [editingIdx, setEditingIdx] = useState<number | null>(null);
   const [editForm, setEditForm] = useState<ShortProposal | null>(null);
   const [maxShorts, setMaxShorts] = useState(3);
+  const [model, setModel] = useState("");
+  const [totalDuration, setTotalDuration] = useState<number | null>(null);
 
   const handleGenerate = useCallback(async () => {
     setLoading(true);
     setProposals([]);
     setAccepted(new Set());
+    setTotalDuration(null);
     try {
-      const res = await fetchJson<{ proposals: ShortProposal[] }>(
-        `/api/admin/director/drafts/${draftId}/shorts/propose`,
-        { method: "POST", body: JSON.stringify({ maxShorts }) },
-      );
+      const res = await fetchJson<{
+        proposals: ShortProposal[];
+        totalDurationSec?: number;
+      }>(`/api/admin/director/drafts/${draftId}/shorts/propose`, {
+        method: "POST",
+        body: JSON.stringify({ maxShorts, model: model || undefined }),
+      });
       setProposals(res.proposals);
-      // Auto-accept all initially
+      setTotalDuration(res.totalDurationSec ?? null);
       setAccepted(new Set(res.proposals.map((_, i) => i)));
+      if (res.proposals.length > 0) {
+        showToast(
+          `Found ${res.proposals.length} Short proposal(s) from ${formatTime(res.totalDurationSec ?? 0)} video`,
+          "success",
+        );
+      }
     } catch {
       showToast("Failed to generate Short proposals", "error");
     } finally {
       setLoading(false);
     }
-  }, [draftId, maxShorts]);
+  }, [draftId, maxShorts, model]);
 
   const toggleAccept = (idx: number) => {
     setAccepted((prev) => {
@@ -129,23 +143,41 @@ export function ShortsProposalPanel({ draftId }: ShortsProposalPanelProps) {
           Shorts Generator
         </h3>
       </div>
+      <p className="text-xs text-muted-foreground">
+        Rendered output is{" "}
+        <span className="text-foreground/90">1080×1920 (9:16)</span>, matching
+        YouTube Shorts.
+      </p>
 
       {/* Controls */}
-      <div className="flex items-center gap-3">
-        <div className="flex items-center gap-2">
-          <label className="text-xs text-muted-foreground">Max Shorts:</label>
-          <select
-            value={maxShorts}
-            onChange={(e) => setMaxShorts(Number(e.target.value))}
-            className="rounded border border-border bg-background px-2 py-1 text-xs"
-          >
-            {[1, 2, 3, 5].map((n) => (
-              <option key={n} value={n}>
-                {n}
-              </option>
-            ))}
-          </select>
+      <div className="space-y-2">
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
+            <label className="text-xs text-muted-foreground">Max Shorts:</label>
+            <select
+              value={maxShorts}
+              onChange={(e) => setMaxShorts(Number(e.target.value))}
+              className="rounded border border-border bg-background px-2 py-1 text-xs"
+            >
+              {[1, 2, 3, 5].map((n) => (
+                <option key={n} value={n}>
+                  {n}
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
+
+        <label className="flex items-center gap-2 text-xs text-muted-foreground">
+          <Brain className="h-3 w-3" />
+          AI Model
+          <InlineModelPicker
+            value={model}
+            onChange={setModel}
+            className="flex-1"
+          />
+        </label>
+
         <button
           onClick={handleGenerate}
           disabled={loading}
@@ -163,6 +195,13 @@ export function ShortsProposalPanel({ draftId }: ShortsProposalPanelProps) {
       {/* Proposals */}
       {proposals.length > 0 && (
         <div className="space-y-3">
+          {totalDuration != null && (
+            <p className="text-xs text-muted-foreground">
+              Source: {formatTime(totalDuration)} total — {proposals.length}{" "}
+              Short
+              {proposals.length !== 1 ? "s" : ""} proposed
+            </p>
+          )}
           {proposals.map((p, idx) => (
             <div
               key={idx}

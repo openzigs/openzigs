@@ -54,6 +54,7 @@ export interface ClipExtractionRequest {
   clipCount?: number;
   duration?: { min: number; max: number };
   style?: "react" | "highlight" | "summarize" | "teaser";
+  model?: string;
 }
 
 export type ClipExtractorChatFn = (
@@ -253,7 +254,11 @@ export class ClipExtractor extends EventEmitter {
         stage: "analyzing",
         progress: 40,
       });
-      const frames = await this.analyzeFrames(framePaths, tmpDir);
+      const frames = await this.analyzeFrames(
+        framePaths,
+        tmpDir,
+        request.model,
+      );
 
       // Step 5: Build scene graph
       const duration = await this.getVideoDuration(request.source);
@@ -476,6 +481,7 @@ export class ClipExtractor extends EventEmitter {
   private async analyzeFrames(
     framePaths: string[],
     _tmpDir: string,
+    model?: string,
   ): Promise<VisualFrame[]> {
     const frames: VisualFrame[] = [];
 
@@ -505,6 +511,7 @@ Return ONLY a valid JSON array.`;
         for await (const chunk of this.chat(prompt, {
           attachments,
           tools: [],
+          model,
         })) {
           response += chunk;
         }
@@ -578,7 +585,10 @@ Return a JSON array of the top ${clipCount} clips. Each clip:
 ${JSON.stringify([{ startTime: 0, endTime: 0, viralityScore: 0, title: "", description: "", hookDetected: false }])}`;
 
     let response = "";
-    for await (const chunk of this.chat(scoringPrompt, { tools: [] })) {
+    for await (const chunk of this.chat(scoringPrompt, {
+      tools: [],
+      model: request.model,
+    })) {
       response += chunk;
     }
 

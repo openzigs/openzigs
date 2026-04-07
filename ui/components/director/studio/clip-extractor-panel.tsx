@@ -1,9 +1,17 @@
 "use client";
 
 import { useState, useCallback } from "react";
-import { Scissors, Loader2, Sparkles, Clock, TrendingUp } from "lucide-react";
+import {
+  Scissors,
+  Loader2,
+  Sparkles,
+  Clock,
+  TrendingUp,
+  Brain,
+} from "lucide-react";
 import { fetchJson } from "@/lib/api";
 import { showToast } from "@/components/toast";
+import { InlineModelPicker } from "@/components/model-picker-select";
 
 interface ExtractedClip {
   startTime: number;
@@ -44,6 +52,7 @@ export function ClipExtractorPanel({
   const [minDuration, setMinDuration] = useState(15);
   const [maxDuration, setMaxDuration] = useState(90);
   const [prompt, setPrompt] = useState("");
+  const [model, setModel] = useState("");
 
   const handleExtract = useCallback(async () => {
     if (!videoSource) {
@@ -68,6 +77,7 @@ export function ClipExtractorPanel({
           maxDuration,
           prompt: prompt || undefined,
           mode: prompt ? "prompt" : "auto",
+          model: model || undefined,
         }),
       });
 
@@ -75,7 +85,26 @@ export function ClipExtractorPanel({
         setClips(res.clips);
         showToast(`Found ${res.clips.length} clips`, "success");
       } else {
-        showToast("Clip extraction started — check back shortly", "info");
+        const jobId = res.jobId;
+        for (let attempt = 0; attempt < 60; attempt++) {
+          await new Promise((r) => setTimeout(r, 3000));
+          const poll = await fetchJson<{
+            jobId: string;
+            status: string;
+            clips?: ExtractedClip[];
+          }>(`/api/studio/pipeline/clip/${jobId}`);
+
+          if (poll.status === "complete" && poll.clips) {
+            setClips(poll.clips);
+            showToast(`Found ${poll.clips.length} clips`, "success");
+            return;
+          }
+          if (poll.status === "failed") {
+            showToast("Clip extraction failed", "error");
+            return;
+          }
+        }
+        showToast("Clip extraction timed out", "error");
       }
     } catch (err) {
       showToast(
@@ -85,7 +114,7 @@ export function ClipExtractorPanel({
     } finally {
       setLoading(false);
     }
-  }, [videoSource, clipCount, style, minDuration, maxDuration, prompt]);
+  }, [videoSource, clipCount, style, minDuration, maxDuration, prompt, model]);
 
   return (
     <div className="space-y-3">
@@ -160,6 +189,16 @@ export function ClipExtractorPanel({
             />
           </label>
         </div>
+
+        <label className="flex items-center gap-2 text-xs text-muted-foreground">
+          <Brain className="h-3 w-3" />
+          AI Model
+          <InlineModelPicker
+            value={model}
+            onChange={setModel}
+            className="flex-1"
+          />
+        </label>
       </div>
 
       <button

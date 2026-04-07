@@ -1,9 +1,10 @@
 "use client";
 
 import { useState, useCallback } from "react";
-import { Film, Loader2, Search, Sparkles, Clock } from "lucide-react";
+import { Film, Loader2, Search, Sparkles, Clock, Brain } from "lucide-react";
 import { fetchJson } from "@/lib/api";
 import { showToast } from "@/components/toast";
+import { InlineModelPicker } from "@/components/model-picker-select";
 
 interface BRollSuggestion {
   timestamp: number;
@@ -33,6 +34,7 @@ export function BRollPanel({
   const [loading, setLoading] = useState(false);
   const [suggestions, setSuggestions] = useState<BRollSuggestion[]>([]);
   const [density, setDensity] = useState<BRollDensity>("moderate");
+  const [model, setModel] = useState("");
   const [accepted, setAccepted] = useState<Set<number>>(new Set());
 
   const handleAnalyze = useCallback(async () => {
@@ -53,6 +55,7 @@ export function BRollPanel({
           source: videoSource,
           mode: "suggest",
           density,
+          model: model || undefined,
         }),
       });
 
@@ -60,7 +63,29 @@ export function BRollPanel({
         setSuggestions(res.suggestions);
         showToast(`Found ${res.suggestions.length} B-Roll points`, "success");
       } else {
-        showToast("B-Roll analysis started — check back shortly", "info");
+        const jobId = res.jobId;
+        for (let attempt = 0; attempt < 60; attempt++) {
+          await new Promise((r) => setTimeout(r, 3000));
+          const poll = await fetchJson<{
+            jobId: string;
+            status: string;
+            suggestions?: BRollSuggestion[];
+          }>(`/api/studio/pipeline/broll/${jobId}`);
+
+          if (poll.status === "complete" && poll.suggestions) {
+            setSuggestions(poll.suggestions);
+            showToast(
+              `Found ${poll.suggestions.length} B-Roll points`,
+              "success",
+            );
+            return;
+          }
+          if (poll.status === "failed") {
+            showToast("B-Roll analysis failed", "error");
+            return;
+          }
+        }
+        showToast("B-Roll analysis timed out", "error");
       }
     } catch (err) {
       showToast(
@@ -70,7 +95,7 @@ export function BRollPanel({
     } finally {
       setLoading(false);
     }
-  }, [videoSource, density]);
+  }, [videoSource, density, model]);
 
   const toggleAccepted = useCallback((index: number) => {
     setAccepted((prev) => {
@@ -103,6 +128,16 @@ export function BRollPanel({
             <option value="moderate">Moderate (every ~1 min)</option>
             <option value="dense">Dense (every ~30s)</option>
           </select>
+        </label>
+
+        <label className="flex items-center gap-2 text-xs text-muted-foreground">
+          <Brain className="h-3 w-3" />
+          AI Model
+          <InlineModelPicker
+            value={model}
+            onChange={setModel}
+            className="flex-1"
+          />
         </label>
       </div>
 

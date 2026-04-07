@@ -325,15 +325,101 @@ describe("createVideoPipelineTools", () => {
     expect(writtenPath).toContain(".openzigs");
   });
 
-  it("generate-thumbnail handler returns config", async () => {
+  it("generate-thumbnail handler produces thumbnails", async () => {
+    // Mock the dynamic imports used by the handler
+    const mockCompositeThumbnail = vi.fn().mockResolvedValue("/tmp/thumb.jpg");
+
+    // Mock the compositeThumbnail import
+    vi.doMock("../../video/thumbnails/thumbnail-compositor.js", () => ({
+      compositeThumbnail: mockCompositeThumbnail,
+    }));
+
+    // Mock child_process.execFile for frame extraction (ffmpeg)
+    vi.doMock("node:child_process", () => ({
+      execFile: vi.fn(
+        (_cmd: string, _args: string[], cb: (err: Error | null) => void) => {
+          // Create the frame file to simulate ffmpeg success
+          const outputPath = _args[_args.indexOf("-y") + 1];
+          if (outputPath) fs.writeFileSync(outputPath, "fake frame");
+          cb(null);
+        },
+      ),
+    }));
+
+    vi.spyOn(fs, "mkdirSync").mockReturnValue(undefined);
+
     const tools = createVideoPipelineTools({});
     const tool = tools.find((t) => t.name === "generate-thumbnail")!;
     const result = await tool.handler({
       source: "/tmp/test.mp4",
+      title: "My Video",
       template: "reaction",
+      count: 2,
     });
+
     const parsed = JSON.parse(result.text);
-    expect(parsed.status).toBe("configured");
+    expect(parsed.status).toBe("complete");
+    expect(parsed.thumbnailCount).toBe(2);
+    expect(parsed.thumbnails).toHaveLength(2);
+    expect(parsed.title).toBe("My Video");
+
+    vi.doUnmock("../../video/thumbnails/thumbnail-compositor.js");
+    vi.doUnmock("node:child_process");
+  });
+
+  it("generate-thumbnail handler returns error when ffmpeg fails", async () => {
+    // Mock child_process to fail
+    vi.doMock("node:child_process", () => ({
+      execFile: vi.fn(
+        (_cmd: string, _args: string[], cb: (err: Error | null) => void) => {
+          cb(new Error("ffmpeg not found"));
+        },
+      ),
+    }));
+
+    // Temporarily make existsSync return false for the frame file
+    const origExistsSync = fs.existsSync;
+    let firstCall = true;
+    vi.spyOn(fs, "existsSync").mockImplementation((p) => {
+      const pStr = String(p);
+      // Source file exists, frame file does not
+      if (pStr.includes("frame_")) return false;
+      if (pStr === "/tmp/test.mp4") return true;
+      if (firstCall) {
+        firstCall = false;
+        return true;
+      }
+      return origExistsSync(pStr);
+    });
+
+    vi.spyOn(fs, "mkdirSync").mockReturnValue(undefined);
+
+    const tools = createVideoPipelineTools({});
+    const tool = tools.find((t) => t.name === "generate-thumbnail")!;
+    const result = await tool.handler({
+      source: "/tmp/test.mp4",
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.text).toContain("Failed to extract frame");
+
+    vi.spyOn(fs, "existsSync").mockReturnValue(true);
+    vi.doUnmock("node:child_process");
+  });
+
+  it("generate-thumbnail handler returns error for missing source", async () => {
+    vi.spyOn(fs, "existsSync").mockReturnValue(false);
+
+    const tools = createVideoPipelineTools({});
+    const tool = tools.find((t) => t.name === "generate-thumbnail")!;
+    const result = await tool.handler({
+      source: "/nonexistent/video.mp4",
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.text).toContain("Source not found");
+
+    vi.spyOn(fs, "existsSync").mockReturnValue(true);
   });
 
   it("handler returns error for missing source", async () => {

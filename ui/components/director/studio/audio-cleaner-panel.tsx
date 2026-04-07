@@ -59,7 +59,35 @@ export function AudioCleanerPanel({
           deNoise,
         }),
       });
-      showToast(`Audio cleaning started (${res.jobId})`, "info");
+
+      const jobId = res.jobId;
+      for (let attempt = 0; attempt < 60; attempt++) {
+        await new Promise((r) => setTimeout(r, 3000));
+        const poll = await fetchJson<{
+          jobId: string;
+          status: string;
+          removedFillers?: number;
+          trimmedSilenceRegions?: number;
+          totalTimeSaved?: number;
+          outputPath?: string;
+        }>(`/api/studio/pipeline/clean-audio/${jobId}`);
+
+        if (poll.status === "complete") {
+          setResult({
+            removedFillers: poll.removedFillers ?? 0,
+            silenceTrimmed: poll.trimmedSilenceRegions ?? 0,
+            durationSaved: `${(poll.totalTimeSaved ?? 0).toFixed(1)}s`,
+            outputPath: poll.outputPath ?? "",
+          });
+          showToast("Audio cleaned successfully", "success");
+          return;
+        }
+        if (poll.status === "failed") {
+          showToast("Audio cleaning failed", "error");
+          return;
+        }
+      }
+      showToast("Audio cleaning timed out", "error");
     } catch (err) {
       showToast(
         `Failed to clean audio: ${err instanceof Error ? err.message : "Unknown error"}`,

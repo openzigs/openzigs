@@ -37,6 +37,7 @@ const clipRequestSchema = z.object({
   style: z
     .enum(["react", "highlight", "summarize", "teaser"])
     .default("highlight"),
+  model: z.string().optional(),
 });
 
 const reframeRequestSchema = z.object({
@@ -67,6 +68,7 @@ const brollRequestSchema = z.object({
   transitionStyle: z
     .enum(["crossfade", "cut", "zoom", "slide"])
     .default("crossfade"),
+  model: z.string().optional(),
 });
 
 const exportRequestSchema = z.object({
@@ -103,6 +105,7 @@ export const createVideoPipelineRouter = (
           clipCount: input.clipCount,
           duration: { min: input.minDuration, max: input.maxDuration },
           style: input.style,
+          model: input.model,
         });
         res.json({ jobId, status: "queued" });
       } catch (err) {

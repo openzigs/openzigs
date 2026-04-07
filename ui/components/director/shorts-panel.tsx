@@ -1,18 +1,19 @@
 "use client";
 
 import { useState, useCallback, useRef, useEffect } from "react";
-import { Scissors, Upload, Loader2, Play, ExternalLink, Film } from "lucide-react";
+import { useRouter } from "next/navigation";
+import {
+  Scissors,
+  Upload,
+  Loader2,
+  Sparkles,
+  ArrowRight,
+  Film,
+} from "lucide-react";
 import { fetchJson } from "@/lib/api";
 import { showToast } from "@/components/toast";
 
-type ShortStyle = "react" | "summarize" | "highlight";
 type SourceMode = "renders" | "upload";
-
-const STYLE_OPTIONS: { value: ShortStyle; label: string; description: string }[] = [
-  { value: "highlight", label: "Highlight Reel", description: "Extract the most viral-worthy moments" },
-  { value: "react", label: "React Style", description: "Commentary-driven reaction format" },
-  { value: "summarize", label: "Summary", description: "Condense the video into a quick recap" },
-];
 
 interface CompletedRender {
   draftId: string;
@@ -24,22 +25,16 @@ interface CompletedRender {
   updatedAt: string;
 }
 
-interface ShortsResult {
-  draftId: string;
-  scriptText: string;
-  processingTimeMs: number;
-}
-
 export function ShortsPanel() {
+  const router = useRouter();
   const [sourceMode, setSourceMode] = useState<SourceMode>("renders");
   const [sourceVideo, setSourceVideo] = useState("");
-  const [selectedRender, setSelectedRender] = useState<CompletedRender | null>(null);
+  const [selectedRender, setSelectedRender] = useState<CompletedRender | null>(
+    null,
+  );
   const [renders, setRenders] = useState<CompletedRender[]>([]);
   const [rendersLoading, setRendersLoading] = useState(false);
-  const [style, setStyle] = useState<ShortStyle>("highlight");
-  const [targetDuration, setTargetDuration] = useState(45);
-  const [generating, setGenerating] = useState(false);
-  const [result, setResult] = useState<ShortsResult | null>(null);
+  const [navigating, setNavigating] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -72,41 +67,86 @@ export function ShortsPanel() {
     }
   }, []);
 
-  const effectiveSource = sourceMode === "renders" ? (selectedRender?.outputPath ?? "") : sourceVideo;
-
-  const handleGenerate = useCallback(async () => {
-    if (!effectiveSource.trim()) {
-      showToast(sourceMode === "renders" ? "Please select a render" : "Please provide a source video", "error");
+  const handleGoToStudio = useCallback(async () => {
+    // If user selected a render that already has a draft, go directly
+    if (sourceMode === "renders" && selectedRender) {
+      router.push(`/director/studio/${selectedRender.draftId}?panel=shorts`);
       return;
     }
-    setGenerating(true);
-    setResult(null);
-    try {
-      const res = await fetchJson<ShortsResult>("/api/admin/director/shorts", {
-        method: "POST",
-        body: JSON.stringify({ sourceVideo: effectiveSource, style, targetDuration }),
-      });
-      setResult(res);
-      showToast("Short created!", "success");
-    } catch (err) {
-      showToast(err instanceof Error ? err.message : "Failed to create short", "error");
-    } finally {
-      setGenerating(false);
+
+    // For uploads, create a draft first
+    const source = sourceVideo.trim();
+    if (!source) {
+      showToast("Please provide a source video", "error");
+      return;
     }
-  }, [effectiveSource, sourceMode, style, targetDuration]);
+
+    setNavigating(true);
+    try {
+      const res = await fetchJson<{ id: string }>(
+        "/api/admin/director/drafts",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            title:
+              source
+                .split("/")
+                .pop()
+                ?.replace(/\.[^.]+$/, "") ?? "Untitled",
+            manifest: {
+              projectTitle:
+                source
+                  .split("/")
+                  .pop()
+                  ?.replace(/\.[^.]+$/, "") ?? "Untitled",
+              composition: { fps: 30, width: 1920, height: 1080 },
+              timeline: [
+                {
+                  type: "video_clip",
+                  src: source,
+                  source: source,
+                  startAtFrame: 0,
+                  durationInFrames: 900,
+                },
+              ],
+            },
+            productionMode: "shorts",
+          }),
+        },
+      );
+      router.push(`/director/studio/${res.id}?panel=shorts`);
+    } catch (err) {
+      showToast(
+        err instanceof Error ? err.message : "Failed to create draft",
+        "error",
+      );
+    } finally {
+      setNavigating(false);
+    }
+  }, [sourceMode, selectedRender, sourceVideo, router]);
+
+  const hasSource =
+    sourceMode === "renders"
+      ? !!selectedRender?.outputPath
+      : !!sourceVideo.trim();
 
   return (
     <div className="flex flex-col gap-6">
       <div>
-        <h2 className="text-lg font-semibold text-foreground">YouTube Shorts Generator</h2>
+        <h2 className="text-lg font-semibold text-foreground">
+          YouTube Shorts Generator
+        </h2>
         <p className="mt-1 text-sm text-muted-foreground">
-          Convert a long-form video into a vertical YouTube Short (15–60s).
+          Select a video and let AI analyze it to propose the best short-form
+          clips with virality scoring.
         </p>
       </div>
 
       {/* Source video */}
       <div className="space-y-3">
-        <label className="text-sm font-medium text-foreground">Source Video</label>
+        <label className="text-sm font-medium text-foreground">
+          Source Video
+        </label>
 
         {/* Mode tabs */}
         <div className="flex rounded-lg border border-border overflow-hidden text-sm">
@@ -143,7 +183,8 @@ export function ShortsPanel() {
               </div>
             ) : renders.length === 0 ? (
               <p className="text-sm text-muted-foreground py-3">
-                No presentations found. Create a presentation in the Video Wizard first.
+                No presentations found. Create a presentation in the Video
+                Wizard first.
               </p>
             ) : (
               <div className="space-y-1.5 max-h-52 overflow-y-auto">
@@ -158,16 +199,22 @@ export function ShortsPanel() {
                         selectedRender?.draftId === r.draftId
                           ? "border-primary bg-primary/5 ring-1 ring-primary"
                           : hasRender
-                          ? "border-border hover:border-muted-foreground/40"
-                          : "border-border opacity-50 cursor-not-allowed"
+                            ? "border-border hover:border-muted-foreground/40"
+                            : "border-border opacity-50 cursor-not-allowed"
                       }`}
                     >
                       <div className="flex items-center justify-between gap-2">
-                        <span className="text-sm font-medium text-foreground truncate">{r.draftTitle}</span>
+                        <span className="text-sm font-medium text-foreground truncate">
+                          {r.draftTitle}
+                        </span>
                         {hasRender ? (
-                          <span className="text-[10px] text-green-500 shrink-0">Ready</span>
+                          <span className="text-[10px] text-green-500 shrink-0">
+                            Ready
+                          </span>
                         ) : (
-                          <span className="text-[10px] text-muted-foreground shrink-0">Render first</span>
+                          <span className="text-[10px] text-muted-foreground shrink-0">
+                            Render first
+                          </span>
                         )}
                       </div>
                       <p className="text-[11px] text-muted-foreground mt-0.5">
@@ -210,88 +257,38 @@ export function ShortsPanel() {
         )}
       </div>
 
-      {/* Style */}
-      <div className="space-y-2">
-        <label className="text-sm font-medium text-foreground">Style</label>
-        <div className="grid grid-cols-3 gap-2">
-          {STYLE_OPTIONS.map((opt) => (
-            <button
-              key={opt.value}
-              onClick={() => setStyle(opt.value)}
-              className={`rounded-lg border p-3 text-left transition ${
-                style === opt.value
-                  ? "border-primary bg-primary/5 ring-1 ring-primary"
-                  : "border-border hover:border-muted-foreground/30"
-              }`}
-            >
-              <p className="text-sm font-medium text-foreground">{opt.label}</p>
-              <p className="mt-0.5 text-[11px] text-muted-foreground">{opt.description}</p>
-            </button>
-          ))}
+      {/* How it works */}
+      <div className="rounded-lg border border-border bg-muted/30 p-4 space-y-2">
+        <div className="flex items-center gap-2">
+          <Sparkles className="h-4 w-4 text-primary" />
+          <h3 className="text-sm font-medium text-foreground">How it works</h3>
         </div>
+        <p className="text-xs text-muted-foreground leading-relaxed">
+          AI will analyze your video and propose the best short-form clips with
+          virality scores. You can review, edit, accept or reject each proposal
+          before rendering — just like OpusClip.
+        </p>
       </div>
 
-      {/* Duration */}
-      <div className="space-y-2">
-        <label className="text-sm font-medium text-foreground">
-          Target Duration: {targetDuration}s
-        </label>
-        <input
-          type="range"
-          min={15}
-          max={60}
-          step={5}
-          value={targetDuration}
-          onChange={(e) => setTargetDuration(Number(e.target.value))}
-          className="w-full accent-primary"
-        />
-        <div className="flex justify-between text-[10px] text-muted-foreground">
-          <span>15s</span>
-          <span>30s</span>
-          <span>45s</span>
-          <span>60s</span>
-        </div>
-      </div>
-
-      {/* Generate button */}
+      {/* CTA */}
       <button
-        onClick={handleGenerate}
-        disabled={generating || !effectiveSource.trim()}
+        onClick={handleGoToStudio}
+        disabled={navigating || !hasSource}
         className="flex items-center justify-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition disabled:opacity-50"
       >
-        {generating ? (
+        {navigating ? (
           <>
             <Loader2 className="h-4 w-4 animate-spin" />
-            Generating Short...
+            Preparing Studio...
           </>
         ) : (
           <>
             <Scissors className="h-4 w-4" />
-            Generate Short
+            Generate Shorts in Studio
+            <ArrowRight className="h-4 w-4" />
           </>
         )}
       </button>
-
-      {/* Result */}
-      {result && (
-        <div className="rounded-lg border border-border bg-muted/30 p-4 space-y-3">
-          <div className="flex items-center justify-between">
-            <h3 className="text-sm font-medium text-foreground">Short Created</h3>
-            <span className="text-[10px] text-muted-foreground">
-              {(result.processingTimeMs / 1000).toFixed(1)}s
-            </span>
-          </div>
-          <p className="text-xs text-muted-foreground line-clamp-3">{result.scriptText}</p>
-          <a
-            href={`/director/studio/${result.draftId}`}
-            className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90 transition"
-          >
-            <Play className="h-3.5 w-3.5" />
-            Open in Studio
-            <ExternalLink className="h-3 w-3" />
-          </a>
-        </div>
-      )}
     </div>
   );
 }

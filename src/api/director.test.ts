@@ -2767,6 +2767,7 @@ describe("Director API router", () => {
       expect(childDraft).toBeDefined();
       const childManifest = JSON.parse(childDraft!.manifest as string) as Record<string, unknown>;
       expect(childManifest.shortsMetadata).toBeDefined();
+      expect(childManifest.templateId).toBe("ContentCreator");
       expect((childManifest.composition as Record<string, unknown>).width).toBe(1080);
       expect((childManifest.composition as Record<string, unknown>).height).toBe(1920);
     });

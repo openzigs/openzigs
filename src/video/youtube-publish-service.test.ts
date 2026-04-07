@@ -10,7 +10,12 @@ import type { ToolDefinition } from "../mcp/tool-registry.js";
 import { z } from "zod";
 
 /** Use a path inside the allowed renders directory for test temp files. */
-const TEST_RENDERS_DIR = path.join(os.homedir(), ".openzigs", "renders", "__test__");
+const TEST_RENDERS_DIR = path.join(
+  os.homedir(),
+  ".openzigs",
+  "renders",
+  "__test__",
+);
 
 function createTestDb(): Database.Database {
   const db = new Database(":memory:");
@@ -44,12 +49,24 @@ function createTestDb(): Database.Database {
   db.prepare(
     `INSERT INTO director_drafts (id, title, manifest, production_mode, created_at, updated_at)
      VALUES (?, ?, ?, ?, ?, ?)`,
-  ).run("draft-1", "Test Video", "{}", "ai", new Date().toISOString(), new Date().toISOString());
+  ).run(
+    "draft-1",
+    "Test Video",
+    "{}",
+    "ai",
+    new Date().toISOString(),
+    new Date().toISOString(),
+  );
   return db;
 }
 
-function createMockToolRegistry(uploadResult?: { text: string; isError?: boolean }): ToolRegistry {
-  const registry = new ToolRegistry({ statePath: "/tmp/test-yt-tools-state.json" });
+function createMockToolRegistry(uploadResult?: {
+  text: string;
+  isError?: boolean;
+}): ToolRegistry {
+  const registry = new ToolRegistry({
+    statePath: "/tmp/test-yt-tools-state.json",
+  });
 
   const mockTool: ToolDefinition = {
     name: "youtube-upload-video",
@@ -60,7 +77,10 @@ function createMockToolRegistry(uploadResult?: { text: string; isError?: boolean
       uploadResult ?? {
         text: JSON.stringify({
           success: true,
-          data: { video_id: "abc123", url: "https://www.youtube.com/watch?v=abc123" },
+          data: {
+            video_id: "abc123",
+            url: "https://www.youtube.com/watch?v=abc123",
+          },
         }),
         isError: false,
       },
@@ -92,7 +112,10 @@ describe("YouTubePublishService", () => {
   describe("publish", () => {
     it("returns failed status when file does not exist", async () => {
       const registry = createMockToolRegistry();
-      const service = new YouTubePublishService({ toolRegistry: registry, publishRepo });
+      const service = new YouTubePublishService({
+        toolRegistry: registry,
+        publishRepo,
+      });
 
       const result = await service.publish({
         draftId: "draft-1",
@@ -111,8 +134,13 @@ describe("YouTubePublishService", () => {
     });
 
     it("returns failed status when youtube-upload-video tool is not available", async () => {
-      const registry = new ToolRegistry({ statePath: "/tmp/test-yt-empty-state.json" });
-      const service = new YouTubePublishService({ toolRegistry: registry, publishRepo });
+      const registry = new ToolRegistry({
+        statePath: "/tmp/test-yt-empty-state.json",
+      });
+      const service = new YouTubePublishService({
+        toolRegistry: registry,
+        publishRepo,
+      });
 
       const tmpFile = path.join(TEST_RENDERS_DIR, "test-yt-publish-video.mp4");
       fs.writeFileSync(tmpFile, "fake video data");
@@ -129,9 +157,15 @@ describe("YouTubePublishService", () => {
 
     it("publishes successfully when tool succeeds", async () => {
       const registry = createMockToolRegistry();
-      const service = new YouTubePublishService({ toolRegistry: registry, publishRepo });
+      const service = new YouTubePublishService({
+        toolRegistry: registry,
+        publishRepo,
+      });
 
-      const tmpFile = path.join(TEST_RENDERS_DIR, "test-yt-publish-success.mp4");
+      const tmpFile = path.join(
+        TEST_RENDERS_DIR,
+        "test-yt-publish-success.mp4",
+      );
       fs.writeFileSync(tmpFile, "fake video data");
 
       const result = await service.publish({
@@ -171,7 +205,10 @@ describe("YouTubePublishService", () => {
         text: "Upload quota exceeded",
         isError: true,
       });
-      const service = new YouTubePublishService({ toolRegistry: registry, publishRepo });
+      const service = new YouTubePublishService({
+        toolRegistry: registry,
+        publishRepo,
+      });
 
       const tmpFile = path.join(TEST_RENDERS_DIR, "test-yt-publish-error.mp4");
       fs.writeFileSync(tmpFile, "fake video data");
@@ -191,9 +228,15 @@ describe("YouTubePublishService", () => {
         text: JSON.stringify({ success: false, error: "Daily quota exceeded" }),
         isError: false,
       });
-      const service = new YouTubePublishService({ toolRegistry: registry, publishRepo });
+      const service = new YouTubePublishService({
+        toolRegistry: registry,
+        publishRepo,
+      });
 
-      const tmpFile = path.join(TEST_RENDERS_DIR, "test-yt-publish-api-error.mp4");
+      const tmpFile = path.join(
+        TEST_RENDERS_DIR,
+        "test-yt-publish-api-error.mp4",
+      );
       fs.writeFileSync(tmpFile, "fake video data");
 
       const result = await service.publish({
@@ -203,13 +246,17 @@ describe("YouTubePublishService", () => {
       });
 
       expect(result.status).toBe("failed");
-    expect(result.error).toContain("Daily quota exceeded");
+      expect(result.error).toContain("Daily quota exceeded");
     });
 
     it("emits Socket.IO events during publish", async () => {
       const registry = createMockToolRegistry();
       const io = { emit: vi.fn() } as unknown as import("socket.io").Server;
-      const service = new YouTubePublishService({ toolRegistry: registry, publishRepo, io });
+      const service = new YouTubePublishService({
+        toolRegistry: registry,
+        publishRepo,
+        io,
+      });
 
       const tmpFile = path.join(TEST_RENDERS_DIR, "test-yt-publish-events.mp4");
       fs.writeFileSync(tmpFile, "fake video data");
@@ -220,27 +267,39 @@ describe("YouTubePublishService", () => {
         title: "Test Upload",
       });
 
-      expect(io.emit).toHaveBeenCalledWith("youtube:publish:progress", expect.objectContaining({
-        draftId: "draft-1",
-        stage: "uploading",
-      }));
-      expect(io.emit).toHaveBeenCalledWith("youtube:publish:complete", expect.objectContaining({
-        draftId: "draft-1",
-        videoId: "abc123",
-      }));
+      expect(io.emit).toHaveBeenCalledWith(
+        "youtube:publish:progress",
+        expect.objectContaining({
+          draftId: "draft-1",
+          stage: "uploading",
+        }),
+      );
+      expect(io.emit).toHaveBeenCalledWith(
+        "youtube:publish:complete",
+        expect.objectContaining({
+          draftId: "draft-1",
+          videoId: "abc123",
+        }),
+      );
     });
   });
 
   describe("getPublishStatus", () => {
     it("returns null when no publishes exist", () => {
       const registry = createMockToolRegistry();
-      const service = new YouTubePublishService({ toolRegistry: registry, publishRepo });
+      const service = new YouTubePublishService({
+        toolRegistry: registry,
+        publishRepo,
+      });
       expect(service.getPublishStatus("draft-1")).toBeNull();
     });
 
     it("returns latest publish status", () => {
       const registry = createMockToolRegistry();
-      const service = new YouTubePublishService({ toolRegistry: registry, publishRepo });
+      const service = new YouTubePublishService({
+        toolRegistry: registry,
+        publishRepo,
+      });
 
       publishRepo.insert({
         id: "pub-1",
@@ -265,19 +324,36 @@ describe("YouTubePublishService", () => {
   describe("getPublishHistory", () => {
     it("returns all publishes for a draft", () => {
       const registry = createMockToolRegistry();
-      const service = new YouTubePublishService({ toolRegistry: registry, publishRepo });
+      const service = new YouTubePublishService({
+        toolRegistry: registry,
+        publishRepo,
+      });
 
       publishRepo.insert({
-        id: "pub-1", draft_id: "draft-1", video_id: null, video_url: null,
-        title: "V1", privacy_status: "private", published_at: null,
-        status: "failed", error_message: "err",
-        created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+        id: "pub-1",
+        draft_id: "draft-1",
+        video_id: null,
+        video_url: null,
+        title: "V1",
+        privacy_status: "private",
+        published_at: null,
+        status: "failed",
+        error_message: "err",
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
       });
       publishRepo.insert({
-        id: "pub-2", draft_id: "draft-1", video_id: "v2", video_url: "url",
-        title: "V2", privacy_status: "public", published_at: new Date().toISOString(),
-        status: "published", error_message: null,
-        created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+        id: "pub-2",
+        draft_id: "draft-1",
+        video_id: "v2",
+        video_url: "url",
+        title: "V2",
+        privacy_status: "public",
+        published_at: new Date().toISOString(),
+        status: "published",
+        error_message: null,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
       });
 
       const history = service.getPublishHistory("draft-1");
@@ -296,9 +372,22 @@ describe("YouTubePublishService", () => {
       db.prepare(
         `INSERT INTO director_renders (id, draft_id, job_id, quality, status, output_path, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      ).run("render-1", "draft-1", "job-1", "standard", "complete", tmpFile, now, now);
+      ).run(
+        "render-1",
+        "draft-1",
+        "job-1",
+        "standard",
+        "complete",
+        tmpFile,
+        now,
+        now,
+      );
 
-      const service = new YouTubePublishService({ toolRegistry: registry, publishRepo, db });
+      const service = new YouTubePublishService({
+        toolRegistry: registry,
+        publishRepo,
+        db,
+      });
 
       const result = await service.publish({
         draftId: "draft-1",
@@ -322,7 +411,11 @@ describe("YouTubePublishService", () => {
       fs.writeFileSync(tmpFile, "fake video data");
 
       // Pass the db but don't insert any director_renders row
-      const service = new YouTubePublishService({ toolRegistry: registry, publishRepo, db });
+      const service = new YouTubePublishService({
+        toolRegistry: registry,
+        publishRepo,
+        db,
+      });
 
       const result = await service.publish({
         draftId: "draft-1",
@@ -343,9 +436,22 @@ describe("YouTubePublishService", () => {
       db.prepare(
         `INSERT INTO director_renders (id, draft_id, job_id, quality, status, output_path, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      ).run("render-2", "draft-1", "job-2", "standard", "complete", tmpFile, now, now);
+      ).run(
+        "render-2",
+        "draft-1",
+        "job-2",
+        "standard",
+        "complete",
+        tmpFile,
+        now,
+        now,
+      );
 
-      const service = new YouTubePublishService({ toolRegistry: registry, publishRepo, db });
+      const service = new YouTubePublishService({
+        toolRegistry: registry,
+        publishRepo,
+        db,
+      });
 
       const result = await service.publish({
         draftId: "draft-1",
@@ -363,7 +469,10 @@ describe("YouTubePublishService", () => {
   describe("path traversal protection", () => {
     it("rejects file paths outside allowed directories", async () => {
       const registry = createMockToolRegistry();
-      const service = new YouTubePublishService({ toolRegistry: registry, publishRepo });
+      const service = new YouTubePublishService({
+        toolRegistry: registry,
+        publishRepo,
+      });
 
       const result = await service.publish({
         draftId: "draft-1",
@@ -377,7 +486,10 @@ describe("YouTubePublishService", () => {
 
     it("rejects path traversal attempts with ../", async () => {
       const registry = createMockToolRegistry();
-      const service = new YouTubePublishService({ toolRegistry: registry, publishRepo });
+      const service = new YouTubePublishService({
+        toolRegistry: registry,
+        publishRepo,
+      });
 
       const result = await service.publish({
         draftId: "draft-1",
@@ -393,7 +505,10 @@ describe("YouTubePublishService", () => {
   describe("checkVideoExists", () => {
     it("returns not_found when publish ID does not exist", async () => {
       const registry = createMockToolRegistry();
-      const service = new YouTubePublishService({ toolRegistry: registry, publishRepo });
+      const service = new YouTubePublishService({
+        toolRegistry: registry,
+        publishRepo,
+      });
 
       const result = await service.checkVideoExists("nonexistent");
       expect(result.exists).toBe(false);
@@ -402,7 +517,10 @@ describe("YouTubePublishService", () => {
 
     it("returns current status when no video_id is set", async () => {
       const registry = createMockToolRegistry();
-      const service = new YouTubePublishService({ toolRegistry: registry, publishRepo });
+      const service = new YouTubePublishService({
+        toolRegistry: registry,
+        publishRepo,
+      });
 
       publishRepo.insert({
         id: "pub-check-1",
@@ -431,7 +549,10 @@ describe("YouTubePublishService", () => {
         inputSchema: { type: "object", properties: {} },
         zodSchema: z.object({}),
         handler: vi.fn().mockResolvedValue({
-          text: JSON.stringify({ success: true, data: { exists: false, video_id: "deleted123" } }),
+          text: JSON.stringify({
+            success: true,
+            data: { exists: false, video_id: "deleted123" },
+          }),
           isError: false,
         }),
         category: "social",
@@ -440,7 +561,10 @@ describe("YouTubePublishService", () => {
       };
       registry.registerTool(checkTool);
 
-      const service = new YouTubePublishService({ toolRegistry: registry, publishRepo });
+      const service = new YouTubePublishService({
+        toolRegistry: registry,
+        publishRepo,
+      });
 
       publishRepo.insert({
         id: "pub-check-2",
@@ -473,7 +597,10 @@ describe("YouTubePublishService", () => {
         inputSchema: { type: "object", properties: {} },
         zodSchema: z.object({}),
         handler: vi.fn().mockResolvedValue({
-          text: JSON.stringify({ success: true, data: { exists: true, video_id: "live123" } }),
+          text: JSON.stringify({
+            success: true,
+            data: { exists: true, video_id: "live123" },
+          }),
           isError: false,
         }),
         category: "social",
@@ -482,7 +609,10 @@ describe("YouTubePublishService", () => {
       };
       registry.registerTool(checkTool);
 
-      const service = new YouTubePublishService({ toolRegistry: registry, publishRepo });
+      const service = new YouTubePublishService({
+        toolRegistry: registry,
+        publishRepo,
+      });
 
       publishRepo.insert({
         id: "pub-check-3",
@@ -504,8 +634,13 @@ describe("YouTubePublishService", () => {
     });
 
     it("returns true when check tool is not available", async () => {
-      const registry = new ToolRegistry({ statePath: "/tmp/test-yt-no-check-tool.json" });
-      const service = new YouTubePublishService({ toolRegistry: registry, publishRepo });
+      const registry = new ToolRegistry({
+        statePath: "/tmp/test-yt-no-check-tool.json",
+      });
+      const service = new YouTubePublishService({
+        toolRegistry: registry,
+        publishRepo,
+      });
 
       publishRepo.insert({
         id: "pub-check-4",
@@ -530,13 +665,20 @@ describe("YouTubePublishService", () => {
   describe("generateSrtForDraft", () => {
     it("returns null when no database is set", () => {
       const registry = createMockToolRegistry();
-      const service = new YouTubePublishService({ toolRegistry: registry, publishRepo });
+      const service = new YouTubePublishService({
+        toolRegistry: registry,
+        publishRepo,
+      });
       expect(service.generateSrtForDraft("draft-1")).toBeNull();
     });
 
     it("returns null when draft has no subtitle segments", () => {
       const registry = createMockToolRegistry();
-      const service = new YouTubePublishService({ toolRegistry: registry, publishRepo, db });
+      const service = new YouTubePublishService({
+        toolRegistry: registry,
+        publishRepo,
+        db,
+      });
 
       // Draft-1 has manifest "{}" which has no timeline
       expect(service.generateSrtForDraft("draft-1")).toBeNull();
@@ -547,13 +689,28 @@ describe("YouTubePublishService", () => {
       const manifest = JSON.stringify({
         composition: { fps: 30 },
         timeline: [
-          { type: "narration", scriptText: "Hello world", durationInFrames: 90 },
-          { type: "narration", scriptText: "Second line", durationInFrames: 60 },
+          {
+            type: "narration",
+            scriptText: "Hello world",
+            durationInFrames: 90,
+          },
+          {
+            type: "narration",
+            scriptText: "Second line",
+            durationInFrames: 60,
+          },
         ],
       });
-      db.prepare(`UPDATE director_drafts SET manifest = ? WHERE id = ?`).run(manifest, "draft-1");
+      db.prepare(`UPDATE director_drafts SET manifest = ? WHERE id = ?`).run(
+        manifest,
+        "draft-1",
+      );
 
-      const service = new YouTubePublishService({ toolRegistry: registry, publishRepo, db });
+      const service = new YouTubePublishService({
+        toolRegistry: registry,
+        publishRepo,
+        db,
+      });
       const srt = service.generateSrtForDraft("draft-1");
 
       expect(srt).not.toBeNull();
@@ -564,7 +721,11 @@ describe("YouTubePublishService", () => {
 
     it("returns null for non-existent draft", () => {
       const registry = createMockToolRegistry();
-      const service = new YouTubePublishService({ toolRegistry: registry, publishRepo, db });
+      const service = new YouTubePublishService({
+        toolRegistry: registry,
+        publishRepo,
+        db,
+      });
       expect(service.generateSrtForDraft("nonexistent")).toBeNull();
     });
   });
@@ -572,7 +733,11 @@ describe("YouTubePublishService", () => {
   describe("uploadCaptions", () => {
     it("returns error when publish has no video ID", async () => {
       const registry = createMockToolRegistry();
-      const service = new YouTubePublishService({ toolRegistry: registry, publishRepo, db });
+      const service = new YouTubePublishService({
+        toolRegistry: registry,
+        publishRepo,
+        db,
+      });
 
       publishRepo.insert({
         id: "pub-cap-1",
@@ -595,7 +760,11 @@ describe("YouTubePublishService", () => {
 
     it("returns error when no subtitle content exists", async () => {
       const registry = createMockToolRegistry();
-      const service = new YouTubePublishService({ toolRegistry: registry, publishRepo, db });
+      const service = new YouTubePublishService({
+        toolRegistry: registry,
+        publishRepo,
+        db,
+      });
 
       publishRepo.insert({
         id: "pub-cap-2",
@@ -620,11 +789,20 @@ describe("YouTubePublishService", () => {
       const registry = createMockToolRegistry();
       const manifest = JSON.stringify({
         composition: { fps: 30 },
-        timeline: [{ type: "narration", scriptText: "Hello", durationInFrames: 90 }],
+        timeline: [
+          { type: "narration", scriptText: "Hello", durationInFrames: 90 },
+        ],
       });
-      db.prepare(`UPDATE director_drafts SET manifest = ? WHERE id = ?`).run(manifest, "draft-1");
+      db.prepare(`UPDATE director_drafts SET manifest = ? WHERE id = ?`).run(
+        manifest,
+        "draft-1",
+      );
 
-      const service = new YouTubePublishService({ toolRegistry: registry, publishRepo, db });
+      const service = new YouTubePublishService({
+        toolRegistry: registry,
+        publishRepo,
+        db,
+      });
 
       publishRepo.insert({
         id: "pub-cap-3",
@@ -642,7 +820,9 @@ describe("YouTubePublishService", () => {
 
       const result = await service.uploadCaptions("pub-cap-3");
       expect(result.success).toBe(false);
-      expect(result.error).toContain("youtube-upload-captions tool not available");
+      expect(result.error).toContain(
+        "youtube-upload-captions tool not available",
+      );
     });
 
     it("uploads captions successfully", async () => {
@@ -664,11 +844,24 @@ describe("YouTubePublishService", () => {
 
       const manifest = JSON.stringify({
         composition: { fps: 30 },
-        timeline: [{ type: "narration", scriptText: "Hello world", durationInFrames: 90 }],
+        timeline: [
+          {
+            type: "narration",
+            scriptText: "Hello world",
+            durationInFrames: 90,
+          },
+        ],
       });
-      db.prepare(`UPDATE director_drafts SET manifest = ? WHERE id = ?`).run(manifest, "draft-1");
+      db.prepare(`UPDATE director_drafts SET manifest = ? WHERE id = ?`).run(
+        manifest,
+        "draft-1",
+      );
 
-      const service = new YouTubePublishService({ toolRegistry: registry, publishRepo, db });
+      const service = new YouTubePublishService({
+        toolRegistry: registry,
+        publishRepo,
+        db,
+      });
 
       publishRepo.insert({
         id: "pub-cap-4",
@@ -696,8 +889,133 @@ describe("YouTubePublishService", () => {
         }),
       );
       // Verify SRT content was included
-      const callArgs = (captionTool.handler as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      const callArgs = (captionTool.handler as ReturnType<typeof vi.fn>).mock
+        .calls[0][0];
       expect(callArgs.srt_content).toContain("Hello world");
+    });
+  });
+
+  describe("autoGenerateThumbnail", () => {
+    it("returns null when ffmpeg frame extraction fails", async () => {
+      const registry = createMockToolRegistry();
+      const service = new YouTubePublishService({
+        toolRegistry: registry,
+        publishRepo,
+      });
+
+      // Use a non-existent video path so ffmpeg will fail
+      const result = await service.autoGenerateThumbnail(
+        "draft-no-ffmpeg",
+        "/tmp/nonexistent-video-for-thumb.mp4",
+        "Test Title",
+        TEST_RENDERS_DIR,
+      );
+
+      expect(result).toBeNull();
+    });
+
+    it("skips auto-thumbnail when skipAutoThumbnail is true", async () => {
+      const registry = createMockToolRegistry();
+      const thumbnailTool: ToolDefinition = {
+        name: "youtube-set-thumbnail",
+        description: "Set thumbnail",
+        inputSchema: { type: "object", properties: {} },
+        zodSchema: z.object({}),
+        handler: vi.fn().mockResolvedValue({ text: "ok", isError: false }),
+        category: "social",
+        riskLevel: "low",
+        source: "youtube",
+      };
+      registry.registerTool(thumbnailTool);
+
+      const tmpFile = path.join(TEST_RENDERS_DIR, "test-skip-auto-thumb.mp4");
+      fs.writeFileSync(tmpFile, "fake video data");
+
+      // Ensure no pre-rendered thumbnail exists for this draft
+      const thumbDir = path.join(
+        os.homedir(),
+        ".openzigs",
+        "video-output",
+        "thumbnails",
+      );
+      const existingJpg = path.join(thumbDir, "draft-1.jpg");
+      const existingPng = path.join(thumbDir, "draft-1.png");
+      const hadJpg = fs.existsSync(existingJpg);
+      const hadPng = fs.existsSync(existingPng);
+      if (hadJpg) fs.renameSync(existingJpg, existingJpg + ".bak");
+      if (hadPng) fs.renameSync(existingPng, existingPng + ".bak");
+
+      try {
+        const service = new YouTubePublishService({
+          toolRegistry: registry,
+          publishRepo,
+        });
+
+        await service.publish({
+          draftId: "draft-1",
+          filePath: tmpFile,
+          title: "Skip Auto Thumb",
+          skipAutoThumbnail: true,
+        });
+
+        // Thumbnail tool should not have been called since no pre-rendered thumbnail exists
+        // and skipAutoThumbnail is true
+        expect(thumbnailTool.handler).not.toHaveBeenCalled();
+      } finally {
+        // Restore any backed-up thumbnails
+        if (hadJpg) fs.renameSync(existingJpg + ".bak", existingJpg);
+        if (hadPng) fs.renameSync(existingPng + ".bak", existingPng);
+      }
+    });
+
+    it("uploads pre-rendered thumbnail when it exists on disk", async () => {
+      const registry = createMockToolRegistry();
+      const thumbnailTool: ToolDefinition = {
+        name: "youtube-set-thumbnail",
+        description: "Set thumbnail",
+        inputSchema: { type: "object", properties: {} },
+        zodSchema: z.object({}),
+        handler: vi.fn().mockResolvedValue({ text: "ok", isError: false }),
+        category: "social",
+        riskLevel: "low",
+        source: "youtube",
+      };
+      registry.registerTool(thumbnailTool);
+
+      const tmpFile = path.join(TEST_RENDERS_DIR, "test-prerendered-thumb.mp4");
+      fs.writeFileSync(tmpFile, "fake video data");
+
+      // Create a pre-rendered thumbnail
+      const thumbDir = path.join(
+        os.homedir(),
+        ".openzigs",
+        "video-output",
+        "thumbnails",
+      );
+      fs.mkdirSync(thumbDir, { recursive: true });
+      const thumbPath = path.join(thumbDir, "draft-1.jpg");
+      fs.writeFileSync(thumbPath, "fake thumbnail");
+
+      const service = new YouTubePublishService({
+        toolRegistry: registry,
+        publishRepo,
+      });
+
+      await service.publish({
+        draftId: "draft-1",
+        filePath: tmpFile,
+        title: "Pre-rendered Thumb",
+      });
+
+      expect(thumbnailTool.handler).toHaveBeenCalledWith(
+        expect.objectContaining({
+          video_id: "abc123",
+          thumbnail_path: thumbPath,
+        }),
+      );
+
+      // Cleanup
+      fs.rmSync(thumbPath, { force: true });
     });
   });
 });

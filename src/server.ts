@@ -185,6 +185,7 @@ import { createCalendarRouter } from "./api/calendar.js";
 import { createAnalyticsRouter } from "./api/analytics.js";
 import { createCreativeRouter } from "./api/creative.js";
 import { createTemplatesRouter } from "./api/templates.js";
+import { createBrandTemplateRouter } from "./api/brand-templates.js";
 import {
   createCharacterRouter,
   setCharacterIO,
@@ -1051,8 +1052,11 @@ const audioCleaner = new AudioCleaner({
     process.env.OPENZIGS_AUDIO_SIDECAR_URL ?? "http://localhost:5006",
 });
 const brollPipeline = new BRollPipeline({
-  chat: (prompt) => {
-    return copilot.chat(prompt, { tools: [] });
+  chat: (prompt, options) => {
+    return copilot.chat(prompt, {
+      tools: [],
+      model: options?.model,
+    });
   },
   audioSidecarUrl:
     process.env.OPENZIGS_AUDIO_SIDECAR_URL ?? "http://localhost:5006",
@@ -1469,6 +1473,19 @@ app.get("/api/youtube/oauth/callback", async (req, res) => {
   }
 
   logger.info("YouTube OAuth flow completed successfully");
+
+  // Restart the YouTube MCP subprocess so it picks up the new YOUTUBE_OAUTH_TOKEN.
+  // The Python process reads env vars at spawn time — updating process.env alone is not enough.
+  if (localServerManager) {
+    localServerManager.restartServer("youtube").catch((err: unknown) => {
+      logger.warn(
+        `Failed to restart YouTube MCP server after OAuth: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    });
+  }
+
   return res.redirect(`${uiOrigin}/admin?youtube_oauth=success`);
 });
 
@@ -2315,6 +2332,10 @@ app.use("/api/admin/creative", authMiddleware, creativeRouter);
 // Post Template API routes (Issue #809)
 const templatesRouter = createTemplatesRouter({ postTemplateRepo });
 app.use("/api/admin/templates", authMiddleware, templatesRouter);
+
+// Brand Template API routes (#827)
+const brandTemplateRouter = createBrandTemplateRouter({ brandTemplateRepo });
+app.use("/api/admin/brand-templates", authMiddleware, brandTemplateRouter);
 
 // Character API routes (LoRA character profiles + training)
 const characterRouter = createCharacterRouter({ characterRepo, copilot });

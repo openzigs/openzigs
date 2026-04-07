@@ -51,6 +51,7 @@ export function VideoTrimmer({
   assetId,
   videoUrl,
   duration,
+  onTrimComplete,
   onDirtyChange,
 }: VideoTrimmerProps) {
   const { socket } = useSocket();
@@ -115,10 +116,11 @@ export function VideoTrimmer({
   // Listen for Socket.IO events
   useEffect(() => {
     if (!socket) return;
-    const onTrimComplete = (data: { jobId: string }) => {
+    const handleTrimComplete = (data: { jobId: string; assetId?: string }) => {
       if (data.jobId === trimJobId) {
         setTrimming(false);
         showToast("Trim complete! New clip saved to Gallery.", "success");
+        if (data.assetId) onTrimComplete?.(data.assetId);
       }
     };
     const onTrimFailed = (data: { jobId: string; error: string }) => {
@@ -127,13 +129,13 @@ export function VideoTrimmer({
         showToast(`Trim failed: ${data.error}`, "error");
       }
     };
-    socket.on("trim:complete", onTrimComplete);
+    socket.on("trim:complete", handleTrimComplete);
     socket.on("trim:failed", onTrimFailed);
     return () => {
-      socket.off("trim:complete", onTrimComplete);
+      socket.off("trim:complete", handleTrimComplete);
       socket.off("trim:failed", onTrimFailed);
     };
-  }, [socket, trimJobId]);
+  }, [socket, trimJobId, onTrimComplete]);
 
   // Video time tracking
   useEffect(() => {
@@ -156,43 +158,6 @@ export function VideoTrimmer({
       video.removeEventListener("pause", onPause);
     };
   }, [loopPreview, startTime, endTime]);
-
-  // ── Keyboard Shortcuts ──
-  useEffect(() => {
-    const onKeyDown = (e: KeyboardEvent) => {
-      const tag = (e.target as HTMLElement)?.tagName;
-      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
-
-      switch (e.key.toLowerCase()) {
-        case " ":
-          e.preventDefault();
-          handleTogglePlay();
-          break;
-        case "i":
-          e.preventDefault();
-          setStartTime(currentTime);
-          break;
-        case "o":
-          e.preventDefault();
-          setEndTime(currentTime);
-          break;
-        case "b":
-          if (mode === "blade") {
-            e.preventDefault();
-            handleBladeSplit();
-          }
-          break;
-        case "escape":
-          if (mode === "blade") {
-            e.preventDefault();
-            setMode("trim");
-          }
-          break;
-      }
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [currentTime, mode, startTime, endTime]);
 
   const handlePlaySelection = useCallback(() => {
     const video = videoRef.current;
@@ -244,6 +209,43 @@ export function VideoTrimmer({
     if (splitPoints.some((p) => Math.abs(p - t) < 0.2)) return;
     setSplitPoints((prev) => [...prev, t]);
   }, [currentTime, duration, splitPoints]);
+
+  // ── Keyboard Shortcuts ──
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement)?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+
+      switch (e.key.toLowerCase()) {
+        case " ":
+          e.preventDefault();
+          handleTogglePlay();
+          break;
+        case "i":
+          e.preventDefault();
+          setStartTime(currentTime);
+          break;
+        case "o":
+          e.preventDefault();
+          setEndTime(currentTime);
+          break;
+        case "b":
+          if (mode === "blade") {
+            e.preventDefault();
+            handleBladeSplit();
+          }
+          break;
+        case "escape":
+          if (mode === "blade") {
+            e.preventDefault();
+            setMode("trim");
+          }
+          break;
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [currentTime, mode, startTime, endTime, handleTogglePlay, handleBladeSplit]);
 
   const removeSplitPoint = useCallback((point: number) => {
     setSplitPoints((prev) => prev.filter((p) => Math.abs(p - point) > 0.05));

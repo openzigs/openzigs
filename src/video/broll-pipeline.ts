@@ -48,11 +48,12 @@ export interface BRollRequest {
   density?: BRollDensity;
   transitionStyle?: TransitionStyle;
   customAssets?: string[];
+  model?: string;
 }
 
 export type BRollChatFn = (
   prompt: string,
-  options?: { tools?: never[] },
+  options?: { tools?: never[]; model?: string },
 ) => AsyncGenerator<string>;
 
 export interface BRollPipelineOptions {
@@ -234,7 +235,10 @@ Transcript:
 ${transcriptText || "(No transcript available — suggest generic B-Roll at regular intervals for a video of unknown content)"}`;
 
     let response = "";
-    for await (const chunk of this.chat(prompt, { tools: [] })) {
+    for await (const chunk of this.chat(prompt, {
+      tools: [],
+      model: request.model,
+    })) {
       response += chunk;
     }
 
