@@ -6,7 +6,7 @@ import { fetchJson } from "@/lib/api";
 import type { ModelConfig, ReasoningEffort, ProviderType } from "@/lib/types";
 import { showToast } from "@/components/toast";
 import { ConfirmDialog } from "@/components/confirm-dialog";
-import { RotateCw, Key, Eye, EyeOff, CheckCircle, XCircle, Cloud, Trash2 } from "lucide-react";
+import { RotateCw, Key, Eye, EyeOff, CheckCircle, XCircle, Cloud, Cpu, Trash2 } from "lucide-react";
 import {
   Select,
   SelectContent,
@@ -102,11 +102,41 @@ export const ModelConfigPanel = () => {
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["models-config"] });
+      queryClient.invalidateQueries({ queryKey: ["models-list"] });
+      queryClient.invalidateQueries({ queryKey: ["models"] });
       setApiKey("");
       showToast("Model configuration saved", "success");
     },
     onError: (err) => showToast(`Error: ${err.message}`, "error"),
   });
+
+  const switchSourceMutation = useMutation({
+    mutationFn: (payload: Record<string, unknown>) =>
+      fetchJson("/api/admin/models/config", {
+        method: "PUT",
+        body: JSON.stringify(payload),
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["models-config"] });
+      queryClient.invalidateQueries({ queryKey: ["models-list"] });
+      queryClient.invalidateQueries({ queryKey: ["models"] });
+      showToast("AI source switched", "success");
+    },
+    onError: (err) => showToast(`Error switching source: ${err.message}`, "error"),
+  });
+
+  const isLocalMode = config?.provider?.type === "ollama";
+
+  const handleSwitchSource = (toLocal: boolean) => {
+    if (toLocal) {
+      const savedBaseUrl = config?.provider?.type === "ollama" ? config.provider.baseUrl : null;
+      switchSourceMutation.mutate({
+        provider: { type: "ollama", baseUrl: savedBaseUrl ?? "http://localhost:11434" },
+      });
+    } else {
+      switchSourceMutation.mutate({ provider: null });
+    }
+  };
 
   const testMutation = useMutation({
     mutationFn: (payload: Record<string, unknown>) =>
@@ -197,6 +227,46 @@ export const ModelConfigPanel = () => {
 
   return (
     <div className="space-y-6">
+      {/* AI Source Toggle */}
+      <div className="space-y-2">
+        <p className="text-sm font-semibold text-foreground">AI Source</p>
+        <div className="flex rounded-xl border border-border bg-muted/40 p-1 w-fit" role="radiogroup" aria-label="AI Source">
+          <button
+            role="radio"
+            aria-checked={!isLocalMode}
+            disabled={switchSourceMutation.isPending}
+            onClick={() => { if (isLocalMode) handleSwitchSource(false); }}
+            className={`flex items-center gap-2 rounded-lg px-4 py-2 text-xs font-semibold transition ${
+              !isLocalMode
+                ? "bg-card text-foreground shadow-sm border border-border"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            <Cloud className="h-3.5 w-3.5" />
+            GitHub Copilot
+          </button>
+          <button
+            role="radio"
+            aria-checked={isLocalMode}
+            disabled={switchSourceMutation.isPending}
+            onClick={() => { if (!isLocalMode) handleSwitchSource(true); }}
+            className={`flex items-center gap-2 rounded-lg px-4 py-2 text-xs font-semibold transition ${
+              isLocalMode
+                ? "bg-card text-foreground shadow-sm border border-border"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            <Cpu className="h-3.5 w-3.5" />
+            Local (Ollama)
+          </button>
+        </div>
+        <p className="text-[11px] text-muted-foreground/60">
+          {isLocalMode
+            ? "Using local Ollama inference. Configure the provider URL below."
+            : "Using GitHub Copilot for model access."}
+        </p>
+      </div>
+
       {/* Default Model */}
       <div className="space-y-2">
         <p className="text-sm font-semibold text-foreground">Default Model</p>

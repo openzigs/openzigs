@@ -113,11 +113,19 @@ describe("LTX_MODEL_CATALOG", () => {
     expect(defaultModel!.repo).toBe("AITRADER/ltx2-distilled-4bit-mlx");
   });
 
-  it("includes only supported models (LTX-2 via AITRADER)", () => {
-    // LTX-2.3 removed from catalog — mlx_video (Blaizzy fork) only supports LTX-2 format.
-    // dgrauet/ltx-2.3-mlx-q4 uses a flat layout incompatible with the current library.
-    const supported = LTX_MODEL_CATALOG.filter((m) => m.version === "2.0");
-    expect(supported.length).toBeGreaterThanOrEqual(1);
+  it("includes CUDA models for 12GB VRAM GPUs", () => {
+    const cudaModels = LTX_MODEL_CATALOG.filter((m) => m.backend === "cuda");
+    expect(cudaModels.length).toBeGreaterThanOrEqual(1);
+    const distilled = cudaModels.find((m) => m.id === "ltxv-13b-097-distilled");
+    expect(distilled).toBeDefined();
+    expect(distilled!.repo).toBe("Lightricks/LTX-Video-0.9.7-distilled");
+  });
+
+  it("includes MLX and CUDA backend entries", () => {
+    const mlx = LTX_MODEL_CATALOG.filter((m) => m.backend === "mlx");
+    const cuda = LTX_MODEL_CATALOG.filter((m) => m.backend === "cuda");
+    expect(mlx.length).toBeGreaterThanOrEqual(1);
+    expect(cuda.length).toBeGreaterThanOrEqual(1);
   });
 });
 

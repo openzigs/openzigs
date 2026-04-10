@@ -224,6 +224,10 @@ LTX_SECRET_TOKEN=$TOKEN
 M2_PRO_HOST=0.0.0.0
 M2_PRO_PORT=5007
 LTX_MODEL_REPO=AITRADER/ltx2-distilled-4bit-mlx
+
+# Audio generation (disabled by default — requires ~87 GB download on first use)
+# Uncomment to enable synchronized audio in generated videos, then restart the worker.
+# LTX_ALLOW_AUDIO=1
 EOF
   chmod 600 "$ENV_FILE"
   ok "Created .env file"

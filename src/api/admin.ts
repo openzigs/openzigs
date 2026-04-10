@@ -3716,6 +3716,89 @@ export const createAdminRouter = ({
     }
   });
 
+  // ── Test Provider Connection ──
+  router.post("/models/test-connection", async (req, res) => {
+    const body = req.body as Record<string, unknown>;
+    const prov = body.provider as Record<string, unknown> | undefined;
+
+    if (!prov || typeof prov !== "object" || !prov.type || !prov.baseUrl) {
+      return res
+        .status(400)
+        .json({ success: false, error: "provider.type and provider.baseUrl are required" });
+    }
+
+    const baseUrl = String(prov.baseUrl).replace(/\/+$/, "");
+    const provType = String(prov.type);
+    const start = Date.now();
+
+    try {
+      if (provType === "ollama") {
+        // Ollama: hit the /api/tags endpoint to list models
+        const tagRes = await fetch(`${baseUrl}/api/tags`, {
+          signal: AbortSignal.timeout(10_000),
+        });
+        if (!tagRes.ok) {
+          return res.json({
+            success: false,
+            error: `Ollama returned ${tagRes.status}: ${tagRes.statusText}`,
+          });
+        }
+        const data = (await tagRes.json()) as {
+          models?: { name: string }[];
+        };
+        const models = data.models?.map((m) => m.name) ?? [];
+        return res.json({
+          success: true,
+          latency: Date.now() - start,
+          model: models.length > 0 ? models.join(", ") : "no models loaded",
+          models,
+        });
+      }
+
+      // OpenAI / Azure / Anthropic: hit /models or /v1/models
+      const modelsUrl = provType === "azure"
+        ? `${baseUrl}/openai/models?api-version=${(prov.azure as Record<string, string>)?.apiVersion ?? "2024-10-21"}`
+        : `${baseUrl}/models`;
+
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (prov.apiKey) {
+        if (provType === "anthropic") {
+          headers["x-api-key"] = String(prov.apiKey);
+          headers["anthropic-version"] = "2023-06-01";
+        } else {
+          headers["Authorization"] = `Bearer ${String(prov.apiKey)}`;
+        }
+      } else if (prov.bearerToken) {
+        headers["Authorization"] = `Bearer ${String(prov.bearerToken)}`;
+      }
+
+      const modelsRes = await fetch(modelsUrl, {
+        headers,
+        signal: AbortSignal.timeout(10_000),
+      });
+
+      if (!modelsRes.ok) {
+        return res.json({
+          success: false,
+          error: `Provider returned ${modelsRes.status}: ${modelsRes.statusText}`,
+        });
+      }
+
+      const modelsData = (await modelsRes.json()) as {
+        data?: { id: string }[];
+      };
+      const firstModel = modelsData.data?.[0]?.id;
+      return res.json({
+        success: true,
+        latency: Date.now() - start,
+        model: firstModel ?? "connected",
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return res.json({ success: false, error: message });
+    }
+  });
+
   // ── Custom Agents Management ──
   router.get("/agents", (_req, res) => {
     const agents = copilot?.getCustomAgents() ?? [];

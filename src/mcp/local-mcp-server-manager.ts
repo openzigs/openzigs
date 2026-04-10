@@ -7,6 +7,18 @@ import path from "node:path";
 import { logger } from "../logging/logger.js";
 import { PROJECT_ROOT } from "../project-root.js";
 
+const isWin = process.platform === "win32";
+
+/** Return the platform-correct Python exe inside an external MCP server venv. */
+function externalVenvPython(serverDir: string): string {
+  return isWin
+    ? path.join(PROJECT_ROOT, "external", serverDir, ".venv", "Scripts", "python.exe")
+    : path.join(PROJECT_ROOT, "external", serverDir, ".venv", "bin", "python");
+}
+
+/** Commands shipped as .cmd/.bat wrappers on Windows that need cmd.exe to launch. */
+const CMD_WRAPPERS = new Set(["npx", "uvx", "jbang", "pnpm"]);
+
 // ── Local MCP Server Definition ──────────────────────────────────────────────
 
 export type LocalMcpServerDefinition = {
@@ -128,7 +140,7 @@ export const DEFAULT_LOCAL_SERVER_DEFINITIONS: LocalMcpServerDefinition[] = [
   {
     name: "twitter",
     label: "Twitter / X",
-    command: path.join(PROJECT_ROOT, "external/twitter-mcp/.venv/bin/python"),
+    command: externalVenvPython("twitter-mcp"),
     args: ["-m", "src.twitter_mcp_server"],
     env: { PYTHONPATH: path.join(PROJECT_ROOT, "external/twitter-mcp") },
     requiredEnvVars: [
@@ -145,7 +157,7 @@ export const DEFAULT_LOCAL_SERVER_DEFINITIONS: LocalMcpServerDefinition[] = [
   {
     name: "youtube",
     label: "YouTube",
-    command: path.join(PROJECT_ROOT, "external/youtube-mcp/.venv/bin/python"),
+    command: externalVenvPython("youtube-mcp"),
     args: ["-m", "src.youtube_mcp_server"],
     env: {
       PYTHONPATH: path.join(PROJECT_ROOT, "external/youtube-mcp"),
@@ -160,7 +172,7 @@ export const DEFAULT_LOCAL_SERVER_DEFINITIONS: LocalMcpServerDefinition[] = [
   {
     name: "linkedin",
     label: "LinkedIn",
-    command: path.join(PROJECT_ROOT, "external/linkedin-mcp/.venv/bin/python"),
+    command: externalVenvPython("linkedin-mcp"),
     args: ["-m", "src.linkedin_mcp_server"],
     env: { PYTHONPATH: path.join(PROJECT_ROOT, "external/linkedin-mcp") },
     requiredEnvVars: ["LINKEDIN_ACCESS_TOKEN"],
@@ -171,7 +183,7 @@ export const DEFAULT_LOCAL_SERVER_DEFINITIONS: LocalMcpServerDefinition[] = [
   {
     name: "reddit",
     label: "Reddit",
-    command: path.join(PROJECT_ROOT, "external/reddit-mcp/.venv/bin/python"),
+    command: externalVenvPython("reddit-mcp"),
     args: ["-m", "src.reddit_mcp_server"],
     env: { PYTHONPATH: path.join(PROJECT_ROOT, "external/reddit-mcp") },
     requiredEnvVars: ["REDDIT_CLIENT_ID", "REDDIT_CLIENT_SECRET"],
@@ -192,7 +204,7 @@ export const DEFAULT_LOCAL_SERVER_DEFINITIONS: LocalMcpServerDefinition[] = [
   {
     name: "instagram",
     label: "Instagram",
-    command: path.join(PROJECT_ROOT, "external/ig-mcp/.venv/bin/python"),
+    command: externalVenvPython("ig-mcp"),
     args: ["-B", "-m", "src.instagram_mcp_server"],
     env: { PYTHONPATH: path.join(PROJECT_ROOT, "external/ig-mcp") },
     requiredEnvVars: [
@@ -207,7 +219,7 @@ export const DEFAULT_LOCAL_SERVER_DEFINITIONS: LocalMcpServerDefinition[] = [
   {
     name: "facebook",
     label: "Facebook",
-    command: path.join(PROJECT_ROOT, "external/fb-mcp/.venv/bin/python"),
+    command: externalVenvPython("fb-mcp"),
     args: ["-B", "-m", "src.facebook_mcp_server"],
     env: { PYTHONPATH: path.join(PROJECT_ROOT, "external/fb-mcp") },
     requiredEnvVars: [
@@ -265,6 +277,10 @@ export class LocalMcpServerManager extends EventEmitter {
 
   /** Start all eligible local MCP servers. */
   async startAll(): Promise<void> {
+    // Phase 1: synchronous pre-checks (credentials, runtime availability, venv provisioning).
+    // Done sequentially so that provisioning side-effects (disk writes) don't race.
+    const toStart: LocalMcpServerDefinition[] = [];
+
     for (const def of this.definitions) {
       if (this.skipUnconfigured && !this.hasRequiredCredentials(def)) {
         logger.info(
@@ -297,41 +313,49 @@ export class LocalMcpServerManager extends EventEmitter {
         continue;
       }
 
-      try {
-        await this.startServer(def);
-      } catch (error) {
-        const err = error instanceof Error ? error : new Error(String(error));
-        const errMsg = err.message.toLowerCase();
-        // Detect expired token errors and provide actionable guidance
-        const isTokenError =
-          errMsg.includes("expired") ||
-          errMsg.includes("invalid") ||
-          errMsg.includes("access token") ||
-          errMsg.includes("oauthexception");
-        if (isTokenError && def.category === "social") {
-          logger.error(
-            `Local MCP server "${def.name}" failed: access token is expired or invalid. ` +
-              `Please generate a new long-lived token from https://developers.facebook.com/tools/explorer/ ` +
-              `and update the environment variable(s): ${(def.requiredEnvVars ?? []).join(", ")}`,
-          );
-          this.setStatus(def, {
-            running: false,
-            toolCount: 0,
-            error: "token_expired",
-          });
-        } else {
-          logger.error(
-            `Failed to start local MCP server "${def.name}": ${err.message}`,
-          );
-          this.setStatus(def, {
-            running: false,
-            toolCount: 0,
-            error: err.message,
-          });
-        }
-        this.emit("server:error", def.name, err);
-      }
+      toStart.push(def);
     }
+
+    // Phase 2: launch all eligible servers concurrently so slow cold-starts
+    // (uvx package resolution, npx downloads) overlap instead of stacking.
+    await Promise.allSettled(
+      toStart.map(async (def) => {
+        try {
+          await this.startServer(def);
+        } catch (error) {
+          const err = error instanceof Error ? error : new Error(String(error));
+          const errMsg = err.message.toLowerCase();
+          // Detect expired token errors and provide actionable guidance
+          const isTokenError =
+            errMsg.includes("expired") ||
+            errMsg.includes("invalid") ||
+            errMsg.includes("access token") ||
+            errMsg.includes("oauthexception");
+          if (isTokenError && def.category === "social") {
+            logger.error(
+              `Local MCP server "${def.name}" failed: access token is expired or invalid. ` +
+                `Please generate a new long-lived token from https://developers.facebook.com/tools/explorer/ ` +
+                `and update the environment variable(s): ${(def.requiredEnvVars ?? []).join(", ")}`,
+            );
+            this.setStatus(def, {
+              running: false,
+              toolCount: 0,
+              error: "token_expired",
+            });
+          } else {
+            logger.error(
+              `Failed to start local MCP server "${def.name}": ${err.message}`,
+            );
+            this.setStatus(def, {
+              running: false,
+              toolCount: 0,
+              error: err.message,
+            });
+          }
+          this.emit("server:error", def.name, err);
+        }
+      }),
+    );
   }
 
   /** Stop all running local MCP servers. */
@@ -475,9 +499,19 @@ export class LocalMcpServerManager extends EventEmitter {
 
   private isRuntimeAvailable(def: LocalMcpServerDefinition): boolean {
     // Validate command name to prevent injection via shell metacharacters
-    if (!/^[a-zA-Z0-9_.\-/]+$/.test(def.command)) return false;
+    const pathPattern = isWin
+      ? /^[a-zA-Z0-9_.\\/:@-]+$/
+      : /^[a-zA-Z0-9_./-]+$/;
+    if (!pathPattern.test(def.command)) return false;
+
+    // Absolute paths: just check file existence
+    if (path.isAbsolute(def.command)) {
+      return fs.existsSync(def.command);
+    }
+
     try {
-      execFileSync("which", [def.command], { stdio: "ignore" });
+      const whichCmd = isWin ? "where.exe" : "which";
+      execFileSync(whichCmd, [def.command], { stdio: "ignore" });
       return true;
     } catch {
       return false;
@@ -490,10 +524,20 @@ export class LocalMcpServerManager extends EventEmitter {
    */
   private provisionPythonVenv(def: LocalMcpServerDefinition): boolean {
     if (def.runtime !== "python") return false;
-    const venvMatch = def.command.match(/^(.+\/.venv)\/bin\/python\d*$/);
+
+    const venvBinDir = isWin ? "Scripts" : "bin";
+    const pythonExe = isWin ? "python.exe" : "python";
+    const pipExe = isWin ? "pip.exe" : "pip";
+    const pythonCmd = isWin ? "python" : "python3";
+
+    // Match both Unix (.venv/bin/python) and Windows (.venv/Scripts/python.exe) patterns
+    const venvPattern = isWin
+      ? /^(.+[\\/]\.venv)[\\/]Scripts[\\/]python(?:\.exe)?$/
+      : /^(.+\/.venv)\/bin\/python\d*$/;
+    const venvMatch = def.command.match(venvPattern);
     if (!venvMatch) return false;
     const venvDir = venvMatch[1];
-    if (fs.existsSync(path.join(venvDir, "bin", "python"))) return false; // already exists
+    if (fs.existsSync(path.join(venvDir, venvBinDir, pythonExe))) return false; // already exists
 
     const serverDir = path.dirname(venvDir);
     const reqFile = path.join(serverDir, "requirements.txt");
@@ -502,19 +546,47 @@ export class LocalMcpServerManager extends EventEmitter {
     logger.info(
       `Auto-provisioning Python venv for "${def.name}" at ${venvDir}`,
     );
+
+    // Prefer `uv` for venv creation (handles managed Python installs on Windows)
+    const hasUv = (() => {
+      try {
+        const whichCmd = isWin ? "where.exe" : "which";
+        execFileSync(whichCmd, ["uv"], { stdio: "ignore" });
+        return true;
+      } catch {
+        return false;
+      }
+    })();
+
     try {
-      execFileSync("python3", ["-m", "venv", venvDir], {
-        stdio: "pipe",
-        timeout: 30_000,
-      });
-      execFileSync(
-        path.join(venvDir, "bin", "pip"),
-        ["install", "-r", reqFile, "--quiet"],
-        {
+      if (hasUv) {
+        const uvCmd = isWin ? "uv.exe" : "uv";
+        execFileSync(uvCmd, ["venv", venvDir, "--python", "3.12"], {
           stdio: "pipe",
-          timeout: 120_000,
-        },
-      );
+          timeout: 60_000,
+        });
+        execFileSync(
+          uvCmd,
+          ["pip", "install", "-r", reqFile, "--quiet", "--python", path.join(venvDir, venvBinDir, pythonExe)],
+          {
+            stdio: "pipe",
+            timeout: 120_000,
+          },
+        );
+      } else {
+        execFileSync(pythonCmd, ["-m", "venv", venvDir], {
+          stdio: "pipe",
+          timeout: 30_000,
+        });
+        execFileSync(
+          path.join(venvDir, venvBinDir, pipExe),
+          ["install", "-r", reqFile, "--quiet"],
+          {
+            stdio: "pipe",
+            timeout: 120_000,
+          },
+        );
+      }
       logger.info(`Python venv provisioned for "${def.name}"`);
       return true;
     } catch (err) {
@@ -554,9 +626,17 @@ export class LocalMcpServerManager extends EventEmitter {
       }
     }
 
+    // On Windows, .cmd/.bat wrappers (npx, uvx, jbang) need cmd.exe to launch
+    let spawnCommand = def.command;
+    let spawnArgs = [...def.args];
+    if (isWin && CMD_WRAPPERS.has(spawnCommand)) {
+      spawnArgs = ["/c", spawnCommand, ...spawnArgs];
+      spawnCommand = process.env.COMSPEC ?? "cmd.exe";
+    }
+
     const transport = new StdioClientTransport({
-      command: def.command,
-      args: def.args,
+      command: spawnCommand,
+      args: spawnArgs,
       env,
     });
 

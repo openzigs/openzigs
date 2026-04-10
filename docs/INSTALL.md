@@ -260,3 +260,78 @@ Compare with the checksums in the release notes.
 - **Documentation**: [USER_GUIDE.md](USER_GUIDE.md)
 - **Issues**: [GitHub Issues](https://github.com/openzigs/openzigs/issues)
 - **Discussions**: [GitHub Discussions](https://github.com/openzigs/openzigs/discussions)
+
+---
+
+## Hardware-Specific Model Configuration (CUDA Sidecars)
+
+On Windows with an NVIDIA GPU, the CUDA sidecars automatically select models based on your hardware. The defaults are tuned for **12 GB VRAM** (e.g. RTX 3060/3080), but you can override them per-machine.
+
+### Default Models
+
+| Sidecar | Default Model | Quality | Steps | VRAM Required |
+|---------|--------------|---------|-------|---------------|
+| Image Gen (port 5005) | `flux-dev` (FLUX.1-dev) | High | 25 | 12 GB (w/ offload) |
+| Video Worker (port 5007) | `ltxv-13b-097-distilled` (LTX-Video 13B distilled) | High | 7 | 12 GB (w/ offload) |
+
+Both workers use `enable_model_cpu_offload()` + VAE tiling so full model weights are never required in VRAM simultaneously.
+
+### Available Video Models
+
+| Key | Model | Steps | VRAM | Notes |
+|-----|-------|-------|------|-------|
+| `ltxv-13b-097-distilled` | Lightricks/LTX-Video-0.9.7-distilled | 7 | 12 GB | **Default** — fast, high quality |
+| `ltxv-13b-097-dev` | Lightricks/LTX-Video-0.9.7-dev | 30 | 16 GB | Highest quality, more VRAM |
+| `ltxv-2b-096-distilled` | Lightricks/LTX-Video-0.9.6-distilled | 4 | 8 GB | Real-time speed, lower VRAM |
+| `ltxv-2b-legacy` | Lightricks/LTX-Video | 20 | 8 GB | Legacy baseline |
+
+### Available Image Models
+
+| Key | Model | Steps | Notes |
+|-----|-------|-------|-------|
+| `flux-dev` | black-forest-labs/FLUX.1-dev | 25 | **Default** — guidance-distilled, high quality |
+| `flux-schnell` | black-forest-labs/FLUX.1-schnell | 4 | Fast drafts, lower quality |
+
+### Changing Models Per Machine
+
+**Option 1: Per-machine env file** (recommended — survives restarts)
+
+Create `~/.openzigs/.env.cuda` in WSL:
+
+```bash
+# ~/.openzigs/.env.cuda
+# Video worker model (see table above for valid keys)
+LTX_MODEL_KEY=ltxv-13b-097-distilled
+
+# Image gen model
+FLUX_DEFAULT_MODEL=flux-dev
+```
+
+This file is sourced automatically by `start-cuda-sidecars.sh`.
+
+**Option 2: Environment variables** (session only)
+
+```bash
+# In WSL before running the start script
+export LTX_MODEL_KEY=ltxv-2b-096-distilled   # For 8 GB GPU
+export FLUX_DEFAULT_MODEL=flux-schnell         # For faster images
+bash ~/path/to/sidecars/start-cuda-sidecars.sh
+```
+
+### Audio in Video
+
+Audio-synchronized video generation is **only supported on the Apple Silicon (MLX) backend** running the full BF16 model. The CUDA backend will return an error if `audio=true` is requested, rather than silently producing a silent video.
+
+### First-Run Model Downloads
+
+Models are downloaded from HuggingFace on first use and cached in `~/.cache/huggingface/`. Expected download sizes:
+
+| Model | Download Size |
+|-------|--------------|
+| LTX-Video 13B distilled | ~26 GB |
+| LTX-Video 13B dev | ~26 GB |
+| LTX-Video 2B | ~4 GB |
+| FLUX.1-dev | ~24 GB |
+| FLUX.1-schnell | ~24 GB |
+
+A `HF_TOKEN` env var is required in your project root `.env` for gated models.

@@ -2,7 +2,7 @@ import { EventEmitter } from "node:events";
 import os from "node:os";
 import path from "node:path";
 import fs from "node:fs/promises";
-import { CopilotClient, defineTool } from "@github/copilot-sdk";
+import { CopilotClient, defineTool, type SessionConfig } from "@github/copilot-sdk";
 import {
   secureDirOptions,
   secureFileOptions,
@@ -20,6 +20,7 @@ import type {
   TokenUsageEvent,
   CompactionEvent,
 } from "./token-tracker.js";
+import { getUserSelectedModel } from "../config/user-model.js";
 
 export type { TokenUsage, TokenUsageEvent, CompactionEvent };
 
@@ -49,7 +50,7 @@ export type ProviderConfig =
       baseUrl: string;
       apiKey?: string;
       bearerToken?: string;
-      wireApi?: "openai" | "anthropic";
+      wireApi?: "completions" | "responses";
     }
   | {
       type: "azure";
@@ -142,7 +143,7 @@ type SessionCreateConfig = {
   excludedTools?: string[];
   workingDirectory?: string;
   reasoningEffort?: ReasoningEffort;
-  provider?: ProviderConfig;
+  provider?: SessionConfig["provider"];
   customAgents?: CustomAgentDefinition[];
   mcpServers?: Record<string, NativeMcpServerDefinition>;
   skillDirectories?: string[];
@@ -783,6 +784,22 @@ export class CopilotWrapperService
     void this.clearAllSessions();
   }
 
+  /**
+   * Map internal ProviderConfig to the SDK's expected format.
+   * The Copilot SDK only supports type "openai" | "azure" | "anthropic".
+   * Ollama uses the OpenAI-compatible API, so we map it to type "openai".
+   * The SDK/CLI appends /v1/chat/completions internally, so we pass the
+   * raw Ollama base URL without a /v1 suffix.
+   */
+  private toSdkProvider(): SessionConfig["provider"] {
+    if (!this.providerConfig) return undefined;
+    if (this.providerConfig.type === "ollama") {
+      const base = this.providerConfig.baseUrl.replace(/\/+$/, "");
+      return { type: "openai", baseUrl: `${base}/v1`, wireApi: "completions" };
+    }
+    return this.providerConfig;
+  }
+
   getWorkingDirectory(): string | undefined {
     return this.defaultWorkingDirectory;
   }
@@ -886,7 +903,7 @@ export class CopilotWrapperService
       );
     }
 
-    const effectiveModel = options?.model ?? this.model;
+    const effectiveModel = options?.model ?? (await getUserSelectedModel()) ?? this.model;
     const perCallToolCallback = options?.onToolCall;
 
     // When availableTools is specified (skill scoping or explicit client filter),
@@ -1303,7 +1320,7 @@ export class CopilotWrapperService
       ...(effectiveReasoningEffort
         ? { reasoningEffort: effectiveReasoningEffort }
         : {}),
-      ...(this.providerConfig ? { provider: this.providerConfig } : {}),
+      ...(this.providerConfig ? { provider: this.toSdkProvider() } : {}),
       ...(mergedAgents.length > 0 ? { customAgents: mergedAgents } : {}),
       ...(Object.keys(sdkMcpServers).length > 0
         ? { mcpServers: sdkMcpServers }

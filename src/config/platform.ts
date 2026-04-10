@@ -108,13 +108,16 @@ export function getPlatformCapabilities(
   const currentOS = process.platform;
   const arch = os.arch();
 
+  // Sidecars are supported on macOS ARM natively, or on any platform when
+  // explicit sidecar URL env vars are set (e.g. CUDA sidecars running in WSL).
+  const hasExplicitSidecarUrls =
+    !!(process.env.MAC_MINI_WORKER_URL || process.env.AUDIO_SIDECAR_URL || process.env.M2_PRO_WORKER_URL);
+
   const base: PlatformCapabilities = {
     os: currentOS,
     arch,
     dockerAvailable: isDockerAvailableSync(),
-    // Native sidecars (image-gen, music-studio etc.)
-    // only work on macOS ARM (Apple Silicon) currently
-    sidecarsSupported: currentOS === "darwin" && arch === "arm64",
+    sidecarsSupported: (currentOS === "darwin" && arch === "arm64") || hasExplicitSidecarUrls,
     chromePath: findChromePath(),
     isWindows: currentOS === "win32",
     isMacOS: currentOS === "darwin",
