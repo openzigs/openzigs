@@ -23,24 +23,33 @@ function createWrapper() {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
-  return ({ children }: { children: React.ReactNode }) => (
-    <QueryClientProvider client={client}>{children}</QueryClientProvider>
-  );
+  function Wrapper({ children }: { children: React.ReactNode }) {
+    return (
+      <QueryClientProvider client={client}>{children}</QueryClientProvider>
+    );
+  }
+  return Wrapper;
 }
 
 describe("ClipExtractorPanel", () => {
   it("renders extract button", () => {
-    render(<ClipExtractorPanel draftId="d1" videoSource="/tmp/test.mp4" />, { wrapper: createWrapper() });
+    render(<ClipExtractorPanel draftId="d1" videoSource="/tmp/test.mp4" />, {
+      wrapper: createWrapper(),
+    });
     expect(screen.getByText("Extract Clips")).toBeInTheDocument();
   });
 
   it("shows clip count input", () => {
-    render(<ClipExtractorPanel draftId="d1" videoSource="/tmp/test.mp4" />, { wrapper: createWrapper() });
+    render(<ClipExtractorPanel draftId="d1" videoSource="/tmp/test.mp4" />, {
+      wrapper: createWrapper(),
+    });
     expect(screen.getByText("Clips")).toBeInTheDocument();
   });
 
   it("shows style selector", () => {
-    render(<ClipExtractorPanel draftId="d1" videoSource="/tmp/test.mp4" />, { wrapper: createWrapper() });
+    render(<ClipExtractorPanel draftId="d1" videoSource="/tmp/test.mp4" />, {
+      wrapper: createWrapper(),
+    });
     expect(screen.getByText("Style")).toBeInTheDocument();
   });
 
@@ -73,12 +82,16 @@ describe("AudioCleanerPanel", () => {
 
 describe("BRollPanel", () => {
   it("renders analyze button", () => {
-    render(<BRollPanel draftId="d1" videoSource="/tmp/test.mp4" />, { wrapper: createWrapper() });
+    render(<BRollPanel draftId="d1" videoSource="/tmp/test.mp4" />, {
+      wrapper: createWrapper(),
+    });
     expect(screen.getByText("Find B-Roll Points")).toBeInTheDocument();
   });
 
   it("shows density selector", () => {
-    render(<BRollPanel draftId="d1" videoSource="/tmp/test.mp4" />, { wrapper: createWrapper() });
+    render(<BRollPanel draftId="d1" videoSource="/tmp/test.mp4" />, {
+      wrapper: createWrapper(),
+    });
     expect(screen.getByText("Density")).toBeInTheDocument();
   });
 
