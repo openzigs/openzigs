@@ -47,7 +47,13 @@ interface VideoTrimmerProps {
 
 type TrimmerMode = "trim" | "blade";
 
-export function VideoTrimmer({ assetId, videoUrl, duration, onDirtyChange }: VideoTrimmerProps) {
+export function VideoTrimmer({
+  assetId,
+  videoUrl,
+  duration,
+  onTrimComplete,
+  onDirtyChange,
+}: VideoTrimmerProps) {
   const { socket } = useSocket();
   const videoRef = useRef<HTMLVideoElement>(null);
   const timelineRef = useRef<HTMLDivElement>(null);
@@ -82,7 +88,9 @@ export function VideoTrimmer({ assetId, videoUrl, duration, onDirtyChange }: Vid
     const newSegments: ClipSegment[] = [];
     for (let i = 0; i < points.length - 1; i++) {
       const existing = segments.find(
-        (s) => Math.abs(s.start - points[i]) < 0.05 && Math.abs(s.end - points[i + 1]) < 0.05,
+        (s) =>
+          Math.abs(s.start - points[i]) < 0.05 &&
+          Math.abs(s.end - points[i + 1]) < 0.05,
       );
       newSegments.push({
         id: existing?.id ?? `seg-${Date.now()}-${i}`,
@@ -97,18 +105,22 @@ export function VideoTrimmer({ assetId, videoUrl, duration, onDirtyChange }: Vid
 
   // Notify parent when user has unsaved work (blade splits, AI cuts, or modified trim range)
   useEffect(() => {
-    const dirty = splitPoints.length > 0 || suggestedCuts.length > 0 ||
-      startTime > 0.1 || endTime < duration - 0.1;
+    const dirty =
+      splitPoints.length > 0 ||
+      suggestedCuts.length > 0 ||
+      startTime > 0.1 ||
+      endTime < duration - 0.1;
     onDirtyChange?.(dirty);
   }, [splitPoints, suggestedCuts, startTime, endTime, duration, onDirtyChange]);
 
   // Listen for Socket.IO events
   useEffect(() => {
     if (!socket) return;
-    const onTrimComplete = (data: { jobId: string }) => {
+    const handleTrimComplete = (data: { jobId: string; assetId?: string }) => {
       if (data.jobId === trimJobId) {
         setTrimming(false);
         showToast("Trim complete! New clip saved to Gallery.", "success");
+        if (data.assetId) onTrimComplete?.(data.assetId);
       }
     };
     const onTrimFailed = (data: { jobId: string; error: string }) => {
@@ -117,13 +129,13 @@ export function VideoTrimmer({ assetId, videoUrl, duration, onDirtyChange }: Vid
         showToast(`Trim failed: ${data.error}`, "error");
       }
     };
-    socket.on("trim:complete", onTrimComplete);
+    socket.on("trim:complete", handleTrimComplete);
     socket.on("trim:failed", onTrimFailed);
     return () => {
-      socket.off("trim:complete", onTrimComplete);
+      socket.off("trim:complete", handleTrimComplete);
       socket.off("trim:failed", onTrimFailed);
     };
-  }, [socket, trimJobId]);
+  }, [socket, trimJobId, onTrimComplete]);
 
   // Video time tracking
   useEffect(() => {
@@ -146,40 +158,6 @@ export function VideoTrimmer({ assetId, videoUrl, duration, onDirtyChange }: Vid
       video.removeEventListener("pause", onPause);
     };
   }, [loopPreview, startTime, endTime]);
-
-  // ── Keyboard Shortcuts ──
-  useEffect(() => {
-    const onKeyDown = (e: KeyboardEvent) => {
-      const tag = (e.target as HTMLElement)?.tagName;
-      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
-
-      switch (e.key.toLowerCase()) {
-        case " ":
-          e.preventDefault();
-          handleTogglePlay();
-          break;
-        case "i":
-          e.preventDefault();
-          setStartTime(currentTime);
-          break;
-        case "o":
-          e.preventDefault();
-          setEndTime(currentTime);
-          break;
-        case "b":
-          if (mode === "blade") {
-            e.preventDefault();
-            handleBladeSplit();
-          }
-          break;
-        case "escape":
-          if (mode === "blade") { e.preventDefault(); setMode("trim"); }
-          break;
-      }
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [currentTime, mode, startTime, endTime]);
 
   const handlePlaySelection = useCallback(() => {
     const video = videoRef.current;
@@ -215,7 +193,10 @@ export function VideoTrimmer({ assetId, videoUrl, duration, onDirtyChange }: Vid
       setTrimJobId(res.jobId);
       showToast("Trim job submitted", "info");
     } catch (err) {
-      showToast(`Trim failed: ${err instanceof Error ? err.message : "Unknown error"}`, "error");
+      showToast(
+        `Trim failed: ${err instanceof Error ? err.message : "Unknown error"}`,
+        "error",
+      );
       setTrimming(false);
     }
   }, [assetId, startTime, endTime]);
@@ -228,6 +209,43 @@ export function VideoTrimmer({ assetId, videoUrl, duration, onDirtyChange }: Vid
     if (splitPoints.some((p) => Math.abs(p - t) < 0.2)) return;
     setSplitPoints((prev) => [...prev, t]);
   }, [currentTime, duration, splitPoints]);
+
+  // ── Keyboard Shortcuts ──
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement)?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+
+      switch (e.key.toLowerCase()) {
+        case " ":
+          e.preventDefault();
+          handleTogglePlay();
+          break;
+        case "i":
+          e.preventDefault();
+          setStartTime(currentTime);
+          break;
+        case "o":
+          e.preventDefault();
+          setEndTime(currentTime);
+          break;
+        case "b":
+          if (mode === "blade") {
+            e.preventDefault();
+            handleBladeSplit();
+          }
+          break;
+        case "escape":
+          if (mode === "blade") {
+            e.preventDefault();
+            setMode("trim");
+          }
+          break;
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [currentTime, mode, startTime, endTime, handleTogglePlay, handleBladeSplit]);
 
   const removeSplitPoint = useCallback((point: number) => {
     setSplitPoints((prev) => prev.filter((p) => Math.abs(p - point) > 0.05));
@@ -245,20 +263,29 @@ export function VideoTrimmer({ assetId, videoUrl, duration, onDirtyChange }: Vid
       for (const seg of segments) {
         const res = await fetchJson<{ jobId: string }>("/api/studio/trim", {
           method: "POST",
-          body: JSON.stringify({ assetId, startTime: seg.start, endTime: seg.end }),
+          body: JSON.stringify({
+            assetId,
+            startTime: seg.start,
+            endTime: seg.end,
+          }),
         });
         if (res.jobId) successCount++;
       }
       showToast(`${successCount} clip(s) queued for export`, "success");
     } catch (err) {
-      showToast(`Export failed: ${err instanceof Error ? err.message : "Unknown error"}`, "error");
+      showToast(
+        `Export failed: ${err instanceof Error ? err.message : "Unknown error"}`,
+        "error",
+      );
     } finally {
       setTrimming(false);
     }
   }, [assetId, segments]);
 
   const renameSegment = useCallback((segId: string, newName: string) => {
-    setSegments((prev) => prev.map((s) => (s.id === segId ? { ...s, name: newName } : s)));
+    setSegments((prev) =>
+      prev.map((s) => (s.id === segId ? { ...s, name: newName } : s)),
+    );
     setEditingSegmentId(null);
   }, []);
 
@@ -280,22 +307,33 @@ export function VideoTrimmer({ assetId, videoUrl, duration, onDirtyChange }: Vid
         }>(`/api/studio/analyze/${res.jobId}`);
 
         if (job.status === "complete" && job.suggestedCuts) {
-          setSuggestedCuts(job.suggestedCuts.map((c) => ({ ...c, enabled: true })));
-          showToast(`AI found ${job.suggestedCuts.length} regions to remove`, "success");
+          setSuggestedCuts(
+            job.suggestedCuts.map((c) => ({ ...c, enabled: true })),
+          );
+          showToast(
+            `AI found ${job.suggestedCuts.length} regions to remove`,
+            "success",
+          );
           return;
         }
         if (job.status === "failed") throw new Error("Analysis failed");
       }
       throw new Error("Analysis timed out");
     } catch (err) {
-      showToast(`Analysis failed: ${err instanceof Error ? err.message : "Unknown error"}`, "error");
+      showToast(
+        `Analysis failed: ${err instanceof Error ? err.message : "Unknown error"}`,
+        "error",
+      );
     } finally {
       setAnalyzing(false);
     }
   }, [assetId, analyzeModel]);
 
   // ── Apply All AI Cuts (export clean video without bad regions) ──
-  const enabledCuts = useMemo(() => suggestedCuts.filter((c) => c.enabled), [suggestedCuts]);
+  const enabledCuts = useMemo(
+    () => suggestedCuts.filter((c) => c.enabled),
+    [suggestedCuts],
+  );
 
   const handleApplyAllCuts = useCallback(async () => {
     if (enabledCuts.length === 0) {
@@ -327,13 +365,23 @@ export function VideoTrimmer({ assetId, videoUrl, duration, onDirtyChange }: Vid
       for (const region of keepRegions) {
         const res = await fetchJson<{ jobId: string }>("/api/studio/trim", {
           method: "POST",
-          body: JSON.stringify({ assetId, startTime: region.start, endTime: region.end }),
+          body: JSON.stringify({
+            assetId,
+            startTime: region.start,
+            endTime: region.end,
+          }),
         });
         if (res.jobId) successCount++;
       }
-      showToast(`${successCount} clean segment(s) queued for export`, "success");
+      showToast(
+        `${successCount} clean segment(s) queued for export`,
+        "success",
+      );
     } catch (err) {
-      showToast(`Export failed: ${err instanceof Error ? err.message : "Unknown error"}`, "error");
+      showToast(
+        `Export failed: ${err instanceof Error ? err.message : "Unknown error"}`,
+        "error",
+      );
     } finally {
       setTrimming(false);
     }
@@ -360,7 +408,10 @@ export function VideoTrimmer({ assetId, videoUrl, duration, onDirtyChange }: Vid
 
       const rect = timeline.getBoundingClientRect();
       const updatePos = (clientX: number) => {
-        const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+        const ratio = Math.max(
+          0,
+          Math.min(1, (clientX - rect.left) / rect.width),
+        );
         const time = ratio * duration;
         if (handle === "start") {
           setStartTime(Math.min(time, endTime - 0.1));
@@ -388,11 +439,18 @@ export function VideoTrimmer({ assetId, videoUrl, duration, onDirtyChange }: Vid
       const timeline = timelineRef.current;
       if (!timeline) return;
       const rect = timeline.getBoundingClientRect();
-      const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+      const ratio = Math.max(
+        0,
+        Math.min(1, (e.clientX - rect.left) / rect.width),
+      );
       const time = ratio * duration;
 
       if (mode === "blade") {
-        if (time > 0.1 && time < duration - 0.1 && !splitPoints.some((p) => Math.abs(p - time) < 0.2)) {
+        if (
+          time > 0.1 &&
+          time < duration - 0.1 &&
+          !splitPoints.some((p) => Math.abs(p - time) < 0.2)
+        ) {
           setSplitPoints((prev) => [...prev, time]);
         }
       } else {
@@ -407,7 +465,10 @@ export function VideoTrimmer({ assetId, videoUrl, duration, onDirtyChange }: Vid
   const playheadPct = (currentTime / duration) * 100;
 
   return (
-    <div className="rounded-lg border border-zinc-700 bg-zinc-900 p-4 space-y-3" data-testid="video-trimmer">
+    <div
+      className="rounded-lg border border-zinc-700 bg-zinc-900 p-4 space-y-3"
+      data-testid="video-trimmer"
+    >
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
@@ -420,7 +481,9 @@ export function VideoTrimmer({ assetId, videoUrl, duration, onDirtyChange }: Vid
             <button
               onClick={() => setMode("trim")}
               className={`rounded px-2 py-1 text-[10px] font-medium transition ${
-                mode === "trim" ? "bg-blue-600 text-white" : "text-zinc-400 hover:text-zinc-200"
+                mode === "trim"
+                  ? "bg-blue-600 text-white"
+                  : "text-zinc-400 hover:text-zinc-200"
               }`}
               title="Trim mode: Set In/Out points (I/O)"
             >
@@ -429,24 +492,44 @@ export function VideoTrimmer({ assetId, videoUrl, duration, onDirtyChange }: Vid
             <button
               onClick={() => setMode("blade")}
               className={`rounded px-2 py-1 text-[10px] font-medium transition ${
-                mode === "blade" ? "bg-orange-600 text-white" : "text-zinc-400 hover:text-zinc-200"
+                mode === "blade"
+                  ? "bg-orange-600 text-white"
+                  : "text-zinc-400 hover:text-zinc-200"
               }`}
               title="Blade mode: Split into clips (B to split)"
             >
               Blade
             </button>
           </div>
-          <span className="text-xs text-zinc-500 font-mono">{fmt(duration)}</span>
+          <span className="text-xs text-zinc-500 font-mono">
+            {fmt(duration)}
+          </span>
         </div>
       </div>
 
       {/* Hotkey Hints */}
       <div className="flex flex-wrap gap-2 text-[9px] text-zinc-600">
-        <span><kbd className="rounded bg-zinc-800 px-1 py-0.5 text-zinc-400">Space</kbd> Play/Pause</span>
-        <span><kbd className="rounded bg-zinc-800 px-1 py-0.5 text-zinc-400">I</kbd> Set In</span>
-        <span><kbd className="rounded bg-zinc-800 px-1 py-0.5 text-zinc-400">O</kbd> Set Out</span>
+        <span>
+          <kbd className="rounded bg-zinc-800 px-1 py-0.5 text-zinc-400">
+            Space
+          </kbd>{" "}
+          Play/Pause
+        </span>
+        <span>
+          <kbd className="rounded bg-zinc-800 px-1 py-0.5 text-zinc-400">I</kbd>{" "}
+          Set In
+        </span>
+        <span>
+          <kbd className="rounded bg-zinc-800 px-1 py-0.5 text-zinc-400">O</kbd>{" "}
+          Set Out
+        </span>
         {mode === "blade" && (
-          <span><kbd className="rounded bg-zinc-800 px-1 py-0.5 text-zinc-400">B</kbd> Split at playhead</span>
+          <span>
+            <kbd className="rounded bg-zinc-800 px-1 py-0.5 text-zinc-400">
+              B
+            </kbd>{" "}
+            Split at playhead
+          </span>
         )}
       </div>
 
@@ -482,9 +565,15 @@ export function VideoTrimmer({ assetId, videoUrl, duration, onDirtyChange }: Vid
         <div
           ref={timelineRef}
           className={`relative h-10 rounded cursor-pointer select-none ${
-            mode === "blade" ? "bg-zinc-800 ring-1 ring-orange-600/30" : "bg-zinc-800"
+            mode === "blade"
+              ? "bg-zinc-800 ring-1 ring-orange-600/30"
+              : "bg-zinc-800"
           }`}
-          onMouseDown={mode === "trim" ? (e) => handleTimelineDrag("playhead", e) : undefined}
+          onMouseDown={
+            mode === "trim"
+              ? (e) => handleTimelineDrag("playhead", e)
+              : undefined
+          }
           onClick={mode === "blade" ? handleTimelineClick : undefined}
         >
           {/* Trim mode: Selection region */}
@@ -492,18 +581,29 @@ export function VideoTrimmer({ assetId, videoUrl, duration, onDirtyChange }: Vid
             <>
               <div
                 className="absolute top-0 bottom-0 bg-blue-600/20 border-x-2 border-blue-500"
-                style={{ left: `${selectionLeftPct}%`, width: `${selectionWidthPct}%` }}
+                style={{
+                  left: `${selectionLeftPct}%`,
+                  width: `${selectionWidthPct}%`,
+                }}
               />
               <div
                 className="absolute top-0 bottom-0 w-3 bg-blue-500 rounded-l cursor-ew-resize z-10 hover:bg-blue-400 transition"
                 style={{ left: `calc(${selectionLeftPct}% - 6px)` }}
-                onMouseDown={(e) => { e.stopPropagation(); handleTimelineDrag("start", e); }}
+                onMouseDown={(e) => {
+                  e.stopPropagation();
+                  handleTimelineDrag("start", e);
+                }}
                 data-testid="start-handle"
               />
               <div
                 className="absolute top-0 bottom-0 w-3 bg-blue-500 rounded-r cursor-ew-resize z-10 hover:bg-blue-400 transition"
-                style={{ left: `calc(${selectionLeftPct + selectionWidthPct}% - 6px)` }}
-                onMouseDown={(e) => { e.stopPropagation(); handleTimelineDrag("end", e); }}
+                style={{
+                  left: `calc(${selectionLeftPct + selectionWidthPct}% - 6px)`,
+                }}
+                onMouseDown={(e) => {
+                  e.stopPropagation();
+                  handleTimelineDrag("end", e);
+                }}
                 data-testid="end-handle"
               />
             </>
@@ -518,7 +618,10 @@ export function VideoTrimmer({ assetId, videoUrl, duration, onDirtyChange }: Vid
                 style={{ left: `${(point / duration) * 100}%` }}
               >
                 <button
-                  onClick={(e) => { e.stopPropagation(); removeSplitPoint(point); }}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    removeSplitPoint(point);
+                  }}
                   className="absolute -top-1 -left-2 h-4 w-4 rounded-full bg-orange-600 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition"
                 >
                   <X className="h-2.5 w-2.5" />
@@ -540,7 +643,10 @@ export function VideoTrimmer({ assetId, videoUrl, duration, onDirtyChange }: Vid
                 width: `${((cut.end - cut.start) / duration) * 100}%`,
               }}
               title={`${cut.enabled ? "Remove" : "Keep"}: ${cut.reason}`}
-              onClick={(e) => { e.stopPropagation(); toggleCut(i); }}
+              onClick={(e) => {
+                e.stopPropagation();
+                toggleCut(i);
+              }}
             />
           ))}
 
@@ -562,7 +668,14 @@ export function VideoTrimmer({ assetId, videoUrl, duration, onDirtyChange }: Vid
                 max={endTime - 0.1}
                 step={0.1}
                 value={Number(startTime.toFixed(1))}
-                onChange={(e) => setStartTime(Math.max(0, Math.min(Number(e.target.value), endTime - 0.1)))}
+                onChange={(e) =>
+                  setStartTime(
+                    Math.max(
+                      0,
+                      Math.min(Number(e.target.value), endTime - 0.1),
+                    ),
+                  )
+                }
                 className="w-20 rounded bg-zinc-800 border border-zinc-700 px-2 py-1 text-zinc-200 font-mono text-xs"
                 data-testid="start-time-input"
               />
@@ -575,7 +688,14 @@ export function VideoTrimmer({ assetId, videoUrl, duration, onDirtyChange }: Vid
                 max={duration}
                 step={0.1}
                 value={Number(endTime.toFixed(1))}
-                onChange={(e) => setEndTime(Math.max(startTime + 0.1, Math.min(Number(e.target.value), duration)))}
+                onChange={(e) =>
+                  setEndTime(
+                    Math.max(
+                      startTime + 0.1,
+                      Math.min(Number(e.target.value), duration),
+                    ),
+                  )
+                }
                 className="w-20 rounded bg-zinc-800 border border-zinc-700 px-2 py-1 text-zinc-200 font-mono text-xs"
                 data-testid="end-time-input"
               />
@@ -589,8 +709,12 @@ export function VideoTrimmer({ assetId, videoUrl, duration, onDirtyChange }: Vid
         {/* Playhead time (blade mode) */}
         {mode === "blade" && (
           <div className="flex items-center justify-between text-xs">
-            <span className="text-zinc-500 font-mono">Playhead: {fmt(currentTime)}</span>
-            <span className="text-zinc-600">{splitPoints.length} split(s) → {segments.length} clips</span>
+            <span className="text-zinc-500 font-mono">
+              Playhead: {fmt(currentTime)}
+            </span>
+            <span className="text-zinc-600">
+              {splitPoints.length} split(s) → {segments.length} clips
+            </span>
           </div>
         )}
       </div>
@@ -614,7 +738,8 @@ export function VideoTrimmer({ assetId, videoUrl, duration, onDirtyChange }: Vid
                     value={segmentNameInput}
                     onChange={(e) => setSegmentNameInput(e.target.value)}
                     onKeyDown={(e) => {
-                      if (e.key === "Enter") renameSegment(seg.id, segmentNameInput);
+                      if (e.key === "Enter")
+                        renameSegment(seg.id, segmentNameInput);
                       if (e.key === "Escape") setEditingSegmentId(null);
                     }}
                     onBlur={() => renameSegment(seg.id, segmentNameInput)}
@@ -622,10 +747,15 @@ export function VideoTrimmer({ assetId, videoUrl, duration, onDirtyChange }: Vid
                     autoFocus
                   />
                 ) : (
-                  <span className="flex-1 text-zinc-300 truncate">{seg.name}</span>
+                  <span className="flex-1 text-zinc-300 truncate">
+                    {seg.name}
+                  </span>
                 )}
                 <button
-                  onClick={() => { setEditingSegmentId(seg.id); setSegmentNameInput(seg.name); }}
+                  onClick={() => {
+                    setEditingSegmentId(seg.id);
+                    setSegmentNameInput(seg.name);
+                  }}
                   className="text-zinc-500 hover:text-zinc-300 transition"
                   title="Rename clip"
                 >
@@ -644,8 +774,13 @@ export function VideoTrimmer({ assetId, videoUrl, duration, onDirtyChange }: Vid
             onClick={() => setCutsExpanded(!cutsExpanded)}
             className="flex items-center gap-1.5 text-xs text-zinc-400 font-medium hover:text-zinc-200 transition"
           >
-            {cutsExpanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
-            AI Regions to Remove ({enabledCuts.length}/{suggestedCuts.length} enabled)
+            {cutsExpanded ? (
+              <ChevronUp className="h-3 w-3" />
+            ) : (
+              <ChevronDown className="h-3 w-3" />
+            )}
+            AI Regions to Remove ({enabledCuts.length}/{suggestedCuts.length}{" "}
+            enabled)
           </button>
           {cutsExpanded && (
             <div className="max-h-36 overflow-y-auto space-y-1">
@@ -659,8 +794,14 @@ export function VideoTrimmer({ assetId, videoUrl, duration, onDirtyChange }: Vid
                       : "bg-zinc-800 border border-zinc-700 opacity-60"
                   }`}
                 >
-                  <span className={`shrink-0 ${cut.enabled ? "text-red-400" : "text-zinc-500"}`}>
-                    {cut.enabled ? <Trash2 className="h-3 w-3" /> : <Check className="h-3 w-3" />}
+                  <span
+                    className={`shrink-0 ${cut.enabled ? "text-red-400" : "text-zinc-500"}`}
+                  >
+                    {cut.enabled ? (
+                      <Trash2 className="h-3 w-3" />
+                    ) : (
+                      <Check className="h-3 w-3" />
+                    )}
                   </span>
                   <span className="font-mono text-zinc-400 shrink-0">
                     {fmt(cut.start)} – {fmt(cut.end)}
@@ -711,7 +852,11 @@ export function VideoTrimmer({ assetId, videoUrl, duration, onDirtyChange }: Vid
             disabled={trimming}
             className="flex items-center gap-1.5 rounded bg-red-600/20 hover:bg-red-600/30 border border-red-600/50 px-3 py-2 text-xs text-red-300 transition disabled:opacity-50"
           >
-            {trimming ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+            {trimming ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Trash2 className="h-3.5 w-3.5" />
+            )}
             Apply All ({enabledCuts.length})
           </button>
         )}
@@ -724,7 +869,11 @@ export function VideoTrimmer({ assetId, videoUrl, duration, onDirtyChange }: Vid
             className="flex-1 flex items-center justify-center gap-1.5 rounded bg-blue-600 hover:bg-blue-700 px-3 py-2 text-xs text-white font-medium transition disabled:opacity-50"
             data-testid="trim-button"
           >
-            {trimming ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
+            {trimming ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Download className="h-3.5 w-3.5" />
+            )}
             {trimming ? "Trimming…" : "Export Cut"}
           </button>
         )}
@@ -735,7 +884,11 @@ export function VideoTrimmer({ assetId, videoUrl, duration, onDirtyChange }: Vid
             disabled={trimming}
             className="flex-1 flex items-center justify-center gap-1.5 rounded bg-orange-600 hover:bg-orange-700 px-3 py-2 text-xs text-white font-medium transition disabled:opacity-50"
           >
-            {trimming ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <SplitSquareHorizontal className="h-3.5 w-3.5" />}
+            {trimming ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <SplitSquareHorizontal className="h-3.5 w-3.5" />
+            )}
             {trimming ? "Exporting…" : `Export ${segments.length} Clips`}
           </button>
         )}

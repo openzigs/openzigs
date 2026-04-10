@@ -81,7 +81,10 @@ export async function selectThumbnailFrame(
     .join("\n");
 
   const keyframeList = keyframes
-    .map((kf, i) => `[${i}] timestamp=${kf.timestampSec.toFixed(1)}s, scene=${kf.sceneIndex}, file="${path.basename(kf.path)}"`)
+    .map(
+      (kf, i) =>
+        `[${i}] timestamp=${kf.timestampSec.toFixed(1)}s, scene=${kf.sceneIndex}, file="${path.basename(kf.path)}"`,
+    )
     .join("\n");
 
   const userPrompt = `VIDEO: "${manifest.projectTitle}"
@@ -106,14 +109,25 @@ Select the best frame for a YouTube thumbnail.`;
   }
 
   const responseText = chunks.join("").trim();
-  let parsed: { selectedIndex?: number; rationale?: string; suggestedText?: string[]; textPlacement?: string; textColor?: string };
+  let parsed: {
+    selectedIndex?: number;
+    rationale?: string;
+    suggestedText?: string[];
+    textPlacement?: string;
+    textColor?: string;
+  };
 
   try {
     let jsonText = responseText;
-    if (jsonText.startsWith("```")) jsonText = jsonText.replace(/^```(?:json)?\n?/, "").replace(/\n?```$/, "");
+    if (jsonText.startsWith("```"))
+      jsonText = jsonText
+        .replace(/^```(?:json)?\n?/, "")
+        .replace(/\n?```$/, "");
     parsed = JSON.parse(jsonText);
   } catch {
-    logger.warn("[FrameSelector] Failed to parse LLM response, using first keyframe");
+    logger.warn(
+      "[FrameSelector] Failed to parse LLM response, using first keyframe",
+    );
     return {
       framePath: keyframes[0].path,
       timestamp: keyframes[0].timestampSec,
@@ -124,9 +138,10 @@ Select the best frame for a YouTube thumbnail.`;
     };
   }
 
-  const selectedIdx = typeof parsed.selectedIndex === "number"
-    ? Math.max(0, Math.min(parsed.selectedIndex, keyframes.length - 1))
-    : 0;
+  const selectedIdx =
+    typeof parsed.selectedIndex === "number"
+      ? Math.max(0, Math.min(parsed.selectedIndex, keyframes.length - 1))
+      : 0;
 
   const selected = keyframes[selectedIdx];
 
@@ -135,14 +150,20 @@ Select the best frame for a YouTube thumbnail.`;
     timestamp: selected.timestampSec,
     rationale: parsed.rationale ?? "Selected by LLM",
     suggestedText: Array.isArray(parsed.suggestedText)
-      ? parsed.suggestedText.filter((t): t is string => typeof t === "string").slice(0, 3)
+      ? parsed.suggestedText
+          .filter((t): t is string => typeof t === "string")
+          .slice(0, 3)
       : [manifest.projectTitle.toUpperCase()],
-    textPlacement: (["top", "center", "bottom"].includes(parsed.textPlacement ?? "")
-      ? parsed.textPlacement as "top" | "center" | "bottom"
-      : "bottom"),
-    textColor: typeof parsed.textColor === "string" && /^#[0-9a-fA-F]{6}$/.test(parsed.textColor)
-      ? parsed.textColor
-      : "#ffffff",
+    textPlacement: ["top", "center", "bottom"].includes(
+      parsed.textPlacement ?? "",
+    )
+      ? (parsed.textPlacement as "top" | "center" | "bottom")
+      : "bottom",
+    textColor:
+      typeof parsed.textColor === "string" &&
+      /^#[0-9a-fA-F]{6}$/.test(parsed.textColor)
+        ? parsed.textColor
+        : "#ffffff",
   };
 }
 
@@ -159,8 +180,14 @@ export function extractKeyframesFromManifest(
 
   for (const entry of manifest.timeline) {
     if (entry.type === "image_scene") {
-      if (typeof entry.src === "string" && (entry.src.includes("..") || entry.src.includes("\0"))) continue;
-      const imgPath = path.isAbsolute(entry.src) ? entry.src : path.join(outputDir, entry.src);
+      if (
+        typeof entry.src === "string" &&
+        (entry.src.includes("..") || entry.src.includes("\0"))
+      )
+        continue;
+      const imgPath = path.isAbsolute(entry.src)
+        ? entry.src
+        : path.join(outputDir, entry.src);
       if (fs.existsSync(imgPath)) {
         keyframes.push({
           path: imgPath,

@@ -6211,6 +6211,19 @@ export const createAdminRouter = ({
     if (!result.ok) {
       return res.status(400).json({ error: result.error });
     }
+
+    // Restart the YouTube MCP subprocess so it picks up the refreshed YOUTUBE_OAUTH_TOKEN.
+    // The Python process reads env vars at spawn time — in-process env updates don't propagate.
+    if (localServerManager) {
+      localServerManager.restartServer("youtube").catch((err: unknown) => {
+        logger.warn(
+          `Failed to restart YouTube MCP server after token refresh: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      });
+    }
+
     return res.json({ ok: true, expiresAt: result.expiresAt });
   });
 

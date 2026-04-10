@@ -56,16 +56,20 @@ export async function generateShortsVoiceover(
     viralClip.endSeconds,
   );
 
-  const transcriptText = clipTranscript.length > 0
-    ? clipTranscript.map((s) => s.speech).join(" ")
-    : "(no speech in selected segment)";
+  const transcriptText =
+    clipTranscript.length > 0
+      ? clipTranscript.map((s) => s.speech).join(" ")
+      : "(no speech in selected segment)";
 
   const segmentDuration = viralClip.endSeconds - viralClip.startSeconds;
 
   const styleInstructions: Record<string, string> = {
-    react: "Write an energetic, reaction-style commentary. Be expressive and opinionated.",
-    summarize: "Write a clear, concise summary. Focus on the key insight or takeaway.",
-    highlight: "Write engaging narration that builds excitement. Highlight the most impressive moments.",
+    react:
+      "Write an energetic, reaction-style commentary. Be expressive and opinionated.",
+    summarize:
+      "Write a clear, concise summary. Focus on the key insight or takeaway.",
+    highlight:
+      "Write engaging narration that builds excitement. Highlight the most impressive moments.",
   };
 
   const prompt = `You are a YouTube Shorts voiceover writer. Write a punchy, fast-paced script for a ${segmentDuration.toFixed(0)}-second Short.
@@ -150,7 +154,11 @@ function filterTranscriptToWindow(
 function parseTimestamp(ts: string): number {
   const parts = ts.split(":");
   if (parts.length === 3) {
-    return parseFloat(parts[0]) * 3600 + parseFloat(parts[1]) * 60 + parseFloat(parts[2]);
+    return (
+      parseFloat(parts[0]) * 3600 +
+      parseFloat(parts[1]) * 60 +
+      parseFloat(parts[2])
+    );
   }
   if (parts.length === 2) {
     return parseFloat(parts[0]) * 60 + parseFloat(parts[1]);
@@ -179,17 +187,23 @@ async function normalizeWavToPcm16(wavPath: string): Promise<void> {
   try {
     await execFileAsync("ffmpeg", [
       "-y",
-      "-i", wavPath,
-      "-c:a", "pcm_s16le",
-      "-ar", "24000",
-      "-ac", "1",
+      "-i",
+      wavPath,
+      "-c:a",
+      "pcm_s16le",
+      "-ar",
+      "24000",
+      "-ac",
+      "1",
       tmpPath,
     ]);
     await fs.rename(tmpPath, wavPath);
     logger.info(`[ShortsVoice] Normalized WAV to PCM s16le: ${wavPath}`);
   } catch (err) {
     await fs.unlink(tmpPath).catch(() => {});
-    logger.warn(`[ShortsVoice] Failed to normalize WAV: ${(err as Error).message}`);
+    logger.warn(
+      `[ShortsVoice] Failed to normalize WAV: ${(err as Error).message}`,
+    );
     throw err;
   }
 }

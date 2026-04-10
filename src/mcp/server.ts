@@ -71,6 +71,7 @@ import { createQrCodeTools } from "./tools/qr-code-tools.js";
 import { createSocialCaptionTools } from "./tools/social-caption-tools.js";
 import { createBrandKitTools } from "./tools/brand-kit-tools.js";
 import { createPostTemplateTools } from "./tools/post-template-tools.js";
+import { createVideoPipelineTools } from "./tools/video-pipeline-tools.js";
 import { createFirecrawlSearchTool } from "./tools/firecrawl-search.js";
 import { getFirecrawlClient } from "../browser/firecrawl-client.js";
 import { createLeadExtractTool } from "./tools/lead-extract.js";
@@ -175,6 +176,14 @@ export type McpServerOptions = {
   brandKitRepo?: import("../video/brand-kit.js").BrandKitRepository;
   /** Post Template Repository for post template tools. */
   postTemplateRepo?: import("../creative/post-template-repository.js").PostTemplateRepository;
+  /** ClipExtractor for clip-video MCP tool. */
+  clipExtractor?: import("../video/clip-extractor.js").ClipExtractor;
+  /** ReframeWorker for reframe-video MCP tool. */
+  reframeWorker?: import("../video/reframe-worker.js").ReframeWorker;
+  /** AudioCleaner for clean-audio MCP tool. */
+  audioCleaner?: import("../video/audio-cleaner.js").AudioCleaner;
+  /** BRollPipeline for auto-broll MCP tool. */
+  brollPipeline?: import("../video/broll-pipeline.js").BRollPipeline;
 };
 
 export type RegisterMcpToolsOptions = Pick<
@@ -227,6 +236,10 @@ export type RegisterMcpToolsOptions = Pick<
   | "imageProcessingSidecarUrl"
   | "brandKitRepo"
   | "postTemplateRepo"
+  | "clipExtractor"
+  | "reframeWorker"
+  | "audioCleaner"
+  | "brollPipeline"
 >;
 
 const readFileSchema = z.object({ path: z.string() });
@@ -1114,5 +1127,16 @@ export const registerMcpTools = (
     for (const tool of ptTools) {
       registerTool(tool);
     }
+  }
+
+  // Video Pipeline Tools (Clip Extraction, Reframing, Audio Cleaning, B-Roll, NLE Export) — Epic #817
+  const videoPipelineTools = createVideoPipelineTools({
+    clipExtractor: options.clipExtractor,
+    reframeWorker: options.reframeWorker,
+    audioCleaner: options.audioCleaner,
+    brollPipeline: options.brollPipeline,
+  });
+  for (const tool of videoPipelineTools) {
+    registerTool(tool);
   }
 };

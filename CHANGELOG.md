@@ -14,6 +14,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **OpusClip Feature Parity — Video Clipping, Editing & Publishing Pipeline** (#817):
+  - **Intelligent Video Clipping** (#821): Multi-modal AI clip extraction via scene graph analysis (transcript + visual + audio), LLM virality scoring, and FFmpeg extraction. MCP tool: `clip-video`.
+  - **AI Video Reframing** (#818): Subject-tracking reframing with Bezier-interpolated crop trajectories. Supports 9:16, 1:1, 4:5 targets and auto/single-speaker/split-screen/gameplay/action layouts. MCP tool: `reframe-video`.
+  - **Audio Cleaner** (#820): Filler word removal (gentle/moderate/aggressive), silence trimming, optional denoise and speech normalization via Whisper + FFmpeg. MCP tool: `clean-audio`.
+  - **Enhanced Captions** (#819): 6 animated caption templates (Hormozi, minimal, TikTok, news, podcast, corporate) with word-level highlighting and brand kit integration. MCP tool: `add-captions`.
+  - **Auto B-Roll Pipeline** (#822): AI-powered B-Roll insertion point detection with stock footage search. Supports sparse/moderate/dense density modes. MCP tool: `auto-broll`.
+  - **NLE Timeline Export** (#826): FCP XML and CMX3600 EDL export from Director manifests for Premiere Pro, DaVinci Resolve, and Final Cut Pro. MCP tool: `export-timeline`.
+  - **Thumbnail Generation** (#825): Multi-template thumbnail generator with A/B variant support. MCP tool: `generate-thumbnail`.
+  - **Social Calendar Aggregation** (#823): `GET /api/admin/calendar` endpoint unifying outbox queue + scheduled jobs with platform color-coding and gap detection for empty days.
+  - **Video Performance Analytics** (#828): Cross-platform analytics aggregator with SQLite cache (1hr TTL), REST API (`/summary`, `/best-times`, `/compare`), and dashboard UI with KPI cards, platform breakdown, and best-time heatmap.
+  - **Brand Video Templates** (#827): 7 built-in animated template definitions (3 intros, 2 outros, 2 lower-thirds) with SQLite repository for saved customizations and auto-apply support.
+  - **Enhanced Timeline Editor** (#824): Canvas-based timeline ruler with zoom, toolbar with undo/redo/split/snap controls, and `useUndoHistory` hook for command-pattern editing.
+  - REST API routes: `/api/studio/pipeline/{clip,reframe,clean-audio,broll,caption-templates,export}`, `/api/admin/calendar`, `/api/admin/video-analytics/*`
+  - UI panels: ClipExtractorPanel, AudioCleanerPanel, BRollPanel, NLEExportPanel in Director Studio
+  - UI components: AnalyticsDashboard, BrandTemplateEditor, TimelineRuler, TimelineToolbar
 - Gallery Studio: pipeline selector dropdown — choose between Distilled, Dev, 2-Stage, and 2-Stage HQ pipelines (#783)
 - Gallery Studio: audio generation toggle with ~30% time warning (#784)
 - Gallery Studio: VAE tiling mode selector — Auto, None, Default, Aggressive, Conservative (#785)

@@ -1,7 +1,17 @@
 "use client";
 
-import { useState, useCallback, useEffect } from "react";
-import { ArrowLeft, Save, Film, Loader2, Check, Youtube, ExternalLink, Subtitles, ChevronDown } from "lucide-react";
+import { useState, useCallback, useEffect, useRef } from "react";
+import {
+  ArrowLeft,
+  Save,
+  Film,
+  Loader2,
+  Check,
+  Youtube,
+  ExternalLink,
+  Subtitles,
+  ChevronDown,
+} from "lucide-react";
 import { useRouter } from "next/navigation";
 import { fetchJson } from "@/lib/api";
 import { showToast } from "@/components/toast";
@@ -23,15 +33,42 @@ interface StudioToolbarProps {
   lastSaved?: string | null;
 }
 
-export function StudioToolbar({ title, draftId, manifest, onSave, onRestore, dirty, lastSaved }: StudioToolbarProps) {
+export function StudioToolbar({
+  title,
+  draftId,
+  manifest,
+  onSave,
+  onRestore,
+  dirty,
+  lastSaved,
+}: StudioToolbarProps) {
   const router = useRouter();
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [rendering, setRendering] = useState(false);
   const [ytOpen, setYtOpen] = useState(false);
   const [publishing, setPublishing] = useState(false);
-  const [publishStatus, setPublishStatus] = useState<{ status: string; videoUrl?: string } | null>(null);
+  const [publishStatus, setPublishStatus] = useState<{
+    status: string;
+    videoUrl?: string;
+  } | null>(null);
   const [subtitleMenuOpen, setSubtitleMenuOpen] = useState(false);
+  const subtitleRef = useRef<HTMLDivElement>(null);
+
+  // Close subtitles dropdown on outside click
+  useEffect(() => {
+    if (!subtitleMenuOpen) return;
+    const handleClick = (e: MouseEvent) => {
+      if (
+        subtitleRef.current &&
+        !subtitleRef.current.contains(e.target as Node)
+      ) {
+        setSubtitleMenuOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [subtitleMenuOpen]);
 
   const handleSave = useCallback(async () => {
     setSaving(true);
@@ -53,10 +90,13 @@ export function StudioToolbar({ title, draftId, manifest, onSave, onRestore, dir
     try {
       // Save first so the latest manifest is persisted
       await onSave();
-      const res = await fetchJson<{ jobId: string }>("/api/admin/director/render", {
-        method: "POST",
-        body: JSON.stringify({ manifest, draftId, quality: "standard" }),
-      });
+      const res = await fetchJson<{ jobId: string }>(
+        "/api/admin/director/render",
+        {
+          method: "POST",
+          body: JSON.stringify({ manifest, draftId, quality: "standard" }),
+        },
+      );
       await fetchJson(`/api/admin/director/drafts/${draftId}`, {
         method: "PUT",
         body: JSON.stringify({ status: "rendering" }),
@@ -76,16 +116,21 @@ export function StudioToolbar({ title, draftId, manifest, onSave, onRestore, dir
       `/api/admin/director/youtube/publish/${draftId}/status`,
     )
       .then(setPublishStatus)
-      .catch(() => {/* silent */});
+      .catch(() => {
+        /* silent */
+      });
   }, [draftId]);
 
-  const handleYouTubePublish = useCallback(async (metadata: YouTubeMetadata) => {
-    setPublishing(true);
-    try {
-      await onSave();
-      const res = await fetchJson<{ id: string; status: string; error?: string }>(
-        "/api/admin/director/youtube/publish",
-        {
+  const handleYouTubePublish = useCallback(
+    async (metadata: YouTubeMetadata) => {
+      setPublishing(true);
+      try {
+        await onSave();
+        const res = await fetchJson<{
+          id: string;
+          status: string;
+          error?: string;
+        }>("/api/admin/director/youtube/publish", {
           method: "POST",
           body: JSON.stringify({
             draftId,
@@ -95,25 +140,26 @@ export function StudioToolbar({ title, draftId, manifest, onSave, onRestore, dir
             categoryId: metadata.categoryId,
             privacyStatus: metadata.privacyStatus,
           }),
-        },
-      );
-      if (res.status === "failed") {
-        showToast(res.error ?? "Publish failed", "error");
-      } else {
-        showToast("Publishing to YouTube…", "success");
-        setYtOpen(false);
-        // Re-fetch status
-        const status = await fetchJson<{ status: string; videoUrl?: string }>(
-          `/api/admin/director/youtube/publish/${draftId}/status`,
-        );
-        setPublishStatus(status);
+        });
+        if (res.status === "failed") {
+          showToast(res.error ?? "Publish failed", "error");
+        } else {
+          showToast("Publishing to YouTube…", "success");
+          setYtOpen(false);
+          // Re-fetch status
+          const status = await fetchJson<{ status: string; videoUrl?: string }>(
+            `/api/admin/director/youtube/publish/${draftId}/status`,
+          );
+          setPublishStatus(status);
+        }
+      } catch {
+        showToast("Failed to start YouTube publish", "error");
+      } finally {
+        setPublishing(false);
       }
-    } catch {
-      showToast("Failed to start YouTube publish", "error");
-    } finally {
-      setPublishing(false);
-    }
-  }, [draftId, onSave]);
+    },
+    [draftId, onSave],
+  );
 
   const handleSaveVersion = useCallback(async () => {
     await onSave();
@@ -135,9 +181,13 @@ export function StudioToolbar({ title, draftId, manifest, onSave, onRestore, dir
           Back
         </button>
         <div className="h-4 w-px bg-border" />
-        <h2 className="text-sm font-medium text-foreground truncate max-w-[300px]">{title}</h2>
+        <h2 className="text-sm font-medium text-foreground truncate max-w-[300px]">
+          {title}
+        </h2>
         {dirty && (
-          <span className="ml-1 text-[10px] text-muted-foreground italic">unsaved</span>
+          <span className="ml-1 text-[10px] text-muted-foreground italic">
+            unsaved
+          </span>
         )}
         {lastSaved && !dirty && (
           <span className="ml-1 text-[10px] text-muted-foreground">saved</span>
@@ -150,7 +200,13 @@ export function StudioToolbar({ title, draftId, manifest, onSave, onRestore, dir
           disabled={saving}
           className="flex items-center gap-1.5 rounded-md bg-muted px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted/80 transition disabled:opacity-50"
         >
-          {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : saved ? <Check className="h-3.5 w-3.5 text-green-500" /> : <Save className="h-3.5 w-3.5" />}
+          {saving ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          ) : saved ? (
+            <Check className="h-3.5 w-3.5 text-green-500" />
+          ) : (
+            <Save className="h-3.5 w-3.5" />
+          )}
           {saved ? "Saved" : "Save"}
         </button>
         {draftId && (
@@ -162,15 +218,22 @@ export function StudioToolbar({ title, draftId, manifest, onSave, onRestore, dir
         )}
         {draftId && <ThumbnailPanel draftId={draftId} />}
         {draftId && <RenderHistory draftId={draftId} />}
-        {draftId && <YouTubePublishHistory draftId={draftId} onStatusChange={() => {
-          fetchJson<{ status: string; videoUrl?: string }>(
-            `/api/admin/director/youtube/publish/${draftId}/status`,
-          ).then(setPublishStatus).catch(() => {});
-        }} />}
+        {draftId && (
+          <YouTubePublishHistory
+            draftId={draftId}
+            onStatusChange={() => {
+              fetchJson<{ status: string; videoUrl?: string }>(
+                `/api/admin/director/youtube/publish/${draftId}/status`,
+              )
+                .then(setPublishStatus)
+                .catch(() => {});
+            }}
+          />
+        )}
 
         {/* Export Subtitles */}
         {draftId && (
-          <div className="relative">
+          <div className="relative" ref={subtitleRef}>
             <button
               onClick={() => setSubtitleMenuOpen(!subtitleMenuOpen)}
               className="flex items-center gap-1.5 rounded-md bg-muted px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted/80 transition"
@@ -203,7 +266,9 @@ export function StudioToolbar({ title, draftId, manifest, onSave, onRestore, dir
         )}
 
         {/* YouTube Publish */}
-        {draftId && publishStatus?.status === "published" && publishStatus.videoUrl ? (
+        {draftId &&
+        publishStatus?.status === "published" &&
+        publishStatus.videoUrl ? (
           <a
             href={publishStatus.videoUrl}
             target="_blank"
@@ -234,7 +299,11 @@ export function StudioToolbar({ title, draftId, manifest, onSave, onRestore, dir
           disabled={rendering || !manifest}
           className="flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90 transition disabled:opacity-50"
         >
-          {rendering ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Film className="h-3.5 w-3.5" />}
+          {rendering ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          ) : (
+            <Film className="h-3.5 w-3.5" />
+          )}
           Render
         </button>
       </div>
@@ -247,7 +316,11 @@ export function StudioToolbar({ title, draftId, manifest, onSave, onRestore, dir
         onClose={() => setYtOpen(false)}
         onPublish={handleYouTubePublish}
         publishing={publishing}
-        warning={publishStatus?.status === "published" ? "This draft has already been published to YouTube. Publishing again will create a new video." : undefined}
+        warning={
+          publishStatus?.status === "published"
+            ? "This draft has already been published to YouTube. Publishing again will create a new video."
+            : undefined
+        }
       />
     </div>
   );

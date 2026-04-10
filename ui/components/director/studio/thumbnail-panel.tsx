@@ -1,7 +1,15 @@
 "use client";
 
 import { useState, useCallback, useEffect, useRef } from "react";
-import { ImageIcon, Loader2, RefreshCw, Download, Sparkles, Wand2, ArrowLeft } from "lucide-react";
+import {
+  ImageIcon,
+  Loader2,
+  RefreshCw,
+  Download,
+  Sparkles,
+  Wand2,
+  ArrowLeft,
+} from "lucide-react";
 import { fetchJson, buildMediaUrl } from "@/lib/api";
 import { showToast } from "@/components/toast";
 import { useSocket } from "@/lib/socket-context";
@@ -21,7 +29,11 @@ interface ThumbnailResult {
   rawFrameUrl?: string;
 }
 
-const OVERLAY_OPTIONS: { value: ClickbaitOverlay; label: string; icon: string }[] = [
+const OVERLAY_OPTIONS: {
+  value: ClickbaitOverlay;
+  label: string;
+  icon: string;
+}[] = [
   { value: "none", label: "None", icon: "—" },
   { value: "arrows", label: "Arrows", icon: "➤" },
   { value: "circles", label: "Circles", icon: "⭕" },
@@ -51,7 +63,16 @@ export function ThumbnailPanel({ draftId }: ThumbnailPanelProps) {
   // Primary: poll GET /thumbnail-job/:jobId every 3s (mirrors produce pipeline pattern)
   const thumbJobQuery = useQuery({
     queryKey: ["thumbnail-job", thumbnailJobId],
-    queryFn: () => fetchJson<{ status: string; thumbnailUrl?: string; suggestedText?: string[]; selectedFrame?: { timestamp: number; rationale: string }; mode?: string; error?: string; elapsedMs?: number }>(`/api/admin/director/thumbnail-job/${thumbnailJobId}`),
+    queryFn: () =>
+      fetchJson<{
+        status: string;
+        thumbnailUrl?: string;
+        suggestedText?: string[];
+        selectedFrame?: { timestamp: number; rationale: string };
+        mode?: string;
+        error?: string;
+        elapsedMs?: number;
+      }>(`/api/admin/director/thumbnail-job/${thumbnailJobId}`),
     enabled: !!thumbnailJobId && generating,
     refetchInterval: 3000,
   });
@@ -95,7 +116,11 @@ export function ThumbnailPanel({ draftId }: ThumbnailPanelProps) {
       mode: string;
     }) => {
       if (data.draftId !== draftId) return;
-      if (pendingJobRef.current && data.thumbnailJobId !== pendingJobRef.current) return;
+      if (
+        pendingJobRef.current &&
+        data.thumbnailJobId !== pendingJobRef.current
+      )
+        return;
       pendingJobRef.current = null;
       setThumbnailJobId(null);
       setResult({
@@ -110,9 +135,17 @@ export function ThumbnailPanel({ draftId }: ThumbnailPanelProps) {
       showToast("Thumbnail enhanced!", "success");
     };
 
-    const onFailed = (data: { thumbnailJobId: string; draftId: string; error: string }) => {
+    const onFailed = (data: {
+      thumbnailJobId: string;
+      draftId: string;
+      error: string;
+    }) => {
       if (data.draftId !== draftId) return;
-      if (pendingJobRef.current && data.thumbnailJobId !== pendingJobRef.current) return;
+      if (
+        pendingJobRef.current &&
+        data.thumbnailJobId !== pendingJobRef.current
+      )
+        return;
       pendingJobRef.current = null;
       setThumbnailJobId(null);
       setGenerating(false);
@@ -142,7 +175,10 @@ export function ThumbnailPanel({ draftId }: ThumbnailPanelProps) {
       setResult(res);
       setStep("customize");
     } catch (err) {
-      showToast(err instanceof Error ? err.message : "Failed to pick frame", "error");
+      showToast(
+        err instanceof Error ? err.message : "Failed to pick frame",
+        "error",
+      );
     } finally {
       setGenerating(false);
     }
@@ -172,7 +208,10 @@ export function ThumbnailPanel({ draftId }: ThumbnailPanelProps) {
       setThumbnailJobId(res.thumbnailJobId);
       showToast("Enhancing thumbnail — this may take a few minutes…", "info");
     } catch (err) {
-      showToast(err instanceof Error ? err.message : "Enhancement failed", "error");
+      showToast(
+        err instanceof Error ? err.message : "Enhancement failed",
+        "error",
+      );
       setGenerating(false);
     }
   }, [draftId, prompt, overlay, rawFrameUrl, editing, textOverride]);
@@ -195,7 +234,10 @@ export function ThumbnailPanel({ draftId }: ThumbnailPanelProps) {
       setThumbnailJobId(res.thumbnailJobId);
       showToast("Generating thumbnail — this may take a few minutes…", "info");
     } catch (err) {
-      showToast(err instanceof Error ? err.message : "Generation failed", "error");
+      showToast(
+        err instanceof Error ? err.message : "Generation failed",
+        "error",
+      );
       setGenerating(false);
     }
   }, [draftId, prompt, overlay, editing, textOverride]);
@@ -249,23 +291,32 @@ export function ThumbnailPanel({ draftId }: ThumbnailPanelProps) {
             <div className="flex items-center gap-2">
               {step !== "pick-frame" && (
                 <button
-                  onClick={() => step === "final" ? setStep("customize") : handleStartOver()}
+                  onClick={() =>
+                    step === "final" ? setStep("customize") : handleStartOver()
+                  }
                   className="text-muted-foreground hover:text-foreground transition"
                 >
                   <ArrowLeft className="h-3.5 w-3.5" />
                 </button>
               )}
               <span className="text-xs font-medium text-foreground">
-                {step === "pick-frame" ? "AI Thumbnail" : step === "customize" ? "Customize Thumbnail" : "Thumbnail Ready"}
+                {step === "pick-frame"
+                  ? "AI Thumbnail"
+                  : step === "customize"
+                    ? "Customize Thumbnail"
+                    : "Thumbnail Ready"}
               </span>
             </div>
             <span className="rounded bg-muted px-1.5 py-0.5 text-[9px] font-medium text-muted-foreground">
-              {step === "pick-frame" ? "1/3" : step === "customize" ? "2/3" : "3/3"}
+              {step === "pick-frame"
+                ? "1/3"
+                : step === "customize"
+                  ? "2/3"
+                  : "3/3"}
             </span>
           </div>
 
           <div className="p-3 space-y-3">
-
             {/* ── Step 1: Pick best frame ── */}
             {step === "pick-frame" && (
               <div className="text-center space-y-2">
@@ -273,7 +324,8 @@ export function ThumbnailPanel({ draftId }: ThumbnailPanelProps) {
                   <ImageIcon className="h-7 w-7 text-primary" />
                 </div>
                 <p className="text-xs text-muted-foreground">
-                  AI will analyze your scenes and pick the most clickable frame as a starting point.
+                  AI will analyze your scenes and pick the most clickable frame
+                  as a starting point.
                 </p>
                 <button
                   onClick={handlePickFrame}
@@ -295,7 +347,9 @@ export function ThumbnailPanel({ draftId }: ThumbnailPanelProps) {
               <>
                 {/* Show the selected raw frame */}
                 <div className="space-y-1.5">
-                  <p className="text-[10px] font-medium text-muted-foreground">Most Clickable Frame</p>
+                  <p className="text-[10px] font-medium text-muted-foreground">
+                    Most Clickable Frame
+                  </p>
                   <div className="relative aspect-video w-full overflow-hidden rounded-md border border-border bg-muted">
                     <img
                       src={buildMediaUrl(rawFrameUrl)}
@@ -303,18 +357,21 @@ export function ThumbnailPanel({ draftId }: ThumbnailPanelProps) {
                       className="h-full w-full object-cover"
                     />
                   </div>
-                  <p className="text-[9px] text-muted-foreground italic">{rationale}</p>
+                  <p className="text-[9px] text-muted-foreground italic">
+                    {rationale}
+                  </p>
                 </div>
 
                 {/* Prompt for modification */}
                 <div>
                   <p className="mb-1 text-[10px] font-medium text-muted-foreground">
-                    Modify with Flux <span className="text-[9px] font-normal">(optional)</span>
+                    Modify with Flux{" "}
+                    <span className="text-[9px] font-normal">(optional)</span>
                   </p>
                   <textarea
                     value={prompt}
                     onChange={(e) => setPrompt(e.target.value)}
-                    placeholder="e.g. &quot;add a woman in a bikini next to the car&quot;, &quot;make it more dramatic with fire&quot;, &quot;add neon lights&quot;…"
+                    placeholder='e.g. "add a woman in a bikini next to the car", "make it more dramatic with fire", "add neon lights"…'
                     rows={2}
                     className="w-full resize-none rounded-md border border-border bg-background px-2 py-1.5 text-xs placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary"
                   />
@@ -322,7 +379,9 @@ export function ThumbnailPanel({ draftId }: ThumbnailPanelProps) {
 
                 {/* Overlay + text edits */}
                 <div>
-                  <p className="mb-1.5 text-[10px] font-medium text-muted-foreground">Clickbait Overlay</p>
+                  <p className="mb-1.5 text-[10px] font-medium text-muted-foreground">
+                    Clickbait Overlay
+                  </p>
                   <div className="flex gap-1">
                     {OVERLAY_OPTIONS.map((opt) => (
                       <button
@@ -336,7 +395,9 @@ export function ThumbnailPanel({ draftId }: ThumbnailPanelProps) {
                         }`}
                       >
                         <span className="text-sm">{opt.icon}</span>
-                        <span className="text-[8px] text-muted-foreground">{opt.label}</span>
+                        <span className="text-[8px] text-muted-foreground">
+                          {opt.label}
+                        </span>
                       </button>
                     ))}
                   </div>
@@ -345,7 +406,9 @@ export function ThumbnailPanel({ draftId }: ThumbnailPanelProps) {
                 {/* Suggested text lines */}
                 <div className="space-y-1">
                   <div className="flex items-center justify-between">
-                    <span className="text-[10px] font-medium text-muted-foreground">Overlay Text</span>
+                    <span className="text-[10px] font-medium text-muted-foreground">
+                      Overlay Text
+                    </span>
                     <button
                       onClick={() => setEditing(!editing)}
                       className="text-[10px] text-primary hover:underline"
@@ -373,7 +436,10 @@ export function ThumbnailPanel({ draftId }: ThumbnailPanelProps) {
                   ) : (
                     <div className="flex flex-wrap gap-1">
                       {textOverride.map((t, i) => (
-                        <span key={i} className="rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium text-foreground">
+                        <span
+                          key={i}
+                          className="rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium text-foreground"
+                        >
                           {t}
                         </span>
                       ))}
@@ -389,7 +455,11 @@ export function ThumbnailPanel({ draftId }: ThumbnailPanelProps) {
                       disabled={generating}
                       className="flex w-full items-center justify-center gap-1.5 rounded-md bg-primary px-3 py-2 text-xs font-medium text-primary-foreground hover:bg-primary/90 transition disabled:opacity-50"
                     >
-                      {generating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Wand2 className="h-3.5 w-3.5" />}
+                      {generating ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <Wand2 className="h-3.5 w-3.5" />
+                      )}
                       {generating ? "Editing…" : "Edit Frame with Kontext"}
                     </button>
                   )}
@@ -399,7 +469,11 @@ export function ThumbnailPanel({ draftId }: ThumbnailPanelProps) {
                       disabled={generating}
                       className="flex flex-1 items-center justify-center gap-1 rounded-md border border-border bg-background px-2 py-1.5 text-[11px] font-medium text-foreground hover:bg-muted transition disabled:opacity-50"
                     >
-                      {generating && !prompt.trim() ? <Loader2 className="h-3 w-3 animate-spin" /> : <ImageIcon className="h-3 w-3" />}
+                      {generating && !prompt.trim() ? (
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                      ) : (
+                        <ImageIcon className="h-3 w-3" />
+                      )}
                       Use As-Is
                     </button>
                     <button
@@ -407,7 +481,11 @@ export function ThumbnailPanel({ draftId }: ThumbnailPanelProps) {
                       disabled={generating}
                       className="flex flex-1 items-center justify-center gap-1 rounded-md border border-border bg-background px-2 py-1.5 text-[11px] font-medium text-foreground hover:bg-muted transition disabled:opacity-50"
                     >
-                      {generating ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
+                      {generating ? (
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                      ) : (
+                        <Sparkles className="h-3 w-3" />
+                      )}
                       New Image
                     </button>
                   </div>
@@ -456,7 +534,6 @@ export function ThumbnailPanel({ draftId }: ThumbnailPanelProps) {
                 </button>
               </div>
             )}
-
           </div>
         </div>
       )}

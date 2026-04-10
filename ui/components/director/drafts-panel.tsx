@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { Clapperboard, Trash2, Loader2, FileVideo, Clock } from "lucide-react";
-import { fetchJson } from "@/lib/api";
+import { fetchJson, buildMediaUrl } from "@/lib/api";
 import { showToast } from "@/components/toast";
 import type { DraftSummary } from "./types";
 
@@ -91,9 +91,14 @@ export function DraftsPanel() {
           className="group flex w-full cursor-pointer items-center gap-3 rounded-lg border border-border bg-card p-3 text-left transition hover:border-primary/50 hover:bg-muted/50"
         >
           {/* Thumbnail or placeholder */}
-          <div className="flex h-14 w-20 shrink-0 items-center justify-center rounded-md bg-muted">
+          <div className="flex h-14 w-20 shrink-0 items-center justify-center overflow-hidden rounded-md bg-muted">
             {d.thumbnail ? (
-              <img src={d.thumbnail} alt="" className="h-full w-full rounded-md object-cover" />
+              <img
+                src={buildMediaUrl(d.thumbnail)}
+                alt=""
+                className="h-full w-full rounded-md object-cover"
+                onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
+              />
             ) : (
               <Clapperboard className="h-5 w-5 text-muted-foreground" />
             )}
