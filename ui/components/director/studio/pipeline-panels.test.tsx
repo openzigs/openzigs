@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ClipExtractorPanel } from "./clip-extractor-panel";
 import { AudioCleanerPanel } from "./audio-cleaner-panel";
 import { BRollPanel } from "./broll-panel";
@@ -18,24 +19,33 @@ vi.mock("@/lib/socket-context", () => ({
   useSocket: () => ({ socket: null }),
 }));
 
+function createWrapper() {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  return ({ children }: { children: React.ReactNode }) => (
+    <QueryClientProvider client={client}>{children}</QueryClientProvider>
+  );
+}
+
 describe("ClipExtractorPanel", () => {
   it("renders extract button", () => {
-    render(<ClipExtractorPanel draftId="d1" videoSource="/tmp/test.mp4" />);
+    render(<ClipExtractorPanel draftId="d1" videoSource="/tmp/test.mp4" />, { wrapper: createWrapper() });
     expect(screen.getByText("Extract Clips")).toBeInTheDocument();
   });
 
   it("shows clip count input", () => {
-    render(<ClipExtractorPanel draftId="d1" videoSource="/tmp/test.mp4" />);
+    render(<ClipExtractorPanel draftId="d1" videoSource="/tmp/test.mp4" />, { wrapper: createWrapper() });
     expect(screen.getByText("Clips")).toBeInTheDocument();
   });
 
   it("shows style selector", () => {
-    render(<ClipExtractorPanel draftId="d1" videoSource="/tmp/test.mp4" />);
+    render(<ClipExtractorPanel draftId="d1" videoSource="/tmp/test.mp4" />, { wrapper: createWrapper() });
     expect(screen.getByText("Style")).toBeInTheDocument();
   });
 
   it("disables button without source", () => {
-    render(<ClipExtractorPanel draftId="d1" />);
+    render(<ClipExtractorPanel draftId="d1" />, { wrapper: createWrapper() });
     const btn = screen.getByText("Extract Clips").closest("button");
     expect(btn).toBeDisabled();
   });
@@ -63,17 +73,17 @@ describe("AudioCleanerPanel", () => {
 
 describe("BRollPanel", () => {
   it("renders analyze button", () => {
-    render(<BRollPanel draftId="d1" videoSource="/tmp/test.mp4" />);
+    render(<BRollPanel draftId="d1" videoSource="/tmp/test.mp4" />, { wrapper: createWrapper() });
     expect(screen.getByText("Find B-Roll Points")).toBeInTheDocument();
   });
 
   it("shows density selector", () => {
-    render(<BRollPanel draftId="d1" videoSource="/tmp/test.mp4" />);
+    render(<BRollPanel draftId="d1" videoSource="/tmp/test.mp4" />, { wrapper: createWrapper() });
     expect(screen.getByText("Density")).toBeInTheDocument();
   });
 
   it("disables button without source", () => {
-    render(<BRollPanel draftId="d1" />);
+    render(<BRollPanel draftId="d1" />, { wrapper: createWrapper() });
     const btn = screen.getByText("Find B-Roll Points").closest("button");
     expect(btn).toBeDisabled();
   });
