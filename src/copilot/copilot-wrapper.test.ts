@@ -995,7 +995,7 @@ describe("copilot wrapper", () => {
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     for await (const _chunk of wrapper.chat("test", { conversationId: "ollama-map-test" })) { /* drain */ }
     const cfg = client.lastSessionConfig as Record<string, unknown>;
-    expect(cfg.provider).toEqual({ type: "openai", baseUrl: "http://localhost:11434/v1" });
+    expect(cfg.provider).toEqual({ type: "openai", baseUrl: "http://localhost:11434/v1", wireApi: "completions" });
   });
 
   it("passes non-ollama providers through to SDK unchanged", async () => {
