@@ -19,7 +19,13 @@ import {
 import { showToast } from "@/components/toast";
 import { fetchJson } from "@/lib/api";
 
-type RecordingState = "idle" | "requesting" | "recording" | "paused" | "stopped" | "uploading";
+type RecordingState =
+  | "idle"
+  | "requesting"
+  | "recording"
+  | "paused"
+  | "stopped"
+  | "uploading";
 
 interface ScreenRecorderProps {
   onRecordingComplete?: (assetId: string, filename: string) => void;
@@ -60,7 +66,8 @@ export function ScreenRecorder({ onRecordingComplete }: ScreenRecorderProps) {
       if (timerRef.current) clearInterval(timerRef.current);
       if (vuAnimFrameRef.current) cancelAnimationFrame(vuAnimFrameRef.current);
       if (vuContextRef.current) vuContextRef.current.close().catch(() => {});
-      if (mixAudioContextRef.current) mixAudioContextRef.current.close().catch(() => {});
+      if (mixAudioContextRef.current)
+        mixAudioContextRef.current.close().catch(() => {});
       if (previewUrl) URL.revokeObjectURL(previewUrl);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -125,8 +132,15 @@ export function ScreenRecorder({ onRecordingComplete }: ScreenRecorderProps) {
 
       // Warn when audio was requested but none captured (e.g. window/screen share
       // instead of tab share, or user un-checked "Share audio" in the dialog).
-      if (includeAudio && displayStream.getAudioTracks().length === 0 && !includeMic) {
-        showToast("No audio captured — try sharing a browser tab instead of a window, or enable Microphone.", "info");
+      if (
+        includeAudio &&
+        displayStream.getAudioTracks().length === 0 &&
+        !includeMic
+      ) {
+        showToast(
+          "No audio captured — try sharing a browser tab instead of a window, or enable Microphone.",
+          "info",
+        );
       }
 
       let combinedStream = displayStream;
@@ -135,7 +149,9 @@ export function ScreenRecorder({ onRecordingComplete }: ScreenRecorderProps) {
       // are combined into one track (MediaRecorder only records one audio track).
       if (includeMic) {
         try {
-          const micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          const micStream = await navigator.mediaDevices.getUserMedia({
+            audio: true,
+          });
           const displayHasAudio = displayStream.getAudioTracks().length > 0;
 
           if (displayHasAudio) {
@@ -160,7 +176,10 @@ export function ScreenRecorder({ onRecordingComplete }: ScreenRecorderProps) {
             ]);
           }
         } catch {
-          showToast("Microphone access denied — recording without mic.", "info");
+          showToast(
+            "Microphone access denied — recording without mic.",
+            "info",
+          );
         }
       }
 
@@ -173,7 +192,9 @@ export function ScreenRecorder({ onRecordingComplete }: ScreenRecorderProps) {
       }
 
       // Choose format: prefer WebM VP9+Opus
-      const mimeType = MediaRecorder.isTypeSupported("video/webm;codecs=vp9,opus")
+      const mimeType = MediaRecorder.isTypeSupported(
+        "video/webm;codecs=vp9,opus",
+      )
         ? "video/webm;codecs=vp9,opus"
         : MediaRecorder.isTypeSupported("video/webm;codecs=vp8,opus")
           ? "video/webm;codecs=vp8,opus"
@@ -211,26 +232,44 @@ export function ScreenRecorder({ onRecordingComplete }: ScreenRecorderProps) {
         }
       });
 
-      pausedElapsedRef.current = isContinuingRef.current ? continuationElapsedRef.current : 0;
+      pausedElapsedRef.current = isContinuingRef.current
+        ? continuationElapsedRef.current
+        : 0;
       recorder.start(1000); // 1s timeslice
       setState("recording");
       startTimer();
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Failed to start screen capture";
-      if (msg.includes("Permission denied") || msg.includes("NotAllowedError")) {
-        setError("Screen capture permission denied. On macOS, enable Screen Recording in System Settings → Privacy & Security.");
+      const msg =
+        err instanceof Error ? err.message : "Failed to start screen capture";
+      if (
+        msg.includes("Permission denied") ||
+        msg.includes("NotAllowedError")
+      ) {
+        setError(
+          "Screen capture permission denied. On macOS, enable Screen Recording in System Settings → Privacy & Security.",
+        );
       } else {
         setError(msg);
       }
       setState("idle");
       stopAllStreams();
     }
-  }, [includeAudio, includeMic, previewUrl, setupVuMeter, startTimer, stopTimer, stopAllStreams]);
+  }, [
+    includeAudio,
+    includeMic,
+    previewUrl,
+    setupVuMeter,
+    startTimer,
+    stopTimer,
+    stopAllStreams,
+  ]);
 
   const pauseRecording = useCallback(() => {
     if (mediaRecorderRef.current?.state === "recording") {
       mediaRecorderRef.current.pause();
-      pausedElapsedRef.current = Math.floor((Date.now() - startTimeRef.current) / 1000);
+      pausedElapsedRef.current = Math.floor(
+        (Date.now() - startTimeRef.current) / 1000,
+      );
       setState("paused");
       stopTimer();
     }
@@ -245,12 +284,18 @@ export function ScreenRecorder({ onRecordingComplete }: ScreenRecorderProps) {
   }, [startTimer]);
 
   const stopRecording = useCallback(() => {
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
+    if (
+      mediaRecorderRef.current &&
+      mediaRecorderRef.current.state !== "inactive"
+    ) {
       mediaRecorderRef.current.stop();
     }
     if (vuAnimFrameRef.current) cancelAnimationFrame(vuAnimFrameRef.current);
     if (vuContextRef.current) vuContextRef.current.close().catch(() => {});
-    if (mixAudioContextRef.current) { mixAudioContextRef.current.close().catch(() => {}); mixAudioContextRef.current = null; }
+    if (mixAudioContextRef.current) {
+      mixAudioContextRef.current.close().catch(() => {});
+      mixAudioContextRef.current = null;
+    }
   }, []);
 
   const discardRecording = useCallback(() => {
@@ -297,11 +342,19 @@ export function ScreenRecorder({ onRecordingComplete }: ScreenRecorderProps) {
       );
 
       if (!response.ok) {
-        const data = await response.json().catch(() => ({ error: "Upload failed" }));
-        throw new Error((data as { error?: string }).error ?? `Upload failed: ${response.status}`);
+        const data = await response
+          .json()
+          .catch(() => ({ error: "Upload failed" }));
+        throw new Error(
+          (data as { error?: string }).error ??
+            `Upload failed: ${response.status}`,
+        );
       }
 
-      const result = await response.json() as { assetId: string; filename: string };
+      const result = (await response.json()) as {
+        assetId: string;
+        filename: string;
+      };
       showToast(`Recording saved: ${result.filename}`, "success");
       onRecordingComplete?.(result.assetId, result.filename);
       discardRecording();
@@ -333,19 +386,30 @@ export function ScreenRecorder({ onRecordingComplete }: ScreenRecorderProps) {
       );
 
       if (!response.ok) {
-        const data = await response.json().catch(() => ({ error: "Upload failed" }));
-        throw new Error((data as { error?: string }).error ?? `Upload failed: ${response.status}`);
+        const data = await response
+          .json()
+          .catch(() => ({ error: "Upload failed" }));
+        throw new Error(
+          (data as { error?: string }).error ??
+            `Upload failed: ${response.status}`,
+        );
       }
 
-      const result = await response.json() as { assetId: string; filename: string };
+      const result = (await response.json()) as {
+        assetId: string;
+        filename: string;
+      };
 
       // Fetch the asset to get the file path for the manifest
-      const asset = await fetchJson<{ file_path: string; duration_seconds: number | null }>(
-        `/api/queue/assets/${result.assetId}`,
-      );
+      const asset = await fetchJson<{
+        file_path: string;
+        duration_seconds: number | null;
+      }>(`/api/queue/assets/${result.assetId}`);
 
       const fps = 30;
-      const durationFrames = Math.round((asset.duration_seconds ?? elapsed) * fps);
+      const durationFrames = Math.round(
+        (asset.duration_seconds ?? elapsed) * fps,
+      );
       const manifest = {
         projectTitle: `Recording ${new Date().toLocaleDateString()}`,
         templateId: "highlight-16-9",
@@ -362,14 +426,17 @@ export function ScreenRecorder({ onRecordingComplete }: ScreenRecorderProps) {
         ],
       };
 
-      const draft = await fetchJson<{ id: string }>("/api/admin/director/drafts", {
-        method: "POST",
-        body: JSON.stringify({
-          title: manifest.projectTitle,
-          manifest,
-          productionMode: "highlight",
-        }),
-      });
+      const draft = await fetchJson<{ id: string }>(
+        "/api/admin/director/drafts",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            title: manifest.projectTitle,
+            manifest,
+            productionMode: "highlight",
+          }),
+        },
+      );
 
       showToast(`Draft created! Opening editor…`, "success");
       onRecordingComplete?.(result.assetId, result.filename);
@@ -393,47 +460,80 @@ export function ScreenRecorder({ onRecordingComplete }: ScreenRecorderProps) {
 
       switch (e.key.toLowerCase()) {
         case "r":
-          if (state === "idle") { e.preventDefault(); startRecording(); }
-          else if (state === "recording" || state === "paused") { e.preventDefault(); stopRecording(); }
+          if (state === "idle") {
+            e.preventDefault();
+            startRecording();
+          } else if (state === "recording" || state === "paused") {
+            e.preventDefault();
+            stopRecording();
+          }
           break;
         case "p":
-          if (state === "recording") { e.preventDefault(); pauseRecording(); }
-          else if (state === "paused") { e.preventDefault(); resumeRecording(); }
+          if (state === "recording") {
+            e.preventDefault();
+            pauseRecording();
+          } else if (state === "paused") {
+            e.preventDefault();
+            resumeRecording();
+          }
           break;
         case "escape":
-          if (state === "recording" || state === "paused") { e.preventDefault(); stopRecording(); }
-          else if (state === "stopped") { e.preventDefault(); discardRecording(); }
+          if (state === "recording" || state === "paused") {
+            e.preventDefault();
+            stopRecording();
+          } else if (state === "stopped") {
+            e.preventDefault();
+            discardRecording();
+          }
           break;
       }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [state, startRecording, stopRecording, pauseRecording, resumeRecording, discardRecording]);
+  }, [
+    state,
+    startRecording,
+    stopRecording,
+    pauseRecording,
+    resumeRecording,
+    discardRecording,
+  ]);
 
   const formatTime = (secs: number) => {
-    const m = Math.floor(secs / 60).toString().padStart(2, "0");
+    const m = Math.floor(secs / 60)
+      .toString()
+      .padStart(2, "0");
     const s = (secs % 60).toString().padStart(2, "0");
     return `${m}:${s}`;
   };
 
   return (
-    <div className="rounded-lg border border-zinc-700 bg-zinc-900 p-4 space-y-4" data-testid="screen-recorder">
+    <div
+      className="rounded-lg border border-zinc-700 bg-zinc-900 p-4 space-y-4"
+      data-testid="screen-recorder"
+    >
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <MonitorUp className="h-5 w-5 text-red-400" />
-          <h3 className="text-sm font-semibold text-zinc-200">Screen Recorder</h3>
+          <h3 className="text-sm font-semibold text-zinc-200">
+            Screen Recorder
+          </h3>
         </div>
         {state === "recording" && (
           <div className="flex items-center gap-2">
             <span className="h-2 w-2 rounded-full bg-red-500 animate-pulse" />
-            <span className="text-xs text-red-400 font-mono">{formatTime(elapsed)}</span>
+            <span className="text-xs text-red-400 font-mono">
+              {formatTime(elapsed)}
+            </span>
           </div>
         )}
         {state === "paused" && (
           <div className="flex items-center gap-2">
             <Clock className="h-3 w-3 text-yellow-400" />
-            <span className="text-xs text-yellow-400 font-mono">{formatTime(elapsed)}</span>
+            <span className="text-xs text-yellow-400 font-mono">
+              {formatTime(elapsed)}
+            </span>
           </div>
         )}
       </div>
@@ -457,7 +557,11 @@ export function ScreenRecorder({ onRecordingComplete }: ScreenRecorderProps) {
                 : "bg-zinc-800 text-zinc-500 border border-zinc-700"
             }`}
           >
-            {includeAudio ? <Volume2 className="h-3 w-3" /> : <VolumeX className="h-3 w-3" />}
+            {includeAudio ? (
+              <Volume2 className="h-3 w-3" />
+            ) : (
+              <VolumeX className="h-3 w-3" />
+            )}
             System Audio
           </button>
           <button
@@ -468,7 +572,11 @@ export function ScreenRecorder({ onRecordingComplete }: ScreenRecorderProps) {
                 : "bg-zinc-800 text-zinc-500 border border-zinc-700"
             }`}
           >
-            {includeMic ? <Mic className="h-3 w-3" /> : <MicOff className="h-3 w-3" />}
+            {includeMic ? (
+              <Mic className="h-3 w-3" />
+            ) : (
+              <MicOff className="h-3 w-3" />
+            )}
             Microphone
           </button>
         </div>
@@ -511,7 +619,10 @@ export function ScreenRecorder({ onRecordingComplete }: ScreenRecorderProps) {
         )}
 
         {state === "requesting" && (
-          <button disabled className="flex-1 flex items-center justify-center gap-2 rounded bg-zinc-700 px-3 py-2 text-sm text-zinc-400">
+          <button
+            disabled
+            className="flex-1 flex items-center justify-center gap-2 rounded bg-zinc-700 px-3 py-2 text-sm text-zinc-400"
+          >
             <div className="h-4 w-4 border-2 border-zinc-500 border-t-transparent rounded-full animate-spin" />
             Waiting for permission…
           </button>
@@ -592,7 +703,10 @@ export function ScreenRecorder({ onRecordingComplete }: ScreenRecorderProps) {
         )}
 
         {state === "uploading" && (
-          <button disabled className="flex-1 flex items-center justify-center gap-2 rounded bg-zinc-700 px-3 py-2 text-sm text-zinc-400">
+          <button
+            disabled
+            className="flex-1 flex items-center justify-center gap-2 rounded bg-zinc-700 px-3 py-2 text-sm text-zinc-400"
+          >
             <div className="h-4 w-4 border-2 border-zinc-500 border-t-transparent rounded-full animate-spin" />
             Uploading…
           </button>
@@ -604,8 +718,9 @@ export function ScreenRecorder({ onRecordingComplete }: ScreenRecorderProps) {
         <div className="flex items-start gap-2 rounded bg-blue-950/50 border border-blue-800 p-2">
           <Info className="h-3.5 w-3.5 text-blue-400 mt-0.5 shrink-0" />
           <p className="text-[10px] text-blue-300 leading-tight">
-            Recording in another window? Use the browser&apos;s <strong>Stop Sharing</strong> button (in the tab bar or system tray) to stop.
-            Keyboard shortcuts only work when this tab has focus.
+            Recording in another window? Use the browser&apos;s{" "}
+            <strong>Stop Sharing</strong> button (in the tab bar or system tray)
+            to stop. Keyboard shortcuts only work when this tab has focus.
           </p>
         </div>
       )}
@@ -615,17 +730,24 @@ export function ScreenRecorder({ onRecordingComplete }: ScreenRecorderProps) {
         <div className="space-y-1">
           {state === "idle" && (
             <p className="text-[10px] text-zinc-600 leading-tight">
-              macOS: Enable Screen Recording in System Settings → Privacy &amp; Security for this browser.
+              macOS: Enable Screen Recording in System Settings → Privacy &amp;
+              Security for this browser.
             </p>
           )}
           <p className="text-[10px] text-zinc-600">
-            <kbd className="rounded bg-zinc-800 px-1 py-0.5 text-zinc-400">R</kbd>{" "}
+            <kbd className="rounded bg-zinc-800 px-1 py-0.5 text-zinc-400">
+              R
+            </kbd>{" "}
             {state === "idle" ? "Record" : "Stop"}
             {" · "}
-            <kbd className="rounded bg-zinc-800 px-1 py-0.5 text-zinc-400">P</kbd>{" "}
+            <kbd className="rounded bg-zinc-800 px-1 py-0.5 text-zinc-400">
+              P
+            </kbd>{" "}
             {state === "paused" ? "Resume" : "Pause"}
             {" · "}
-            <kbd className="rounded bg-zinc-800 px-1 py-0.5 text-zinc-400">Esc</kbd>{" "}
+            <kbd className="rounded bg-zinc-800 px-1 py-0.5 text-zinc-400">
+              Esc
+            </kbd>{" "}
             {state === "idle" ? "Discard" : "Stop"}
             {(state === "recording" || state === "paused") && (
               <span className="text-zinc-700"> (this tab only)</span>

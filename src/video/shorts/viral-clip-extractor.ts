@@ -48,9 +48,12 @@ export async function extractViralClip(
     .join("\n");
 
   const styleInstructions: Record<string, string> = {
-    react: "Find the most reaction-worthy, surprising, or controversial moment.",
-    summarize: "Find the segment that best summarizes the core message or key insight.",
-    highlight: "Find the most visually dynamic, emotionally engaging, or peak-action moment.",
+    react:
+      "Find the most reaction-worthy, surprising, or controversial moment.",
+    summarize:
+      "Find the segment that best summarizes the core message or key insight.",
+    highlight:
+      "Find the most visually dynamic, emotionally engaging, or peak-action moment.",
   };
 
   const prompt = `You are a viral content editor specializing in YouTube Shorts.
@@ -91,7 +94,10 @@ Respond with ONLY valid JSON (no markdown):
   }
 
   const responseText = chunks.join("");
-  const rawJson = responseText.replace(/```(?:json)?\s*/gi, "").replace(/```\s*/g, "").trim();
+  const rawJson = responseText
+    .replace(/```(?:json)?\s*/gi, "")
+    .replace(/```\s*/g, "")
+    .trim();
 
   try {
     const parsed = JSON.parse(rawJson) as Record<string, unknown>;
@@ -100,7 +106,11 @@ Respond with ONLY valid JSON (no markdown):
     const rationale = String(parsed.rationale ?? "");
     const suggestedHook = String(parsed.suggestedHook ?? "");
 
-    if (!Number.isFinite(startSeconds) || !Number.isFinite(endSeconds) || endSeconds <= startSeconds) {
+    if (
+      !Number.isFinite(startSeconds) ||
+      !Number.isFinite(endSeconds) ||
+      endSeconds <= startSeconds
+    ) {
       throw new Error("Invalid time range");
     }
 
@@ -110,7 +120,9 @@ Respond with ONLY valid JSON (no markdown):
     const duration = clampedEnd - clampedStart;
 
     if (duration < 10 || duration > 90) {
-      logger.warn(`[ViralClipExtractor] Duration ${duration.toFixed(1)}s outside expected range — using anyway`);
+      logger.warn(
+        `[ViralClipExtractor] Duration ${duration.toFixed(1)}s outside expected range — using anyway`,
+      );
     }
 
     return {
@@ -120,7 +132,9 @@ Respond with ONLY valid JSON (no markdown):
       suggestedHook,
     };
   } catch (parseErr) {
-    logger.warn(`[ViralClipExtractor] LLM response could not be parsed — using center segment`);
+    logger.warn(
+      `[ViralClipExtractor] LLM response could not be parsed — using center segment`,
+    );
     // Fallback: take the center segment of target duration
     const center = clip.duration / 2;
     const halfDur = Math.min(targetDuration / 2, clip.duration / 2);
@@ -134,7 +148,10 @@ Respond with ONLY valid JSON (no markdown):
 }
 
 /** Uniformly sample N keyframes from a larger set. */
-function sampleKeyframes(keyframes: KeyframeInfo[], maxCount: number): KeyframeInfo[] {
+function sampleKeyframes(
+  keyframes: KeyframeInfo[],
+  maxCount: number,
+): KeyframeInfo[] {
   if (keyframes.length <= maxCount) return keyframes;
   const step = keyframes.length / maxCount;
   const sampled: KeyframeInfo[] = [];

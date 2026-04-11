@@ -47,6 +47,7 @@
 - [Character Lab — LoRA Training & Identity Consistency](#character-lab--lora-training--identity-consistency-epic-374)
 - [Autonomous Agent Testing Architecture](#autonomous-agent-testing-architecture)
 - [Studio Mode: Screen Capture, Trim & AI Auto-Cut](#studio-mode-screen-capture-trim--ai-auto-cut)
+- [OpusClip Feature Parity — Video Pipeline](#opusclip-feature-parity--video-pipeline-epic-817)
 
 ---
 
@@ -6442,3 +6443,67 @@ Professional-grade features for video production and asset management.
 - UI: **`ui/app/director/analytics/page.tsx`** — Channel overview cards, Recharts bar chart (top 10 by views), sortable/searchable video metrics table.
 
 ### Tracking: [Epic #511](https://github.com/openzigs/openzigs/issues/511)
+
+---
+
+## OpusClip Feature Parity — Video Pipeline (Epic #817)
+
+End-to-end video clipping, editing, and publishing pipeline with intelligent clip extraction, AI reframing, audio cleaning, animated captions, auto B-Roll, NLE export, thumbnail generation, social calendar, analytics dashboard, and brand templates.
+
+### Backend Modules
+
+| Module | File | Description |
+|--------|------|-------------|
+| **Scene Graph** | `src/video/scene-graph.ts` | Multi-modal scene analysis — transcript, visual, and audio signals fused into a scored scene graph for clip boundary detection |
+| **Clip Extractor** | `src/video/clip-extractor.ts` | Orchestrates scene graph analysis → LLM virality scoring → FFmpeg extraction. Job queue with `submit()` / `waitForCompletion()` |
+| **Crop Trajectory** | `src/video/crop-trajectory.ts` | Bézier-interpolated crop path generation for smooth subject-tracking reframes. Supports single-speaker, split-screen, gameplay, action modes |
+| **Reframe Worker** | `src/video/reframe-worker.ts` | FFmpeg-backed reframing engine. Accepts crop trajectories, renders to 9:16, 1:1, 4:5 targets |
+| **Audio Cleaner** | `src/video/audio-cleaner.ts` | Filler word removal (Whisper-based detection), silence trimming, denoise, loudness normalization via FFmpeg |
+| **Caption Templates** | `src/video/caption-templates.ts` | 6 animated caption templates (hormozi, minimal, tiktok, news, podcast, corporate) with word-level highlight configs |
+| **B-Roll Pipeline** | `src/video/broll-pipeline.ts` | Narration analysis → insertion point detection → stock footage sourcing (Pexels/Pixabay) or AI generation |
+| **NLE Export** | `src/video/nle-export.ts` | Manifest → Timeline conversion, FCP XML and EDL (CMX3600) export for Premiere Pro, DaVinci Resolve, Final Cut Pro |
+| **Brand Templates** | `src/video/brand-templates.ts` | 7 built-in animated intro/outro/lower-third templates with SQLite persistence for saved customizations |
+| **Thumbnail Templates** | `src/video/thumbnails/thumbnail-templates.ts` | 5 YouTube-optimized thumbnail layouts (reaction, before-after, list, spotlight, minimal) with A/B variant generation |
+
+### API Routers
+
+| Router | File | Mount Path | Description |
+|--------|------|------------|-------------|
+| **Video Pipeline** | `src/api/video-pipeline.ts` | `/api/studio/pipeline/*` | Clip, reframe, clean-audio, B-Roll, caption-templates, export, thumbnail endpoints. Rate-limited export route. |
+| **Calendar** | `src/api/calendar.ts` | `/api/admin/calendar` | Social publishing calendar with CRUD for scheduled posts, drag-and-drop rescheduling, platform selection |
+| **Analytics** | `src/api/analytics.ts` | `/api/admin/video-analytics/*` | Cross-platform analytics aggregator with SQLite cache (1hr TTL), KPI summary, platform breakdown, best-posting-times heatmap |
+
+### MCP Tools (7 tools)
+
+All tools registered via `createVideoPipelineTools()` in `src/mcp/tools/video-pipeline-tools.ts`:
+
+| Tool | Risk | Description |
+|------|------|-------------|
+| `clip-video` | medium | Extract viral-worthy clips from long video using multi-modal AI scene analysis |
+| `reframe-video` | medium | Reframe video to different aspect ratio with AI subject tracking |
+| `clean-audio` | low | Remove filler words, trim silence, denoise, normalize loudness |
+| `add-captions` | low | Apply animated caption templates with word-level highlighting |
+| `auto-broll` | low | Identify and suggest B-Roll insertion points with stock footage sourcing |
+| `export-timeline` | low | Export Director manifest as FCP XML or EDL for NLE import |
+| `generate-thumbnail` | low | Generate YouTube-optimized thumbnails with template selection and A/B variants |
+
+### UI Components
+
+| Component | File | Description |
+|-----------|------|-------------|
+| **ClipExtractorPanel** | `ui/components/director/studio/clip-extractor-panel.tsx` | Clip extraction UI with source input, style selection, job progress |
+| **AudioCleanerPanel** | `ui/components/director/studio/audio-cleaner-panel.tsx` | Audio cleaning controls with aggressiveness slider, preview |
+| **BRollPanel** | `ui/components/director/studio/broll-panel.tsx` | B-Roll suggestion review, density controls, transition style |
+| **NLEExportPanel** | `ui/components/director/studio/nle-export-panel.tsx` | Format selection (FCP XML / EDL), manifest preview, download |
+| **AnalyticsDashboard** | `ui/components/analytics/analytics-dashboard.tsx` | KPI cards, platform breakdown, best-posting-times heatmap, date range picker |
+| **BrandTemplateEditor** | `ui/components/director/brand-template-editor.tsx` | Template gallery, customization form, auto-apply toggle, preview |
+| **TimelineRuler** | `ui/components/director/studio/timeline-ruler.tsx` | Canvas-based timeline ruler with zoom and scrubbing |
+| **TimelineToolbar** | `ui/components/director/studio/timeline-toolbar.tsx` | Undo/redo, save, render controls |
+
+### Data Model
+
+- **`brand_templates`** SQLite table — Saved custom brand template configurations
+- **Analytics cache** — `analytics_cache` SQLite table with platform, metric type, JSON payload, and 1hr TTL
+- **Calendar events** — `calendar_events` SQLite table for scheduled social posts
+
+### Tracking: [Epic #817](https://github.com/openzigs/openzigs/issues/817)

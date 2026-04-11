@@ -30,6 +30,7 @@ export interface YouTubePublishRequest {
   privacyStatus?: "public" | "unlisted" | "private";
   notifySubscribers?: boolean;
   scheduledPublishTime?: string;
+  skipAutoThumbnail?: boolean;
 }
 
 export interface YouTubePublishResult {
@@ -53,7 +54,12 @@ export class YouTubePublishService {
   private io: SocketIOServer | null;
   private readonly db: Database.Database | null;
 
-  constructor({ toolRegistry, publishRepo, io, db }: YouTubePublishServiceOptions) {
+  constructor({
+    toolRegistry,
+    publishRepo,
+    io,
+    db,
+  }: YouTubePublishServiceOptions) {
     this.toolRegistry = toolRegistry;
     this.publishRepo = publishRepo;
     this.io = io ?? null;
@@ -79,7 +85,9 @@ export class YouTubePublishService {
     const now = new Date().toISOString();
 
     // Resolve the video file path
-    const filePath = request.filePath ? resolvePath(request.filePath) : this.resolveRenderOutputPath(request.draftId);
+    const filePath = request.filePath
+      ? resolvePath(request.filePath)
+      : this.resolveRenderOutputPath(request.draftId);
 
     // Defense-in-depth: validate file path is within allowed directories
     if (filePath) {
@@ -102,7 +110,13 @@ export class YouTubePublishService {
           created_at: now,
           updated_at: now,
         });
-        return { publishId, videoId: null, videoUrl: null, status: "failed", error: errorMsg };
+        return {
+          publishId,
+          videoId: null,
+          videoUrl: null,
+          status: "failed",
+          error: errorMsg,
+        };
       }
     }
     if (!filePath || !fs.existsSync(filePath)) {
@@ -120,7 +134,13 @@ export class YouTubePublishService {
         created_at: now,
         updated_at: now,
       });
-      return { publishId, videoId: null, videoUrl: null, status: "failed", error: errorMsg };
+      return {
+        publishId,
+        videoId: null,
+        videoUrl: null,
+        status: "failed",
+        error: errorMsg,
+      };
     }
 
     // Create the publish record in uploading state
@@ -145,7 +165,9 @@ export class YouTubePublishService {
       // Get the youtube-upload-video tool from the registry
       const tool = this.toolRegistry.getToolDefinition("youtube-upload-video");
       if (!tool) {
-        throw new Error("YouTube upload tool (youtube-upload-video) is not available. Ensure the YouTube MCP server is running.");
+        throw new Error(
+          "YouTube upload tool (youtube-upload-video) is not available. Ensure the YouTube MCP server is running.",
+        );
       }
 
       // Call the MCP tool
@@ -175,8 +197,12 @@ export class YouTubePublishService {
       }
 
       const videoId = response.data?.video_id ?? response.data?.id ?? null;
-      const videoUrl = videoId ? `https://www.youtube.com/watch?v=${videoId}` : (response.data?.url ?? null);
-      const finalStatus = request.scheduledPublishTime ? "scheduled" : "published";
+      const videoUrl = videoId
+        ? `https://www.youtube.com/watch?v=${videoId}`
+        : (response.data?.url ?? null);
+      const finalStatus = request.scheduledPublishTime
+        ? "scheduled"
+        : "published";
 
       // Update publish record
       this.publishRepo.updateStatus(publishId, finalStatus, {
@@ -188,7 +214,13 @@ export class YouTubePublishService {
       this.emitComplete(request.draftId, publishId, videoId, videoUrl);
 
       // Try to set thumbnail if one exists
-      await this.trySetThumbnail(request.draftId, videoId);
+      await this.trySetThumbnail(
+        request.draftId,
+        videoId,
+        filePath,
+        request.title,
+        request.skipAutoThumbnail,
+      );
 
       // Try to upload captions if the draft has subtitles
       if (videoId) {
@@ -199,13 +231,19 @@ export class YouTubePublishService {
           // still processing after upload. A brief wait reduces spurious failures;
           // users can also retry manually via the UI.
           const captionDelay = new Promise<void>((r) => setTimeout(r, 15_000));
-          captionDelay.then(() => this.uploadCaptions(publishId)).catch((err) => {
-            logger.warn(`[YouTubePublish] Auto caption upload failed: ${err instanceof Error ? err.message : String(err)}`);
-          });
+          captionDelay
+            .then(() => this.uploadCaptions(publishId))
+            .catch((err) => {
+              logger.warn(
+                `[YouTubePublish] Auto caption upload failed: ${err instanceof Error ? err.message : String(err)}`,
+              );
+            });
         }
       }
 
-      logger.info(`[YouTubePublish] Published ${publishId} → ${videoId ?? "unknown"}`);
+      logger.info(
+        `[YouTubePublish] Published ${publishId} → ${videoId ?? "unknown"}`,
+      );
       return { publishId, videoId, videoUrl, status: finalStatus };
     } catch (error) {
       const rawMsg = error instanceof Error ? error.message : String(error);
@@ -215,12 +253,24 @@ export class YouTubePublishService {
       });
       this.emitError(request.draftId, publishId, errorMsg);
       logger.error(`[YouTubePublish] Failed ${publishId}: ${errorMsg}`);
-      return { publishId, videoId: null, videoUrl: null, status: "failed", error: errorMsg };
+      return {
+        publishId,
+        videoId: null,
+        videoUrl: null,
+        status: "failed",
+        error: errorMsg,
+      };
     }
   }
 
   /** Get publish status for a draft. */
-  getPublishStatus(draftId: string): { status: string; publishId?: string; videoId?: string; videoUrl?: string; error?: string } | null {
+  getPublishStatus(draftId: string): {
+    status: string;
+    publishId?: string;
+    videoId?: string;
+    videoUrl?: string;
+    error?: string;
+  } | null {
     const latest = this.publishRepo.getLatestByDraftId(draftId);
     if (!latest) return null;
     return {
@@ -242,7 +292,9 @@ export class YouTubePublishService {
    * If the video has been deleted from YouTube, updates the publish record status to "deleted".
    * Returns the updated status.
    */
-  async checkVideoExists(publishId: string): Promise<{ exists: boolean; status: string }> {
+  async checkVideoExists(
+    publishId: string,
+  ): Promise<{ exists: boolean; status: string }> {
     const record = this.publishRepo.getById(publishId);
     if (!record) {
       return { exists: false, status: "not_found" };
@@ -251,20 +303,29 @@ export class YouTubePublishService {
       return { exists: false, status: record.status };
     }
 
-    const tool = this.toolRegistry.getToolDefinition("youtube-check-video-exists");
+    const tool = this.toolRegistry.getToolDefinition(
+      "youtube-check-video-exists",
+    );
     if (!tool) {
-      logger.warn("[YouTubePublish] youtube-check-video-exists tool not available");
+      logger.warn(
+        "[YouTubePublish] youtube-check-video-exists tool not available",
+      );
       return { exists: true, status: record.status };
     }
 
     try {
       const result = await tool.handler({ video_id: record.video_id });
       if (result.isError) {
-        logger.warn(`[YouTubePublish] Video existence check failed: ${result.text}`);
+        logger.warn(
+          `[YouTubePublish] Video existence check failed: ${result.text}`,
+        );
         return { exists: true, status: record.status };
       }
 
-      const response = JSON.parse(result.text) as { success: boolean; data?: { exists: boolean } };
+      const response = JSON.parse(result.text) as {
+        success: boolean;
+        data?: { exists: boolean };
+      };
       const exists = response.data?.exists ?? true;
 
       if (!exists && record.status === "published") {
@@ -274,13 +335,17 @@ export class YouTubePublishService {
           publishId,
           status: "deleted",
         });
-        logger.info(`[YouTubePublish] Video ${record.video_id} no longer exists, marked as deleted`);
+        logger.info(
+          `[YouTubePublish] Video ${record.video_id} no longer exists, marked as deleted`,
+        );
         return { exists: false, status: "deleted" };
       }
 
       return { exists, status: record.status };
     } catch (error) {
-      logger.warn(`[YouTubePublish] Video existence check error: ${error instanceof Error ? error.message : String(error)}`);
+      logger.warn(
+        `[YouTubePublish] Video existence check error: ${error instanceof Error ? error.message : String(error)}`,
+      );
       return { exists: true, status: record.status };
     }
   }
@@ -300,12 +365,18 @@ export class YouTubePublishService {
 
     const srtContent = this.generateSrtForDraft(record.draft_id);
     if (!srtContent) {
-      return { success: false, error: "No subtitle content available for this draft" };
+      return {
+        success: false,
+        error: "No subtitle content available for this draft",
+      };
     }
 
     const tool = this.toolRegistry.getToolDefinition("youtube-upload-captions");
     if (!tool) {
-      return { success: false, error: "youtube-upload-captions tool not available" };
+      return {
+        success: false,
+        error: "youtube-upload-captions tool not available",
+      };
     }
 
     try {
@@ -320,12 +391,20 @@ export class YouTubePublishService {
         return { success: false, error: result.text };
       }
 
-      const response = JSON.parse(result.text) as { success: boolean; error?: string };
+      const response = JSON.parse(result.text) as {
+        success: boolean;
+        error?: string;
+      };
       if (!response.success) {
-        return { success: false, error: response.error ?? "Caption upload failed" };
+        return {
+          success: false,
+          error: response.error ?? "Caption upload failed",
+        };
       }
 
-      logger.info(`[YouTubePublish] Captions uploaded for video ${record.video_id}`);
+      logger.info(
+        `[YouTubePublish] Captions uploaded for video ${record.video_id}`,
+      );
       return { success: true };
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
@@ -341,9 +420,9 @@ export class YouTubePublishService {
     if (!this.db) return null;
 
     try {
-      const row = this.db.prepare(
-        `SELECT manifest FROM director_drafts WHERE id = ?`,
-      ).get(draftId) as { manifest: string } | undefined;
+      const row = this.db
+        .prepare(`SELECT manifest FROM director_drafts WHERE id = ?`)
+        .get(draftId) as { manifest: string } | undefined;
 
       if (!row?.manifest) return null;
 
@@ -353,7 +432,9 @@ export class YouTubePublishService {
 
       return generateSrt(segments);
     } catch (error) {
-      logger.warn(`[YouTubePublish] Failed to generate SRT for draft ${draftId}: ${error instanceof Error ? error.message : String(error)}`);
+      logger.warn(
+        `[YouTubePublish] Failed to generate SRT for draft ${draftId}: ${error instanceof Error ? error.message : String(error)}`,
+      );
       return null;
     }
   }
@@ -364,15 +445,21 @@ export class YouTubePublishService {
     // 1. Query director_renders for the latest completed render for this draft
     if (this.db) {
       try {
-        const row = this.db.prepare(
-          `SELECT output_path FROM director_renders WHERE draft_id = ? AND status = 'complete' AND output_path IS NOT NULL ORDER BY created_at DESC LIMIT 1`,
-        ).get(draftId) as { output_path: string } | undefined;
+        const row = this.db
+          .prepare(
+            `SELECT output_path FROM director_renders WHERE draft_id = ? AND status = 'complete' AND output_path IS NOT NULL ORDER BY created_at DESC LIMIT 1`,
+          )
+          .get(draftId) as { output_path: string } | undefined;
         if (row?.output_path && fs.existsSync(row.output_path)) {
-          logger.debug(`[YouTubePublish] Resolved render path from DB: ${row.output_path}`);
+          logger.debug(
+            `[YouTubePublish] Resolved render path from DB: ${row.output_path}`,
+          );
           return row.output_path;
         }
       } catch (err) {
-        logger.warn(`[YouTubePublish] DB lookup for render path failed: ${err instanceof Error ? err.message : String(err)}`);
+        logger.warn(
+          `[YouTubePublish] DB lookup for render path failed: ${err instanceof Error ? err.message : String(err)}`,
+        );
       }
     }
 
@@ -396,45 +483,175 @@ export class YouTubePublishService {
     }
 
     // 3. Legacy path
-    const legacyPath = resolvePath(`~/.openzigs/video-output/${draftId}/output.mp4`);
+    const legacyPath = resolvePath(
+      `~/.openzigs/video-output/${draftId}/output.mp4`,
+    );
     if (fs.existsSync(legacyPath)) return legacyPath;
 
     return null;
   }
 
-  private async trySetThumbnail(draftId: string, videoId: string | null): Promise<void> {
+  private async trySetThumbnail(
+    draftId: string,
+    videoId: string | null,
+    videoFilePath?: string,
+    videoTitle?: string,
+    skipAutoThumbnail?: boolean,
+  ): Promise<void> {
     if (!videoId) return;
 
-    const thumbnailPath = resolvePath(`~/.openzigs/video-output/thumbnails/${draftId}.jpg`);
-    if (!fs.existsSync(thumbnailPath)) {
-      // Also check .png
-      const pngPath = resolvePath(`~/.openzigs/video-output/thumbnails/${draftId}.png`);
-      if (!fs.existsSync(pngPath)) return;
+    const thumbnailDir = resolvePath("~/.openzigs/video-output/thumbnails");
+    const jpgPath = path.join(thumbnailDir, `${draftId}.jpg`);
+    const pngPath = path.join(thumbnailDir, `${draftId}.png`);
+
+    let thumbPath: string | null = null;
+
+    if (fs.existsSync(jpgPath)) {
+      thumbPath = jpgPath;
+    } else if (fs.existsSync(pngPath)) {
+      thumbPath = pngPath;
+    } else if (!skipAutoThumbnail && videoFilePath) {
+      // Auto-generate a thumbnail using the frame selector + compositor pipeline
+      thumbPath = await this.autoGenerateThumbnail(
+        draftId,
+        videoFilePath,
+        videoTitle ?? "Untitled",
+        thumbnailDir,
+      );
     }
+
+    if (!thumbPath) return;
 
     const tool = this.toolRegistry.getToolDefinition("youtube-set-thumbnail");
     if (!tool) {
-      logger.debug("[YouTubePublish] youtube-set-thumbnail tool not available, skipping thumbnail upload");
+      logger.debug(
+        "[YouTubePublish] youtube-set-thumbnail tool not available, skipping thumbnail upload",
+      );
       return;
     }
 
     try {
-      const thumbPath = fs.existsSync(thumbnailPath)
-        ? thumbnailPath
-        : resolvePath(`~/.openzigs/video-output/thumbnails/${draftId}.png`);
       await tool.handler({ video_id: videoId, thumbnail_path: thumbPath });
       logger.info(`[YouTubePublish] Thumbnail set for ${videoId}`);
     } catch (error) {
-      logger.warn(`[YouTubePublish] Failed to set thumbnail: ${error instanceof Error ? error.message : String(error)}`);
+      logger.warn(
+        `[YouTubePublish] Failed to set thumbnail: ${error instanceof Error ? error.message : String(error)}`,
+      );
     }
   }
 
-  private emitProgress(draftId: string, publishId: string, stage: string, percent: number): void {
-    this.io?.emit("youtube:publish:progress", { draftId, publishId, stage, percent });
+  /**
+   * Auto-generate a thumbnail from the video file using the compositor pipeline.
+   * Uses the first frame of the video as the background and overlays the title.
+   * Returns the output path on success, null on failure.
+   */
+  async autoGenerateThumbnail(
+    draftId: string,
+    videoFilePath: string,
+    title: string,
+    thumbnailDir: string,
+  ): Promise<string | null> {
+    try {
+      const { compositeThumbnail } =
+        await import("./thumbnails/thumbnail-compositor.js");
+
+      // Try to extract a frame using ffmpeg; fall back to using the video file directly
+      const framePath = await this.extractFirstFrame(videoFilePath, draftId);
+      if (!framePath) {
+        logger.warn(
+          "[YouTubePublish] Could not extract frame for auto-thumbnail",
+        );
+        return null;
+      }
+
+      const outputPath = path.join(thumbnailDir, `${draftId}.jpg`);
+
+      // Compose the thumbnail with text overlay
+      await compositeThumbnail({
+        backgroundPath: framePath,
+        textLines: [title.toUpperCase()],
+        textPlacement: "bottom",
+        textColor: "#ffffff",
+        outputPath,
+        outputFormat: "jpeg",
+      });
+
+      logger.info(
+        `[YouTubePublish] Auto-generated thumbnail for draft ${draftId}`,
+      );
+      return outputPath;
+    } catch (error) {
+      logger.warn(
+        `[YouTubePublish] Auto-thumbnail generation failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return null;
+    }
   }
 
-  private emitComplete(draftId: string, publishId: string, videoId: string | null, videoUrl: string | null): void {
-    this.io?.emit("youtube:publish:complete", { draftId, publishId, videoId, videoUrl });
+  /**
+   * Extract the first frame from a video using ffmpeg.
+   * Returns the path to the extracted frame, or null if extraction fails.
+   */
+  private async extractFirstFrame(
+    videoPath: string,
+    draftId: string,
+  ): Promise<string | null> {
+    const { execFile } = await import("node:child_process");
+    const { promisify } = await import("node:util");
+    const execFileAsync = promisify(execFile);
+
+    const tmpDir = resolvePath("~/.openzigs/video-output/thumbnails");
+    if (!fs.existsSync(tmpDir)) {
+      fs.mkdirSync(tmpDir, { recursive: true });
+    }
+    const framePath = path.join(tmpDir, `${draftId}_frame.jpg`);
+
+    try {
+      await execFileAsync("ffmpeg", [
+        "-i",
+        videoPath,
+        "-ss",
+        "1",
+        "-vframes",
+        "1",
+        "-q:v",
+        "2",
+        "-y",
+        framePath,
+      ]);
+      if (fs.existsSync(framePath)) return framePath;
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
+  private emitProgress(
+    draftId: string,
+    publishId: string,
+    stage: string,
+    percent: number,
+  ): void {
+    this.io?.emit("youtube:publish:progress", {
+      draftId,
+      publishId,
+      stage,
+      percent,
+    });
+  }
+
+  private emitComplete(
+    draftId: string,
+    publishId: string,
+    videoId: string | null,
+    videoUrl: string | null,
+  ): void {
+    this.io?.emit("youtube:publish:complete", {
+      draftId,
+      publishId,
+      videoId,
+      videoUrl,
+    });
   }
 
   private emitError(draftId: string, publishId: string, error: string): void {
@@ -452,13 +669,18 @@ export class YouTubePublishService {
 
     // Try to extract reason from embedded JSON
     const quotaMatch = raw.match(/"reason"\s*:\s*"quotaExceeded"/);
-    if (quotaMatch) return "Daily YouTube API quota exceeded. Quota resets at midnight Pacific Time.";
+    if (quotaMatch)
+      return "Daily YouTube API quota exceeded. Quota resets at midnight Pacific Time.";
 
     const authMatch = raw.match(/"reason"\s*:\s*"(unauthorized|authError)"/);
-    if (authMatch) return "YouTube authorization expired. Please re-connect your YouTube account in Settings.";
+    if (authMatch)
+      return "YouTube authorization expired. Please re-connect your YouTube account in Settings.";
 
-    const forbiddenMatch = raw.match(/"reason"\s*:\s*"(forbidden|insufficientPermissions)"/);
-    if (forbiddenMatch) return "Access denied. Check that your YouTube OAuth token has upload permissions.";
+    const forbiddenMatch = raw.match(
+      /"reason"\s*:\s*"(forbidden|insufficientPermissions)"/,
+    );
+    if (forbiddenMatch)
+      return "Access denied. Check that your YouTube OAuth token has upload permissions.";
 
     return raw;
   }

@@ -2,7 +2,12 @@
  * Director Mode — Shared types for the wizard UI.
  */
 
-export type ProductionMode = "highlight" | "script" | "presentation" | "shorts" | "hero-reel";
+export type ProductionMode =
+  | "highlight"
+  | "script"
+  | "presentation"
+  | "shorts"
+  | "hero-reel";
 
 export type ImageProvider = "auto" | "local" | "cloud";
 export type ImageModel = "sdxl-turbo" | "flux-schnell" | "flux" | "flux-dev";
@@ -91,11 +96,26 @@ export interface RenderSettings {
   crf: number;
 }
 
-export const QUALITY_PRESETS: Record<RenderQuality, { crf: number; label: string; description: string }> = {
-  draft: { crf: 32, label: "Draft", description: "Fast preview, lower quality" },
-  standard: { crf: 23, label: "Standard", description: "Balanced quality & size" },
+export const QUALITY_PRESETS: Record<
+  RenderQuality,
+  { crf: number; label: string; description: string }
+> = {
+  draft: {
+    crf: 32,
+    label: "Draft",
+    description: "Fast preview, lower quality",
+  },
+  standard: {
+    crf: 23,
+    label: "Standard",
+    description: "Balanced quality & size",
+  },
   high: { crf: 18, label: "High", description: "High quality, larger files" },
-  lossless: { crf: 0, label: "Lossless", description: "Maximum quality, very large files" },
+  lossless: {
+    crf: 0,
+    label: "Lossless",
+    description: "Maximum quality, very large files",
+  },
 };
 
 export interface TemplateInfo {
@@ -123,7 +143,15 @@ export interface DirectorManifestSummary {
 
 export interface RenderJobStatus {
   id: string;
-  status: "queued" | "bundling" | "rendering" | "encoding" | "finalizing" | "complete" | "failed" | "aborted";
+  status:
+    | "queued"
+    | "bundling"
+    | "rendering"
+    | "encoding"
+    | "finalizing"
+    | "complete"
+    | "failed"
+    | "aborted";
   progress: number;
   projectTitle: string;
   templateId: string;
@@ -191,7 +219,12 @@ export interface DirectorManifest {
   composition: { width: number; height: number; fps: number };
   audioLayer: {
     music: { track: string; volume: number; loop: boolean } | null;
-    voiceover: { src?: string; source?: string; volume: number; startAtFrame?: number } | null;
+    voiceover: {
+      src?: string;
+      source?: string;
+      volume: number;
+      startAtFrame?: number;
+    } | null;
   };
   timeline?: TimelineEntry[];
   metadata?: Record<string, unknown>;

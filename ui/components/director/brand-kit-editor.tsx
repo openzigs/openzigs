@@ -1,17 +1,10 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import {
-  Palette,
-  Plus,
-  Trash2,
-  Loader2,
-  Save,
-  Pencil,
-  X,
-} from "lucide-react";
+import { Palette, Plus, Trash2, Loader2, Save, Pencil, X } from "lucide-react";
 import { fetchJson } from "@/lib/api";
 import { showToast } from "@/components/toast";
+import { BrandTemplateEditor } from "./brand-template-editor";
 
 interface BrandKit {
   id: string;
@@ -57,10 +50,20 @@ const DEFAULT_FORM: BrandKitFormData = {
   fontFamily: "Inter",
 };
 
-function ColorInput({ label, value, onChange }: { label: string; value: string; onChange: (v: string) => void }) {
+function ColorInput({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+}) {
   return (
     <div className="flex flex-col gap-1">
-      <label className="text-xs font-medium text-muted-foreground">{label}</label>
+      <label className="text-xs font-medium text-muted-foreground">
+        {label}
+      </label>
       <div className="flex items-center gap-2">
         <input
           type="color"
@@ -93,7 +96,9 @@ export function BrandKitEditor() {
   const load = useCallback(async () => {
     try {
       setLoading(true);
-      const res = await fetchJson<{ brandKits: BrandKit[] }>("/api/admin/director/brand-kits");
+      const res = await fetchJson<{ brandKits: BrandKit[] }>(
+        "/api/admin/director/brand-kits",
+      );
       setKits(res.brandKits);
     } catch {
       showToast("Failed to load brand kits", "error");
@@ -102,7 +107,9 @@ export function BrandKitEditor() {
     }
   }, []);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    load();
+  }, [load]);
 
   const handleEdit = (kit: BrandKit) => {
     setEditingId(kit.id);
@@ -160,7 +167,9 @@ export function BrandKitEditor() {
   const handleDelete = async (id: string) => {
     setDeleting(id);
     try {
-      await fetchJson(`/api/admin/director/brand-kits/${id}`, { method: "DELETE" });
+      await fetchJson(`/api/admin/director/brand-kits/${id}`, {
+        method: "DELETE",
+      });
       setKits((prev) => prev.filter((k) => k.id !== id));
       showToast("Brand kit deleted", "success");
     } catch {
@@ -200,14 +209,21 @@ export function BrandKitEditor() {
       {showForm && (
         <div className="rounded-lg border border-border bg-card p-4 space-y-4">
           <div className="flex items-center justify-between">
-            <h4 className="text-sm font-medium">{editingId ? "Edit" : "Create"} Brand Kit</h4>
-            <button onClick={handleCancel} className="rounded p-1 hover:bg-muted">
+            <h4 className="text-sm font-medium">
+              {editingId ? "Edit" : "Create"} Brand Kit
+            </h4>
+            <button
+              onClick={handleCancel}
+              className="rounded p-1 hover:bg-muted"
+            >
               <X className="h-4 w-4" />
             </button>
           </div>
 
           <div>
-            <label className="text-xs font-medium text-muted-foreground">Name</label>
+            <label className="text-xs font-medium text-muted-foreground">
+              Name
+            </label>
             <input
               type="text"
               value={form.name}
@@ -218,20 +234,36 @@ export function BrandKitEditor() {
           </div>
 
           <div className="grid grid-cols-3 gap-3">
-            <ColorInput label="Primary" value={form.primaryColor} onChange={(v) => setForm({ ...form, primaryColor: v })} />
-            <ColorInput label="Secondary" value={form.secondaryColor} onChange={(v) => setForm({ ...form, secondaryColor: v })} />
-            <ColorInput label="Accent" value={form.accentColor} onChange={(v) => setForm({ ...form, accentColor: v })} />
+            <ColorInput
+              label="Primary"
+              value={form.primaryColor}
+              onChange={(v) => setForm({ ...form, primaryColor: v })}
+            />
+            <ColorInput
+              label="Secondary"
+              value={form.secondaryColor}
+              onChange={(v) => setForm({ ...form, secondaryColor: v })}
+            />
+            <ColorInput
+              label="Accent"
+              value={form.accentColor}
+              onChange={(v) => setForm({ ...form, accentColor: v })}
+            />
           </div>
 
           <div>
-            <label className="text-xs font-medium text-muted-foreground">Font Family</label>
+            <label className="text-xs font-medium text-muted-foreground">
+              Font Family
+            </label>
             <select
               value={form.fontFamily}
               onChange={(e) => setForm({ ...form, fontFamily: e.target.value })}
               className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
             >
               {FONT_OPTIONS.map((f) => (
-                <option key={f} value={f}>{f}</option>
+                <option key={f} value={f}>
+                  {f}
+                </option>
               ))}
             </select>
           </div>
@@ -240,10 +272,22 @@ export function BrandKitEditor() {
           <div className="rounded-md border border-border p-3">
             <p className="text-xs text-muted-foreground mb-2">Preview</p>
             <div className="flex items-center gap-2">
-              <div className="h-8 w-8 rounded" style={{ backgroundColor: form.primaryColor }} />
-              <div className="h-8 w-8 rounded" style={{ backgroundColor: form.secondaryColor }} />
-              <div className="h-8 w-8 rounded" style={{ backgroundColor: form.accentColor }} />
-              <span className="ml-2 text-sm" style={{ fontFamily: form.fontFamily }}>
+              <div
+                className="h-8 w-8 rounded"
+                style={{ backgroundColor: form.primaryColor }}
+              />
+              <div
+                className="h-8 w-8 rounded"
+                style={{ backgroundColor: form.secondaryColor }}
+              />
+              <div
+                className="h-8 w-8 rounded"
+                style={{ backgroundColor: form.accentColor }}
+              />
+              <span
+                className="ml-2 text-sm"
+                style={{ fontFamily: form.fontFamily }}
+              >
                 {form.name || "Brand Kit"}
               </span>
             </div>
@@ -261,7 +305,11 @@ export function BrandKitEditor() {
               disabled={saving}
               className="flex items-center gap-1 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
             >
-              {saving ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3" />}
+              {saving ? (
+                <Loader2 className="h-3 w-3 animate-spin" />
+              ) : (
+                <Save className="h-3 w-3" />
+              )}
               {editingId ? "Update" : "Create"}
             </button>
           </div>
@@ -277,44 +325,62 @@ export function BrandKitEditor() {
       ) : (
         <div className="space-y-2">
           {kits.map((kit) => (
-            <div
-              key={kit.id}
-              className="flex items-center gap-3 rounded-lg border border-border bg-card p-3 transition hover:border-primary/30"
-            >
-              {/* Color swatches */}
-              <div className="flex gap-1">
-                <div className="h-6 w-6 rounded" style={{ backgroundColor: kit.primaryColor }} />
-                {kit.secondaryColor && <div className="h-6 w-6 rounded" style={{ backgroundColor: kit.secondaryColor }} />}
-                {kit.accentColor && <div className="h-6 w-6 rounded" style={{ backgroundColor: kit.accentColor }} />}
-              </div>
-
-              {/* Info */}
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-medium">{kit.name}</p>
-                <p className="text-xs text-muted-foreground">{kit.fontFamily ?? "Default font"}</p>
-              </div>
-
-              {/* Actions */}
-              <div className="flex items-center gap-1">
-                <button
-                  onClick={() => handleEdit(kit)}
-                  className="rounded p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground"
-                  title="Edit"
-                >
-                  <Pencil className="h-3.5 w-3.5" />
-                </button>
-                <button
-                  onClick={() => handleDelete(kit.id)}
-                  disabled={deleting === kit.id}
-                  className="rounded p-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive disabled:opacity-50"
-                  title="Delete"
-                >
-                  {deleting === kit.id ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  ) : (
-                    <Trash2 className="h-3.5 w-3.5" />
+            <div key={kit.id} className="space-y-2">
+              <div className="flex items-center gap-3 rounded-lg border border-border bg-card p-3 transition hover:border-primary/30">
+                {/* Color swatches */}
+                <div className="flex gap-1">
+                  <div
+                    className="h-6 w-6 rounded"
+                    style={{ backgroundColor: kit.primaryColor }}
+                  />
+                  {kit.secondaryColor && (
+                    <div
+                      className="h-6 w-6 rounded"
+                      style={{ backgroundColor: kit.secondaryColor }}
+                    />
                   )}
-                </button>
+                  {kit.accentColor && (
+                    <div
+                      className="h-6 w-6 rounded"
+                      style={{ backgroundColor: kit.accentColor }}
+                    />
+                  )}
+                </div>
+
+                {/* Info */}
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-medium">{kit.name}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {kit.fontFamily ?? "Default font"}
+                  </p>
+                </div>
+
+                {/* Actions */}
+                <div className="flex items-center gap-1">
+                  <button
+                    onClick={() => handleEdit(kit)}
+                    className="rounded p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+                    title="Edit"
+                  >
+                    <Pencil className="h-3.5 w-3.5" />
+                  </button>
+                  <button
+                    onClick={() => handleDelete(kit.id)}
+                    disabled={deleting === kit.id}
+                    className="rounded p-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive disabled:opacity-50"
+                    title="Delete"
+                  >
+                    {deleting === kit.id ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <Trash2 className="h-3.5 w-3.5" />
+                    )}
+                  </button>
+                </div>
+              </div>
+              {/* Brand template gallery for this kit */}
+              <div className="mt-2">
+                <BrandTemplateEditor brandKitId={kit.id} />
               </div>
             </div>
           ))}

@@ -25,7 +25,13 @@ export interface AnalyzeJob {
   id: string;
   inputPath: string;
   assetId: string;
-  status: "queued" | "extracting_frames" | "transcribing" | "analyzing" | "complete" | "failed";
+  status:
+    | "queued"
+    | "extracting_frames"
+    | "transcribing"
+    | "analyzing"
+    | "complete"
+    | "failed";
   suggestedCuts: SuggestedCut[];
   error?: string;
   /** Model to use for vision analysis. */
@@ -57,7 +63,11 @@ export interface AnalyzeWorkerOptions {
    */
   chat: (
     prompt: string,
-    options?: { attachments?: AnalyzeAttachment[]; model?: string; tools?: never[] },
+    options?: {
+      attachments?: AnalyzeAttachment[];
+      model?: string;
+      tools?: never[];
+    },
   ) => AsyncGenerator<string>;
   /** Audio sidecar URL for Whisper transcription (optional). */
   audioSidecarUrl?: string;
@@ -118,7 +128,9 @@ export class AnalyzeWorker extends EventEmitter {
 
     this.jobs.set(id, job);
     this.queue.push(job);
-    logger.info(`[AnalyzeWorker] Job ${id} queued: ${path.basename(request.inputPath)}`);
+    logger.info(
+      `[AnalyzeWorker] Job ${id} queued: ${path.basename(request.inputPath)}`,
+    );
     this.emit("analyze:queued", { jobId: id });
     this.processNext();
     return id;
@@ -133,11 +145,14 @@ export class AnalyzeWorker extends EventEmitter {
       const job = this.jobs.get(jobId);
       if (!job) return reject(new Error(`Job ${jobId} not found`));
       if (job.status === "complete") return resolve(job);
-      if (job.status === "failed") return reject(new Error(job.error ?? "Analysis failed"));
+      if (job.status === "failed")
+        return reject(new Error(job.error ?? "Analysis failed"));
 
       const timeout = setTimeout(() => {
         cleanup();
-        reject(new Error(`Analysis job ${jobId} timed out after ${timeoutMs}ms`));
+        reject(
+          new Error(`Analysis job ${jobId} timed out after ${timeoutMs}ms`),
+        );
       }, timeoutMs);
 
       const onComplete = (data: { jobId: string }) => {
@@ -172,8 +187,13 @@ export class AnalyzeWorker extends EventEmitter {
       .then(() => {
         job.status = "complete";
         job.completedAt = new Date();
-        logger.info(`[AnalyzeWorker] Job ${job.id} complete: ${job.suggestedCuts.length} cuts found`);
-        this.emit("analyze:complete", { jobId: job.id, suggestedCuts: job.suggestedCuts });
+        logger.info(
+          `[AnalyzeWorker] Job ${job.id} complete: ${job.suggestedCuts.length} cuts found`,
+        );
+        this.emit("analyze:complete", {
+          jobId: job.id,
+          suggestedCuts: job.suggestedCuts,
+        });
       })
       .catch((err) => {
         job.status = "failed";
@@ -194,40 +214,70 @@ export class AnalyzeWorker extends EventEmitter {
     try {
       // Step 1: Extract frames (1fps, 320px)
       job.status = "extracting_frames";
-      this.emit("analyze:progress", { jobId: job.id, stage: "extracting_frames", progress: 10 });
+      this.emit("analyze:progress", {
+        jobId: job.id,
+        stage: "extracting_frames",
+        progress: 10,
+      });
       const framePaths = await this.extractFrames(job.inputPath, tmpDir);
 
       // Step 2: Transcribe audio (optional)
       job.status = "transcribing";
-      this.emit("analyze:progress", { jobId: job.id, stage: "transcribing", progress: 30 });
+      this.emit("analyze:progress", {
+        jobId: job.id,
+        stage: "transcribing",
+        progress: 30,
+      });
       let transcript = "";
       try {
         transcript = await this.transcribeAudio(job.inputPath, tmpDir);
       } catch {
-        logger.warn(`[AnalyzeWorker] Transcription unavailable for job ${job.id}, proceeding with frames only`);
+        logger.warn(
+          `[AnalyzeWorker] Transcription unavailable for job ${job.id}, proceeding with frames only`,
+        );
       }
 
       // Step 3: Send to Vision LLM in batches
       job.status = "analyzing";
-      this.emit("analyze:progress", { jobId: job.id, stage: "analyzing", progress: 50 });
+      this.emit("analyze:progress", {
+        jobId: job.id,
+        stage: "analyzing",
+        progress: 50,
+      });
       const allCuts: SuggestedCut[] = [];
 
       const batchCount = Math.ceil(framePaths.length / this.maxFramesPerBatch);
       for (let batch = 0; batch < batchCount; batch++) {
         const start = batch * this.maxFramesPerBatch;
-        const batchFrames = framePaths.slice(start, start + this.maxFramesPerBatch);
+        const batchFrames = framePaths.slice(
+          start,
+          start + this.maxFramesPerBatch,
+        );
         const batchOffset = start; // Seconds offset for this batch
 
-        const cuts = await this.analyzeFrameBatch(batchFrames, batchOffset, transcript, job.model);
+        const cuts = await this.analyzeFrameBatch(
+          batchFrames,
+          batchOffset,
+          transcript,
+          job.model,
+        );
         allCuts.push(...cuts);
 
         const progress = 50 + Math.round(((batch + 1) / batchCount) * 45);
-        this.emit("analyze:progress", { jobId: job.id, stage: "analyzing", progress });
+        this.emit("analyze:progress", {
+          jobId: job.id,
+          stage: "analyzing",
+          progress,
+        });
       }
 
       // Merge overlapping cuts
       job.suggestedCuts = this.mergeCuts(allCuts);
-      this.emit("analyze:progress", { jobId: job.id, stage: "complete", progress: 100 });
+      this.emit("analyze:progress", {
+        jobId: job.id,
+        stage: "complete",
+        progress: 100,
+      });
     } finally {
       // Cleanup temp files
       try {
@@ -243,28 +293,38 @@ export class AnalyzeWorker extends EventEmitter {
     return new Promise((resolve, reject) => {
       const pattern = path.join(outputDir, "frame_%04d.jpg");
       const args = [
-        "-i", inputPath,
-        "-vf", "fps=1,scale=320:-2",
-        "-q:v", "5",
+        "-i",
+        inputPath,
+        "-vf",
+        "fps=1,scale=320:-2",
+        "-q:v",
+        "5",
         "-y",
         pattern,
       ];
 
       const proc = spawn("ffmpeg", args, { stdio: ["ignore", "pipe", "pipe"] });
       proc.on("close", (code) => {
-        if (code !== 0) return reject(new Error(`Frame extraction failed: exit ${code}`));
-        const files = fs.readdirSync(outputDir)
-          .filter(f => f.startsWith("frame_") && f.endsWith(".jpg"))
+        if (code !== 0)
+          return reject(new Error(`Frame extraction failed: exit ${code}`));
+        const files = fs
+          .readdirSync(outputDir)
+          .filter((f) => f.startsWith("frame_") && f.endsWith(".jpg"))
           .sort()
-          .map(f => path.join(outputDir, f));
+          .map((f) => path.join(outputDir, f));
         resolve(files);
       });
-      proc.on("error", (err) => reject(new Error(`Failed to spawn ffmpeg: ${err.message}`)));
+      proc.on("error", (err) =>
+        reject(new Error(`Failed to spawn ffmpeg: ${err.message}`)),
+      );
     });
   }
 
   /** Extract audio and transcribe via Whisper sidecar. */
-  private async transcribeAudio(inputPath: string, tmpDir: string): Promise<string> {
+  private async transcribeAudio(
+    inputPath: string,
+    tmpDir: string,
+  ): Promise<string> {
     if (!this.audioSidecarUrl) {
       throw new Error("Audio sidecar not configured");
     }
@@ -273,10 +333,23 @@ export class AnalyzeWorker extends EventEmitter {
 
     // Extract audio as 16kHz mono WAV
     await new Promise<void>((resolve, reject) => {
-      const args = ["-i", inputPath, "-vn", "-ar", "16000", "-ac", "1", "-f", "wav", "-y", wavPath];
+      const args = [
+        "-i",
+        inputPath,
+        "-vn",
+        "-ar",
+        "16000",
+        "-ac",
+        "1",
+        "-f",
+        "wav",
+        "-y",
+        wavPath,
+      ];
       const proc = spawn("ffmpeg", args, { stdio: ["ignore", "pipe", "pipe"] });
       proc.on("close", (code) => {
-        if (code !== 0) reject(new Error(`Audio extraction failed: exit ${code}`));
+        if (code !== 0)
+          reject(new Error(`Audio extraction failed: exit ${code}`));
         else resolve();
       });
       proc.on("error", reject);
@@ -285,7 +358,11 @@ export class AnalyzeWorker extends EventEmitter {
     // Send to Whisper sidecar
     const wavData = fs.readFileSync(wavPath);
     const formData = new FormData();
-    formData.append("file", new Blob([wavData], { type: "audio/wav" }), "audio.wav");
+    formData.append(
+      "file",
+      new Blob([wavData], { type: "audio/wav" }),
+      "audio.wav",
+    );
     formData.append("response_format", "verbose_json");
 
     const res = await fetch(`${this.audioSidecarUrl}/transcribe`, {
@@ -294,12 +371,18 @@ export class AnalyzeWorker extends EventEmitter {
     });
 
     if (!res.ok) throw new Error(`Whisper transcription failed: ${res.status}`);
-    const data = await res.json() as { text?: string; segments?: Array<{ start: number; end: number; text: string }> };
+    const data = (await res.json()) as {
+      text?: string;
+      segments?: Array<{ start: number; end: number; text: string }>;
+    };
 
     // Format with timestamps for the LLM
     if (data.segments?.length) {
       return data.segments
-        .map(s => `[${Math.round(s.start)}s-${Math.round(s.end)}s] ${s.text.trim()}`)
+        .map(
+          (s) =>
+            `[${Math.round(s.start)}s-${Math.round(s.end)}s] ${s.text.trim()}`,
+        )
         .join("\n");
     }
     return data.text ?? "";
@@ -331,7 +414,11 @@ export class AnalyzeWorker extends EventEmitter {
     const prompt = `${VISION_SYSTEM_PROMPT}\n\n${transcriptSection}Video frames attached (1 per second, starting at ${offsetSeconds}s):\n${frameLabels}\n\nAnalyze ALL attached frames and return the JSON array of suggested cuts.`;
 
     const chunks: string[] = [];
-    for await (const chunk of this.chat(prompt, { attachments, model, tools: [] })) {
+    for await (const chunk of this.chat(prompt, {
+      attachments,
+      model,
+      tools: [],
+    })) {
       chunks.push(chunk);
     }
     const response = chunks.join("");
@@ -347,16 +434,18 @@ export class AnalyzeWorker extends EventEmitter {
     try {
       const parsed = JSON.parse(jsonMatch[0]) as unknown[];
       return parsed
-        .filter((item): item is { start: number; end: number; reason: string } => {
-          if (typeof item !== "object" || item === null) return false;
-          const obj = item as Record<string, unknown>;
-          return (
-            typeof obj.start === "number" &&
-            typeof obj.end === "number" &&
-            typeof obj.reason === "string" &&
-            obj.end > obj.start
-          );
-        })
+        .filter(
+          (item): item is { start: number; end: number; reason: string } => {
+            if (typeof item !== "object" || item === null) return false;
+            const obj = item as Record<string, unknown>;
+            return (
+              typeof obj.start === "number" &&
+              typeof obj.end === "number" &&
+              typeof obj.reason === "string" &&
+              obj.end > obj.start
+            );
+          },
+        )
         .map(({ start, end, reason }) => ({
           start: Math.max(0, Math.round(start)),
           end: Math.max(0, Math.round(end)),
@@ -380,7 +469,8 @@ export class AnalyzeWorker extends EventEmitter {
       // Merge if overlapping or within 2 seconds of each other
       if (cur.start <= prev.end + 2) {
         prev.end = Math.max(prev.end, cur.end);
-        prev.reason = prev.reason.length > cur.reason.length ? prev.reason : cur.reason;
+        prev.reason =
+          prev.reason.length > cur.reason.length ? prev.reason : cur.reason;
       } else {
         merged.push(cur);
       }

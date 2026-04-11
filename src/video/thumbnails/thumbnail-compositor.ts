@@ -147,12 +147,15 @@ export async function compositeThumbnail(
   }
 
   // Write output
-  const buffer = outputFormat === "png"
-    ? canvas.toBuffer("image/png")
-    : canvas.toBuffer("image/jpeg");
+  const buffer =
+    outputFormat === "png"
+      ? canvas.toBuffer("image/png")
+      : canvas.toBuffer("image/jpeg");
 
   fs.writeFileSync(outputPath, buffer);
-  logger.info(`[ThumbnailCompositor] Wrote thumbnail: ${outputPath} (${width}x${height})`);
+  logger.info(
+    `[ThumbnailCompositor] Wrote thumbnail: ${outputPath} (${width}x${height})`,
+  );
 
   return outputPath;
 }

@@ -16,7 +16,12 @@ import { generateShortsVoiceover } from "./shorts-voice-pipeline.js";
 import { getAudioDuration } from "../ingestion/audio-extractor.js";
 import type { CopilotWrapper } from "../../copilot/copilot-wrapper.js";
 import type { VoiceService } from "../../voice/voice-service.js";
-import type { DirectorManifest, VideoClipEntry, OverlayEntry, ImageSceneEntry } from "../manifest/manifest-types.js";
+import type {
+  DirectorManifest,
+  VideoClipEntry,
+  OverlayEntry,
+  ImageSceneEntry,
+} from "../manifest/manifest-types.js";
 
 export interface ShortsPipelineInput {
   /** Path to the source video */
@@ -81,7 +86,9 @@ export async function createShort(
       visionAnalysis: { maxKeyframes: 40, delayMs: 1000, model },
       mode: "dense",
       onProgress: (event) => {
-        logger.info(`[ShortsPipeline] Ingestion: ${event.phase} — ${event.message}`);
+        logger.info(
+          `[ShortsPipeline] Ingestion: ${event.phase} — ${event.message}`,
+        );
       },
     },
   );
@@ -93,7 +100,7 @@ export async function createShort(
 
   logger.info(
     `[ShortsPipeline] Ingested: ${clip.keyframes.length} keyframes, ` +
-    `${clip.transcript.length} transcript segments, ${clip.duration.toFixed(1)}s`,
+      `${clip.transcript.length} transcript segments, ${clip.duration.toFixed(1)}s`,
   );
 
   // ── Step 2: Viral Clip Extraction ───────────────────────────
@@ -107,7 +114,7 @@ export async function createShort(
 
   logger.info(
     `[ShortsPipeline] Viral clip: ${viralClip.startSeconds.toFixed(1)}s → ` +
-    `${viralClip.endSeconds.toFixed(1)}s (${(viralClip.endSeconds - viralClip.startSeconds).toFixed(1)}s)`,
+      `${viralClip.endSeconds.toFixed(1)}s (${(viralClip.endSeconds - viralClip.startSeconds).toFixed(1)}s)`,
   );
 
   // ── Step 3: Voiceover Generation ────────────────────────────
@@ -135,14 +142,20 @@ export async function createShort(
   let captionWords: Array<{ word: string; start: number; end: number }> = [];
   try {
     const voDurationSec = await getAudioDuration(voiceResult.voiceoverPath);
-    const voDurationFrames = voDurationSec > 0
-      ? Math.round(voDurationSec * fps)
-      : totalFrames;
-    captionWords = estimateWordTimings(voiceResult.scriptText, voDurationFrames);
-    logger.info(`[ShortsPipeline] Generated ${captionWords.length} caption word timings over ${voDurationSec.toFixed(1)}s`);
+    const voDurationFrames =
+      voDurationSec > 0 ? Math.round(voDurationSec * fps) : totalFrames;
+    captionWords = estimateWordTimings(
+      voiceResult.scriptText,
+      voDurationFrames,
+    );
+    logger.info(
+      `[ShortsPipeline] Generated ${captionWords.length} caption word timings over ${voDurationSec.toFixed(1)}s`,
+    );
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    logger.warn(`[ShortsPipeline] Could not probe voiceover duration — using clip duration: ${msg}`);
+    logger.warn(
+      `[ShortsPipeline] Could not probe voiceover duration — using clip duration: ${msg}`,
+    );
     captionWords = estimateWordTimings(voiceResult.scriptText, totalFrames);
   }
 
@@ -178,7 +191,10 @@ export async function createShort(
       for (const sentence of sentences) {
         const fraction = sentence.length / totalChars;
         const sceneDuration = Math.max(fps, Math.round(totalFrames * fraction));
-        const actualDur = Math.min(sceneDuration, totalFrames - compositionFrame);
+        const actualDur = Math.min(
+          sceneDuration,
+          totalFrames - compositionFrame,
+        );
         if (actualDur <= 0) break;
 
         // Cycle through available images (round-robin if more sentences than images)
@@ -222,12 +238,15 @@ export async function createShort(
       : [{ start: trimStartFrame, end: viralFrameEnd }];
 
     if (sourceManifest) {
-      const totalUsable = usableRanges.reduce((s, r) => s + (r.end - r.start), 0);
+      const totalUsable = usableRanges.reduce(
+        (s, r) => s + (r.end - r.start),
+        0,
+      );
       const skipped = totalFrames - totalUsable;
       if (skipped > 0) {
         logger.info(
           `[ShortsPipeline] Skipping ${skipped} title-card frames ` +
-          `(${(skipped / fps).toFixed(1)}s) — ${usableRanges.length} usable range(s)`,
+            `(${(skipped / fps).toFixed(1)}s) — ${usableRanges.length} usable range(s)`,
         );
       }
     }
@@ -240,10 +259,17 @@ export async function createShort(
       for (const sentence of sentences) {
         const fraction = sentence.length / totalChars;
         const sceneDuration = Math.max(fps, Math.round(totalFrames * fraction));
-        const actualDur = Math.min(sceneDuration, totalFrames - compositionFrame);
+        const actualDur = Math.min(
+          sceneDuration,
+          totalFrames - compositionFrame,
+        );
         if (actualDur <= 0) break;
 
-        const subClips = mapFrameRangeToClips(logicalFrame, actualDur, usableRanges);
+        const subClips = mapFrameRangeToClips(
+          logicalFrame,
+          actualDur,
+          usableRanges,
+        );
         for (const sub of subClips) {
           sceneEntries.push({
             type: "video_clip",
@@ -340,7 +366,9 @@ export async function createShort(
 /**
  * Try to load the manifest that produced a source video (stored alongside renders).
  */
-async function loadSourceManifest(sourceVideo: string): Promise<DirectorManifest | null> {
+async function loadSourceManifest(
+  sourceVideo: string,
+): Promise<DirectorManifest | null> {
   try {
     const manifestPath = path.join(path.dirname(sourceVideo), "manifest.json");
     const data = await fs.readFile(manifestPath, "utf-8");
@@ -383,7 +411,9 @@ async function resolveSourceImages(
       await fs.access(scene.src);
       verified.push(scene);
     } catch {
-      logger.warn(`[ShortsPipeline] Source image missing, skipping: ${scene.src}`);
+      logger.warn(
+        `[ShortsPipeline] Source image missing, skipping: ${scene.src}`,
+      );
     }
   }
 
@@ -403,7 +433,11 @@ function buildUsableRanges(
   // Collect all card entries
   const cardRanges: Array<{ start: number; end: number }> = [];
   for (const entry of manifest.timeline) {
-    if (entry.type === "title_card" || entry.type === "intro_card" || entry.type === "outro_card") {
+    if (
+      entry.type === "title_card" ||
+      entry.type === "intro_card" ||
+      entry.type === "outro_card"
+    ) {
       cardRanges.push({
         start: entry.startAtFrame,
         end: entry.startAtFrame + entry.duration,
@@ -417,11 +451,17 @@ function buildUsableRanges(
     const transEnd = entry.startAtFrame + (entry.duration ?? 15);
     for (const card of cardRanges) {
       // Transition just before or overlapping card start
-      if (Math.abs(entry.startAtFrame - card.start) <= 1 || Math.abs(transEnd - card.start) <= 1) {
+      if (
+        Math.abs(entry.startAtFrame - card.start) <= 1 ||
+        Math.abs(transEnd - card.start) <= 1
+      ) {
         card.start = Math.min(card.start, entry.startAtFrame);
       }
       // Transition just after or overlapping card end
-      if (Math.abs(entry.startAtFrame - card.end) <= 1 || Math.abs(transEnd - card.end) <= 1) {
+      if (
+        Math.abs(entry.startAtFrame - card.end) <= 1 ||
+        Math.abs(transEnd - card.end) <= 1
+      ) {
         card.end = Math.max(card.end, transEnd);
       }
     }
@@ -440,7 +480,10 @@ function buildUsableRanges(
   const merged: Array<{ start: number; end: number }> = [];
   for (const r of clipped) {
     if (merged.length > 0 && r.start <= merged[merged.length - 1].end) {
-      merged[merged.length - 1].end = Math.max(merged[merged.length - 1].end, r.end);
+      merged[merged.length - 1].end = Math.max(
+        merged[merged.length - 1].end,
+        r.end,
+      );
     } else {
       merged.push({ ...r });
     }
@@ -484,8 +527,9 @@ function mapFrameRangeToClips(
 
   while (remaining > 0 && rangeIdx < usableRanges.length) {
     const range = usableRanges[rangeIdx];
-    const posInRange = logicalStart + (logicalDuration - remaining) - rangeOffset;
-    const available = (range.end - range.start) - posInRange;
+    const posInRange =
+      logicalStart + (logicalDuration - remaining) - rangeOffset;
+    const available = range.end - range.start - posInRange;
     const take = Math.min(remaining, available);
 
     if (take > 0) {
@@ -502,9 +546,10 @@ function mapFrameRangeToClips(
     clips[clips.length - 1].duration += remaining;
   } else if (remaining > 0) {
     // Fallback: no usable ranges matched, use raw start
-    const fallbackStart = usableRanges.length > 0
-      ? usableRanges[usableRanges.length - 1].end
-      : logicalStart;
+    const fallbackStart =
+      usableRanges.length > 0
+        ? usableRanges[usableRanges.length - 1].end
+        : logicalStart;
     clips.push({ trimStart: fallbackStart, duration: remaining });
   }
 
@@ -543,7 +588,9 @@ function estimateWordTimings(
 
   // Second pass: scale durations so they sum to exactly totalFrames
   const scale = totalFrames / rawTotal;
-  const durations = rawDurations.map((d) => Math.max(MIN_FRAMES, Math.round(d * scale)));
+  const durations = rawDurations.map((d) =>
+    Math.max(MIN_FRAMES, Math.round(d * scale)),
+  );
 
   // Distribute any residual rounding error into the last word
   const durSum = durations.reduce((a, b) => a + b, 0);
@@ -567,7 +614,9 @@ function estimateWordTimings(
  */
 function splitIntoSentences(text: string): string[] {
   // Strip pacing directives for splitting, but preserve text
-  const cleaned = text.replace(/\[PAUSE:\s*[\d.]+s?\]/gi, "").replace(/\*/g, "");
+  const cleaned = text
+    .replace(/\[PAUSE:\s*[\d.]+s?\]/gi, "")
+    .replace(/\*/g, "");
   // Split on sentence-ending punctuation followed by whitespace
   const sentences = cleaned
     .split(/(?<=[.!?])\s+/)

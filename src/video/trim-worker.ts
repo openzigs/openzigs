@@ -61,7 +61,9 @@ export class TrimWorker extends EventEmitter {
 
     this.jobs.set(id, job);
     this.queue.push(job);
-    logger.info(`[TrimWorker] Job ${id} queued: ${path.basename(request.inputPath)} [${request.startTime}s → ${request.endTime}s]`);
+    logger.info(
+      `[TrimWorker] Job ${id} queued: ${path.basename(request.inputPath)} [${request.startTime}s → ${request.endTime}s]`,
+    );
     this.emit("trim:queued", { jobId: id });
     this.processNext();
     return id;
@@ -80,7 +82,8 @@ export class TrimWorker extends EventEmitter {
       const job = this.jobs.get(jobId);
       if (!job) return reject(new Error(`Job ${jobId} not found`));
       if (job.status === "complete") return resolve(job);
-      if (job.status === "failed") return reject(new Error(job.error ?? "Trim failed"));
+      if (job.status === "failed")
+        return reject(new Error(job.error ?? "Trim failed"));
 
       const timeout = setTimeout(() => {
         cleanup();
@@ -111,7 +114,8 @@ export class TrimWorker extends EventEmitter {
   }
 
   private processNext(): void {
-    if (this.activeCount >= this.maxConcurrent || this.queue.length === 0) return;
+    if (this.activeCount >= this.maxConcurrent || this.queue.length === 0)
+      return;
     const job = this.queue.shift()!;
     this.activeCount++;
     job.status = "processing";
@@ -121,8 +125,13 @@ export class TrimWorker extends EventEmitter {
       .then(() => {
         job.status = "complete";
         job.completedAt = new Date();
-        logger.info(`[TrimWorker] Job ${job.id} complete: ${path.basename(job.outputPath)}`);
-        this.emit("trim:complete", { jobId: job.id, outputPath: job.outputPath });
+        logger.info(
+          `[TrimWorker] Job ${job.id} complete: ${path.basename(job.outputPath)}`,
+        );
+        this.emit("trim:complete", {
+          jobId: job.id,
+          outputPath: job.outputPath,
+        });
       })
       .catch((err) => {
         job.status = "failed";
@@ -149,11 +158,16 @@ export class TrimWorker extends EventEmitter {
 
       const isWebm = job.inputPath.toLowerCase().endsWith(".webm");
       const args = [
-        "-ss", String(job.startTime),
-        "-to", String(job.endTime),
-        "-i", job.inputPath,
-        "-c", "copy",
-        "-avoid_negative_ts", "make_zero",
+        "-ss",
+        String(job.startTime),
+        "-to",
+        String(job.endTime),
+        "-i",
+        job.inputPath,
+        "-c",
+        "copy",
+        "-avoid_negative_ts",
+        "make_zero",
         ...(isWebm ? [] : ["-movflags", "+faststart"]),
         "-y",
         job.outputPath,
@@ -171,12 +185,18 @@ export class TrimWorker extends EventEmitter {
         if (code === 0) {
           resolve();
         } else {
-          reject(new Error(`FFmpeg exited with code ${code}: ${stderr.slice(-500)}`));
+          reject(
+            new Error(`FFmpeg exited with code ${code}: ${stderr.slice(-500)}`),
+          );
         }
       });
 
       proc.on("error", (err) => {
-        reject(new Error(`Failed to spawn ffmpeg: ${err.message}. Is ffmpeg installed?`));
+        reject(
+          new Error(
+            `Failed to spawn ffmpeg: ${err.message}. Is ffmpeg installed?`,
+          ),
+        );
       });
     });
   }

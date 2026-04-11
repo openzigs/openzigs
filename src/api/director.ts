@@ -1024,6 +1024,8 @@ Respond with ONLY a valid JSON array. No explanation. Example:
         pathMod.join(osMod.homedir(), ".openzigs", "director", "blog"),
         pathMod.join(osMod.homedir(), ".openzigs", "director", "thumbnails"),
         pathMod.join(osMod.homedir(), ".openzigs", "director", "shorts"),
+        // Gallery assets (screen recordings, trimmed clips, uploads via Capture & Trim)
+        pathMod.join(osMod.homedir(), ".openzigs", "gallery"),
       ];
 
       let found: string | null = null;
@@ -3165,7 +3167,11 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
         drafts: rows.map((r) => ({
           id: r.id,
           title: r.title,
-          thumbnail: r.thumbnail,
+          thumbnail: r.thumbnail
+            ? r.thumbnail.startsWith("http") || r.thumbnail.startsWith("/api")
+              ? r.thumbnail
+              : `/api/admin/director/files/${encodeURIComponent(r.thumbnail)}`
+            : null,
           productionMode: r.production_mode,
           createdAt: r.created_at,
           updatedAt: r.updated_at,
@@ -3218,11 +3224,17 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
         );
       }
 
+      const thumbnailUrl = row.thumbnail
+        ? row.thumbnail.startsWith("http") || row.thumbnail.startsWith("/api")
+          ? row.thumbnail
+          : `/api/admin/director/files/${encodeURIComponent(row.thumbnail)}`
+        : null;
+
       res.json({
         id: row.id,
         title: row.title,
         manifest,
-        thumbnail: row.thumbnail,
+        thumbnail: thumbnailUrl,
         productionMode: row.production_mode,
         createdAt: row.created_at,
         updatedAt: row.updated_at,
@@ -7277,7 +7289,10 @@ For each Short, respond with JSON only (no markdown fences):
   router.post("/drafts/:draftId/shorts/propose", async (req, res) => {
     try {
       const { draftId } = req.params;
-      const { maxShorts } = req.body as { maxShorts?: number };
+      const { maxShorts, model: requestModel } = req.body as {
+        maxShorts?: number;
+        model?: string;
+      };
 
       const db = getDatabase();
       const row = db
@@ -7310,51 +7325,168 @@ For each Short, respond with JSON only (no markdown fences):
         return;
       }
 
-      // Build cumulative start/end times for each scene
-      let cumulativeMs = 0;
-      const sceneTimes = timeline.map((s: Record<string, unknown>) => {
-        const dur =
-          typeof s.duration === "number"
-            ? s.duration < 1000
-              ? s.duration * 1000
-              : s.duration
-            : 5000;
-        const start = cumulativeMs;
-        cumulativeMs += dur;
-        return { startMs: start, endMs: cumulativeMs, durationMs: dur };
-      });
+      const comp = (manifest.composition ?? {}) as Record<string, unknown>;
+      const fps = typeof comp.fps === "number" && comp.fps > 0 ? comp.fps : 30;
 
-      const sceneDescriptions = timeline
-        .map((s: Record<string, unknown>, i: number) => {
-          const text =
-            (s.scriptText as string) || (s.title as string) || `Scene ${i + 1}`;
-          return `[${i}] (${Math.round(sceneTimes[i].durationMs / 1000)}s) ${text.slice(0, 200)}`;
-        })
-        .join("\n");
+      // Check if the timeline is a single video_clip — if so, run FFmpeg analysis
+      const isSingleVideoClip =
+        timeline.length === 1 &&
+        (timeline[0] as Record<string, unknown>).type === "video_clip";
+      const videoSource = isSingleVideoClip
+        ? ((timeline[0] as Record<string, unknown>).source as string) ||
+          ((timeline[0] as Record<string, unknown>).src as string) ||
+          ""
+        : "";
+
+      let totalDurationSec = 0;
+      let sceneDescriptions = "";
+
+      const fsMod2 = await import("node:fs");
+      if (isSingleVideoClip && videoSource && fsMod2.existsSync(videoSource)) {
+        // Run ffprobe + scene detection on the actual video file
+        const ffprobeDuration = await new Promise<number>((resolve) => {
+          const proc = spawn("ffprobe", [
+            "-v",
+            "quiet",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
+            videoSource,
+          ]);
+          let out = "";
+          proc.stdout.on("data", (c: Buffer) => (out += c.toString()));
+          proc.on("close", () => {
+            const d = parseFloat(out.trim());
+            resolve(isNaN(d) ? 0 : d);
+          });
+          proc.on("error", () => resolve(0));
+        });
+
+        totalDurationSec = ffprobeDuration || 60;
+
+        // Scene detection via FFmpeg
+        const sceneChanges = await new Promise<
+          Array<{ ts: number; score: number }>
+        >((resolve) => {
+          const proc = spawn("ffmpeg", [
+            "-i",
+            videoSource,
+            "-vf",
+            "select='gt(scene,0.3)',showinfo",
+            "-f",
+            "null",
+            "-",
+          ]);
+          let stderr = "";
+          proc.stderr.on("data", (c: Buffer) => (stderr += c.toString()));
+          proc.on("close", () => {
+            const changes: Array<{ ts: number; score: number }> = [];
+            for (const line of stderr.split("\n")) {
+              const ptsMatch = line.match(/pts_time:(\d+\.?\d*)/);
+              const sceneMatch = line.match(/scene:(\d+\.?\d*)/);
+              if (ptsMatch) {
+                changes.push({
+                  ts: parseFloat(ptsMatch[1]),
+                  score: sceneMatch ? parseFloat(sceneMatch[1]) : 0.5,
+                });
+              }
+            }
+            resolve(changes);
+          });
+          proc.on("error", () => resolve([]));
+        });
+
+        // Build scene descriptions from detected scene boundaries
+        const boundaries = [
+          0,
+          ...sceneChanges.map((c) => c.ts),
+          totalDurationSec,
+        ];
+        const segments: Array<{ start: number; end: number }> = [];
+        for (let i = 0; i < boundaries.length - 1; i++) {
+          const start = boundaries[i];
+          const end = boundaries[i + 1];
+          if (end - start >= 3) segments.push({ start, end });
+        }
+
+        if (segments.length === 0) {
+          segments.push({ start: 0, end: totalDurationSec });
+        }
+
+        sceneDescriptions = segments
+          .map(
+            (s, i) =>
+              `[${i}] (${s.start.toFixed(1)}s–${s.end.toFixed(1)}s, ${Math.round(s.end - s.start)}s) Scene ${i + 1}`,
+          )
+          .join("\n");
+      } else {
+        // Multi-scene timeline: use manifest data
+        const framesToSec = (raw: unknown): number => {
+          if (typeof raw !== "number" || raw <= 0) return 5;
+          return raw / fps;
+        };
+
+        let cumulativeSec = 0;
+        const sceneTimes = timeline.map((s: Record<string, unknown>) => {
+          const durSec = framesToSec(s.duration ?? s.durationInFrames);
+          const start = cumulativeSec;
+          cumulativeSec += durSec;
+          return {
+            startSec: start,
+            endSec: cumulativeSec,
+            durationSec: durSec,
+          };
+        });
+
+        totalDurationSec = cumulativeSec;
+        sceneDescriptions = timeline
+          .map((s: Record<string, unknown>, i: number) => {
+            const text =
+              (s.scriptText as string) ||
+              (s.title as string) ||
+              `Scene ${i + 1}`;
+            const src = (s.source as string) || (s.src as string) || "";
+            const srcInfo = src ? ` [source: ${path.basename(src)}]` : "";
+            return `[${i}] (${sceneTimes[i].startSec.toFixed(1)}s–${sceneTimes[i].endSec.toFixed(1)}s, ${Math.round(sceneTimes[i].durationSec)}s)${srcInfo} ${text.slice(0, 200)}`;
+          })
+          .join("\n");
+      }
 
       const limit = Math.min(maxShorts || 3, 5);
-      const prompt = `You are a viral content strategist. Analyze these video scenes and select up to ${limit} segments that would make the most engaging YouTube Shorts (max 60 seconds each).
+      const prompt = `You are a viral content strategist. A ${Math.round(totalDurationSec)}-second video/presentation has the following scenes. Your job is to select up to ${limit} SHORT segments (each under 60 seconds) that would make the most engaging YouTube Shorts.
+
+READ each scene's script/description carefully. Identify the most compelling, self-contained ideas that work as standalone Shorts.
 
 SCENES:
 ${sceneDescriptions}
 
-For each Short, respond with JSON only (no markdown fences):
+CRITICAL RULES:
+1. Each Short MUST be between 15 and 60 seconds
+2. NEVER select the entire video — pick specific interesting segments
+3. startTime and endTime are in SECONDS — use the scene timestamps shown above
+4. Each Short should cover 1-3 related scenes that tell a complete micro-story
+5. Prefer segments with: strong opening hooks, surprising facts, quotable lines, clear takeaways
+6. Avoid intro/outro scenes — pick the meaty content in the middle
+
+Return a JSON array only (no markdown, no explanation):
 [
   {
-    "startSceneIndex": 0,
-    "endSceneIndex": 2,
-    "title": "Hook title for the Short",
-    "hookText": "Opening hook text overlay",
-    "ctaText": "Call to action text",
-    "reason": "Why this segment is engaging",
+    "startTime": 52.4,
+    "endTime": 100.4,
+    "title": "Catchy Short title",
+    "hookText": "Opening text overlay for the Short",
+    "ctaText": "Call to action",
+    "reason": "Brief explanation of why this segment is engaging",
     "score": 85
   }
 ]`;
 
-      const seoModel = await getUserSelectedModel();
+      const chosenModel =
+        requestModel || (await getUserSelectedModel()) || undefined;
       const stream = copilot.chat(prompt, {
         tools: [],
-        ...(seoModel ? { model: seoModel } : {}),
+        ...(chosenModel ? { model: chosenModel } : {}),
       });
       const chunks: string[] = [];
       for await (const chunk of stream) {
@@ -7362,9 +7494,14 @@ For each Short, respond with JSON only (no markdown fences):
       }
 
       const rawResponse = chunks.join("").trim();
+      logger.info(
+        `[Director API] shorts/propose raw LLM (${rawResponse.length} chars): ${rawResponse.slice(0, 500)}`,
+      );
       let suggestions: Array<{
-        startSceneIndex: number;
-        endSceneIndex: number;
+        startTime?: number;
+        endTime?: number;
+        startSceneIndex?: number;
+        endSceneIndex?: number;
         title: string;
         hookText: string;
         ctaText: string;
@@ -7383,19 +7520,24 @@ For each Short, respond with JSON only (no markdown fences):
         return;
       }
 
-      // Map to the shape the UI expects: { startTime, endTime, title, hookText, ctaText, score, reason }
       const proposals = suggestions.slice(0, limit).map((s) => {
-        const startIdx = Math.max(
-          0,
-          Math.min(s.startSceneIndex, timeline.length - 1),
-        );
-        const endIdx = Math.max(
-          startIdx,
-          Math.min(s.endSceneIndex, timeline.length - 1),
-        );
+        let startTime: number;
+        let endTime: number;
+
+        if (typeof s.startTime === "number" && typeof s.endTime === "number") {
+          startTime = s.startTime;
+          endTime = s.endTime;
+        } else {
+          // Fallback: use proportional mapping when LLM returns scene indices
+          startTime = 0;
+          endTime = Math.min(totalDurationSec, 60);
+        }
+
+        if (endTime - startTime > 60) endTime = startTime + 60;
+
         return {
-          startTime: sceneTimes[startIdx].startMs / 1000,
-          endTime: sceneTimes[endIdx].endMs / 1000,
+          startTime,
+          endTime,
           title: s.title,
           hookText: s.hookText,
           ctaText: s.ctaText,
@@ -7404,7 +7546,10 @@ For each Short, respond with JSON only (no markdown fences):
         };
       });
 
-      res.json({ proposals });
+      logger.info(
+        `[Director API] shorts/propose returning ${proposals.length} proposals for ${Math.round(totalDurationSec)}s video`,
+      );
+      res.json({ proposals, totalDurationSec: Math.round(totalDurationSec) });
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       logger.error(
@@ -7471,20 +7616,100 @@ For each Short, respond with JSON only (no markdown fences):
 
       const jobIds: string[] = [];
 
+      const parentComposition =
+        (parentManifest.composition as Record<string, unknown>) || {};
+      const parentFps =
+        typeof parentComposition.fps === "number" && parentComposition.fps > 0
+          ? parentComposition.fps
+          : 30;
+      const parentTimeline = Array.isArray(parentManifest.timeline)
+        ? (parentManifest.timeline as Array<Record<string, unknown>>)
+        : [];
+
+      // Find the primary video source from the parent timeline
+      const primaryVideoEntry = parentTimeline.find(
+        (e) => e.type === "video_clip" && (e.source || e.src),
+      );
+      const primaryVideoSource =
+        (primaryVideoEntry?.source as string) ??
+        (primaryVideoEntry?.src as string) ??
+        "";
+
       for (const seg of parsed.data.segments) {
         const shortDraftId = nanoid();
         const jobId = nanoid();
         const now = new Date().toISOString();
 
-        // Create a Shorts manifest from the segment
+        const segDurationSec = seg.endTime - seg.startTime;
+        const segDurationFrames = Math.round(segDurationSec * parentFps);
+
+        let shortsTimeline: Array<Record<string, unknown>>;
+
+        if (primaryVideoSource) {
+          // Single video_clip: trim to the selected time range
+          shortsTimeline = [
+            {
+              type: "video_clip",
+              source: primaryVideoSource,
+              title: seg.title,
+              startAtFrame: 0,
+              trimStart: seg.startTime,
+              trimEnd: seg.endTime,
+              duration: segDurationFrames,
+              durationInFrames: segDurationFrames,
+            },
+          ];
+        } else {
+          // Multi-scene/presentation: filter to scenes overlapping the selected window
+          let cumulativeSec = 0;
+          const scenesWithTime = parentTimeline.map((entry) => {
+            const dur =
+              typeof entry.duration === "number"
+                ? entry.duration / parentFps
+                : typeof entry.durationInFrames === "number"
+                  ? (entry.durationInFrames as number) / parentFps
+                  : 5;
+            const start = cumulativeSec;
+            cumulativeSec += dur;
+            return { entry, startSec: start, endSec: cumulativeSec };
+          });
+
+          // Keep scenes that overlap with [seg.startTime, seg.endTime]
+          const filtered = scenesWithTime.filter(
+            (s) => s.endSec > seg.startTime && s.startSec < seg.endTime,
+          );
+
+          // Recompute startAtFrame sequentially for the filtered timeline
+          let frame = 0;
+          shortsTimeline = filtered.map((s) => {
+            const dur =
+              typeof s.entry.duration === "number"
+                ? (s.entry.duration as number)
+                : typeof s.entry.durationInFrames === "number"
+                  ? (s.entry.durationInFrames as number)
+                  : Math.round(5 * parentFps);
+            const updated = { ...s.entry, startAtFrame: frame };
+            frame += dur;
+            return updated;
+          });
+
+          if (shortsTimeline.length === 0) {
+            shortsTimeline = parentTimeline;
+          }
+        }
+
+        // YouTube Shorts: vertical 9:16 at 1080×1920 using the ContentCreator composition
+        // (parent drafts may use 16:9 templates — do not inherit templateId for Short output).
         const shortsManifest = {
           ...parentManifest,
+          templateId: "ContentCreator",
           projectTitle: seg.title,
           composition: {
-            ...((parentManifest.composition as Record<string, unknown>) || {}),
+            ...parentComposition,
             width: 1080,
             height: 1920,
           },
+          timeline: shortsTimeline,
           shortsMetadata: {
             parentDraftId: draftId,
             startTime: seg.startTime,
