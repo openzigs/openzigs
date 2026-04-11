@@ -18,15 +18,14 @@ import gc
 import json
 import logging
 import os
+import re
 import tempfile
 import time
 import traceback
-import ipaddress
 import subprocess
 import shutil
 from pathlib import Path
 from typing import Any, Optional
-from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 from urllib.error import URLError
 
@@ -44,26 +43,25 @@ logger = logging.getLogger("lipsync-sidecar-cuda")
 
 # ── Security Utilities ───────────────────────────────────────
 
+# Job ID must be a UUID (hex + hyphens) — reject anything else.
+_JOB_ID_RE = re.compile(r"^[a-fA-F0-9\-]{1,64}$")
 
-def validate_callback_url(url: str) -> str:
-    """Validate that a callback/webhook URL is safe (SSRF protection)."""
-    parsed = urlparse(url)
-    if parsed.scheme not in ("http", "https"):
-        raise ValueError(f"URL scheme must be http or https, got: {parsed.scheme}")
-    hostname = parsed.hostname or ""
-    if not hostname:
-        raise ValueError("URL must have a hostname")
-    _blocked = {"localhost", "0.0.0.0", "metadata.google.internal"}
-    if hostname.lower() in _blocked:
-        raise ValueError(f"Blocked hostname: {hostname}")
-    try:
-        addr = ipaddress.ip_address(hostname.strip("[]"))
-        if addr.is_private or addr.is_loopback or addr.is_link_local or addr.is_reserved:
-            raise ValueError(f"Blocked private/internal IP: {addr}")
-    except ValueError as e:
-        if "Blocked" in str(e):
-            raise
-    return url
+# Valid model versions — strict allowlist used before any path construction.
+_VALID_MODEL_VERSIONS = frozenset({"v1.5", "v1.6"})
+
+
+def _validate_job_id(job_id: str) -> str:
+    """Ensure job_id is safe to use in filenames and URLs."""
+    if not _JOB_ID_RE.match(job_id):
+        raise ValueError(f"Invalid job_id format: {job_id!r}")
+    return job_id
+
+
+def _validate_model_version(v: str) -> str:
+    """Ensure model_version is in the strict allowlist."""
+    if v not in _VALID_MODEL_VERSIONS:
+        raise ValueError(f"Invalid model_version: {v!r}. Must be one of {_VALID_MODEL_VERSIONS}")
+    return v
 
 
 def safe_join(base_dir: str, user_path: str) -> str:
@@ -75,14 +73,13 @@ def safe_join(base_dir: str, user_path: str) -> str:
     return joined
 
 
-def _safe_urlopen(url: str, data: bytes | None = None, timeout: int = 30) -> None:
-    """urlopen wrapper with SSRF protection."""
-    validate_callback_url(url)
+def _post_to_callback(endpoint_url: str, data: bytes, timeout: int = 30) -> None:
+    """POST data to a server-configured callback URL (not user-supplied)."""
     headers = {"Content-Type": "application/json"}
     _cb_secret = os.getenv("CALLBACK_SECRET") or None
     if _cb_secret:
         headers["Authorization"] = f"Bearer {_cb_secret}"
-    req = Request(url, data=data, headers=headers, method="POST")
+    req = Request(endpoint_url, data=data, headers=headers, method="POST")
     urlopen(req, timeout=timeout)
 
 
@@ -97,6 +94,10 @@ AUTH_TOKEN: Optional[str] = os.environ.get("LIPSYNC_SECRET_TOKEN")
 MODEL_IDLE_TIMEOUT = float(os.environ.get("LIPSYNC_MODEL_IDLE_TIMEOUT", "300"))
 MEMORY_LIMIT_GB = float(os.environ.get("LIPSYNC_MEMORY_LIMIT_GB", "24"))
 DEFAULT_MODEL = os.environ.get("LIPSYNC_DEFAULT_MODEL", "v1.5")
+
+# Callback URLs are server-configured only (not user-supplied) to prevent SSRF.
+CALLBACK_URL: str = os.environ.get("CALLBACK_URL", "http://localhost:3000/api/queue/complete")
+PROGRESS_URL: str = os.environ.get("PROGRESS_URL", "http://localhost:3000/api/queue/progress")
 
 
 def _resolve_device() -> str:
@@ -194,17 +195,20 @@ def _load_pipeline(model_version: str = "v1.5"):
         worker_state["model_version"] = model_version
         return
 
+    safe_version = _validate_model_version(model_version)
     config_map = {
         "v1.5": "latentsync_unet_v1.5.yaml",
         "v1.6": "latentsync_unet_v1.6.yaml",
     }
-    config_name = config_map.get(model_version, config_map["v1.5"])
-    latentsync_dir = os.environ.get(
-        "LATENTSYNC_DIR",
-        str(Path.home() / ".openzigs" / "models" / "latentsync"),
+    config_name = config_map[safe_version]
+    latentsync_dir = os.path.realpath(
+        os.environ.get(
+            "LATENTSYNC_DIR",
+            str(Path.home() / ".openzigs" / "models" / "latentsync"),
+        )
     )
-    config_path = os.path.join(latentsync_dir, "configs", config_name)
-    ckpt_path = os.path.join(latentsync_dir, "checkpoints", f"latentsync_unet_{model_version}.pt")
+    config_path = safe_join(latentsync_dir, os.path.join("configs", config_name))
+    ckpt_path = safe_join(latentsync_dir, os.path.join("checkpoints", f"latentsync_unet_{safe_version}.pt"))
 
     if not os.path.exists(config_path) or not os.path.exists(ckpt_path):
         logger.warning(
@@ -212,7 +216,7 @@ def _load_pipeline(model_version: str = "v1.5"):
         )
         _pipeline = None
         worker_state["loaded_model"] = "subprocess"
-        worker_state["model_version"] = model_version
+        worker_state["model_version"] = safe_version
         return
 
     _pipeline = LatentSyncPipeline.from_pretrained(
@@ -221,9 +225,9 @@ def _load_pipeline(model_version: str = "v1.5"):
         device=DEVICE,
         dtype=torch.float16,
     )
-    worker_state["loaded_model"] = f"latentsync-{model_version}"
-    worker_state["model_version"] = model_version
-    logger.info("LatentSync %s loaded on %s (float16)", model_version, DEVICE)
+    worker_state["loaded_model"] = f"latentsync-{safe_version}"
+    worker_state["model_version"] = safe_version
+    logger.info("LatentSync %s loaded on %s (float16)", safe_version, DEVICE)
 
 
 def _unload_model() -> None:
@@ -262,7 +266,7 @@ async def _idle_timer():
 
 
 class LipSyncRequest(BaseModel):
-    job_id: str
+    job_id: str = Field(..., pattern=r"^[a-fA-F0-9\-]{1,64}$")
     video_path: Optional[str] = None
     audio_path: Optional[str] = None
     video_data: Optional[str] = None
@@ -271,8 +275,6 @@ class LipSyncRequest(BaseModel):
     guidance_scale: float = Field(default=1.5, ge=0.0, le=10.0)
     enable_deepcache: bool = True
     model_version: str = Field(default="v1.5", pattern=r"^v1\.[56]$")
-    callback_url: Optional[str] = None
-    progress_url: Optional[str] = None
 
     @field_validator("video_path", "audio_path", mode="before")
     @classmethod
@@ -292,9 +294,8 @@ def report_progress(
     stage: str,
     progress: float,
     message: str,
-    progress_url: Optional[str] = None,
 ):
-    """Update local progress state and POST to the progress webhook."""
+    """Update local progress state and POST to the server-configured progress URL."""
     job_progress[job_id] = {
         **job_progress.get(job_id, {}),
         "stage": stage,
@@ -302,12 +303,12 @@ def report_progress(
         "message": message,
         "status": "processing",
     }
-    if progress_url:
+    if PROGRESS_URL:
         try:
             payload = json.dumps(
                 {"job_id": job_id, "stage": stage, "progress": progress, "message": message}
             ).encode()
-            _safe_urlopen(progress_url, data=payload)
+            _post_to_callback(PROGRESS_URL, data=payload)
         except Exception as exc:
             logger.warning("Failed to POST progress for %s: %s", job_id, exc)
 
@@ -321,11 +322,21 @@ def _run_latentsync_subprocess(
     guidance_scale: float = 1.5,
 ) -> None:
     """Run LatentSync inference via subprocess (fallback)."""
-    latentsync_dir = os.environ.get(
-        "LATENTSYNC_DIR",
-        str(Path.home() / ".openzigs" / "models" / "latentsync"),
+    safe_version = _validate_model_version(model_version)
+    safe_steps = int(inference_steps)
+    safe_scale = float(guidance_scale)
+    if not (1 <= safe_steps <= 100):
+        raise ValueError(f"inference_steps out of range: {safe_steps}")
+    if not (0.0 <= safe_scale <= 10.0):
+        raise ValueError(f"guidance_scale out of range: {safe_scale}")
+
+    latentsync_dir = os.path.realpath(
+        os.environ.get(
+            "LATENTSYNC_DIR",
+            str(Path.home() / ".openzigs" / "models" / "latentsync"),
+        )
     )
-    inference_script = os.path.join(latentsync_dir, "inference.py")
+    inference_script = safe_join(latentsync_dir, "inference.py")
     if not os.path.exists(inference_script):
         raise FileNotFoundError(f"LatentSync inference.py not found at {inference_script}")
 
@@ -333,12 +344,13 @@ def _run_latentsync_subprocess(
         "v1.5": "latentsync_unet_v1.5.yaml",
         "v1.6": "latentsync_unet_v1.6.yaml",
     }
-    config_name = config_map.get(model_version, config_map["v1.5"])
-    config_path = os.path.join(latentsync_dir, "configs", config_name)
-    ckpt_path = os.path.join(
-        latentsync_dir, "checkpoints", f"latentsync_unet_{model_version}.pt"
+    config_name = config_map[safe_version]
+    config_path = safe_join(latentsync_dir, os.path.join("configs", config_name))
+    ckpt_path = safe_join(
+        latentsync_dir, os.path.join("checkpoints", f"latentsync_unet_{safe_version}.pt")
     )
 
+    # All arguments are validated and path-safe; no shell=True
     cmd = [
         "python",
         inference_script,
@@ -347,11 +359,11 @@ def _run_latentsync_subprocess(
         "--video_path", video_path,
         "--audio_path", audio_path,
         "--output_path", output_path,
-        "--inference_steps", str(inference_steps),
-        "--guidance_scale", str(guidance_scale),
+        "--inference_steps", str(safe_steps),
+        "--guidance_scale", str(safe_scale),
     ]
 
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)  # noqa: S603
     if result.returncode != 0:
         raise RuntimeError(f"LatentSync inference failed: {result.stderr[-1000:]}")
 
@@ -369,7 +381,7 @@ async def process_lipsync_job(req: LipSyncRequest) -> None:
         tmpdir = tempfile.mkdtemp(prefix="lipsync_")
 
         # ── Resolve video input ──
-        report_progress(job_id, "input", 0.1, "Preparing video input", req.progress_url)
+        report_progress(job_id, "input", 0.1, "Preparing video input")
         if req.video_data:
             video_file = os.path.join(tmpdir, "input_video.mp4")
             with open(video_file, "wb") as f:
@@ -382,7 +394,7 @@ async def process_lipsync_job(req: LipSyncRequest) -> None:
             raise ValueError("Either video_data or video_path is required")
 
         # ── Resolve audio input ──
-        report_progress(job_id, "input", 0.2, "Preparing audio input", req.progress_url)
+        report_progress(job_id, "input", 0.2, "Preparing audio input")
         if req.audio_data:
             audio_file = os.path.join(tmpdir, "input_audio.wav")
             with open(audio_file, "wb") as f:
@@ -397,13 +409,13 @@ async def process_lipsync_job(req: LipSyncRequest) -> None:
         output_path = os.path.join(tmpdir, "output_lipsync.mp4")
 
         # ── Load model if needed ──
-        report_progress(job_id, "model", 0.3, "Loading model", req.progress_url)
+        report_progress(job_id, "model", 0.3, "Loading model")
         if worker_state.get("model_version") != req.model_version:
             _unload_model()
             _load_pipeline(req.model_version)
 
         # ── Run inference ──
-        report_progress(job_id, "inference", 0.4, "Running lip-sync inference (CUDA)", req.progress_url)
+        report_progress(job_id, "inference", 0.4, "Running lip-sync inference (CUDA)")
 
         if _pipeline is not None:
             _pipeline(
@@ -424,15 +436,16 @@ async def process_lipsync_job(req: LipSyncRequest) -> None:
                 guidance_scale=req.guidance_scale,
             )
 
-        report_progress(job_id, "finalize", 0.9, "Finalizing output", req.progress_url)
+        report_progress(job_id, "finalize", 0.9, "Finalizing output")
 
         if not os.path.exists(output_path):
             raise RuntimeError("LatentSync produced no output file")
 
         # ── Copy to gallery ──
         os.makedirs(GALLERY_DIR, exist_ok=True)
-        final_filename = f"lipsync_{job_id}.mp4"
-        final_path = os.path.join(GALLERY_DIR, final_filename)
+        safe_id = _validate_job_id(job_id)
+        final_filename = f"lipsync_{safe_id}.mp4"
+        final_path = safe_join(GALLERY_DIR, final_filename)
         shutil.copy2(output_path, final_path)
 
         result_url = f"/gallery/{final_filename}"
@@ -447,8 +460,8 @@ async def process_lipsync_job(req: LipSyncRequest) -> None:
         }
         cleanup_old_jobs()
 
-        # ── Callback ──
-        if req.callback_url:
+        # ── Callback (server-configured URL, not user-supplied) ──
+        if CALLBACK_URL:
             try:
                 cb_payload = json.dumps(
                     {
@@ -464,7 +477,7 @@ async def process_lipsync_job(req: LipSyncRequest) -> None:
                         ),
                     }
                 ).encode()
-                _safe_urlopen(req.callback_url, data=cb_payload)
+                _post_to_callback(CALLBACK_URL, data=cb_payload)
             except Exception as exc:
                 logger.error("Callback failed for %s: %s", job_id, exc)
 
@@ -478,12 +491,12 @@ async def process_lipsync_job(req: LipSyncRequest) -> None:
             "error": str(exc)[:500],
             "completed_at": time.time(),
         }
-        if req.callback_url:
+        if CALLBACK_URL:
             try:
                 err_payload = json.dumps(
                     {"job_id": job_id, "status": "failed", "error": str(exc)[:500]}
                 ).encode()
-                _safe_urlopen(req.callback_url, data=err_payload)
+                _post_to_callback(CALLBACK_URL, data=err_payload)
             except Exception:
                 pass
     finally:

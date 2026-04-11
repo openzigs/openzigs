@@ -1510,8 +1510,6 @@ export class QueueMaster extends EventEmitter {
     if (nodeConfig.token)
       headers["Authorization"] = `Bearer ${nodeConfig.token}`;
 
-    const callbackUrl = this.resolveCallbackUrl(nodeConfig.url);
-
     const body: Record<string, unknown> = {
       job_id: job.id,
       video_path: job.payload.video_path,
@@ -1522,8 +1520,6 @@ export class QueueMaster extends EventEmitter {
       guidance_scale: job.payload.guidance_scale_lipsync ?? 1.5,
       enable_deepcache: job.payload.enable_deepcache ?? true,
       model_version: job.payload.model_version ?? "v1.5",
-      callback_url: callbackUrl,
-      progress_url: `${this.config.callbackUrl}/api/queue/progress`,
     };
 
     const res = await fetch(`${nodeConfig.url}/generate`, {
