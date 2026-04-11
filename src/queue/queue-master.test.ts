@@ -1861,4 +1861,22 @@ describe("QueueMaster", () => {
           arrayBuffer: () => Promise.resolve(fakeWav.buffer),
         })
         // Remaining sidecar checks + re-tick
-        .mockRejectedValu
+        .mockRejectedValue(new Error("unreachable"));
+
+      await qm.tick();
+
+      expect(repo.markDispatched).toHaveBeenCalledWith("tts-5");
+
+      // Verify fetch was called with /tts endpoint and the payload includes ref_audio_path
+      const ttsCall = mockFetch.mock.calls.find(
+        (c) => typeof c[0] === "string" && (c[0] as string).includes("/tts"),
+      );
+      expect(ttsCall).toBeDefined();
+      const body = JSON.parse(ttsCall![1]?.body as string);
+      expect(body.text).toBe("Clone voice");
+      expect(body.voice).toBe("af_heart");
+      // reference_audio should be decoded to a temp file path
+      expect(body.ref_audio_path).toBeDefined();
+    });
+  });
+});
