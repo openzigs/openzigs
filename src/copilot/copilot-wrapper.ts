@@ -794,7 +794,8 @@ export class CopilotWrapperService
   private toSdkProvider(): SessionConfig["provider"] {
     if (!this.providerConfig) return undefined;
     if (this.providerConfig.type === "ollama") {
-      const base = this.providerConfig.baseUrl.replace(/\/+$/, "");
+      let base = this.providerConfig.baseUrl;
+      while (base.endsWith("/")) base = base.slice(0, -1);
       return { type: "openai", baseUrl: `${base}/v1`, wireApi: "completions" };
     }
     return this.providerConfig;

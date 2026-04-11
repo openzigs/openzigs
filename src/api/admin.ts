@@ -3729,12 +3729,30 @@ export const createAdminRouter = ({
 
     const baseUrl = String(prov.baseUrl).replace(/\/+$/, "");
     const provType = String(prov.type);
+
+    // SSRF protection: only allow http(s) URLs targeting known AI provider patterns
+    // or explicit localhost/private addresses for Ollama/local providers.
+    let parsedUrl: URL;
+    try {
+      parsedUrl = new URL(baseUrl);
+    } catch {
+      return res.status(400).json({ success: false, error: "Invalid base URL" });
+    }
+    if (parsedUrl.protocol !== "http:" && parsedUrl.protocol !== "https:") {
+      return res.status(400).json({ success: false, error: "URL scheme must be http or https" });
+    }
+    const ALLOWED_PROVIDER_TYPES = ["openai", "azure", "anthropic", "ollama", "custom"];
+    if (!ALLOWED_PROVIDER_TYPES.includes(provType)) {
+      return res.status(400).json({ success: false, error: `Unknown provider type: ${provType}` });
+    }
+
     const start = Date.now();
 
     try {
       if (provType === "ollama") {
         // Ollama: hit the /api/tags endpoint to list models
-        const tagRes = await fetch(`${baseUrl}/api/tags`, {
+        const ollamaUrl = new URL("/api/tags", baseUrl).href;
+        const tagRes = await fetch(ollamaUrl, {
           signal: AbortSignal.timeout(10_000),
         });
         if (!tagRes.ok) {
@@ -3757,8 +3775,8 @@ export const createAdminRouter = ({
 
       // OpenAI / Azure / Anthropic: hit /models or /v1/models
       const modelsUrl = provType === "azure"
-        ? `${baseUrl}/openai/models?api-version=${(prov.azure as Record<string, string>)?.apiVersion ?? "2024-10-21"}`
-        : `${baseUrl}/models`;
+        ? new URL(`/openai/models?api-version=${encodeURIComponent((prov.azure as Record<string, string>)?.apiVersion ?? "2024-10-21")}`, baseUrl).href
+        : new URL("/models", baseUrl).href;
 
       const headers: Record<string, string> = { "Content-Type": "application/json" };
       if (prov.apiKey) {

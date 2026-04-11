@@ -540,13 +540,14 @@ async def _report_progress(
         return
     if not _is_safe_callback_url(progress_url):
         return
+    safe_url = validate_callback_url(progress_url)  # re-validate to bind the safe value
     now = time.monotonic()
     if now - _last_progress_time < _PROGRESS_THROTTLE_SEC:
         return
     _last_progress_time = now
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
-            await client.post(progress_url, json={
+            await client.post(safe_url, json={
                 "job_id": job_id, "stage": stage,
                 "progress": progress, "message": message,
             }, headers=_callback_auth_headers())

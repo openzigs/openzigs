@@ -1,4 +1,4 @@
-"""
+﻿"""
 Image Generation Sidecar -- CUDA/PyTorch Backend
 Drop-in replacement for the MLX/MFLUX image-gen sidecar using HuggingFace
 diffusers on NVIDIA GPUs. Maintains the same HTTP API contract so QueueMaster
@@ -19,7 +19,7 @@ Endpoints (compatible with the MLX version):
     GET  /train-checkpoints  -- List checkpoint files for a character
     POST /train-resume       -- Resume training from a checkpoint
     POST /train-recover      -- Extract adapter from a checkpoint
-    POST /train-pause        -- Pause training (not supported on CUDA — trains in subprocess)
+    POST /train-pause        -- Pause training (not supported on CUDA â€” trains in subprocess)
     POST /train-unpause      -- Unpause training (not supported on CUDA)
     DELETE /train-data       -- Delete training data for a character
 
@@ -55,7 +55,7 @@ from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException
 from fastapi.responses import Response
 from pydantic import BaseModel, Field, field_validator
 
-# ── Logging ────────────────────────────────────────────────────
+# â”€â”€ Logging â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
@@ -63,11 +63,11 @@ logging.basicConfig(
 )
 log = logging.getLogger("image-gen-cuda")
 
-# ── Lazy imports (torch/diffusers loaded on first use) ─────────
+# â”€â”€ Lazy imports (torch/diffusers loaded on first use) â”€â”€â”€â”€â”€â”€â”€â”€â”€
 torch = None
 Image = None
 
-# ── Security ───────────────────────────────────────────────────
+# â”€â”€ Security â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 _secret_token: Optional[str] = os.environ.get("FLUXQ_SECRET_TOKEN") or None
 _callback_secret: Optional[str] = os.environ.get("FLUXQ_CALLBACK_SECRET") or None
 
@@ -87,7 +87,7 @@ def verify_token(authorization: Optional[str] = Header(None)) -> None:
         raise HTTPException(status_code=403, detail="Invalid token")
 
 
-# ── Model Registry ─────────────────────────────────────────────
+# â”€â”€ Model Registry â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 MODEL_REGISTRY: dict[str, dict] = {
     "flux-schnell": {
         "hf_id": "black-forest-labs/FLUX.1-schnell",
@@ -107,7 +107,7 @@ MODEL_REGISTRY: dict[str, dict] = {
     },
 }
 
-# ── Global State ───────────────────────────────────────────────
+# â”€â”€ Global State â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 _pipeline: Any = None
 _model_name: Optional[str] = None
 _ready: bool = False
@@ -119,7 +119,7 @@ _default_model: str = os.getenv("FLUX_DEFAULT_MODEL", "flux-dev")
 _generating: bool = False
 _active_lora_paths: list[str] = []  # Currently loaded LoRA adapter paths
 
-# ── Persistent Training & LoRA Directories ─────────────────────
+# â”€â”€ Persistent Training & LoRA Directories â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 _TRAINING_BASE_DIR = os.path.join(os.path.expanduser("~"), ".openzigs", "training")
 _LORAS_DIR = os.path.join(os.path.expanduser("~"), ".openzigs", "loras")
 
@@ -129,7 +129,7 @@ _train_process: Any = None
 _train_error: Optional[str] = None
 _train_output_dir: Optional[str] = None
 
-# ── Job store ──────────────────────────────────────────────────
+# â”€â”€ Job store â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 _MAX_STORED_RESULTS = 100
 _job_results: dict[str, dict] = {}
 _job_results_lock = threading.Lock()
@@ -143,7 +143,7 @@ def _store_result(job_id: str, payload: dict) -> None:
             del _job_results[oldest]
 
 
-# ── Security Utilities ─────────────────────────────────────────
+# â”€â”€ Security Utilities â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def safe_join(base_dir: str, user_path: str) -> str:
     """Safely join a base directory with a user-supplied path component."""
@@ -173,7 +173,19 @@ def _get_training_dir(character_id: str) -> str:
     return d
 
 
-# ── Model Lifecycle ────────────────────────────────────────────
+def _sanitize_train_error(err: Optional[str]) -> Optional[str]:
+    """Strip file paths and stack traces from training errors before returning to clients."""
+    if not err:
+        return err
+    # Take only the last line (the actual error message) to avoid leaking paths/stack frames
+    lines = err.strip().splitlines()
+    last_line = lines[-1].strip() if lines else ""
+    # Remove absolute path prefixes
+    import re
+    return re.sub(r"(/[^\s:]+/|[A-Z]:\\[^\s:]+\\)", "", last_line) if last_line else "Training failed"
+
+
+# â”€â”€ Model Lifecycle â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def _ensure_torch():
     global torch, Image
@@ -277,7 +289,7 @@ async def _idle_unload_loop() -> None:
             _unload_model()
 
 
-# ── Callback helper ────────────────────────────────────────────
+# â”€â”€ Callback helper â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def _is_safe_callback_url(url: str) -> bool:
     try:
@@ -325,7 +337,7 @@ def _post_callback(job_id: str, callback_url: Optional[str], payload: dict) -> N
     log.error(f"[async] Callback for job {job_id} PERMANENTLY FAILED")
 
 
-# ── Generation ─────────────────────────────────────────────────
+# â”€â”€ Generation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def _generate_image(prompt: str, model_key: str, width: int, height: int,
                     steps: Optional[int], guidance: float, seed: int,
@@ -462,7 +474,7 @@ def _bg_img2img(
             pass
 
 
-# ── Pydantic models ────────────────────────────────────────────
+# â”€â”€ Pydantic models â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 class GenerateRequest(BaseModel):
     prompt: str = Field(..., min_length=1, max_length=2000)
@@ -504,6 +516,18 @@ class Img2ImgRequest(BaseModel):
     guidance_scale: Optional[float] = Field(default=None, ge=0.0, le=20.0)
     seed: Optional[int] = None
 
+    @field_validator("image_path", mode="before")
+    @classmethod
+    def _validate_image_path(cls, v: Any) -> Any:
+        if v is None:
+            return v
+        if "\x00" in v:
+            raise ValueError("Path contains null bytes")
+        normed = os.path.normpath(v)
+        if ".." in normed.split(os.sep):
+            raise ValueError("Path traversal detected in image_path")
+        return normed
+
 
 class AsyncImg2ImgRequest(Img2ImgRequest):
     job_id: str
@@ -534,7 +558,7 @@ class ModelResponse(BaseModel):
     quantized: str
 
 
-# ── FastAPI app ────────────────────────────────────────────────
+# â”€â”€ FastAPI app â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 from contextlib import asynccontextmanager
 
 @asynccontextmanager
@@ -839,9 +863,10 @@ async def img2img_async(req: AsyncImg2ImgRequest, background_tasks: BackgroundTa
     return {"job_id": req.job_id, "status": "accepted"}
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 # LoRA TRAINING ENDPOINTS (DreamBooth via diffusers + PEFT on CUDA)
-# ══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 def _stop_training_for_inference() -> bool:
     """If a training job is running, kill it to free VRAM for inference.
@@ -896,14 +921,14 @@ def _relocate_adapter(character_id: str, search_dir: str) -> Optional[str]:
             if f.endswith(".safetensors") and "adapter" in f.lower():
                 src = os.path.join(root, f)
                 os.makedirs(_LORAS_DIR, exist_ok=True)
-                dest = os.path.join(_LORAS_DIR, f"{character_id}_adapter.safetensors")
+                dest = safe_join(_LORAS_DIR, f"{character_id}_adapter.safetensors")
                 shutil.move(src, dest)
                 log.info(f"[train-data] Relocated adapter {src} -> {dest}")
                 return dest
     return None
 
 
-# ── Training Request/Response Models ─────────────────────────────
+# â”€â”€ Training Request/Response Models â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 class TrainPhotoItem(BaseModel):
     image_base64: str = Field(..., description="Base64-encoded image data")
@@ -990,7 +1015,7 @@ def _materialize_network_training(req: TrainRequest) -> tuple[str, str]:
                 new_w = int(w * scale) // 16 * 16
                 new_h = int(h * scale) // 16 * 16
                 pil_img = pil_img.resize((new_w, new_h), PILImage.LANCZOS)
-                log.info(f"[train] Resized {safe_stem}.jpg from {w}x{h} → {new_w}x{new_h}")
+                log.info(f"[train] Resized {safe_stem}.jpg from {w}x{h} â†’ {new_w}x{new_h}")
             pil_img.save(photo_path, format="JPEG", quality=95)
         except Exception as e:
             log.warning(f"[train] PIL conversion failed for photo {i}: {e}")
@@ -1145,7 +1170,7 @@ async def train_status(character_id: Optional[str] = None):
 
     # Also check permanent loras dir
     if lora_path is None and character_id:
-        relocated = os.path.join(_LORAS_DIR, f"{character_id}_adapter.safetensors")
+        relocated = safe_join(_LORAS_DIR, f"{character_id}_adapter.safetensors")
         if os.path.isfile(relocated):
             lora_path = relocated
 
@@ -1153,7 +1178,7 @@ async def train_status(character_id: Optional[str] = None):
         "training": _training,
         "paused": False,  # Pause not supported on CUDA
         "process_alive": _train_process is not None and _train_process.poll() is None if _train_process else False,
-        "error": _train_error,
+        "error": _sanitize_train_error(_train_error),
         "output_dir": _train_output_dir,
         "lora_path": lora_path,
         "checkpoint_count": checkpoint_count,
@@ -1183,7 +1208,7 @@ async def list_train_checkpoints(character_id: str):
 
 @app.post("/train-resume", response_model=TrainResponse, dependencies=[Depends(verify_token)])
 async def resume_train_lora(req: ResumeTrainRequest, background_tasks: BackgroundTasks):
-    """Resume training from a checkpoint (placeholder — full implementation varies by framework)."""
+    """Resume training from a checkpoint (placeholder â€” full implementation varies by framework)."""
     global _training, _train_error, _train_output_dir
 
     if _training:
@@ -1192,7 +1217,7 @@ async def resume_train_lora(req: ResumeTrainRequest, background_tasks: Backgroun
     if not os.path.exists(req.checkpoint_path):
         raise HTTPException(status_code=400, detail=f"Checkpoint not found: {req.checkpoint_path}")
 
-    # For now, just mark as an error — diffusers DreamBooth doesn't have native resume
+    # For now, just mark as an error â€” diffusers DreamBooth doesn't have native resume
     # This is a compatibility stub
     return TrainResponse(
         status="error",
@@ -1216,7 +1241,7 @@ async def recover_trained_lora(req: RecoverTrainRequest):
         raise HTTPException(status_code=404, detail=f"No trained LoRA found for {req.character_id}")
 
     # Relocate to permanent location
-    dest = os.path.join(_LORAS_DIR, f"{req.character_id}_adapter.safetensors")
+    dest = safe_join(_LORAS_DIR, f"{req.character_id}_adapter.safetensors")
     os.makedirs(_LORAS_DIR, exist_ok=True)
     shutil.copy(lora_path, dest)
     log.info(f"[train-recover] Copied {lora_path} -> {dest}")
@@ -1241,7 +1266,7 @@ async def delete_train_data(req: DeleteTrainDataRequest):
     """Delete training data for a character."""
     removed_paths = []
     relocated_lora = None
-    persistent_dir = os.path.join(_TRAINING_BASE_DIR, req.character_id)
+    persistent_dir = safe_join(_TRAINING_BASE_DIR, req.character_id)
 
     if os.path.isdir(persistent_dir):
         relocated_lora = _relocate_adapter(req.character_id, persistent_dir)
@@ -1257,435 +1282,12 @@ async def delete_train_data(req: DeleteTrainDataRequest):
     return {"removed": False, "reason": f"No training data found for {req.character_id}"}
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 # END TRAINING ENDPOINTS
-# ══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# LoRA TRAINING ENDPOINTS (DreamBooth via diffusers + PEFT on CUDA)
-# ══════════════════════════════════════════════════════════════════════════════
-
-def _stop_training_for_inference() -> bool:
-    """If a training job is running, kill it to free VRAM for inference.
-    Returns True if training was stopped."""
-    global _training, _train_process, _train_error
-    if not _training or _train_process is None:
-        return False
-
-    pid = _train_process.pid
-    log.warning(f"[train] Stopping training (pid={pid}) to free VRAM for inference. Resume from checkpoint when ready.")
-    try:
-        _train_process.terminate()
-        try:
-            _train_process.wait(timeout=10)
-        except Exception:
-            _train_process.kill()
-            _train_process.wait(timeout=5)
-    except Exception as e:
-        log.error(f"[train] Failed to stop training process: {e}")
-
-    _training = False
-    _train_process = None
-    _train_error = "Training stopped to free VRAM for image generation. Resume from checkpoint when ready."
-    gc.collect()
-    _ensure_torch()
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
-    return True
-
-
-def _find_trained_lora(dir_path: str) -> Optional[str]:
-    """Find a trained .safetensors LoRA adapter in the output directory."""
-    try:
-        for root, _dirs, files in os.walk(dir_path):
-            for f in files:
-                if f.endswith(".safetensors") and "adapter" in f.lower():
-                    return os.path.join(root, f)
-        # Check for any safetensors file if none have "adapter" in name
-        for root, _dirs, files in os.walk(dir_path):
-            for f in files:
-                if f.endswith(".safetensors"):
-                    return os.path.join(root, f)
-    except Exception as e:
-        log.error(f"[train] Error finding LoRA adapter: {e}")
-    return None
-
-
-def _relocate_adapter(character_id: str, search_dir: str) -> Optional[str]:
-    """Move adapter .safetensors to permanent ~/.openzigs/loras/ directory."""
-    for root, _dirs, files in os.walk(search_dir):
-        for f in files:
-            if f.endswith(".safetensors") and "adapter" in f.lower():
-                src = os.path.join(root, f)
-                os.makedirs(_LORAS_DIR, exist_ok=True)
-                dest = os.path.join(_LORAS_DIR, f"{character_id}_adapter.safetensors")
-                shutil.move(src, dest)
-                log.info(f"[train-data] Relocated adapter {src} -> {dest}")
-                return dest
-    return None
-
-
-# ── Training Request/Response Models ─────────────────────────────
-
-class TrainPhotoItem(BaseModel):
-    image_base64: str = Field(..., description="Base64-encoded image data")
-    filename: str = Field(..., description="Original filename")
-    prompt: str = Field(..., description="Caption / prompt for this image")
-
-
-class TrainRequest(BaseModel):
-    train_config_path: Optional[str] = Field(None, description="Path to local config JSON")
-    train_config: Optional[dict] = Field(None, description="Inline training config")
-    photos: Optional[list[TrainPhotoItem]] = Field(None, description="Base64 training photos")
-    character_id: Optional[str] = Field(None, description="Character ID for organizing output")
-
-    @field_validator("character_id", mode="before")
-    @classmethod
-    def _validate_character_id(cls, v: Any) -> Any:
-        if v is not None:
-            s = str(v)
-            if "\x00" in s or ".." in s or "/" in s or "\\" in s:
-                raise ValueError(f"Invalid character ID: {v}")
-        return v
-
-
-class TrainResponse(BaseModel):
-    status: str
-    message: str
-    output_dir: Optional[str] = None
-
-
-class ResumeTrainRequest(BaseModel):
-    checkpoint_path: str = Field(..., description="Path to checkpoint file")
-
-
-class DeleteTrainDataRequest(BaseModel):
-    character_id: str
-
-    @field_validator("character_id", mode="before")
-    @classmethod
-    def _validate_character_id(cls, v: Any) -> Any:
-        s = str(v)
-        if "\x00" in s or ".." in s or "/" in s or "\\" in s:
-            raise ValueError(f"Invalid character ID: {v}")
-        return v
-
-
-class RecoverTrainRequest(BaseModel):
-    character_id: str
-    checkpoint_path: Optional[str] = None
-
-    @field_validator("character_id", mode="before")
-    @classmethod
-    def _validate_character_id(cls, v: Any) -> Any:
-        s = str(v)
-        if "\x00" in s or ".." in s or "/" in s or "\\" in s:
-            raise ValueError(f"Invalid character ID: {v}")
-        return v
-
-
-def _materialize_network_training(req: TrainRequest) -> tuple[str, str]:
-    """Write base64 photos to disk and generate training config.
-    Returns (data_dir, output_dir)."""
-    from PIL import Image as PILImage
-
-    char_id = req.character_id or "unknown"
-    train_dir = _get_training_dir(char_id)
-    data_dir = os.path.join(train_dir, "data")
-    if os.path.isdir(data_dir):
-        shutil.rmtree(data_dir)
-    os.makedirs(data_dir, exist_ok=True)
-
-    cfg = req.train_config or {}
-    max_dim = int(cfg.get("max_image_dim", 720))
-
-    for i, photo in enumerate(req.photos or []):
-        safe_stem = f"{i:04d}"
-        photo_path = os.path.join(data_dir, f"{safe_stem}.jpg")
-        txt_path = os.path.join(data_dir, f"{safe_stem}.txt")
-        img_bytes = base64.b64decode(photo.image_base64, validate=True)
-        try:
-            pil_img = PILImage.open(io.BytesIO(img_bytes)).convert("RGB")
-            w, h = pil_img.size
-            if max(w, h) > max_dim:
-                scale = max_dim / max(w, h)
-                new_w = int(w * scale) // 16 * 16
-                new_h = int(h * scale) // 16 * 16
-                pil_img = pil_img.resize((new_w, new_h), PILImage.LANCZOS)
-                log.info(f"[train] Resized {safe_stem}.jpg from {w}x{h} → {new_w}x{new_h}")
-            pil_img.save(photo_path, format="JPEG", quality=95)
-        except Exception as e:
-            log.warning(f"[train] PIL conversion failed for photo {i}: {e}")
-            with open(photo_path, "wb") as f:
-                f.write(img_bytes)
-        with open(txt_path, "w") as f:
-            f.write(photo.prompt)
-
-    output_dir = os.path.join(train_dir, "output")
-    os.makedirs(output_dir, exist_ok=True)
-    log.info(f"[train] Materialized {len(req.photos or [])} photos to {data_dir}")
-    return data_dir, output_dir
-
-
-def _bg_train(data_dir: str, output_dir: str, cfg: dict) -> None:
-    """Background task: run DreamBooth LoRA training via diffusers."""
-    global _training, _train_process, _train_error, _train_output_dir
-
-    try:
-        trigger_word = cfg.get("trigger_word", "TOK")
-        num_epochs = int(cfg.get("num_epochs", 10))
-        steps_per_epoch = len([f for f in os.listdir(data_dir) if f.endswith((".jpg", ".jpeg", ".png"))])
-        max_train_steps = num_epochs * steps_per_epoch
-        learning_rate = float(cfg.get("learning_rate", 1e-4))
-        lora_rank = int(cfg.get("lora_rank", 8))
-
-        # Use diffusers' train_dreambooth_lora.py script
-        # We'll call it as a subprocess since it handles all the complexity
-        train_script = os.path.join(os.path.dirname(__file__), "train_dreambooth_lora_cuda.py")
-
-        # Build command
-        cmd = [
-            sys.executable, train_script,
-            "--pretrained_model_name_or_path", "black-forest-labs/FLUX.1-dev",
-            "--instance_data_dir", data_dir,
-            "--output_dir", output_dir,
-            "--instance_prompt", f"a photo of {trigger_word}",
-            "--resolution", "512",
-            "--train_batch_size", "1",
-            "--gradient_accumulation_steps", "4",
-            "--learning_rate", str(learning_rate),
-            "--lr_scheduler", "constant",
-            "--lr_warmup_steps", "0",
-            "--max_train_steps", str(max_train_steps),
-            "--rank", str(lora_rank),
-            "--mixed_precision", "fp16",
-            "--seed", "42",
-        ]
-
-        log.info(f"[train] Starting DreamBooth LoRA training: {' '.join(cmd)}")
-        _train_process = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            bufsize=1,
-        )
-
-        last_lines: list[str] = []
-        assert _train_process.stdout is not None
-        for line in _train_process.stdout:
-            line = line.rstrip()
-            if line:
-                log.info(f"[dreambooth] {line}")
-                last_lines.append(line)
-                if len(last_lines) > 30:
-                    last_lines.pop(0)
-
-        _train_process.wait()
-        rc = _train_process.returncode
-
-        if rc == 0:
-            log.info("[train] DreamBooth training completed successfully")
-            # Find the trained model
-            lora_path = _find_trained_lora(output_dir)
-            if lora_path:
-                log.info(f"[train] Trained LoRA saved at: {lora_path}")
-        else:
-            err_msg = "\n".join(last_lines[-10:]) if last_lines else f"exit code {rc}"
-            _train_error = err_msg
-            log.error(f"[train] Training failed: {err_msg}")
-
-    except Exception as e:
-        _train_error = str(e)
-        log.error(f"[train] Training error: {e}")
-    finally:
-        _training = False
-        _train_process = None
-        gc.collect()
-        _ensure_torch()
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-
-
-@app.post("/train", response_model=TrainResponse, dependencies=[Depends(verify_token)])
-async def train_lora(req: TrainRequest, background_tasks: BackgroundTasks):
-    """Start LoRA DreamBooth training."""
-    global _training, _train_error, _train_output_dir
-
-    if _training:
-        raise HTTPException(status_code=409, detail="A training job is already in progress")
-
-    # Unload inference model to free VRAM
-    if _model_loaded:
-        log.info("[train] Unloading inference model for training")
-        _unload_model()
-
-    if not req.train_config or not req.photos:
-        raise HTTPException(status_code=400, detail="Provide 'train_config' + 'photos'")
-
-    try:
-        data_dir, output_dir = _materialize_network_training(req)
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Failed to materialize training data: {e}")
-
-    _training = True
-    _train_error = None
-    _train_output_dir = output_dir
-
-    background_tasks.add_task(_bg_train, data_dir, output_dir, req.train_config)
-
-    log.info(f"[train] Started LoRA training for character {req.character_id}")
-    return TrainResponse(status="accepted", message="Training started", output_dir=output_dir)
-
-
-@app.get("/train-status")
-async def train_status(character_id: Optional[str] = None):
-    """Check training status."""
-    lora_path = None
-    checkpoint_count = 0
-
-    search_dirs = []
-    if _train_output_dir:
-        search_dirs.append(_train_output_dir)
-    if character_id:
-        char_dir = _get_training_dir(character_id)
-        output_subdir = os.path.join(char_dir, "output")
-        for d in (char_dir, output_subdir):
-            if os.path.isdir(d) and d not in search_dirs:
-                search_dirs.append(d)
-
-    for search_dir in search_dirs:
-        try:
-            for root, _dirs, files in os.walk(search_dir):
-                for f in files:
-                    if "checkpoint" in f.lower():
-                        checkpoint_count += 1
-        except Exception:
-            pass
-        if not _training and lora_path is None:
-            lora_path = _find_trained_lora(search_dir)
-
-    # Also check permanent loras dir
-    if lora_path is None and character_id:
-        relocated = os.path.join(_LORAS_DIR, f"{character_id}_adapter.safetensors")
-        if os.path.isfile(relocated):
-            lora_path = relocated
-
-    return {
-        "training": _training,
-        "paused": False,  # Pause not supported on CUDA
-        "process_alive": _train_process is not None and _train_process.poll() is None if _train_process else False,
-        "error": _train_error,
-        "output_dir": _train_output_dir,
-        "lora_path": lora_path,
-        "checkpoint_count": checkpoint_count,
-    }
-
-
-@app.get("/train-checkpoints", dependencies=[Depends(verify_token)])
-async def list_train_checkpoints(character_id: str):
-    """List checkpoint files for a character."""
-    train_dir = _get_training_dir(character_id)
-    checkpoints: list[dict] = []
-    try:
-        for root, _dirs, files in os.walk(train_dir):
-            for f in files:
-                if "checkpoint" in f.lower() or f.endswith(".safetensors"):
-                    full_path = os.path.join(root, f)
-                    try:
-                        size = os.path.getsize(full_path)
-                    except OSError:
-                        size = 0
-                    checkpoints.append({"path": full_path, "name": f, "size": size})
-    except Exception:
-        pass
-    checkpoints.sort(key=lambda c: c["name"], reverse=True)
-    return {"character_id": character_id, "checkpoints": checkpoints, "train_dir": train_dir}
-
-
-@app.post("/train-resume", response_model=TrainResponse, dependencies=[Depends(verify_token)])
-async def resume_train_lora(req: ResumeTrainRequest, background_tasks: BackgroundTasks):
-    """Resume training from a checkpoint (placeholder — full implementation varies by framework)."""
-    global _training, _train_error, _train_output_dir
-
-    if _training:
-        raise HTTPException(status_code=409, detail="A training job is already in progress")
-
-    if not os.path.exists(req.checkpoint_path):
-        raise HTTPException(status_code=400, detail=f"Checkpoint not found: {req.checkpoint_path}")
-
-    # For now, just mark as an error — diffusers DreamBooth doesn't have native resume
-    # This is a compatibility stub
-    return TrainResponse(
-        status="error",
-        message="Resume from checkpoint not yet supported on CUDA. Re-run training from scratch.",
-        output_dir=None,
-    )
-
-
-@app.post("/train-recover", dependencies=[Depends(verify_token)])
-async def recover_trained_lora(req: RecoverTrainRequest):
-    """Extract a LoRA adapter from a checkpoint and save it permanently."""
-    persistent_dir = _get_training_dir(req.character_id)
-    output_dir = os.path.join(persistent_dir, "output")
-
-    lora_path = _find_trained_lora(output_dir) if os.path.isdir(output_dir) else None
-
-    if not lora_path:
-        lora_path = _find_trained_lora(persistent_dir)
-
-    if not lora_path:
-        raise HTTPException(status_code=404, detail=f"No trained LoRA found for {req.character_id}")
-
-    # Relocate to permanent location
-    dest = os.path.join(_LORAS_DIR, f"{req.character_id}_adapter.safetensors")
-    os.makedirs(_LORAS_DIR, exist_ok=True)
-    shutil.copy(lora_path, dest)
-    log.info(f"[train-recover] Copied {lora_path} -> {dest}")
-
-    return {"lora_path": dest, "source": lora_path}
-
-
-@app.post("/train-pause", dependencies=[Depends(verify_token)])
-async def pause_training():
-    """Pause is not supported on CUDA (subprocess-based training)."""
-    return {"ok": False, "message": "Pause not supported on CUDA training"}
-
-
-@app.post("/train-unpause", dependencies=[Depends(verify_token)])
-async def unpause_training():
-    """Unpause is not supported on CUDA."""
-    return {"ok": False, "message": "Unpause not supported on CUDA training"}
-
-
-@app.delete("/train-data", dependencies=[Depends(verify_token)])
-async def delete_train_data(req: DeleteTrainDataRequest):
-    """Delete training data for a character."""
-    removed_paths = []
-    relocated_lora = None
-    persistent_dir = os.path.join(_TRAINING_BASE_DIR, req.character_id)
-
-    if os.path.isdir(persistent_dir):
-        relocated_lora = _relocate_adapter(req.character_id, persistent_dir)
-        try:
-            shutil.rmtree(persistent_dir)
-            removed_paths.append(persistent_dir)
-            log.info(f"[train-data] Removed {persistent_dir}")
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Failed to remove {persistent_dir}: {e}")
-
-    if removed_paths:
-        return {"removed": True, "paths": removed_paths, "lora_path": relocated_lora}
-    return {"removed": False, "reason": f"No training data found for {req.character_id}"}
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# END TRAINING ENDPOINTS
-# ══════════════════════════════════════════════════════════════════════════════
-
-
-# ── Entrypoint ─────────────────────────────────────────────────
+# â”€â”€ Entrypoint â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Image-gen CUDA sidecar")
     parser.add_argument("--port", type=int, default=int(os.environ.get("PORT", "5005")))
