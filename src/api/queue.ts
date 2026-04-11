@@ -34,6 +34,9 @@ import {
   isSegmentJob as isSegmentJobCheck,
   formatSegmentProgress,
 } from "../queue/multi-segment.js";
+import {
+  createTalkingHeadPipeline,
+} from "../queue/talking-head-pipeline.js";
 import type { CharacterRepository } from "../characters/character-repository.js";
 import type { KnowledgeIngestionService } from "../knowledge/index.js";
 
@@ -652,6 +655,77 @@ export const createQueueRouter = ({
       return;
     }
     res.json({ ok: true });
+  });
+
+  // ── POST /pipelines/talking-head — Create a talking-head pipeline ──
+  router.post("/pipelines/talking-head", (req, res) => {
+    try {
+      const {
+        text,
+        voice,
+        referenceAudio,
+        videoPrompt,
+        referenceImage,
+        videoModel,
+        lipsyncModelVersion,
+        inferenceSteps,
+        guidanceScale,
+        enableDeepCache,
+        maxDurationSec,
+        projectId,
+        priority,
+      } = req.body as Record<string, unknown>;
+
+      if (!text || typeof text !== "string" || text.trim().length === 0) {
+        res.status(400).json({ error: "text is required" });
+        return;
+      }
+
+      const MAX_TEXT_LENGTH = 10_000;
+      if (text.length > MAX_TEXT_LENGTH) {
+        res
+          .status(400)
+          .json({ error: `Text exceeds ${MAX_TEXT_LENGTH} characters` });
+        return;
+      }
+
+      const { pipelineId, firstJob } = createTalkingHeadPipeline({
+        text: text as string,
+        voice: voice as string | undefined,
+        referenceAudio: referenceAudio as string | undefined,
+        videoPrompt: videoPrompt as string | undefined,
+        referenceImage: referenceImage as string | undefined,
+        videoModel: videoModel as string | undefined,
+        lipsyncModelVersion: lipsyncModelVersion as string | undefined,
+        inferenceSteps: inferenceSteps as number | undefined,
+        guidanceScale: guidanceScale as number | undefined,
+        enableDeepCache: enableDeepCache as boolean | undefined,
+        maxDurationSec: maxDurationSec as number | undefined,
+        projectId: projectId as string | undefined,
+        priority: priority as number | undefined,
+      });
+
+      // Enqueue the first stage (TTS)
+      const job = repo.createJob({
+        type: firstJob.type,
+        payload: firstJob.payload,
+        model: firstJob.model,
+        projectId: projectId as string | undefined,
+        priority: (priority as number) ?? 0,
+      });
+
+      res.status(201).json({
+        pipeline_id: pipelineId,
+        pipeline_type: "talking-head",
+        stages: ["speech", "video", "lipsync"],
+        first_job_id: job.id,
+        status: "started",
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.warn(`[QueueAPI] Pipeline creation failed: ${msg}`);
+      res.status(500).json({ error: msg });
+    }
   });
 
   // ── POST /jobs/:id/kill — Force-fail a dispatched job ───

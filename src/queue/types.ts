@@ -300,6 +300,22 @@ export interface MediaJobPayload {
   model_version?: string;
   /** Webhook callback URL for async result delivery */
   callback_url?: string;
+
+  // ── Pipeline fields ────────────────────────────────────────
+  /** Pipeline ID that this job belongs to (links stages together) */
+  pipeline_id?: string;
+  /** Pipeline stage name (e.g. "speech", "video", "lipsync") */
+  pipeline_stage?: string;
+  /** Pipeline type (e.g. "talking-head") */
+  pipeline_type?: string;
+  /** Voice name for TTS in pipeline mode */
+  pipeline_voice?: string;
+  /** Reference audio path/base64 for voice cloning in pipeline */
+  reference_audio?: string;
+  /** Video prompt for the video generation stage of a pipeline */
+  video_prompt?: string;
+  /** Reference image (base64) for video generation stage */
+  reference_image?: string;
 }
 
 // ── Stored Job ────────────────────────────────────────────────

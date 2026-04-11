@@ -27,6 +27,12 @@ import {
   registerSegmentJob,
   formatSegmentProgress,
 } from "./multi-segment.js";
+import {
+  handleStageCompletion,
+  handleStageFailure,
+  markLipsyncSkipped,
+  getPipelineState,
+} from "./talking-head-pipeline.js";
 
 export interface QueueMasterEvents {
   "job:dispatched": [job: MediaJob, node: TargetNode];
@@ -1694,6 +1700,21 @@ export class QueueMaster extends EventEmitter {
       }
     }
 
+    // ── Talking-Head Pipeline Routing ─────────────────────────
+    if (job.payload.pipeline_id && job.payload.pipeline_type === "talking-head") {
+      try {
+        await this.handleTalkingHeadPipelineStage(job, result);
+        return;
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        logger.warn(
+          `[QueueMaster] Talking-head pipeline failed for job ${jobId}: ${msg}`,
+        );
+        handleStageFailure(job.payload.pipeline_id, msg);
+        // Fall through to normal completion
+      }
+    }
+
     let resultUrl = (result.metadata?.result_url as string | undefined) ?? "";
     let galleryAssetId: string | undefined = result.metadata
       ?.gallery_asset_id as string | undefined;
@@ -1768,6 +1789,124 @@ export class QueueMaster extends EventEmitter {
 
     // Immediately try to dispatch the next pending job rather than waiting
     // for the next poll interval (which can be several seconds).
+    void this.tick();
+  }
+
+  // ── Talking-Head Pipeline ──────────────────────────────────
+
+  /**
+   * Handle a talking-head pipeline stage completion. Chains TTS → Video → LipSync
+   * with memory coordination between LTX and LatentSync.
+   */
+  private async handleTalkingHeadPipelineStage(
+    job: MediaJob,
+    result: {
+      media_base64?: string;
+      media_type?: string;
+      metadata?: Record<string, unknown>;
+      error?: string;
+    },
+  ): Promise<void> {
+    const pipelineId = job.payload.pipeline_id!;
+    const stageName = job.payload.pipeline_stage ?? "unknown";
+
+    if (result.error) {
+      handleStageFailure(pipelineId, result.error);
+      this.repo.markFailed(job.id, `Pipeline stage "${stageName}" failed: ${result.error}`);
+      this.emit("job:failed", job, result.error);
+      return;
+    }
+
+    // Mark current job complete
+    const resultUrl = (result.metadata?.result_url as string | undefined) ?? "";
+    this.repo.markComplete(job.id, resultUrl, result.metadata);
+    this.emit("job:complete", this.repo.getJob(job.id)!);
+
+    // Report pipeline progress
+    this.reportProgress(job.id, {
+      stage: stageName,
+      message: `Pipeline stage "${stageName}" complete ✓`,
+    });
+
+    // Advance pipeline to next stage
+    const { nextJob, done } = handleStageCompletion(
+      pipelineId,
+      job.id,
+      {
+        media_base64: result.media_base64,
+        media_type: result.media_type,
+        file_path: result.metadata?.file_path as string | undefined,
+      },
+    );
+
+    if (done) {
+      logger.info(
+        `[QueueMaster] Talking-head pipeline ${pipelineId} complete`,
+      );
+      return;
+    }
+
+    if (!nextJob) return;
+
+    // If next stage is lipsync, do memory coordination first
+    if (nextJob.payload.pipeline_stage === "lipsync") {
+      try {
+        await this.ensureSidecarMemory("lipsync");
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        logger.warn(
+          `[QueueMaster] Memory coordination failed for pipeline ${pipelineId}: ${msg}`,
+        );
+        // Check if lipsync sidecar is reachable
+        try {
+          const nodeConfig = await this.getLipSyncNodeConfig();
+          const headers: Record<string, string> = {};
+          if (nodeConfig.token)
+            headers["Authorization"] = `Bearer ${nodeConfig.token}`;
+          await fetch(`${nodeConfig.url}/health`, {
+            headers,
+            signal: AbortSignal.timeout(5_000),
+          });
+        } catch {
+          // Sidecar unreachable — skip lipsync gracefully
+          markLipsyncSkipped(pipelineId);
+          logger.info(
+            `[QueueMaster] LipSync sidecar unavailable — pipeline ${pipelineId} degrading to TTS + Video only`,
+          );
+          return;
+        }
+      }
+    }
+
+    // If next stage is video (LTX), ensure lipsync is unloaded
+    if (nextJob.payload.pipeline_stage === "video") {
+      try {
+        await this.ensureSidecarMemory("ltx");
+      } catch {
+        // Non-fatal — LTX may work even if lipsync unload fails
+      }
+    }
+
+    // Enqueue next stage job
+    const nextMediaJob = this.repo.createJob({
+      type: nextJob.type,
+      payload: nextJob.payload,
+      model: nextJob.model,
+      projectId: getPipelineState(pipelineId)?.config.projectId,
+      priority: job.priority,
+    });
+
+    logger.info(
+      `[QueueMaster] Pipeline ${pipelineId}: enqueued stage "${nextJob.payload.pipeline_stage}" → job ${nextMediaJob.id}`,
+    );
+
+    // Report progress for the new stage
+    this.reportProgress(nextMediaJob.id, {
+      stage: nextJob.payload.pipeline_stage,
+      message: `Starting stage "${nextJob.payload.pipeline_stage}"...`,
+    });
+
+    // Trigger immediate dispatch
     void this.tick();
   }
 }
