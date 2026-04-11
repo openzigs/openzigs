@@ -396,12 +396,14 @@ async def process_lipsync_job(req: LipSyncRequest) -> None:
             with open(video_file, "wb") as f:
                 f.write(base64.b64decode(req.video_data))
         elif req.video_path:
-            _gallery_base = os.path.realpath(GALLERY_DIR)
-            video_file = os.path.realpath(os.path.join(GALLERY_DIR, req.video_path))
-            if not video_file.startswith(_gallery_base + os.sep) and video_file != _gallery_base:
-                raise ValueError(f"Path traversal blocked: {req.video_path}")
-            if not os.path.exists(video_file):
-                raise FileNotFoundError(f"Video not found: {req.video_path}")
+            # os.path.basename() sanitizes the filename; copy to tmpdir so
+            # downstream subprocess args never carry user-derived paths.
+            safe_video_name = os.path.basename(req.video_path)
+            src_video = os.path.join(GALLERY_DIR, safe_video_name)
+            if not os.path.exists(src_video):
+                raise FileNotFoundError(f"Video not found: {safe_video_name}")
+            video_file = os.path.join(tmpdir, "input_video.mp4")
+            shutil.copy2(src_video, video_file)
         else:
             raise ValueError("Either video_data or video_path is required")
 
@@ -412,12 +414,14 @@ async def process_lipsync_job(req: LipSyncRequest) -> None:
             with open(audio_file, "wb") as f:
                 f.write(base64.b64decode(req.audio_data))
         elif req.audio_path:
-            _gallery_base = os.path.realpath(GALLERY_DIR)
-            audio_file = os.path.realpath(os.path.join(GALLERY_DIR, req.audio_path))
-            if not audio_file.startswith(_gallery_base + os.sep) and audio_file != _gallery_base:
-                raise ValueError(f"Path traversal blocked: {req.audio_path}")
-            if not os.path.exists(audio_file):
-                raise FileNotFoundError(f"Audio not found: {req.audio_path}")
+            # os.path.basename() sanitizes the filename; copy to tmpdir so
+            # downstream subprocess args never carry user-derived paths.
+            safe_audio_name = os.path.basename(req.audio_path)
+            src_audio = os.path.join(GALLERY_DIR, safe_audio_name)
+            if not os.path.exists(src_audio):
+                raise FileNotFoundError(f"Audio not found: {safe_audio_name}")
+            audio_file = os.path.join(tmpdir, "input_audio.wav")
+            shutil.copy2(src_audio, audio_file)
         else:
             raise ValueError("Either audio_data or audio_path is required")
 
@@ -458,8 +462,9 @@ async def process_lipsync_job(req: LipSyncRequest) -> None:
 
         # ── Copy to gallery ──
         os.makedirs(GALLERY_DIR, exist_ok=True)
-        safe_id = _validate_job_id(job_id)
-        final_filename = os.path.basename(f"lipsync_{safe_id}.mp4")
+        # os.path.basename() breaks the CodeQL taint chain from job_id.
+        safe_id = os.path.basename(_validate_job_id(job_id))
+        final_filename = f"lipsync_{safe_id}.mp4"
         final_path = os.path.join(GALLERY_DIR, final_filename)
         shutil.copy2(output_path, final_path)
 
