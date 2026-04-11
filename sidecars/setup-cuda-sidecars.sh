@@ -5,7 +5,7 @@
 set -euo pipefail
 
 SIDECARS_DIR="$HOME/openzigs-sidecars"
-REPO_SIDECARS="$(cd "$(dirname "$0")" && pwd)"
+REPO_SIDECARS="${REPO_SIDECARS:-$(cd "$(dirname "$0")" && pwd)}"
 TORCH_INDEX="https://download.pytorch.org/whl/cu121"
 
 echo "=== OpenZigs CUDA Sidecar Setup ==="
@@ -62,7 +62,7 @@ echo "Video worker setup complete."
 
 # ── Audio (Whisper + TTS) ───────────────────────────────────
 echo ""
-echo "=== Setting up Audio Sidecar (faster-whisper + Kokoro) on port 5006 ==="
+echo "=== Setting up Audio Sidecar (faster-whisper + Kokoro + F5-TTS) on port 5006 ==="
 AUD_DIR="$SIDECARS_DIR/audio"
 mkdir -p "$AUD_DIR"
 
@@ -71,13 +71,14 @@ if [ ! -d "$AUD_DIR/venv" ]; then
 fi
 source "$AUD_DIR/venv/bin/activate"
 pip install --upgrade pip -q
-pip install torch --index-url "$TORCH_INDEX" -q
-pip install faster-whisper kokoro soundfile numpy \
-    fastapi uvicorn python-multipart -q
+# Install PyTorch with CUDA wheels FIRST so f5-tts uses the GPU-enabled build
+pip install torch torchaudio --index-url "$TORCH_INDEX" -q
+# Install all audio sidecar deps (Kokoro + faster-whisper + F5-TTS)
+pip install -r "$REPO_SIDECARS/audio/requirements-cuda.txt" -q
 deactivate
 
 cp "$REPO_SIDECARS/audio/server_cuda.py" "$AUD_DIR/server.py"
-echo "Audio sidecar setup complete."
+echo "Audio sidecar setup complete (Kokoro + F5-TTS voice cloning)."
 
 # ── Lip Sync (LatentSync) ───────────────────────────────────
 echo ""
@@ -97,6 +98,34 @@ deactivate
 cp "$REPO_SIDECARS/lipsync/server_cuda.py" "$LIP_DIR/server.py"
 echo "Lip sync sidecar setup complete."
 
+# ── Music / ACE-Step (port 5009) ─────────────────────────────
+echo ""
+echo "=== Setting up Music (ACE-Step) on port 5009 ==="
+MUS_DIR="$SIDECARS_DIR/music"
+mkdir -p "$MUS_DIR"
+
+if [ ! -d "$MUS_DIR/venv" ]; then
+    python3 -m venv "$MUS_DIR/venv"
+fi
+source "$MUS_DIR/venv/bin/activate"
+pip install --upgrade pip -q
+pip install torch torchaudio --index-url "$TORCH_INDEX" -q
+pip install soundfile numpy -q
+
+# Clone ACE-Step repo for CUDA (original upstream, not Apple Silicon fork)
+ACESTEP_DIR="$HOME/ace-step"
+if [ ! -d "$ACESTEP_DIR" ]; then
+    echo "Cloning ACE-Step repo..."
+    git clone --depth 1 https://github.com/ace-step/ACE-Step.git "$ACESTEP_DIR"
+    cd "$ACESTEP_DIR" && pip install -e . -q && cd -
+else
+    echo "ACE-Step repo already present at $ACESTEP_DIR"
+fi
+deactivate
+
+cp "$REPO_SIDECARS/music/server.py" "$MUS_DIR/server.py"
+echo "Music sidecar setup complete."
+
 # ── Summary ─────────────────────────────────────────────────
 echo ""
 echo "=== Setup Complete ==="
@@ -106,4 +135,5 @@ echo "Ports:"
 echo "  Image Gen (Flux):   http://localhost:5005"
 echo "  Audio (STT/TTS):    http://localhost:5006"
 echo "  Video Worker (LTX): http://localhost:5007"
+echo "  Music (ACE-Step):   http://localhost:5009"
 echo "  Lip Sync:           http://localhost:5010"
