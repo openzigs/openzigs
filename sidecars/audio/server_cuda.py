@@ -46,7 +46,7 @@ from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
-# ── Logging ────────────────────────────────────────────────────
+# ── Logging ────────────────────────────────────────────────────────────────────
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
@@ -54,10 +54,10 @@ logging.basicConfig(
 )
 log = logging.getLogger("audio-sidecar-cuda")
 
-# ── Lazy imports ───────────────────────────────────────────────
+# ── Lazy imports ───────────────────────────────────────────────────────────────
 torch = None
 
-# ── Voice Presets ──────────────────────────────────────────────
+# ── Voice Presets ──────────────────────────────────────────────────────────────
 VOICE_PRESETS: dict[str, dict] = {
     "af_heart":  {"language": "American English", "gender": "Female", "style": "Warm, expressive"},
     "af_bella":  {"language": "American English", "gender": "Female", "style": "Calm, collected"},
@@ -92,7 +92,7 @@ VOICE_LANG_CODES: dict[str, str] = {
     "Chinese": "z",
 }
 
-# ── Global State ───────────────────────────────────────────────
+# ── Global State ───────────────────────────────────────────────────────────────
 _tts_pipeline = None
 _stt_model = None
 _tts_loaded: bool = False
@@ -107,24 +107,19 @@ _tts_model_name: str = "kokoro"
 _stt_model_name: str = DEFAULT_STT_MODEL
 _active_engine: Literal["kokoro", "sovits", "f5tts"] = "kokoro"
 
-# ── F5-TTS State (Engine C — CUDA) ────────────────────────────
+# ── F5-TTS State (Engine C — CUDA/PyTorch) ────────────────────────────────────
 _f5tts_model: Any = None
 _f5tts_loaded: bool = False
 _f5tts_loading: bool = False
 _f5tts_last_used: float = 0.0
 F5TTS_SAMPLE_RATE = 24000
 F5TTS_MAX_REF_AUDIO_SECONDS = 15.0
-DEFAULT_F5TTS_MODEL = "F5TTS"  # downloads SWivid/F5-TTS-v2 from HuggingFace
-
-# Words-per-second floor for max-duration estimates (conservative narration pace)
-_F5TTS_MIN_WPS = 2.0
-_F5TTS_PAD_SEC = 1.0
-
-# Persisted engine state path (shared with Mac server contract)
-_ENGINE_STATE_FILE = Path.home() / ".openzigs" / "engine-state.json"
+DEFAULT_F5TTS_MODEL = "F5TTS"   # downloads SWivid/F5-TTS-v2 from HuggingFace automatically
+_F5TTS_MIN_WPS = 2.0            # words/sec floor (conservative narration pace)
+_F5TTS_PAD_SEC = 1.0            # padding seconds for max-duration estimate
 
 
-# ── Model Lifecycle ────────────────────────────────────────────
+# ── Model Lifecycle ────────────────────────────────────────────────────────────
 
 def _ensure_torch():
     global torch
@@ -165,7 +160,7 @@ def _load_stt() -> float:
 
 
 def _load_tts() -> float:
-    """Load Kokoro TTS pipeline on CUDA."""
+    """Load Kokoro TTS pipeline on CUDA (Engine A)."""
     global _tts_pipeline, _tts_loaded, _tts_loading, _tts_last_used
 
     if _tts_loaded:
@@ -196,6 +191,35 @@ def _load_tts() -> float:
         _tts_loading = False
 
 
+def _load_f5tts() -> float:
+    """Load F5-TTS model on CUDA (Engine C). Returns seconds taken."""
+    global _f5tts_model, _f5tts_loaded, _f5tts_loading, _f5tts_last_used
+
+    if _f5tts_loaded:
+        return 0.0
+
+    _f5tts_loading = True
+    try:
+        start = time.monotonic()
+        log.info(f"Loading F5-TTS model '{DEFAULT_F5TTS_MODEL}' (CUDA/PyTorch) ...")
+        try:
+            from f5_tts.api import F5TTS
+            _f5tts_model = F5TTS(model_type=DEFAULT_F5TTS_MODEL)
+        except ImportError:
+            log.error("f5-tts is not installed. Run: pip install f5-tts")
+            raise
+        elapsed = time.monotonic() - start
+        _f5tts_loaded = True
+        _f5tts_last_used = time.monotonic()
+        log.info(f"F5-TTS model loaded in {elapsed:.1f}s")
+        return elapsed
+    except Exception as e:
+        log.error(f"Failed to load F5-TTS model: {e}")
+        raise
+    finally:
+        _f5tts_loading = False
+
+
 def _unload_tts():
     global _tts_pipeline, _tts_loaded
     if _tts_pipeline is not None:
@@ -203,7 +227,7 @@ def _unload_tts():
         _tts_pipeline = None
     _tts_loaded = False
     _clear_vram()
-    log.info("TTS model unloaded")
+    log.info("TTS (Kokoro) unloaded")
 
 
 def _unload_stt():
@@ -216,28 +240,38 @@ def _unload_stt():
     log.info("STT model unloaded")
 
 
+def _unload_f5tts():
+    global _f5tts_model, _f5tts_loaded
+    if _f5tts_model is not None:
+        log.info("Unloading F5-TTS model ...")
+        del _f5tts_model
+        _f5tts_model = None
+    _f5tts_loaded = False
+    _clear_vram()
+    log.info("F5-TTS (Engine C) unloaded")
+
+
 def _clear_vram():
-    gc.collect()
     gc.collect()
     _ensure_torch()
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
 
 
-# ── Request/Response Models ──────────────────────────────────
+# ── Request/Response Models ────────────────────────────────────────────────────
 
 class TTSRequest(BaseModel):
     text: str = Field(..., min_length=1, max_length=5000)
     voice: str = Field(default=DEFAULT_VOICE)
     speed: float = Field(default=1.0, ge=0.5, le=2.0)
     format: str = Field(default="wav", pattern=r"^(wav|mp3)$")
-    # F5-TTS voice cloning fields (optional — triggers Engine C when provided)
-    ref_audio_path: Optional[str] = None  # filesystem path to reference WAV
-    ref_text: Optional[str] = None        # transcript of reference audio
+    # F5-TTS voice cloning (optional — triggers Engine C when provided)
+    ref_audio_path: Optional[str] = None   # filesystem path to reference WAV
+    ref_text: Optional[str] = None         # transcript of reference audio
 
 
 class F5TTSClip(BaseModel):
-    ref_audio: str       # base64-encoded audio
+    ref_audio: str       # base64-encoded reference audio
     ref_text: str        # transcript of reference audio
     gen_text: str        # text to synthesize for this clip
     emotion: str = "Regular"
@@ -284,7 +318,7 @@ class HealthResponse(BaseModel):
     f5tts_engine: str = "f5-tts (CUDA/PyTorch)"
 
 
-# ── F5-TTS Utilities ─────────────────────────────────────────
+# ── F5-TTS Utilities ───────────────────────────────────────────────────────────
 
 _EMOTION_TAG_RE = re.compile(r"\(([A-Za-z][A-Za-z0-9_ ]{0,30})\)")
 _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?;:])\s+")
@@ -324,8 +358,7 @@ def _split_text_by_emotion(text: str, default_emotion: str = "Regular") -> list[
 
 def _estimate_max_duration(sentence: str) -> float:
     """Return a conservative max duration (seconds) for a single sentence."""
-    words = len(sentence.split())
-    return max(2.0, words / _F5TTS_MIN_WPS + _F5TTS_PAD_SEC)
+    return max(2.0, len(sentence.split()) / _F5TTS_MIN_WPS + _F5TTS_PAD_SEC)
 
 
 def _convert_to_24khz_mono_wav(input_path: str) -> tuple[str, bool]:
@@ -341,8 +374,8 @@ def _convert_to_24khz_mono_wav(input_path: str) -> tuple[str, bool]:
         ]
         subprocess.run(cmd, capture_output=True, timeout=30, check=True)
         return tmp_path, True
-    except Exception as e:
-        log.warning(f"[Engine C] Audio conversion failed ({e}), using original")
+    except Exception as exc:
+        log.warning(f"[Engine C] Audio conversion failed ({exc}), using original")
         try:
             os.unlink(tmp_path)
         except OSError:
@@ -353,9 +386,8 @@ def _convert_to_24khz_mono_wav(input_path: str) -> tuple[str, bool]:
 def _trim_trailing_silence(wav_bytes: bytes, threshold_db: float = -40.0,
                            min_trail_sec: float = 0.3) -> bytes:
     """Trim silence from the end of a WAV buffer."""
-    buf = io.BytesIO(wav_bytes)
     try:
-        data, sr = sf.read(buf, dtype="float32")
+        data, sr = sf.read(io.BytesIO(wav_bytes), dtype="float32")
     except Exception:
         return wav_bytes
     if len(data) == 0:
@@ -364,19 +396,16 @@ def _trim_trailing_silence(wav_bytes: bytes, threshold_db: float = -40.0,
     above = np.where(np.abs(data) > threshold)[0]
     if len(above) == 0:
         return wav_bytes
-    last_sound_idx = int(above[-1])
-    trail_samples = int(sr * min_trail_sec)
-    cut_idx = min(last_sound_idx + trail_samples, len(data))
+    cut_idx = min(int(above[-1]) + int(sr * min_trail_sec), len(data))
     if cut_idx >= len(data) - int(sr * 0.1):
         return wav_bytes
-    trimmed = data[:cut_idx]
+    trimmed = data[:cut_idx].copy()
     fade_len = min(int(sr * 0.05), len(trimmed))
     if fade_len > 0:
-        fade = np.linspace(1.0, 0.0, fade_len, dtype=np.float32)
-        trimmed[-fade_len:] *= fade
-    out_buf = io.BytesIO()
-    sf.write(out_buf, trimmed, sr, format="WAV", subtype="PCM_16")
-    return out_buf.getvalue()
+        trimmed[-fade_len:] *= np.linspace(1.0, 0.0, fade_len, dtype=np.float32)
+    out = io.BytesIO()
+    sf.write(out, trimmed, sr, format="WAV", subtype="PCM_16")
+    return out.getvalue()
 
 
 def _concatenate_wav_bytes(chunks: list[bytes]) -> bytes:
@@ -388,60 +417,17 @@ def _concatenate_wav_bytes(chunks: list[bytes]) -> bytes:
     all_audio: list[np.ndarray] = []
     sample_rate = F5TTS_SAMPLE_RATE
     for chunk in chunks:
-        buf = io.BytesIO(chunk)
         try:
-            data, sr = sf.read(buf, dtype="float32")
+            data, sr = sf.read(io.BytesIO(chunk), dtype="float32")
             sample_rate = sr
             all_audio.append(data)
-        except Exception as e:
-            log.warning(f"[Engine C] Failed to read WAV chunk: {e}")
+        except Exception as exc:
+            log.warning(f"[Engine C] Failed to read WAV chunk: {exc}")
     if not all_audio:
         return b""
-    combined = np.concatenate(all_audio)
-    out_buf = io.BytesIO()
-    sf.write(out_buf, combined, sample_rate, format="WAV", subtype="PCM_16")
-    return out_buf.getvalue()
-
-
-# ── F5-TTS Model Lifecycle ─────────────────────────────────────
-
-def _load_f5tts() -> float:
-    """Load F5-TTS model on CUDA. Returns time taken in seconds."""
-    global _f5tts_model, _f5tts_loaded, _f5tts_loading, _f5tts_last_used
-    if _f5tts_loaded:
-        return 0.0
-    _f5tts_loading = True
-    try:
-        start = time.monotonic()
-        log.info(f"Loading F5-TTS model '{DEFAULT_F5TTS_MODEL}' (CUDA) ...")
-        try:
-            from f5tts.api import F5TTS
-            _f5tts_model = F5TTS(model_type=DEFAULT_F5TTS_MODEL)
-        except ImportError:
-            log.error("f5-tts is not installed. Install with: pip install f5-tts")
-            raise
-        elapsed = time.monotonic() - start
-        _f5tts_loaded = True
-        _f5tts_last_used = time.monotonic()
-        log.info(f"F5-TTS model loaded in {elapsed:.1f}s")
-        return elapsed
-    except Exception as e:
-        log.error(f"Failed to load F5-TTS model: {e}")
-        raise
-    finally:
-        _f5tts_loading = False
-
-
-def _unload_f5tts() -> None:
-    """Unload F5-TTS model and free VRAM."""
-    global _f5tts_model, _f5tts_loaded
-    if _f5tts_model is not None:
-        log.info("Unloading F5-TTS model ...")
-        del _f5tts_model
-        _f5tts_model = None
-    _f5tts_loaded = False
-    _clear_vram()
-    log.info("F5-TTS model unloaded")
+    out = io.BytesIO()
+    sf.write(out, np.concatenate(all_audio), sample_rate, format="WAV", subtype="PCM_16")
+    return out.getvalue()
 
 
 async def _synthesize_f5tts_clip(
@@ -454,7 +440,7 @@ async def _synthesize_f5tts_clip(
     speed: float,
     seed: Optional[int],
 ) -> bytes:
-    """Synthesize a single text segment with F5-TTS. Returns WAV bytes."""
+    """Run one F5-TTS inference segment. Returns WAV bytes."""
     loop = asyncio.get_event_loop()
 
     def _run() -> bytes:
@@ -477,10 +463,10 @@ async def _synthesize_f5tts_clip(
     return await loop.run_in_executor(None, _run)
 
 
-# ── TTS Synthesis ─────────────────────────────────────────────
+# ── Kokoro TTS Synthesis ───────────────────────────────────────────────────────
 
 async def _synthesize_kokoro(req: TTSRequest) -> Response:
-    """Synthesize using Kokoro TTS (PyTorch/CUDA)."""
+    """Synthesize using Kokoro TTS (PyTorch/CUDA, Engine A)."""
     global _tts_last_used
 
     if not _tts_loaded:
@@ -495,18 +481,15 @@ async def _synthesize_kokoro(req: TTSRequest) -> Response:
     )
 
     start = time.monotonic()
-
-    # Kokoro pipeline generates audio
     audio_chunks = []
     try:
-        # Update lang_code on the pipeline
         _tts_pipeline.lang_code = lang_code
         for _, _, audio in _tts_pipeline(req.text, voice=voice, speed=req.speed):
             if audio is not None:
-                audio_chunks.append(audio.cpu().numpy() if hasattr(audio, 'cpu') else np.array(audio))
-    except Exception as e:
-        log.error(f"Kokoro TTS failed: {e}")
-        raise HTTPException(status_code=500, detail=f"TTS synthesis failed: {str(e)}")
+                audio_chunks.append(audio.cpu().numpy() if hasattr(audio, "cpu") else np.array(audio))
+    except Exception as exc:
+        log.error(f"Kokoro TTS failed: {exc}")
+        raise HTTPException(status_code=500, detail=f"TTS synthesis failed: {str(exc)}")
 
     if not audio_chunks:
         raise HTTPException(status_code=500, detail="TTS produced no audio")
@@ -514,12 +497,10 @@ async def _synthesize_kokoro(req: TTSRequest) -> Response:
     combined = np.concatenate(audio_chunks)
     elapsed = time.monotonic() - start
     _tts_last_used = time.monotonic()
-
-    log.info(f"TTS: {len(req.text)} chars -> {len(combined)} samples in {elapsed:.1f}s")
+    log.info(f"[Engine A] {len(req.text)} chars -> {len(combined)} samples in {elapsed:.1f}s")
 
     buf = io.BytesIO()
     sf.write(buf, combined, TTS_SAMPLE_RATE, format="WAV", subtype="PCM_16")
-
     return Response(
         content=buf.getvalue(),
         media_type="audio/wav",
@@ -527,11 +508,71 @@ async def _synthesize_kokoro(req: TTSRequest) -> Response:
             "X-Generation-Time": f"{elapsed:.2f}",
             "X-Voice": voice,
             "X-Sample-Rate": str(TTS_SAMPLE_RATE),
+            "X-Engine": "kokoro",
         },
     )
 
 
-# ── FastAPI App ──────────────────────────────────────────────
+async def _synthesize_tts_with_voice_clone(req: TTSRequest) -> Response:
+    """Synthesize via /tts when ref_audio_path is present (Engine C shortcut)."""
+    global _f5tts_last_used
+
+    ref_path = os.path.realpath(req.ref_audio_path)  # type: ignore[arg-type]
+    allowed_dirs = [tempfile.gettempdir(), str(Path.home() / ".openzigs")]
+    if not any(ref_path.startswith(d) for d in allowed_dirs):
+        raise HTTPException(status_code=400, detail="Invalid ref_audio_path")
+    if not os.path.isfile(ref_path):
+        raise HTTPException(status_code=400, detail="ref_audio_path file not found")
+
+    if _f5tts_loading:
+        raise HTTPException(status_code=409, detail="F5-TTS model is currently loading")
+    if not _f5tts_loaded:
+        log.info("Lazy-loading F5-TTS for /tts voice clone ...")
+        _load_f5tts()
+
+    conv_path, is_temp = _convert_to_24khz_mono_wav(ref_path)
+    temp_files = [conv_path] if is_temp else []
+    try:
+        start = time.monotonic()
+        _f5tts_last_used = time.monotonic()
+        sentences = _split_sentences(req.text) or [req.text.strip()]
+        chunks: list[bytes] = []
+        for sentence in sentences:
+            chunk = await _synthesize_f5tts_clip(
+                gen_text=sentence,
+                ref_file=conv_path,
+                ref_text=req.ref_text or "",
+                nfe_step=32,
+                cfg_strength=2.0,
+                sway_sampling_coef=-1.0,
+                speed=req.speed,
+                seed=None,
+            )
+            chunks.append(_trim_trailing_silence(chunk))
+            _f5tts_last_used = time.monotonic()
+        wav_bytes = _concatenate_wav_bytes(chunks) if len(chunks) > 1 else (chunks[0] if chunks else b"")
+        if not wav_bytes:
+            raise HTTPException(status_code=500, detail="F5-TTS produced no audio")
+        elapsed = time.monotonic() - start
+        log.info(f"[Engine C/tts] {len(req.text)} chars in {elapsed:.1f}s")
+        return Response(
+            content=wav_bytes,
+            media_type="audio/wav",
+            headers={
+                "X-Generation-Time": f"{elapsed:.2f}",
+                "X-Engine": "f5tts",
+                "X-Sample-Rate": str(F5TTS_SAMPLE_RATE),
+            },
+        )
+    finally:
+        for tmp in temp_files:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+
+
+# ── FastAPI App ────────────────────────────────────────────────────────────────
 
 async def _idle_unload_loop():
     while True:
@@ -572,10 +613,9 @@ async def health():
     _f5tts_pkg_available = False
     try:
         import importlib.util
-        _f5tts_pkg_available = importlib.util.find_spec("f5tts") is not None
+        _f5tts_pkg_available = importlib.util.find_spec("f5_tts") is not None
     except Exception:
         pass
-
     return HealthResponse(
         status=status,
         ready=_ready and not is_loading,
@@ -596,20 +636,11 @@ async def health():
 
 @app.get("/voices")
 async def list_voices():
-    voices = []
-    for voice_id, meta in VOICE_PRESETS.items():
-        voices.append({
-            "id": voice_id,
-            "language": meta["language"],
-            "gender": meta["gender"],
-            "style": meta["style"],
-        })
-    return {
-        "voices": voices,
-        "default": DEFAULT_VOICE,
-        "model": _tts_model_name,
-        "sample_rate": TTS_SAMPLE_RATE,
-    }
+    voices = [
+        {"id": vid, "language": meta["language"], "gender": meta["gender"], "style": meta["style"]}
+        for vid, meta in VOICE_PRESETS.items()
+    ]
+    return {"voices": voices, "default": DEFAULT_VOICE, "model": _tts_model_name, "sample_rate": TTS_SAMPLE_RATE}
 
 
 @app.post("/switch_engine")
@@ -617,10 +648,8 @@ async def switch_engine(req: SwitchEngineRequest):
     global _active_engine
     if req.engine == _active_engine:
         return {"engine": _active_engine, "status": "already_loaded"}
-
-    log.info(f"Switching TTS engine: {_active_engine} -> {req.engine}")
-
-    # Unload previous engine to free VRAM before loading new one
+    log.info(f"Switching engine: {_active_engine} -> {req.engine}")
+    # Unload previous engine to free VRAM
     if req.engine == "f5tts":
         if _tts_loaded:
             _unload_tts()
@@ -632,7 +661,6 @@ async def switch_engine(req: SwitchEngineRequest):
             _unload_tts()
         if _f5tts_loaded:
             _unload_f5tts()
-
     _active_engine = req.engine
     return {"engine": _active_engine, "status": "switched"}
 
@@ -642,87 +670,15 @@ async def synthesize(req: TTSRequest):
     if not _ready:
         raise HTTPException(status_code=503, detail="Server not ready")
     try:
-        # If a reference audio path is provided, use F5-TTS for voice cloning
+        # Route to F5-TTS when a reference audio is provided for voice cloning
         if req.ref_audio_path:
             return await _synthesize_tts_with_voice_clone(req)
         return await _synthesize_kokoro(req)
     except HTTPException:
         raise
-    except Exception as e:
-        log.error(f"TTS synthesis failed: {e}")
-        raise HTTPException(status_code=500, detail=f"TTS synthesis failed: {str(e)}")
-
-
-async def _synthesize_tts_with_voice_clone(req: TTSRequest) -> Response:
-    """Synthesize with F5-TTS using a reference audio file for voice cloning."""
-    global _f5tts_last_used
-
-    if not req.ref_audio_path:
-        raise HTTPException(status_code=400, detail="ref_audio_path is required")
-
-    # Validate the path doesn't escape expected tmp dirs
-    ref_path = os.path.realpath(req.ref_audio_path)
-    allowed_dirs = [tempfile.gettempdir(), str(Path.home() / ".openzigs")]
-    if not any(ref_path.startswith(d) for d in allowed_dirs):
-        raise HTTPException(status_code=400, detail="Invalid ref_audio_path")
-    if not os.path.isfile(ref_path):
-        raise HTTPException(status_code=400, detail="ref_audio_path file not found")
-
-    if _f5tts_loading:
-        raise HTTPException(status_code=409, detail="F5-TTS model is currently loading")
-    if not _f5tts_loaded:
-        log.info("Lazy-loading F5-TTS for voice cloning ...")
-        _load_f5tts()
-
-    # Convert reference audio to 24kHz mono WAV
-    conv_path, is_temp = _convert_to_24khz_mono_wav(ref_path)
-    temp_files = [conv_path] if is_temp else []
-
-    try:
-        start = time.monotonic()
-        _f5tts_last_used = time.monotonic()
-
-        sentences = _split_sentences(req.text)
-        if not sentences:
-            sentences = [req.text.strip()]
-
-        wav_chunks: list[bytes] = []
-        for sentence in sentences:
-            chunk = await _synthesize_f5tts_clip(
-                gen_text=sentence,
-                ref_file=conv_path,
-                ref_text=req.ref_text or "",
-                nfe_step=32,
-                cfg_strength=2.0,
-                sway_sampling_coef=-1.0,
-                speed=req.speed,
-                seed=None,
-            )
-            wav_chunks.append(_trim_trailing_silence(chunk))
-            _f5tts_last_used = time.monotonic()
-
-        wav_bytes = _concatenate_wav_bytes(wav_chunks) if len(wav_chunks) > 1 else (wav_chunks[0] if wav_chunks else b"")
-        if not wav_bytes:
-            raise HTTPException(status_code=500, detail="F5-TTS produced no audio")
-
-        elapsed = time.monotonic() - start
-        log.info(f"[Engine C] Voice clone synthesis: {len(req.text)} chars in {elapsed:.1f}s")
-
-        return Response(
-            content=wav_bytes,
-            media_type="audio/wav",
-            headers={
-                "X-Generation-Time": f"{elapsed:.2f}",
-                "X-Engine": "f5tts",
-                "X-Sample-Rate": str(F5TTS_SAMPLE_RATE),
-            },
-        )
-    finally:
-        for tmp in temp_files:
-            try:
-                os.unlink(tmp)
-            except OSError:
-                pass
+    except Exception as exc:
+        log.error(f"TTS synthesis failed: {exc}")
+        raise HTTPException(status_code=500, detail=f"TTS synthesis failed: {str(exc)}")
 
 
 @app.post("/f5tts", response_class=Response)
@@ -730,8 +686,7 @@ async def synthesize_f5tts(req: F5TTSRequest):
     """F5-TTS multi-clip voice cloning (Engine C — CUDA/PyTorch).
 
     Accepts one or more reference clips (base64 audio + transcript + gen_text).
-    Supports emotion tags like (Excited) in the top-level text field.
-    Each clip's gen_text is synthesized with the corresponding reference voice.
+    Each clip's gen_text is synthesized using the corresponding reference voice.
     Returns 24kHz mono WAV.
     """
     global _f5tts_last_used
@@ -755,9 +710,8 @@ async def synthesize_f5tts(req: F5TTSRequest):
         _f5tts_last_used = time.monotonic()
 
         for clip in req.clips:
-            # Decode base64 reference audio to a temp file
+            import base64
             try:
-                import base64
                 ref_bytes = base64.b64decode(clip.ref_audio)
             except Exception:
                 raise HTTPException(status_code=400, detail="Invalid base64 in ref_audio")
@@ -765,19 +719,14 @@ async def synthesize_f5tts(req: F5TTSRequest):
             fd, raw_path = tempfile.mkstemp(suffix=".wav")
             os.close(fd)
             temp_files.append(raw_path)
-            with open(raw_path, "wb") as f:
-                f.write(ref_bytes)
+            with open(raw_path, "wb") as fh:
+                fh.write(ref_bytes)
 
-            # Convert to 24kHz mono WAV
             conv_path, is_temp = _convert_to_24khz_mono_wav(raw_path)
             if is_temp:
                 temp_files.append(conv_path)
 
-            gen_text = clip.gen_text or req.text
-            sentences = _split_sentences(gen_text)
-            if not sentences:
-                sentences = [gen_text.strip()]
-
+            sentences = _split_sentences(clip.gen_text or req.text) or [(clip.gen_text or req.text).strip()]
             for sentence in sentences:
                 if not sentence.strip():
                     continue
@@ -799,11 +748,7 @@ async def synthesize_f5tts(req: F5TTSRequest):
 
         wav_bytes = _concatenate_wav_bytes(wav_chunks) if len(wav_chunks) > 1 else wav_chunks[0]
         elapsed = time.monotonic() - start
-
-        log.info(
-            f"[Engine C] {len(req.clips)} clip(s), {len(wav_chunks)} sentence(s) in {elapsed:.1f}s "
-            f"— {len(wav_bytes)} bytes"
-        )
+        log.info(f"[Engine C] {len(req.clips)} clip(s), {len(wav_chunks)} sentence(s) in {elapsed:.1f}s — {len(wav_bytes)} bytes")
 
         return Response(
             content=wav_bytes,
@@ -816,9 +761,9 @@ async def synthesize_f5tts(req: F5TTSRequest):
         )
     except HTTPException:
         raise
-    except Exception as e:
-        log.error(f"[Engine C] F5-TTS synthesis failed: {e}")
-        raise HTTPException(status_code=500, detail=f"F5-TTS synthesis failed: {str(e)}")
+    except Exception as exc:
+        log.error(f"[Engine C] F5-TTS synthesis failed: {exc}")
+        raise HTTPException(status_code=500, detail=f"F5-TTS synthesis failed: {str(exc)}")
     finally:
         for tmp in temp_files:
             try:
@@ -870,10 +815,8 @@ async def transcribe(audio: UploadFile = File(...)):
 
         log.info(f"Transcribing: {filename} ({len(audio_bytes)} bytes)")
         start = time.monotonic()
-
         segments, info = _stt_model.transcribe(tmp_path, beam_size=5)
 
-        # Collect segments
         parsed_segments = []
         text_parts = []
         for segment in segments:
@@ -885,25 +828,22 @@ async def transcribe(audio: UploadFile = File(...)):
             text_parts.append(segment.text.strip())
 
         text = " ".join(text_parts)
-        language = info.language or ""
         duration = parsed_segments[-1]["end"] if parsed_segments else 0.0
-
         elapsed = time.monotonic() - start
         _stt_last_used = time.monotonic()
-
         log.info(f"Transcribed in {elapsed:.1f}s: {len(text)} chars, {len(parsed_segments)} segments")
 
         return TranscribeResponse(
             text=text,
-            language=language,
+            language=info.language or "",
             segments=parsed_segments,
             duration_seconds=round(duration, 2),
         )
     except HTTPException:
         raise
-    except Exception as e:
-        log.error(f"Transcription failed: {e}")
-        raise HTTPException(status_code=500, detail=f"Transcription failed: {str(e)}")
+    except Exception as exc:
+        log.error(f"Transcription failed: {exc}")
+        raise HTTPException(status_code=500, detail=f"Transcription failed: {str(exc)}")
     finally:
         if tmp_path:
             try:
@@ -936,7 +876,7 @@ async def unload_model(model: str = "all"):
     return result
 
 
-# ── Entrypoint ─────────────────────────────────────────────────
+# ── Entrypoint ─────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Audio sidecar CUDA")
     parser.add_argument("--port", type=int, default=int(os.environ.get("PORT", "5006")))
