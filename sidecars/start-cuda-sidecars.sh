@@ -102,7 +102,7 @@ disown -a
 # Wait for health endpoints
 echo ""
 echo "Waiting for sidecars to become ready..."
-sleep 3
+sleep 8
 
 for entry in "5005:Image Gen" "5006:Audio" "5007:Video Worker" "5009:Music (ACE-Step)" "5010:Lip Sync (LatentSync)"; do
     port="${entry%%:*}"
