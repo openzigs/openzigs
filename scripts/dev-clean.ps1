@@ -68,7 +68,7 @@ if ($openzigsBats) {
 
 # Also kill WSL sidecar ports in Ubuntu (these forward to Windows localhost via WSL NAT)
 if (Get-Command wsl -ErrorAction SilentlyContinue) {
-    $wslKillCmd = 'for p in 5005 5006 5007 5009; do lsof -ti :$p 2>/dev/null | xargs -r kill -9 2>/dev/null; done; true'
+    $wslKillCmd = 'for p in 5005 5006 5007 5009 5010; do lsof -ti :$p 2>/dev/null | xargs -r kill -9 2>/dev/null; done; true'
     wsl -d Ubuntu -e bash -c $wslKillCmd 2>&1 | Out-Null
 }
 
@@ -144,13 +144,20 @@ if ((Test-Path $FirecrawlCompose) -and (Get-Command docker -ErrorAction Silently
 
 # ---- Start WSL CUDA sidecars -----------------------------------------------
 if (Get-Command wsl -ErrorAction SilentlyContinue) {
-    Write-Info "Starting WSL CUDA sidecars (Flux/5005, Audio/5006, LTX/5007, Music/5009)..."
+    Write-Info "Starting WSL CUDA sidecars (Flux/5005, Audio/5006, LTX/5007, Music/5009, Lipsync/5010)..."
 
     # Fire-and-forget: sidecars load models lazily on first request, logs at ~/.openzigs/logs/*-cuda.log
     $wslScriptPath = ($ProjectRoot -replace '\\','/') -replace '^([A-Za-z]):','/mnt/$1'
     $wslScriptPath = $wslScriptPath.Substring(0,5) + $wslScriptPath[5].ToString().ToLower() + $wslScriptPath.Substring(6)
-    Start-Process -FilePath "wsl" -ArgumentList @("-d", "Ubuntu", "bash", "$wslScriptPath/sidecars/start-cuda-sidecars.sh") -WindowStyle Hidden
-    Write-Ok "WSL CUDA sidecars launched (Flux/5005, Audio/5006, LTX/5007, Music/5009) - check ~/.openzigs/logs/*-cuda.log"
+    # Strip Windows CRLF line endings before piping to bash (script lives on Windows-mounted 9P filesystem).
+    # IMPORTANT: Use a single-string -ArgumentList (not an array) so PowerShell does NOT split the bash -c
+    # argument on spaces. Array join is unquoted, which causes bash to see only 'tr' as the -c command.
+    # Backtick-escaped double quotes wrap the full -c argument; $HOME is backtick-escaped so bash expands it.
+    $null = New-Item -ItemType Directory -Force -Path (Join-Path $env:USERPROFILE ".openzigs\logs") -ErrorAction SilentlyContinue
+    $startArgs = "-d Ubuntu bash -c `"tr -d '\r' < '$wslScriptPath/sidecars/start-cuda-sidecars.sh' | bash >> `$HOME/.openzigs/logs/sidecar-start.log 2>&1`""
+    Start-Process -FilePath "wsl" -ArgumentList $startArgs -WindowStyle Hidden
+    Write-Ok "WSL CUDA sidecars launched (Flux/5005, Audio/5006, LTX/5007, Music/5009, Lipsync/5010)"
+    Write-Info "Sidecar startup log: wsl -d Ubuntu bash -c 'cat ~/.openzigs/logs/sidecar-start.log'"
 } else {
     Write-Warn "WSL not found - skipping CUDA sidecar startup (start manually in WSL via start-cuda-sidecars.sh)"
 }
@@ -213,12 +220,12 @@ Write-Ok "OpenZigs dev servers started!"
 Write-Host ""
 Write-Host "  Backend:          http://localhost:3000"
 Write-Host "  UI:               http://localhost:3001"
-Write-Host "  Sidecars (WSL):   5005 (Flux), 5006 (Audio), 5007 (LTX), 5009 (Music) - loading in background"
+Write-Host "  Sidecars (WSL):   5005 (Flux), 5006 (Audio), 5007 (LTX), 5009 (Music), 5010 (Lipsync) - loading in background"
 Write-Host ""
 Write-Host "  Logs:"
 Write-Host "    Backend: $backendLogFile"
 Write-Host "    UI:      $uiLogFile"
-Write-Host "    Sidecars (WSL): ~/.openzigs/logs/{image-gen,audio,worker,music}-cuda.log"
+Write-Host "    Sidecars (WSL): ~/.openzigs/logs/{image-gen,audio,worker,music,lipsync}-cuda.log"
 Write-Host ""
 Write-Host "  To stop: Close this window or press Ctrl+C"
 Write-Host ""
@@ -269,7 +276,7 @@ try {
     # Stop WSL CUDA sidecars in Ubuntu
     if (Get-Command wsl -ErrorAction SilentlyContinue) {
         Write-Info "Stopping WSL CUDA sidecars..."
-        $wslKillCmd = 'for p in 5005 5006 5007 5009; do lsof -ti :$p 2>/dev/null | xargs -r kill -9 2>/dev/null; done; true'
+        $wslKillCmd = 'for p in 5005 5006 5007 5009 5010; do lsof -ti :$p 2>/dev/null | xargs -r kill -9 2>/dev/null; done; true'
         wsl -d Ubuntu -e bash -c $wslKillCmd 2>&1 | Out-Null
     }
 

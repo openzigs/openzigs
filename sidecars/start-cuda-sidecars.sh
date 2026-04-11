@@ -12,7 +12,7 @@ PID_DIR="$HOME/.openzigs/pids"
 # Read HF_TOKEN from the Windows .env file if not already set
 ENV_FILE="/mnt/c/Users/mgbre/Development/openzigs/.env"
 if [ -z "${HF_TOKEN:-}" ] && [ -f "$ENV_FILE" ]; then
-    HF_TOKEN=$(grep -m1 '^HF_TOKEN=' "$ENV_FILE" | cut -d= -f2- | tr -d '\r')
+    HF_TOKEN=$(grep -m1 '^HF_TOKEN=' "$ENV_FILE" | cut -d= -f2- | tr -d '\r' || true)
 export HF_TOKEN
 fi
 
@@ -75,7 +75,7 @@ echo "  PID: $VID_PID"
 # ── Music / ACE-Step (port 5009) ──────────────────────────
 if [ -d "$SIDECARS_DIR/music" ]; then
     echo "Starting Music sidecar (port 5009)..."
-    setsid bash -c "cd '$SIDECARS_DIR/music' && source venv/bin/activate && exec python server.py --port 5009 >> '$LOG_DIR/music-cuda.log' 2>&1" &
+    setsid bash -c "cd '$SIDECARS_DIR/music' && source venv/bin/activate && ACESTEP_DIR='$HOME/ace-step' ACESTEP_DEVICE='cuda' exec python server.py --port 5009 >> '$LOG_DIR/music-cuda.log' 2>&1" &
     MUS_PID=$!
     echo "$MUS_PID" > "$PID_DIR/music.pid"
     echo "  PID: $MUS_PID"
