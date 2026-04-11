@@ -39,7 +39,7 @@
     "dist:desktop": "pnpm build && cd ui && npx next build && cd ../desktop && pnpm build && pnpm dist"
   },
   "dependencies": {
-    "@github/copilot-sdk": "^0.1.32",
+    "@github/copilot-sdk": "^0.2.1",
     "@google-cloud/aiplatform": "^6.4.0",
     "@google-cloud/text-to-speech": "^6.4.0",
     "@huggingface/transformers": "^3.8.1",
@@ -125,7 +125,7 @@
       "socket.io-parser": ">=4.2.6",
       "flatted": ">=3.4.2",
       "tar": ">=7.5.11",
-      "@github/copilot": ">=0.0.423",
+      "@github/copilot": ">=1.0.17",
       "dompurify": ">=3.3.2",
       "@tootallnate/once": ">=3.0.1",
       "picomatch": ">=4.0.4",
@@ -135,6 +135,17 @@
     },
     "patchedDependencies": {
       "vscode-jsonrpc@8.2.1": "patches/vscode-jsonrpc@8.2.1.patch"
-    }
+    },
+    "ignoredBuiltDependencies": [
+      "core-js",
+      "cpu-features",
+      "es5-ext",
+      "onnxruntime-node",
+      "protobufjs",
+      "sharp",
+      "ssh2",
+      "tesseract.js",
+      "unrs-resolver"
+    ]
   }
 }

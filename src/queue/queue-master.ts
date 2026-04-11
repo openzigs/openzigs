@@ -882,6 +882,37 @@ export class QueueMaster extends EventEmitter {
     };
   }
 
+  /**
+   * When a worker sidecar runs on localhost (e.g. WSL), rewrite the
+   * callback URL so the sidecar can reach back to the server.
+   * WSL2 workers can't use `localhost` (points to WSL loopback) or the
+   * LAN IP (often firewalled). Instead, use the Windows host IP on the
+   * WSL virtual NIC (172.x.x.1) which is always reachable from WSL.
+   */
+  private resolveCallbackUrl(workerUrl: string): string {
+    const host = new URL(workerUrl).hostname;
+    if (host === "localhost" || host === "127.0.0.1") {
+      const wslHostIp = this.getWslHostIp();
+      if (wslHostIp) {
+        const parsed = new URL(this.config.callbackUrl);
+        parsed.hostname = wslHostIp;
+        return parsed.toString();
+      }
+    }
+    return this.config.callbackUrl;
+  }
+
+  /** Find the Windows host IP on the WSL virtual NIC. */
+  private getWslHostIp(): string | null {
+    const interfaces = os.networkInterfaces();
+    for (const [name, addrs] of Object.entries(interfaces)) {
+      if (!addrs || !name.toLowerCase().includes("wsl")) continue;
+      const v4 = addrs.find((a) => a.family === "IPv4" && !a.internal);
+      if (v4) return v4.address;
+    }
+    return null;
+  }
+
   private async dispatchImageJob(job: MediaJob): Promise<void> {
     const { url, token } = await this.getLiveNodeConfig("mac-mini");
     const headers: Record<string, string> = {
@@ -904,7 +935,7 @@ export class QueueMaster extends EventEmitter {
     // Other models accept the full parameter set.
     const body: Record<string, unknown> = {
       job_id: job.id,
-      callback_url: this.config.callbackUrl,
+      callback_url: this.resolveCallbackUrl(url),
       prompt: job.payload.prompt,
       seed: job.payload.seed,
       model: job.requiredModel,
@@ -960,6 +991,7 @@ export class QueueMaster extends EventEmitter {
     };
     if (token) headers["Authorization"] = `Bearer ${token}`;
 
+    const callbackUrl = this.resolveCallbackUrl(url);
     const body: Record<string, unknown> = {
       job_id: job.id,
       type: job.type,
@@ -969,7 +1001,7 @@ export class QueueMaster extends EventEmitter {
       num_frames: job.payload.num_frames ?? 97,
       fps: job.payload.fps ?? 24,
       model: job.requiredModel,
-      callback_url: this.config.callbackUrl,
+      callback_url: callbackUrl,
       pipeline: job.payload.pipeline ?? "distilled",
       negative_prompt: job.payload.negative_prompt,
       cfg_scale: job.payload.cfg_scale,
@@ -980,11 +1012,11 @@ export class QueueMaster extends EventEmitter {
     };
 
     // Derive progress_url from callback_url for real-time progress streaming (#762)
-    const progressUrl = this.config.callbackUrl.replace(
+    const progressUrl = callbackUrl.replace(
       /\/complete$/,
       "/progress",
     );
-    if (progressUrl !== this.config.callbackUrl) {
+    if (progressUrl !== callbackUrl) {
       body.progress_url = progressUrl;
     }
 
@@ -1026,15 +1058,7 @@ export class QueueMaster extends EventEmitter {
     if (nodeConfig.token)
       headers["Authorization"] = `Bearer ${nodeConfig.token}`;
 
-    // When music sidecar runs on localhost, use localhost callback URL
-    // so it can reach back without relying on the LAN IP.
-    let callbackUrl = this.config.callbackUrl;
-    const sidecarHost = new URL(nodeConfig.url).hostname;
-    if (sidecarHost === "localhost" || sidecarHost === "127.0.0.1") {
-      const parsed = new URL(this.config.callbackUrl);
-      parsed.hostname = "localhost";
-      callbackUrl = parsed.toString();
-    }
+    const callbackUrl = this.resolveCallbackUrl(nodeConfig.url);
 
     const body: Record<string, unknown> = {
       job_id: job.id,
@@ -1097,13 +1121,7 @@ export class QueueMaster extends EventEmitter {
     if (nodeConfig.token)
       headers["Authorization"] = `Bearer ${nodeConfig.token}`;
 
-    let callbackUrl = this.config.callbackUrl;
-    const sidecarHost = new URL(nodeConfig.url).hostname;
-    if (sidecarHost === "localhost" || sidecarHost === "127.0.0.1") {
-      const parsed = new URL(this.config.callbackUrl);
-      parsed.hostname = "localhost";
-      callbackUrl = parsed.toString();
-    }
+    const callbackUrl = this.resolveCallbackUrl(nodeConfig.url);
 
     // Build progress_url by replacing /complete with /progress in the callback URL
     const progressUrl = callbackUrl.replace(/\/complete\/?$/, "/progress");

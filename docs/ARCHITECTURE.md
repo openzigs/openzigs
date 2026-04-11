@@ -1061,6 +1061,79 @@ The `agent_tasks` table has a `token_usage_json TEXT DEFAULT NULL` column storin
 
 The Models API (`GET /api/models`) is enriched with `contextWindow` from `MODEL_CONTEXT_WINDOWS` for each model.
 
+### BYOK Provider & Local LLM Integration
+
+The Copilot SDK supports **Bring Your Own Key** (BYOK) — custom OpenAI-compatible API providers that replace the default GitHub Copilot backend. OpenZigs exposes this as a first-class feature for running local LLMs via **Ollama** or connecting to external providers (Azure OpenAI, Anthropic, etc.).
+
+#### Architecture
+
+```
+┌──────────────┐    ┌─────────────────────┐    ┌──────────────────┐    ┌─────────────┐
+│  Admin UI    │───▶│  PUT /models/config  │───▶│  CopilotWrapper  │───▶│  Copilot SDK │
+│  model-config│    │  (src/api/admin.ts)  │    │  setProvider()   │    │  createSession│
+│  -panel.tsx  │    └─────────────────────┘    │  toSdkProvider() │    │  ({ provider })│
+└──────────────┘                                └──────────────────┘    └───────┬───────┘
+                                                                                │
+                    ┌───────────────────────────────────────────────────────────┘
+                    ▼
+   ┌────────────────────────────────┐
+   │  OpenAI-compatible endpoint    │
+   │  Ollama:  localhost:11434/v1   │
+   │  OpenAI:  api.openai.com/v1   │
+   │  Azure:   *.openai.azure.com  │
+   │  Anthropic: api.anthropic.com │
+   └────────────────────────────────┘
+```
+
+#### Provider Type Mapping
+
+Our internal `ProviderConfig` includes a convenience `type: "ollama"` variant. Since the Copilot SDK only accepts `"openai" | "azure" | "anthropic"`, the wrapper's `toSdkProvider()` method maps Ollama to OpenAI-compatible format:
+
+| Internal Type | SDK Type | Base URL Transform |
+|---|---|---|
+| `openai` | `openai` | Pass-through |
+| `azure` | `azure` | Pass-through |
+| `anthropic` | `anthropic` | Pass-through |
+| `ollama` | `openai` | Appends `/v1` (e.g., `http://localhost:11434` → `http://localhost:11434/v1`) |
+
+#### Configuration Persistence
+
+Provider config is stored in `~/.openzigs/config.json` under `copilot.provider`:
+
+```json
+{
+  "copilot": {
+    "provider": {
+      "type": "ollama",
+      "baseUrl": "http://localhost:11434"
+    }
+  }
+}
+```
+
+The selected model is stored separately in `config/user.json`:
+
+```json
+{ "selectedModel": "gemma4:e4b" }
+```
+
+#### Ollama-Specific Notes
+
+- **No API key required** — Ollama serves locally without authentication.
+- **GPU acceleration** — Requires NVIDIA driver ≥ 570 for Ollama 0.20+ (cuBLAS v13). Falls back to CPU if CUDA libraries can't load.
+- **Recommended models for 12GB VRAM**: `gemma4:e4b` (9.6GB, 4B effective params, 128K context), `deepseek-coder-v2:16b`, `llama3.1:8b`.
+- **Session invalidation** — Changing the provider via `setProvider()` clears all cached Copilot SDK sessions.
+
+#### Test Connection Endpoint
+
+`POST /api/admin/models/test-connection` validates provider connectivity without invoking a full chat session:
+
+- **Ollama**: Fetches `/api/tags` to list available models.
+- **OpenAI/Azure**: Fetches `/models` with API key.
+- **Anthropic**: Fetches `/models` with `x-api-key` header.
+
+Returns `{ success, latency, model, models }`.
+
 ### Tool Registry (`src/mcp/tool-registry.ts`)
 
 Central registry for every tool the agent can invoke. Each tool has:

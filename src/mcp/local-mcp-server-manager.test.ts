@@ -576,6 +576,12 @@ describe("LocalMcpServerManager", () => {
   });
 
   describe("provisionPythonVenv (via startAll)", () => {
+    const isWin = process.platform === "win32";
+    const whichCmd = isWin ? "where.exe" : "which";
+    const pythonCmd = isWin ? "python" : "python3";
+    const venvBinCheck = isWin ? "Scripts\\python.exe" : "bin/python";
+    const venvCommand = isWin ? "/fake/path/.venv/Scripts/python.exe" : "/fake/path/.venv/bin/python";
+
     it("attempts provisioning when python venv is missing", async () => {
       const { execFileSync } = await import("node:child_process");
       const fs = (await import("node:fs")).default;
@@ -585,14 +591,14 @@ describe("LocalMcpServerManager", () => {
       // First call: which check fails (runtime not available)
       // existsSync: venv/bin/python doesn't exist, requirements.txt exists
       mockedExecFile.mockImplementation((cmd: string, _args?: readonly string[]) => {
-        if (cmd === "which") throw new Error("not found");
-        if (cmd === "python3") return Buffer.from(""); // venv creation
-        if (typeof cmd === "string" && cmd.includes("/pip")) return Buffer.from(""); // pip install
+        if (cmd === whichCmd) throw new Error("not found");
+        if (cmd === pythonCmd) return Buffer.from(""); // venv creation
+        if (typeof cmd === "string" && (cmd.includes("/pip") || cmd.includes("\\pip"))) return Buffer.from(""); // pip install
         return Buffer.from("");
       });
       mockedExists.mockImplementation((p: unknown) => {
         const s = String(p);
-        if (s.endsWith("bin/python")) return false; // venv doesn't exist
+        if (s.endsWith(venvBinCheck)) return false; // venv doesn't exist
         if (s.endsWith("requirements.txt")) return true;
         return false;
       });
@@ -603,7 +609,7 @@ describe("LocalMcpServerManager", () => {
           {
             name: "py-test",
             label: "Python Test",
-            command: "/fake/path/.venv/bin/python",
+            command: venvCommand,
             args: ["-m", "test_server"],
             runtime: "python",
             category: "test",
@@ -614,9 +620,9 @@ describe("LocalMcpServerManager", () => {
       });
       await mgr.startAll();
 
-      // Should have attempted python3 -m venv
+      // Should have attempted python3 -m venv (or python -m venv on Windows)
       expect(mockedExecFile).toHaveBeenCalledWith(
-        "python3",
+        pythonCmd,
         ["-m", "venv", "/fake/path/.venv"],
         expect.any(Object)
       );

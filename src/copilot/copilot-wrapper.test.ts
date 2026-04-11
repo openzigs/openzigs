@@ -1,10 +1,14 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import os from "node:os";
 import path from "node:path";
 import fs from "node:fs/promises";
 import * as z from "zod";
 import { ToolRegistry, type ToolDefinition } from "../mcp/tool-registry.js";
 import { CopilotWrapperService, type CopilotModel } from "./copilot-wrapper.js";
+
+vi.mock("../config/user-model.js", () => ({
+  getUserSelectedModel: vi.fn().mockResolvedValue(undefined),
+}));
 
 class FakeSession {
   readonly sessionId: string;
@@ -130,7 +134,9 @@ describe("copilot wrapper", () => {
     expect(saved.token).toBe("token-123");
 
     const stat = await fs.stat(authPath);
-    expect(stat.mode & 0o077).toBe(0);
+    if (process.platform !== "win32") {
+      expect(stat.mode & 0o077).toBe(0);
+    }
     expect(await wrapper.isAuthenticated()).toBe(true);
   });
 
@@ -170,6 +176,9 @@ describe("copilot wrapper", () => {
   });
 
   it("uses default model when no override is provided", async () => {
+    // Mock getUserSelectedModel to return undefined so the constructor default is used
+    const { getUserSelectedModel } = await import("../config/user-model.js");
+    vi.mocked(getUserSelectedModel).mockResolvedValue(undefined);
     const client = new FakeCopilotClient();
     const wrapper = new CopilotWrapperService({ client, model: "gpt-4.1" });
 
@@ -987,6 +996,25 @@ describe("copilot wrapper", () => {
     expect(wrapper.getProvider()).toBeDefined();
     wrapper.setProvider(undefined);
     expect(wrapper.getProvider()).toBeUndefined();
+  });
+
+  it("maps ollama provider to openai type with /v1 suffix for SDK", async () => {
+    const client = new FakeCopilotClient();
+    const wrapper = new CopilotWrapperService({ client, provider: { type: "ollama", baseUrl: "http://localhost:11434" } });
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    for await (const _chunk of wrapper.chat("test", { conversationId: "ollama-map-test" })) { /* drain */ }
+    const cfg = client.lastSessionConfig as Record<string, unknown>;
+    expect(cfg.provider).toEqual({ type: "openai", baseUrl: "http://localhost:11434/v1", wireApi: "completions" });
+  });
+
+  it("passes non-ollama providers through to SDK unchanged", async () => {
+    const client = new FakeCopilotClient();
+    const provider = { type: "openai" as const, baseUrl: "https://api.openai.com/v1", apiKey: "sk-test" };
+    const wrapper = new CopilotWrapperService({ client, provider });
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    for await (const _chunk of wrapper.chat("test", { conversationId: "openai-pass-test" })) { /* drain */ }
+    const cfg = client.lastSessionConfig as Record<string, unknown>;
+    expect(cfg.provider).toEqual(provider);
   });
 
   it("forwards subagent.* SDK events as subagent: EventEmitter events", async () => {

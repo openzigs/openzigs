@@ -30,11 +30,18 @@ describe("shell execute handler", () => {
   });
 
   it("handles command with args embedded in command string", async () => {
-    const h = createShellExecuteHandler({ allowlist: ["echo"] });
-    const result = await h({ command: "echo hello world", timeout: 5000 });
-
-    expect(result.stdout.trim()).toBe("hello world");
-    expect(result.exitCode).toBe(0);
+    if (process.platform === "win32") {
+      // On Windows, 'echo' is a cmd built-in, not an executable
+      const h = createShellExecuteHandler({ allowlist: ["cmd"] });
+      const result = await h({ command: "cmd /c echo hello world", timeout: 5000 });
+      expect(result.stdout.trim()).toBe("hello world");
+      expect(result.exitCode).toBe(0);
+    } else {
+      const h = createShellExecuteHandler({ allowlist: ["echo"] });
+      const result = await h({ command: "echo hello world", timeout: 5000 });
+      expect(result.stdout.trim()).toBe("hello world");
+      expect(result.exitCode).toBe(0);
+    }
   });
 
   it("rejects compound commands with && operator", async () => {

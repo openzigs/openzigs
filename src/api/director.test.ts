@@ -1499,9 +1499,12 @@ describe("Director API router", () => {
 
     it("returns 503 when voice service not available", async () => {
       const { app } = buildApp();
+      // Use a file that exists on all platforms to get past the 404 check
+      const { fileURLToPath } = await import("node:url");
+      const thisFile = fileURLToPath(import.meta.url);
       const res = await request(app)
         .post("/director/shorts")
-        .send({ sourceVideo: "/dev/null" });
+        .send({ sourceVideo: thisFile });
       expect(res.status).toBe(503);
       expect(res.body.error).toContain("VoiceService");
     });

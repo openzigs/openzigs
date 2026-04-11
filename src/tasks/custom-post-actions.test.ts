@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
+import path from "node:path";
 import { postActionRegistry } from "./post-action-registry.js";
 import { CustomPostActionManager } from "./custom-post-actions.js";
 import type { CustomPostActionDefinition, CustomFieldDefinition } from "./custom-post-actions.js";
@@ -99,7 +100,7 @@ describe("CustomPostActionManager", () => {
     ];
     // Use the exact path the module will look for
     const homeDir = (await import("node:os")).default.homedir();
-    const filePath = `${homeDir}/.openzigs/custom-post-actions.json`;
+    const filePath = path.join(homeDir, ".openzigs", "custom-post-actions.json");
     mockFiles.set(filePath, JSON.stringify(defs));
 
     await manager.initialize();
@@ -385,6 +386,7 @@ describe("CustomPostActionManager", () => {
 
   describe("script handler execution", () => {
     it("executes script and returns stdout", async () => {
+      if (process.platform === "win32") return; // /bin/sh not available on Windows
       await manager.initialize();
       await manager.create(makeScriptDef({ type: "sh-echo", scriptBody: 'echo "hello"' }));
       const def = postActionRegistry.get("sh-echo");
@@ -393,6 +395,7 @@ describe("CustomPostActionManager", () => {
     });
 
     it("passes config values as environment variables", async () => {
+      if (process.platform === "win32") return; // /bin/sh not available on Windows
       await manager.initialize();
       await manager.create(makeScriptDef({
         type: "sh-env",
@@ -404,6 +407,7 @@ describe("CustomPostActionManager", () => {
     });
 
     it("returns error details when script fails", async () => {
+      if (process.platform === "win32") return; // /bin/sh not available on Windows
       await manager.initialize();
       await manager.create(makeScriptDef({
         type: "sh-fail",

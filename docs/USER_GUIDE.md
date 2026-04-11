@@ -2906,6 +2906,110 @@ curl -X PUT -H "Authorization: Bearer <token>" \
 | `wireApi` | string | No | OpenAI only: `"openai"` or `"anthropic"` wire format. |
 | `azure.apiVersion` | string | No | Azure only: API version string (e.g., `"2024-02-15-preview"`). |
 
+### Test Connection
+
+Before saving, verify provider connectivity:
+
+```bash
+curl -X POST -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  http://localhost:3000/api/admin/models/test-connection
+```
+
+Returns `{ "success": true, "latency": 9, "model": "gemma4:e4b", "models": ["gemma4:e4b"] }` on success. Also available as the **Test Connection** button in the Admin UI.
+
+### Setting Up Ollama with Gemma 4 (Local LLM)
+
+Run Google's Gemma 4 locally for free, private AI inference with no API keys or cloud dependency.
+
+#### Prerequisites
+
+- **NVIDIA GPU** with ≥ 8GB VRAM (12GB recommended for `gemma4:e4b`)
+- **NVIDIA driver** ≥ 570 (for Ollama 0.20+ with cuBLAS v13 CUDA libraries)
+- Windows 10/11 or Linux
+
+#### 1. Install Ollama
+
+```powershell
+# Windows (via winget)
+winget install Ollama.Ollama
+
+# Linux
+curl -fsSL https://ollama.com/install.sh | sh
+```
+
+#### 2. Start Ollama Server
+
+```powershell
+# Windows — the server runs in the background on port 11434
+Start-Process -FilePath "$env:LOCALAPPDATA\Programs\Ollama\ollama.exe" -ArgumentList "serve" -WindowStyle Hidden
+
+# Verify it's running
+curl http://localhost:11434   # → "Ollama is running"
+```
+
+#### 3. Download a Model
+
+Choose based on your VRAM:
+
+| Model | Size | VRAM | Best For |
+|---|---|---|---|
+| `gemma4:e2b` | 7.2 GB | 8 GB+ | Lightweight tasks, fast inference |
+| `gemma4:e4b` | 9.6 GB | 12 GB+ | **Recommended** — best quality-to-size ratio |
+| `gemma4:26b` | 18 GB | 24 GB+ | MoE architecture, high quality |
+| `deepseek-coder-v2:16b` | 8.9 GB | 12 GB+ | Code-focused alternative |
+
+```bash
+ollama pull gemma4:e4b    # Downloads ~9.6 GB
+```
+
+#### 4. Configure OpenZigs BYOK
+
+**Option A: Admin UI** — Navigate to Admin → Model Configuration → Enable BYOK → Select "Ollama" → Save.
+
+**Option B: API**
+
+```bash
+# Set Ollama as provider
+curl -X PUT -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"provider":{"type":"ollama","baseUrl":"http://localhost:11434"}}' \
+  http://localhost:3000/api/admin/models/config
+
+# Set the model
+curl -X POST -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"modelId":"gemma4:e4b"}' \
+  http://localhost:3000/api/models/select
+```
+
+#### 5. Verify
+
+```bash
+# Test connection
+curl -X POST -H "Authorization: Bearer <token>" \
+  http://localhost:3000/api/admin/models/test-connection
+# → {"success":true,"latency":9,"model":"gemma4:e4b","models":["gemma4:e4b"]}
+```
+
+#### Reverting to GitHub Copilot
+
+```bash
+curl -X PUT -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"provider": null}' \
+  http://localhost:3000/api/admin/models/config
+```
+
+#### Troubleshooting
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| `100% CPU` in `ollama ps` | NVIDIA driver too old for Ollama's CUDA libraries | Update to driver ≥ 570 (CUDA 13 support) |
+| `failed to get console mode for stderr` | Known Ollama Windows issue | Harmless — ignore |
+| Model not found | Wrong model name | Check `ollama list` for exact names |
+| Slow inference | Running on CPU instead of GPU | Update NVIDIA driver, check `ollama ps` PROCESSOR column |
+
 > **Note:** Changing the provider clears all cached SDK sessions. The next message will create a fresh session with the new provider.
 
 ---

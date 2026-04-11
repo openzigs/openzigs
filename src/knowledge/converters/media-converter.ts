@@ -71,9 +71,12 @@ export async function createMediaConverter(options: MediaConverterOptions = {}):
   }
 
   // Check for whisper-node (optional — may not have types).
+  // whisper-node requires `make` to compile whisper.cpp at module load time.
+  // On Windows, this causes shelljs to call process.exit(1) — skip entirely.
   let whisperFn: WhisperFn | null = null;
 
-  try {
+  if (process.platform !== "win32") {
+    try {
     // Dynamic import — module may not exist. Use string indirection to prevent
     // TypeScript from resolving the module at compile time.
     const moduleName = "whisper-node";
@@ -98,6 +101,7 @@ export async function createMediaConverter(options: MediaConverterOptions = {}):
     }
   } catch {
     // whisper-node not installed.
+  }
   }
 
   if (!whisperFn) {

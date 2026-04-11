@@ -12,7 +12,7 @@ overrides:
   socket.io-parser: '>=4.2.6'
   flatted: '>=3.4.2'
   tar: '>=7.5.11'
-  '@github/copilot': '>=0.0.423'
+  '@github/copilot': '>=1.0.17'
   dompurify: '>=3.3.2'
   '@tootallnate/once': '>=3.0.1'
   picomatch: '>=4.0.4'
@@ -30,8 +30,8 @@ importers:
   .:
     dependencies:
       '@github/copilot-sdk':
-        specifier: ^0.1.32
-        version: 0.1.32
+        specifier: ^0.2.1
+        version: 0.2.1
       '@google-cloud/aiplatform':
         specifier: ^6.4.0
         version: 6.4.0
@@ -52,10 +52,10 @@ importers:
         version: 0.1.95
       '@remotion/bundler':
         specifier: ^4.0.431
-        version: 4.0.431(@swc/helpers@0.5.19)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
+        version: 4.0.431(@swc/helpers@0.5.21)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
       '@remotion/cli':
         specifier: ^4.0.431
-        version: 4.0.431(@swc/helpers@0.5.19)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
+        version: 4.0.431(@swc/helpers@0.5.21)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
       '@remotion/renderer':
         specifier: ^4.0.431
         version: 4.0.431(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
@@ -1239,48 +1239,48 @@ packages:
   '@gar/promisify@1.1.3':
     resolution: {integrity: sha512-k2Ty1JcVojjJFwrg/ThKi2ujJ7XNLYaFGNB/bWT9wGR+oSMJHMa5w+CUq6p/pVrKeNNgA7pCqEcjSnHVoqJQFw==}
 
-  '@github/copilot-darwin-arm64@1.0.11':
-    resolution: {integrity: sha512-wdKimjtbsVeXqMqQSnGpGBPFEYHljxXNuWeH8EIJTNRgFpAsimcivsFgql3Twq4YOp0AxfsH36icG4IEen30mA==}
+  '@github/copilot-darwin-arm64@1.0.22':
+    resolution: {integrity: sha512-cK42uX+oz46Cjsb7z+rdPw+DIGczfVSFWlc1WDcdVlwBW4cEfV0pzFXExpN1r1z179TFgAaVMbhkgLqhOZ/PeQ==}
     cpu: [arm64]
     os: [darwin]
     hasBin: true
 
-  '@github/copilot-darwin-x64@1.0.11':
-    resolution: {integrity: sha512-VeuPv8rzBVGBB8uDwMEhcHBpldoKaq26yZ5YQm+G9Ka5QIF+1DMah8ZNRMVsTeNKkb1ji9G8vcuCsaPbnG3fKg==}
+  '@github/copilot-darwin-x64@1.0.22':
+    resolution: {integrity: sha512-Pmw0ipF+yeLbP6JctsEoMS2LUCpVdC2r557BnCoe48BN8lO8i9JLnkpuDDrJ1AZuCk1VjnujFKEQywOOdfVlpA==}
     cpu: [x64]
     os: [darwin]
     hasBin: true
 
-  '@github/copilot-linux-arm64@1.0.11':
-    resolution: {integrity: sha512-/d8p6RlFYKj1Va2hekFIcYNMHWagcEkaxgcllUNXSyQLnmEtXUkaWtz62VKGWE+n/UMkEwCB6vI2xEwPTlUNBQ==}
+  '@github/copilot-linux-arm64@1.0.22':
+    resolution: {integrity: sha512-WVgG67VmZgHoD7GMlkTxEVe1qK8k9Ek9A02/Da7obpsDdtBInt3nJTwBEgm4cNDM4XaenQH17/jmwVtTwXB6lw==}
     cpu: [arm64]
     os: [linux]
     hasBin: true
 
-  '@github/copilot-linux-x64@1.0.11':
-    resolution: {integrity: sha512-UujTRO3xkPFC1CybchBbCnaTEAG6JrH0etIst07JvfekMWgvRxbiCHQPpDPSzBCPiBcGu0gba0/IT+vUCORuIw==}
+  '@github/copilot-linux-x64@1.0.22':
+    resolution: {integrity: sha512-XRkHVFmdC7FMrczXOdPjbNKiknMr13asKtwJoErJO/Xdy4cmzKQHSvNsBk8VNrr7oyWrUcB1F6mbIxb2LFxPOw==}
     cpu: [x64]
     os: [linux]
     hasBin: true
 
-  '@github/copilot-sdk@0.1.32':
-    resolution: {integrity: sha512-mPWM0fw1Gqc/SW8nl45K8abrFH+92fO7y6tRtRl5imjS5hGapLf/dkX5WDrgPtlsflD0c41lFXVUri5NVJwtoA==}
+  '@github/copilot-sdk@0.2.1':
+    resolution: {integrity: sha512-S1n/4X1viqbSAWcHDZcFyZ/7hgTLAXr3NY7yNmHoX/CL4LTuYIJ6y5w2jrqUnrJNQgtNrMDSFGwFU+H1GeynFw==}
     engines: {node: '>=20.0.0'}
 
-  '@github/copilot-win32-arm64@1.0.11':
-    resolution: {integrity: sha512-EOW8HUM+EmnHEZEa+iUMl4pP1+2eZUk2XCbynYiMehwX9sidc4BxEHp2RuxADSzFPTieQEWzgjQmHWrtet8pQg==}
+  '@github/copilot-win32-arm64@1.0.22':
+    resolution: {integrity: sha512-Ao6gv1f2ZV+HVlkB1MV7YFdCuaB3NcFCnNu0a6/WLl2ypsfP1vWosPPkIB32jQJeBkT9ku3exOZLRj+XC0P3Mg==}
     cpu: [arm64]
     os: [win32]
     hasBin: true
 
-  '@github/copilot-win32-x64@1.0.11':
-    resolution: {integrity: sha512-fKGkSNamzs3h9AbmswNvPYJBORCb2Y8CbusijU3C7fT3ohvqnHJwKo5iHhJXLOKZNOpFZgq9YKha410u9sIs6Q==}
+  '@github/copilot-win32-x64@1.0.22':
+    resolution: {integrity: sha512-EppcL+3TpxC+X/eQEIYtkN0PaA3/cvtI9UJqldLIkKDPXNYk/0mw877Ru9ypRcBWBWokDN6iKIWk5IxYH+JIvg==}
     cpu: [x64]
     os: [win32]
     hasBin: true
 
-  '@github/copilot@1.0.11':
-    resolution: {integrity: sha512-cptVopko/tNKEXyBP174yBjHQBEwg6CqaKN2S0M3J+5LEB8u31bLL75ioOPd+5vubqBrA0liyTdcHeZ8UTRbmg==}
+  '@github/copilot@1.0.22':
+    resolution: {integrity: sha512-BR9oTJ1tQ51RV81xcxmlZe0zB3Tf8i/vFsKSTm2f5wRLJgtuVl2LgaFStoI/peTFcmgtZbhrqsnWTu5GkEPK5Q==}
     hasBin: true
 
   '@google-cloud/aiplatform@6.4.0':
@@ -2937,8 +2937,8 @@ packages:
   '@swc/helpers@0.5.15':
     resolution: {integrity: sha512-JQ5TuMi45Owi4/BIMAJBoSQoOJu12oOk/gADqlcUL9JEdHB8vyjUSsxqeNXnmXHjYKMi2WcYtezGEEhqUI/E2g==}
 
-  '@swc/helpers@0.5.19':
-    resolution: {integrity: sha512-QamiFeIK3txNjgUTNppE6MiG3p7TdninpZu0E0PbqVh1a9FNLT2FRhisaa4NcaX52XVhA5l7Pk58Ft7Sqi/2sA==}
+  '@swc/helpers@0.5.21':
+    resolution: {integrity: sha512-jI/VAmtdjB/RnI8GTnokyX7Ug8c+g+ffD6QRLa6XQewtnGyukKkKSk3wLTM3b5cjt1jNh9x0jfVlagdN2gDKQg==}
 
   '@szmarczak/http-timer@4.0.6':
     resolution: {integrity: sha512-4BAffykYOgO+5nzBWYwE3W90sBgLJoUPRWWcL8wlyiM8IB8ipJz3UMJ9KXQd1RKQXpKp8Tutn80HZtWsu2u76w==}
@@ -3210,8 +3210,8 @@ packages:
   '@types/node@18.19.130':
     resolution: {integrity: sha512-GRaXQx6jGfL8sKfaIDD6OupbIHBr9jv7Jnaml9tB7l4v068PAOXqfcujMMo5PhbIs6ggR1XODELqahT2R8v0fg==}
 
-  '@types/node@20.19.37':
-    resolution: {integrity: sha512-8kzdPJ3FsNsVIurqBs7oodNnCEVbni9yUEkaHbgptDACOPW04jimGagZ51E6+lXUwJjgnBw+hyko/lkFWCldqw==}
+  '@types/node@20.19.39':
+    resolution: {integrity: sha512-orrrD74MBUyK8jOAD/r0+lfa1I2MO6I+vAkmAWzMYbCcgrN4lCrmK52gRFQq/JRxfYPfonkr4b0jcY7Olqdqbw==}
 
   '@types/node@22.19.13':
     resolution: {integrity: sha512-akNQMv0wW5uyRpD2v2IEyRSZiR+BeGuoB6L310EgGObO44HSMNT8z1xzio28V8qOrgYaopIDNA18YgdXd+qTiw==}
@@ -9985,38 +9985,38 @@ snapshots:
 
   '@gar/promisify@1.1.3': {}
 
-  '@github/copilot-darwin-arm64@1.0.11':
+  '@github/copilot-darwin-arm64@1.0.22':
     optional: true
 
-  '@github/copilot-darwin-x64@1.0.11':
+  '@github/copilot-darwin-x64@1.0.22':
     optional: true
 
-  '@github/copilot-linux-arm64@1.0.11':
+  '@github/copilot-linux-arm64@1.0.22':
     optional: true
 
-  '@github/copilot-linux-x64@1.0.11':
+  '@github/copilot-linux-x64@1.0.22':
     optional: true
 
-  '@github/copilot-sdk@0.1.32':
+  '@github/copilot-sdk@0.2.1':
     dependencies:
-      '@github/copilot': 1.0.11
+      '@github/copilot': 1.0.22
       vscode-jsonrpc: 8.2.1(patch_hash=43882f313df37413d48997446332ed0dadf099b57b0ee8549475bfbe5710f1bd)
       zod: 4.3.6
 
-  '@github/copilot-win32-arm64@1.0.11':
+  '@github/copilot-win32-arm64@1.0.22':
     optional: true
 
-  '@github/copilot-win32-x64@1.0.11':
+  '@github/copilot-win32-x64@1.0.22':
     optional: true
 
-  '@github/copilot@1.0.11':
+  '@github/copilot@1.0.22':
     optionalDependencies:
-      '@github/copilot-darwin-arm64': 1.0.11
-      '@github/copilot-darwin-x64': 1.0.11
-      '@github/copilot-linux-arm64': 1.0.11
-      '@github/copilot-linux-x64': 1.0.11
-      '@github/copilot-win32-arm64': 1.0.11
-      '@github/copilot-win32-x64': 1.0.11
+      '@github/copilot-darwin-arm64': 1.0.22
+      '@github/copilot-darwin-x64': 1.0.22
+      '@github/copilot-linux-arm64': 1.0.22
+      '@github/copilot-linux-x64': 1.0.22
+      '@github/copilot-win32-arm64': 1.0.22
+      '@github/copilot-win32-x64': 1.0.22
 
   '@google-cloud/aiplatform@6.4.0':
     dependencies:
@@ -11331,12 +11331,12 @@ snapshots:
       react: 19.2.4
       react-redux: 9.2.0(@types/react@19.2.14)(react@19.2.4)(redux@5.0.1)
 
-  '@remotion/bundler@4.0.431(@swc/helpers@0.5.19)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)':
+  '@remotion/bundler@4.0.431(@swc/helpers@0.5.21)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)':
     dependencies:
       '@remotion/media-parser': 4.0.431
       '@remotion/studio': 4.0.431(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
       '@remotion/studio-shared': 4.0.431(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
-      '@rspack/core': 1.7.6(@swc/helpers@0.5.19)
+      '@rspack/core': 1.7.6(@swc/helpers@0.5.21)
       '@rspack/plugin-react-refresh': 1.6.1(react-refresh@0.9.0)
       css-loader: 5.2.7(webpack@5.105.0(esbuild@0.25.0))
       esbuild: 0.25.0
@@ -11357,14 +11357,14 @@ snapshots:
       - webpack-cli
       - webpack-hot-middleware
 
-  '@remotion/cli@4.0.431(@swc/helpers@0.5.19)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)':
+  '@remotion/cli@4.0.431(@swc/helpers@0.5.21)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)':
     dependencies:
-      '@remotion/bundler': 4.0.431(@swc/helpers@0.5.19)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
+      '@remotion/bundler': 4.0.431(@swc/helpers@0.5.21)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
       '@remotion/media-utils': 4.0.431(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
       '@remotion/player': 4.0.431(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
       '@remotion/renderer': 4.0.431(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
       '@remotion/studio': 4.0.431(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
-      '@remotion/studio-server': 4.0.431(@swc/helpers@0.5.19)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
+      '@remotion/studio-server': 4.0.431(@swc/helpers@0.5.21)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
       '@remotion/studio-shared': 4.0.431(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
       dotenv: 17.3.1
       minimist: 1.2.6
@@ -11462,10 +11462,10 @@ snapshots:
 
   '@remotion/streaming@4.0.431': {}
 
-  '@remotion/studio-server@4.0.431(@swc/helpers@0.5.19)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)':
+  '@remotion/studio-server@4.0.431(@swc/helpers@0.5.21)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)':
     dependencies:
       '@babel/parser': 7.24.1
-      '@remotion/bundler': 4.0.431(@swc/helpers@0.5.19)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
+      '@remotion/bundler': 4.0.431(@swc/helpers@0.5.21)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
       '@remotion/renderer': 4.0.431(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
       '@remotion/studio-shared': 4.0.431(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
       memfs: 3.4.3
@@ -11666,13 +11666,13 @@ snapshots:
       '@rspack/binding-win32-ia32-msvc': 1.7.6
       '@rspack/binding-win32-x64-msvc': 1.7.6
 
-  '@rspack/core@1.7.6(@swc/helpers@0.5.19)':
+  '@rspack/core@1.7.6(@swc/helpers@0.5.21)':
     dependencies:
       '@module-federation/runtime-tools': 0.22.0
       '@rspack/binding': 1.7.6
       '@rspack/lite-tapable': 1.1.0
     optionalDependencies:
-      '@swc/helpers': 0.5.19
+      '@swc/helpers': 0.5.21
 
   '@rspack/lite-tapable@1.1.0': {}
 
@@ -11714,7 +11714,7 @@ snapshots:
     dependencies:
       tslib: 2.8.1
 
-  '@swc/helpers@0.5.19':
+  '@swc/helpers@0.5.21':
     dependencies:
       tslib: 2.8.1
 
@@ -12058,7 +12058,7 @@ snapshots:
     dependencies:
       undici-types: 5.26.5
 
-  '@types/node@20.19.37':
+  '@types/node@20.19.39':
     dependencies:
       undici-types: 6.21.0
 
@@ -12595,10 +12595,10 @@ snapshots:
 
   apache-arrow@18.1.0:
     dependencies:
-      '@swc/helpers': 0.5.19
+      '@swc/helpers': 0.5.21
       '@types/command-line-args': 5.2.3
       '@types/command-line-usage': 5.0.4
-      '@types/node': 20.19.37
+      '@types/node': 20.19.39
       command-line-args: 5.2.1
       command-line-usage: 7.0.4
       flatbuffers: 24.12.23

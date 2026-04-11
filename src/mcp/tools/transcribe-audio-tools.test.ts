@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import path from "node:path";
 import { createTranscribeAudioTools } from "./transcribe-audio-tools.js";
 
 vi.mock("../../logging/logger.js", () => ({
@@ -145,7 +146,7 @@ describe("transcribe-audio tool", () => {
 
     // access() is called with a resolved gallery path
     const accessArg = mockAccess.mock.calls[0][0] as string;
-    expect(accessArg).toContain(".openzigs/gallery/my-video.mp3");
+    expect(accessArg).toContain(path.join(".openzigs", "gallery", "my-video.mp3"));
 
     globalThis.fetch = originalFetch;
   });

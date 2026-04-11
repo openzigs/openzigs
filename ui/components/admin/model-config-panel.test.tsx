@@ -1,4 +1,4 @@
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, within } from "@testing-library/react";
 import { describe, it, expect } from "vitest";
 import { ModelConfigPanel } from "./model-config-panel";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -69,12 +69,13 @@ describe("ModelConfigPanel", () => {
     render(<ModelConfigPanel />, { wrapper: createWrapper(configWithProvider) });
 
     expect(screen.getByText("Provider Type")).toBeInTheDocument();
-    // Check provider type radios
-    expect(screen.getByRole("radio", { name: /OpenAI/i })).toBeInTheDocument();
-    expect(screen.getByRole("radio", { name: /Azure/i })).toBeInTheDocument();
-    expect(screen.getByRole("radio", { name: /Anthropic/i })).toBeInTheDocument();
-    expect(screen.getByRole("radio", { name: /Ollama/i })).toBeInTheDocument();
-    expect(screen.getByRole("radio", { name: /Custom/i })).toBeInTheDocument();
+    // Scope to the Provider Type radiogroup to avoid collision with AI Source radios
+    const providerGroup = screen.getByRole("radiogroup", { name: /Provider Type/i });
+    expect(within(providerGroup).getByRole("radio", { name: /OpenAI/i })).toBeInTheDocument();
+    expect(within(providerGroup).getByRole("radio", { name: /Azure/i })).toBeInTheDocument();
+    expect(within(providerGroup).getByRole("radio", { name: /Anthropic/i })).toBeInTheDocument();
+    expect(within(providerGroup).getByRole("radio", { name: /Ollama/i })).toBeInTheDocument();
+    expect(within(providerGroup).getByRole("radio", { name: /Custom/i })).toBeInTheDocument();
   });
 
   it("toggles BYOK provider on click", () => {

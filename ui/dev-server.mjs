@@ -29,6 +29,7 @@ const BACKEND_PORT = parseInt(
 // ── 1. Start `next dev` on the internal port ──
 const nextProc = spawn("npx", ["next", "dev", "--port", String(NEXT_PORT)], {
   stdio: "inherit",
+  shell: process.platform === "win32",
   env: { ...process.env, PORT: String(NEXT_PORT) },
 });
 nextProc.on("exit", (code) => process.exit(code ?? 1));

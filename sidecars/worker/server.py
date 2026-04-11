@@ -325,7 +325,12 @@ def generate_video_ltx2(request: GenerateRequest) -> bytes:
 
     # Check if we need to swap models
     target_model = "ltx-2"
-    resolved_repo = request.model_repo or DEFAULT_MODEL_REPO
+    # Audio generation requires the full BF16 model — override the repo when audio is enabled.
+    if request.audio and not request.model_repo:
+        resolved_repo = "mlx-community/LTX-2-dev-bf16"
+        logger.info("Audio requested — forcing model repo: mlx-community/LTX-2-dev-bf16")
+    else:
+        resolved_repo = request.model_repo or DEFAULT_MODEL_REPO
     if state._model_name != target_model or state.loaded_model != resolved_repo:
         unload_model()
         state.loaded_model = resolved_repo
@@ -344,6 +349,15 @@ def generate_video_ltx2(request: GenerateRequest) -> bytes:
 
         raw_size = output_raw.stat().st_size if output_raw.exists() else 0
         logger.info(f"MLX generation complete. Raw video: {raw_size:,} bytes — starting H.264 re-encode...")
+
+        # If audio was requested, verify the generated video actually has an audio stream.
+        # generate_video() silently omits audio when the loaded model doesn't support it.
+        if request.audio and not _raw_has_audio_stream(str(output_raw)):
+            raise RuntimeError(
+                "Audio was requested but the generated video contains no audio stream. "
+                "Ensure the LTX worker is using mlx-community/LTX-2-dev-bf16 (the full BF16 model). "
+                "The Q4 quantized model (AITRADER/ltx2-distilled-4bit-mlx) does not support audio generation."
+            )
 
         # Re-encode with h264_videotoolbox for Apple Silicon hardware encoding
         _encode_with_videotoolbox(str(output_raw), str(output_final), fps, has_audio=request.audio)
@@ -443,6 +457,27 @@ def _generate_with_ltx_inference(request: GenerateRequest, num_frames: int, fps:
             "Neither mlx-video nor ltx_video is installed. "
             "Install one of: pip install mlx-video, or pip install -e '.[inference]' from LTX-Video repo"
         )
+
+
+def _raw_has_audio_stream(path: str) -> bool:
+    """Return True if the file at *path* contains at least one audio stream."""
+    try:
+        result = subprocess.run(
+            [
+                "ffprobe", "-v", "error",
+                "-select_streams", "a",
+                "-show_entries", "stream=codec_type",
+                "-of", "csv=p=0",
+                path,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        return bool(result.stdout.strip())
+    except Exception as e:
+        logger.warning(f"ffprobe audio-stream check failed: {e}")
+        return False
 
 
 def _encode_with_videotoolbox(input_path: str, output_path: str, fps: int, has_audio: bool = False):

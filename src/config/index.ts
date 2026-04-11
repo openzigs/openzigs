@@ -118,7 +118,7 @@ export type CopilotProviderConfig =
       baseUrl: string;
       apiKey?: string;
       bearerToken?: string;
-      wireApi?: "openai" | "anthropic";
+      wireApi?: "completions" | "responses";
     }
   | {
       type: "azure";
@@ -461,7 +461,7 @@ const providerSchema = z.discriminatedUnion("type", [
     baseUrl: z.string(),
     apiKey: z.string().optional(),
     bearerToken: z.string().optional(),
-    wireApi: z.enum(["openai", "anthropic"]).optional(),
+    wireApi: z.enum(["completions", "responses"]).optional(),
   }),
   z.object({
     type: z.literal("azure"),
