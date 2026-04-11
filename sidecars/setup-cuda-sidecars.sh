@@ -79,6 +79,24 @@ deactivate
 cp "$REPO_SIDECARS/audio/server_cuda.py" "$AUD_DIR/server.py"
 echo "Audio sidecar setup complete."
 
+# ── Lip Sync (LatentSync) ───────────────────────────────────
+echo ""
+echo "=== Setting up Lip Sync (LatentSync) on port 5010 ==="
+LIP_DIR="$SIDECARS_DIR/lipsync"
+mkdir -p "$LIP_DIR"
+
+if [ ! -d "$LIP_DIR/venv" ]; then
+    python3 -m venv "$LIP_DIR/venv"
+fi
+source "$LIP_DIR/venv/bin/activate"
+pip install --upgrade pip -q
+pip install torch torchvision torchaudio --index-url "$TORCH_INDEX" -q
+pip install -r "$REPO_SIDECARS/lipsync/requirements-cuda.txt" -q
+deactivate
+
+cp "$REPO_SIDECARS/lipsync/server_cuda.py" "$LIP_DIR/server.py"
+echo "Lip sync sidecar setup complete."
+
 # ── Summary ─────────────────────────────────────────────────
 echo ""
 echo "=== Setup Complete ==="
@@ -88,3 +106,4 @@ echo "Ports:"
 echo "  Image Gen (Flux):   http://localhost:5005"
 echo "  Audio (STT/TTS):    http://localhost:5006"
 echo "  Video Worker (LTX): http://localhost:5007"
+echo "  Lip Sync:           http://localhost:5010"

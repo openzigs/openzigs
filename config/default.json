@@ -153,6 +153,18 @@
     "networkNodeUrl": "",
     "networkNodeToken": ""
   },
+  "lipSync": {
+    "enabled": false,
+    "networkNodeUrl": "",
+    "networkNodeToken": "",
+    "defaultModel": "latentsync-v1.5",
+    "inferenceSteps": 20,
+    "guidanceScale": 1.5,
+    "enableDeepCache": true,
+    "maxDurationSec": 30,
+    "modelIdleTimeoutSec": 300,
+    "memoryLimitGB": 24
+  },
   "socialBrain": {
     "enabled": true,
     "confidenceThreshold": "medium",

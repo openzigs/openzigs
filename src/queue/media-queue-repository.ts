@@ -254,6 +254,61 @@ export class MediaQueueRepository {
       `);
     }
 
+    // ── media_jobs CHECK constraint migration: add 'lipsync' ──
+    const needsLipsyncRebuild = (() => {
+      const row = this.db
+        .prepare(
+          "SELECT sql FROM sqlite_master WHERE type='table' AND name='media_jobs'",
+        )
+        .get() as { sql: string } | undefined;
+      if (!row) return false;
+      return !row.sql.includes("'lipsync'");
+    })();
+
+    if (needsLipsyncRebuild) {
+      this.db.exec(`
+        BEGIN;
+        ALTER TABLE media_jobs RENAME TO media_jobs_old;
+        CREATE TABLE media_jobs (
+          id TEXT PRIMARY KEY,
+          type TEXT NOT NULL CHECK(type IN ('txt2img','img2img','txt2video','img2video','tts','txt2music','voice2voice','remix_analyze','remix_replace','remix_master','lipsync')),
+          required_model TEXT NOT NULL,
+          target_node TEXT NOT NULL CHECK(target_node IN ('mac-mini','m2-pro','local')),
+          payload TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'pending'
+            CHECK(status IN ('pending','dispatched','processing','complete','failed')),
+          result_url TEXT,
+          result_metadata TEXT,
+          project_id TEXT,
+          gallery_asset_id TEXT,
+          priority INTEGER NOT NULL DEFAULT 0,
+          retries INTEGER NOT NULL DEFAULT 0,
+          max_retries INTEGER NOT NULL DEFAULT 3,
+          error TEXT,
+          retry_after TEXT,
+          created_at TEXT NOT NULL,
+          dispatched_at TEXT,
+          completed_at TEXT
+        );
+        INSERT INTO media_jobs (
+          id, type, required_model, target_node, payload, status,
+          result_url, result_metadata, project_id, gallery_asset_id,
+          priority, retries, max_retries, error, retry_after,
+          created_at, dispatched_at, completed_at
+        ) SELECT
+          id, type, required_model, target_node, payload, status,
+          result_url, result_metadata, project_id, gallery_asset_id,
+          priority, retries, max_retries, error, retry_after,
+          created_at, dispatched_at, completed_at
+        FROM media_jobs_old;
+        DROP TABLE media_jobs_old;
+        CREATE INDEX IF NOT EXISTS idx_media_jobs_status ON media_jobs(status);
+        CREATE INDEX IF NOT EXISTS idx_media_jobs_target ON media_jobs(target_node, status);
+        CREATE INDEX IF NOT EXISTS idx_media_jobs_project ON media_jobs(project_id);
+        COMMIT;
+      `);
+    }
+
     // ── media_assets table ──
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS media_assets (

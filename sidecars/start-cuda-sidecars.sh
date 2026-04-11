@@ -42,7 +42,7 @@ fi
 echo "=== Starting CUDA Sidecars ==="
 
 # Kill any existing sidecar processes
-for port in 5005 5006 5007 5009; do
+for port in 5005 5006 5007 5009 5010; do
     pid=$(lsof -ti :$port 2>/dev/null || true)
     if [ -n "$pid" ]; then
         echo "Killing existing process on port $port (PID: $pid)"
@@ -84,6 +84,18 @@ else
     MUS_PID=""
 fi
 
+# ── Lip Sync / LatentSync (port 5010) ───────────────────────
+if [ -d "$SIDECARS_DIR/lipsync" ]; then
+    echo "Starting Lip Sync sidecar (port 5010)..."
+    setsid bash -c "cd '$SIDECARS_DIR/lipsync' && source venv/bin/activate && CALLBACK_SECRET='${CALLBACK_SECRET:-}' exec python server.py --port 5010 >> '$LOG_DIR/lipsync-cuda.log' 2>&1" &
+    LIP_PID=$!
+    echo "$LIP_PID" > "$PID_DIR/lipsync.pid"
+    echo "  PID: $LIP_PID"
+else
+    echo "Lip Sync sidecar not deployed (skipping port 5010)"
+    LIP_PID=""
+fi
+
 # Detach background jobs so they survive shell exit
 disown -a
 
@@ -92,7 +104,7 @@ echo ""
 echo "Waiting for sidecars to become ready..."
 sleep 3
 
-for entry in "5005:Image Gen" "5006:Audio" "5007:Video Worker" "5009:Music (ACE-Step)"; do
+for entry in "5005:Image Gen" "5006:Audio" "5007:Video Worker" "5009:Music (ACE-Step)" "5010:Lip Sync (LatentSync)"; do
     port="${entry%%:*}"
     name="${entry##*:}"
     if curl -sf "http://localhost:$port/health" > /dev/null 2>&1; then
@@ -103,7 +115,7 @@ for entry in "5005:Image Gen" "5006:Audio" "5007:Video Worker" "5009:Music (ACE-
 done
 
 echo ""
-echo "Sidecar PIDs: image-gen=$IMG_PID, audio=$AUD_PID, worker=$VID_PID${MUS_PID:+, music=$MUS_PID}"
-echo "Logs: $LOG_DIR/{image-gen,audio,worker,music}-cuda.log"
+echo "Sidecar PIDs: image-gen=$IMG_PID, audio=$AUD_PID, worker=$VID_PID${MUS_PID:+, music=$MUS_PID}${LIP_PID:+, lipsync=$LIP_PID}"
+echo "Logs: $LOG_DIR/{image-gen,audio,worker,music,lipsync}-cuda.log"
 echo ""
-echo "To stop all: kill $IMG_PID $AUD_PID $VID_PID${MUS_PID:+ $MUS_PID}"
+echo "To stop all: kill $IMG_PID $AUD_PID $VID_PID${MUS_PID:+ $MUS_PID}${LIP_PID:+ $LIP_PID}"

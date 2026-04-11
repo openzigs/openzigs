@@ -41,7 +41,7 @@ export interface QueueMasterEvents {
 
 /** Aggregated status of all worker nodes. */
 export interface NodeStatus {
-  node: TargetNode | "music" | "music-studio";
+  node: TargetNode | "music" | "music-studio" | "lipsync";
   reachable: boolean;
   is_busy: boolean;
   loaded_model: string | null;
@@ -64,8 +64,16 @@ export class QueueMaster extends EventEmitter {
     is_busy: false,
     loaded_model: null,
   };
+  /** Independent status tracking for the lip-sync sidecar (LatentSync). */
+  private lipSyncStatus: WorkerStatus = {
+    is_busy: false,
+    loaded_model: null,
+  };
   /** Counter to rate-limit repeated sidecar-unreachable warnings. */
   private musicStudioUnreachableCount = 0;
+  private lipSyncUnreachableCount = 0;
+  /** Prevents concurrent LTX ↔ LatentSync memory transitions on the shared M2 Pro. */
+  private memoryTransitionActive = false;
 
   constructor(repo: MediaQueueRepository, config: QueueConfig) {
     super();
@@ -112,10 +120,11 @@ export class QueueMaster extends EventEmitter {
    * Polls each sidecar's /status (or /health for FluxQ) endpoint.
    */
   async getNodeStatuses(): Promise<NodeStatus[]> {
-    const [macMini, m2Pro, music] = await Promise.allSettled([
+    const [macMini, m2Pro, music, lipsync] = await Promise.allSettled([
       this.pollNodeStatus("mac-mini"),
       this.pollNodeStatus("m2-pro"),
       this.pollMusicNodeStatus(),
+      this.pollLipSyncNodeStatus(),
     ]);
 
     return [
@@ -146,7 +155,52 @@ export class QueueMaster extends EventEmitter {
             loaded_model: null,
             url: "http://localhost:5009",
           },
+      lipsync.status === "fulfilled"
+        ? lipsync.value
+        : {
+            node: "lipsync" as const,
+            reachable: false,
+            is_busy: false,
+            loaded_model: null,
+            url: "http://localhost:5008",
+          },
     ];
+  }
+
+  /** Poll the lip-sync sidecar's /health endpoint independently. */
+  private async pollLipSyncNodeStatus(): Promise<NodeStatus> {
+    const nodeConfig = await this.getLipSyncNodeConfig();
+    try {
+      const headers: Record<string, string> = {};
+      if (nodeConfig.token)
+        headers["Authorization"] = `Bearer ${nodeConfig.token}`;
+
+      const res = await fetch(`${nodeConfig.url}/health`, {
+        headers,
+        signal: AbortSignal.timeout(5_000),
+      });
+      if (!res.ok) throw new Error(`Status check failed: ${res.status}`);
+
+      const data = (await res.json()) as Record<string, unknown>;
+      this.lipSyncStatus = {
+        is_busy: !!(data.busy as boolean),
+        loaded_model: (data.loaded_model as string) ?? null,
+      };
+      return {
+        node: "lipsync" as const,
+        reachable: true,
+        ...this.lipSyncStatus,
+        url: nodeConfig.url,
+      };
+    } catch {
+      return {
+        node: "lipsync" as const,
+        reachable: false,
+        is_busy: false,
+        loaded_model: null,
+        url: nodeConfig.url,
+      };
+    }
   }
 
   /** Poll the music sidecar's /status endpoint independently from other nodes. */
@@ -270,6 +324,97 @@ export class QueueMaster extends EventEmitter {
         );
         await this.unloadNode("mac-mini");
       }
+    }
+  }
+
+  /**
+   * Memory coordination for LTX ↔ LatentSync on shared M2 Pro (32 GB).
+   * Both models cannot coexist (~20 GB LTX + ~18 GB LatentSync > 32 GB).
+   * Unloads the competing sidecar with retries before dispatching.
+   *
+   * @param target - Which sidecar we're about to dispatch to
+   */
+  async ensureSidecarMemory(target: "ltx" | "lipsync"): Promise<void> {
+    if (this.memoryTransitionActive) {
+      throw new Error("Memory transition already in progress");
+    }
+    this.memoryTransitionActive = true;
+    try {
+      if (target === "lipsync" && this.m2ProStatus.loaded_model) {
+        // Unload LTX before loading LatentSync
+        logger.info(
+          `[QueueMaster] Memory coordination: unloading LTX (${this.m2ProStatus.loaded_model}) before lipsync dispatch`,
+        );
+        await this.unloadWithRetry("m2-pro", 3, 2_000);
+      } else if (target === "ltx" && this.lipSyncStatus.loaded_model) {
+        // Unload LatentSync before loading LTX
+        logger.info(
+          `[QueueMaster] Memory coordination: unloading LatentSync (${this.lipSyncStatus.loaded_model}) before video dispatch`,
+        );
+        await this.unloadLipSyncSidecar();
+      }
+    } finally {
+      this.memoryTransitionActive = false;
+    }
+  }
+
+  /**
+   * Unload with retries. Used for memory coordination between competing sidecars.
+   */
+  private async unloadWithRetry(
+    node: TargetNode,
+    maxAttempts: number,
+    backoffMs: number,
+  ): Promise<void> {
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      const result = await this.unloadNode(node);
+      if (result.ok) return;
+      if (attempt < maxAttempts) {
+        logger.warn(
+          `[QueueMaster] Unload ${node} attempt ${attempt}/${maxAttempts} failed — retrying in ${backoffMs}ms`,
+        );
+        await new Promise((r) => setTimeout(r, backoffMs));
+      }
+    }
+    throw new Error(
+      `Failed to unload ${node} after ${maxAttempts} attempts — memory may not be available`,
+    );
+  }
+
+  /**
+   * Unload the LatentSync lip-sync sidecar model.
+   */
+  private async unloadLipSyncSidecar(): Promise<void> {
+    try {
+      const nodeConfig = await this.getLipSyncNodeConfig();
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+      };
+      if (nodeConfig.token)
+        headers["Authorization"] = `Bearer ${nodeConfig.token}`;
+
+      const res = await fetch(`${nodeConfig.url}/unload-model`, {
+        method: "POST",
+        headers,
+        body: "{}",
+        signal: AbortSignal.timeout(10_000),
+      });
+
+      if (!res.ok) {
+        logger.warn(
+          `[QueueMaster] LatentSync unload failed: ${res.status}`,
+        );
+        return;
+      }
+
+      this.lipSyncStatus = { is_busy: false, loaded_model: null };
+      logger.info("[QueueMaster] LatentSync model unloaded for memory coordination");
+    } catch (err) {
+      // If LatentSync sidecar is unreachable, skip gracefully
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.debug(
+        `[QueueMaster] LatentSync sidecar unreachable during unload: ${msg}`,
+      );
     }
   }
 
@@ -448,6 +593,7 @@ export class QueueMaster extends EventEmitter {
       await this.processNode("m2-pro");
       await this.processMusicJobs();
       await this.processMusicStudioJobs();
+      await this.processLipSyncJobs();
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       logger.warn(`[QueueMaster] Tick error: ${msg}`);
@@ -679,6 +825,8 @@ export class QueueMaster extends EventEmitter {
     try {
       // VRAM coordination: ensure image worker has freed memory
       await this.ensureVramAvailable("m2-pro");
+      // Memory coordination: ensure LatentSync has freed memory
+      await this.ensureSidecarMemory("ltx");
 
       await this.dispatchVideoJob(job);
       this.repo.markDispatched(job.id);
@@ -1269,6 +1417,147 @@ export class QueueMaster extends EventEmitter {
     }
     // Default: music-studio sidecar on localhost:5010
     return { url: "http://localhost:5010" };
+  }
+
+  // ── Lip Sync Sidecar (LatentSync) ─────────────────────────
+
+  private async processLipSyncJobs(): Promise<void> {
+    if (this.lipSyncStatus.is_busy) {
+      logger.debug("[QueueMaster] Lip-sync sidecar busy, skipping");
+      return;
+    }
+
+    // Poll sidecar health
+    try {
+      const nodeConfig = await this.getLipSyncNodeConfig();
+      const headers: Record<string, string> = {};
+      if (nodeConfig.token)
+        headers["Authorization"] = `Bearer ${nodeConfig.token}`;
+
+      const res = await fetch(`${nodeConfig.url}/health`, {
+        headers,
+        signal: AbortSignal.timeout(5_000),
+      });
+      if (!res.ok) throw new Error(`Status check failed: ${res.status}`);
+
+      const data = (await res.json()) as Record<string, unknown>;
+      this.lipSyncStatus = {
+        is_busy: !!(data.busy as boolean),
+        loaded_model: (data.loaded_model as string) ?? null,
+      };
+      this.lipSyncUnreachableCount = 0;
+    } catch {
+      this.lipSyncUnreachableCount++;
+      if (
+        this.lipSyncUnreachableCount === 1 ||
+        this.lipSyncUnreachableCount % 10 === 0
+      ) {
+        logger.warn(
+          `[QueueMaster] Lip-sync sidecar unreachable — skipping lipsync jobs. Start with: cd sidecars/lipsync && .venv/bin/python server.py --port 5008`,
+        );
+      }
+      return;
+    }
+
+    if (this.lipSyncStatus.is_busy) {
+      logger.debug("[QueueMaster] Lip-sync sidecar busy, skipping");
+      return;
+    }
+
+    // Get pending lipsync jobs
+    const pending = this.repo.listJobs({
+      status: "pending",
+      type: "lipsync",
+      limit: 1,
+    });
+    if (pending.length === 0) return;
+
+    const job = pending[0];
+    try {
+      // Memory coordination: unload LTX if loaded before dispatching to LatentSync
+      await this.ensureSidecarMemory("lipsync");
+
+      this.repo.markDispatched(job.id);
+      this.lipSyncStatus = { ...this.lipSyncStatus, is_busy: true };
+      this.emit("job:dispatched", job, "m2-pro" as TargetNode);
+      logger.info(
+        `[QueueMaster] Dispatching lipsync job ${job.id} → lip-sync sidecar`,
+      );
+
+      await this.dispatchLipSyncJob(job);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.warn(
+        `[QueueMaster] Failed to dispatch lipsync job ${job.id}: ${msg}`,
+      );
+      this.repo.markFailed(job.id, msg);
+    } finally {
+      this.lipSyncStatus = { ...this.lipSyncStatus, is_busy: false };
+    }
+  }
+
+  private async dispatchLipSyncJob(job: MediaJob): Promise<void> {
+    const nodeConfig = await this.getLipSyncNodeConfig();
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+    };
+    if (nodeConfig.token)
+      headers["Authorization"] = `Bearer ${nodeConfig.token}`;
+
+    const callbackUrl = this.resolveCallbackUrl(nodeConfig.url);
+
+    const body: Record<string, unknown> = {
+      job_id: job.id,
+      video_path: job.payload.video_path,
+      audio_path: job.payload.audio_path,
+      video_data: job.payload.video_data,
+      audio_data: job.payload.audio_data,
+      inference_steps: job.payload.inference_steps ?? 20,
+      guidance_scale: job.payload.guidance_scale_lipsync ?? 1.5,
+      enable_deepcache: job.payload.enable_deepcache ?? true,
+      model_version: job.payload.model_version ?? "v1.5",
+      callback_url: callbackUrl,
+      progress_url: `${this.config.callbackUrl}/api/queue/progress`,
+    };
+
+    const res = await fetch(`${nodeConfig.url}/generate`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(10_000),
+    });
+
+    if (res.status !== 202 && !res.ok) {
+      const text = await res.text().catch(() => "");
+      throw new Error(
+        `Lip-sync sidecar /generate returned ${res.status}: ${text}`,
+      );
+    }
+  }
+
+  private async getLipSyncNodeConfig(): Promise<WorkerNodeConfig> {
+    if (this.config.lipSync?.url) {
+      return this.config.lipSync;
+    }
+    try {
+      const cfgPath = path.join(os.homedir(), ".openzigs", "config.json");
+      const raw = await fs.readFile(cfgPath, "utf-8");
+      const cfg = JSON.parse(raw) as Record<string, unknown>;
+      const ls = cfg.lipSync as Record<string, unknown> | undefined;
+      if (typeof ls?.networkNodeUrl === "string" && ls.networkNodeUrl) {
+        return {
+          url: ls.networkNodeUrl,
+          token:
+            typeof ls.networkNodeToken === "string"
+              ? ls.networkNodeToken
+              : undefined,
+        };
+      }
+    } catch {
+      // config unreadable — fall through
+    }
+    // Default: lip-sync sidecar on localhost:5008
+    return { url: "http://localhost:5008" };
   }
 
   // ── Progress Reporting ────────────────────────────────────

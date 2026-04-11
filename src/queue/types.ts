@@ -15,7 +15,8 @@ export type MediaJobType =
   | "voice2voice"
   | "remix_analyze"
   | "remix_replace"
-  | "remix_master";
+  | "remix_master"
+  | "lipsync";
 
 export type MediaJobStatus =
   | "pending"
@@ -89,6 +90,28 @@ export const LTX_MODEL_CATALOG = [
   },
 ] as const;
 
+/** Known LatentSync lip-sync model catalog entries with memory and disk requirements. */
+export const LIPSYNC_MODEL_CATALOG = [
+  {
+    id: "latentsync-v1.6",
+    repo: "ByteDance/LatentSync-1.6",
+    name: "LatentSync v1.6",
+    memoryGB: 18,
+    downloadGB: 5.2,
+    version: "1.6",
+    resolution: 512,
+  },
+  {
+    id: "latentsync-v1.5",
+    repo: "ByteDance/LatentSync",
+    name: "LatentSync v1.5",
+    memoryGB: 8,
+    downloadGB: 3.5,
+    version: "1.5",
+    resolution: 256,
+  },
+] as const;
+
 /** Audio/music job types that have dedicated dispatch handlers and must NOT be dispatched via the video worker. */
 export const AUDIO_JOB_TYPES: ReadonlySet<MediaJobType> = new Set<MediaJobType>(
   [
@@ -116,6 +139,8 @@ export function targetNodeForJobType(type: MediaJobType): TargetNode {
     case "remix_replace":
     case "remix_master":
       return "local";
+    case "lipsync":
+      return "m2-pro";
   }
 }
 
@@ -141,6 +166,8 @@ export function defaultModelForJobType(type: MediaJobType): string {
       return "basic-pitch";
     case "remix_master":
       return "matchering";
+    case "lipsync":
+      return "latentsync-v1.5";
   }
 }
 
@@ -253,6 +280,26 @@ export interface MediaJobPayload {
   totalSegments?: number;
   /** Parent job ID that this segment belongs to */
   parentJobId?: string;
+
+  // ── Lip Sync fields ────────────────────────────────────────
+  /** Path to the input video for lip sync */
+  video_path?: string;
+  /** Path to the input audio for lip sync */
+  audio_path?: string;
+  /** Base64-encoded video data for lip sync */
+  video_data?: string;
+  /** Base64-encoded audio data for lip sync */
+  audio_data?: string;
+  /** LatentSync inference steps (default 20) */
+  inference_steps?: number;
+  /** LatentSync guidance scale (default 1.5) */
+  guidance_scale_lipsync?: number;
+  /** Enable DeepCache for faster inference (default true) */
+  enable_deepcache?: boolean;
+  /** LatentSync model version: "v1.5" or "v1.6" */
+  model_version?: string;
+  /** Webhook callback URL for async result delivery */
+  callback_url?: string;
 }
 
 // ── Stored Job ────────────────────────────────────────────────
@@ -355,6 +402,8 @@ export interface QueueConfig {
   dispatchTimeoutMs?: number;
   /** Music Studio voice2voice sidecar node config. */
   musicStudio?: WorkerNodeConfig;
+  /** LatentSync lip-sync sidecar node config. */
+  lipSync?: WorkerNodeConfig;
 }
 
 // ── Constants ─────────────────────────────────────────────────

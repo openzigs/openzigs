@@ -77,6 +77,8 @@ describe("QueueMaster", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    // Reset mockFetch fully to clear persistent mockRejectedValue from previous tests
+    mockFetch.mockReset();
     vi.useFakeTimers();
     repo = makeRepo();
     config = makeConfig();
@@ -115,10 +117,11 @@ describe("QueueMaster", () => {
     it("returns fallback statuses when nodes are unreachable", async () => {
       mockFetch.mockRejectedValue(new Error("unreachable"));
       const statuses = await qm.getNodeStatuses();
-      expect(statuses).toHaveLength(3);
+      expect(statuses).toHaveLength(4);
       expect(statuses[0]).toMatchObject({ node: "mac-mini", reachable: false });
       expect(statuses[1]).toMatchObject({ node: "m2-pro", reachable: false });
       expect(statuses[2]).toMatchObject({ node: "music", reachable: false });
+      expect(statuses[3]).toMatchObject({ node: "lipsync", reachable: false });
     });
 
     it("reports reachable nodes when fetch succeeds", async () => {
@@ -560,7 +563,7 @@ describe("QueueMaster", () => {
       );
       repo.listJobs.mockReturnValue([]);
 
-      // mac-mini health
+      // mac-mini health (no pending mac-mini jobs, but processM2Pro fetches first)
       mockFetch
         .mockResolvedValueOnce({
           ok: true,
@@ -576,6 +579,11 @@ describe("QueueMaster", () => {
           ok: true,
           json: () => Promise.resolve({ is_busy: false, loaded_model: null }),
         })
+        // Music sidecar status
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({ is_busy: false }),
+        })
         // Music-studio sidecar health
         .mockResolvedValueOnce({
           ok: true,
@@ -585,16 +593,22 @@ describe("QueueMaster", () => {
         .mockResolvedValueOnce({
           status: 202,
           ok: true,
+        })
+        // Lipsync sidecar health
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({ is_busy: false, loaded_model: null }),
         });
 
       await qm.tick();
       expect(repo.markDispatched).toHaveBeenCalledWith("remix-a-1");
 
       // Verify correct endpoint was called
-      const lastFetchCall =
-        mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
-      expect(lastFetchCall[0]).toContain("/remix/analyze");
-      const body = JSON.parse(lastFetchCall[1]?.body as string);
+      const analyzeCall = mockFetch.mock.calls.find((c) =>
+        String(c[0]).includes("/remix/analyze"),
+      );
+      expect(analyzeCall).toBeDefined();
+      const body = JSON.parse(analyzeCall![1]?.body as string);
       expect(body.job_id).toBe("remix-a-1");
       expect(body.source_asset_id).toBe("asset-42");
     });
@@ -621,7 +635,7 @@ describe("QueueMaster", () => {
       );
       repo.listJobs.mockReturnValue([]);
 
-      // mac-mini health
+      // mac-mini health (no pending mac-mini jobs, but processM2Pro fetches first)
       mockFetch
         .mockResolvedValueOnce({
           ok: true,
@@ -637,6 +651,11 @@ describe("QueueMaster", () => {
           ok: true,
           json: () => Promise.resolve({ is_busy: false, loaded_model: null }),
         })
+        // Music sidecar status
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({ is_busy: false }),
+        })
         // Music-studio sidecar health
         .mockResolvedValueOnce({
           ok: true,
@@ -646,15 +665,21 @@ describe("QueueMaster", () => {
         .mockResolvedValueOnce({
           status: 202,
           ok: true,
+        })
+        // Lipsync sidecar health
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({ is_busy: false, loaded_model: null }),
         });
 
       await qm.tick();
       expect(repo.markDispatched).toHaveBeenCalledWith("remix-m-1");
 
-      const lastFetchCall =
-        mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
-      expect(lastFetchCall[0]).toContain("/remix/master");
-      const body = JSON.parse(lastFetchCall[1]?.body as string);
+      const masterCall = mockFetch.mock.calls.find((c) =>
+        String(c[0]).includes("/remix/master"),
+      );
+      expect(masterCall).toBeDefined();
+      const body = JSON.parse(masterCall![1]?.body as string);
       expect(body.vibe).toBe("warm_lofi");
       expect(body.stem_paths).toEqual({ vocals: "/v.wav", drums: "/d.wav" });
     });
@@ -707,6 +732,11 @@ describe("QueueMaster", () => {
         ok: true,
         json: () => Promise.resolve({ is_busy: false }),
       });
+      // 4: lipsync sidecar
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ is_busy: false, loaded_model: null }),
+      });
 
       // Give m2-pro a loaded model via getNodeStatuses first
       await qm.getNodeStatuses();
@@ -735,6 +765,8 @@ describe("QueueMaster", () => {
       // Music sidecar
       mockFetch.mockRejectedValueOnce(new Error("skip"));
       // music-studio sidecar
+      mockFetch.mockRejectedValueOnce(new Error("skip"));
+      // lipsync sidecar
       mockFetch.mockRejectedValueOnce(new Error("skip"));
 
       await qm.tick();
@@ -1309,6 +1341,280 @@ describe("QueueMaster", () => {
         expect.stringContaining("Dispatch timeout"),
       );
       expect(failedHandler).toHaveBeenCalled();
+    });
+  });
+
+  // ── Memory Coordination (LTX ↔ LatentSync) ──
+
+  describe("ensureSidecarMemory", () => {
+    it("unloads LTX (m2-pro) before lipsync dispatch when model is loaded", async () => {
+      // Seed m2-pro as having a loaded model via getNodeStatuses
+      mockFetch
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              is_busy: false,
+              loaded_model: "ltx-2",
+            }),
+        }) // mac-mini health
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              is_busy: false,
+              loaded_model: "ltx-video-0.9.1",
+            }),
+        }) // m2-pro health (has model loaded)
+        .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({}) }) // music unreachable — use resolved empty
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () =>
+            Promise.resolve({ busy: false, loaded_model: null }),
+        }); // lipsync health
+
+      await qm.getNodeStatuses();
+
+      // Now mock the unload call
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            status: "unloaded",
+            previous_model: "ltx-video-0.9.1",
+          }),
+      });
+
+      await qm.ensureSidecarMemory("lipsync");
+
+      // Verify unload was called on m2-pro
+      const unloadCall = mockFetch.mock.calls.find(
+        (c) =>
+          typeof c[0] === "string" &&
+          c[0].includes("m2-pro") &&
+          c[0].endsWith("/unload"),
+      );
+      expect(unloadCall).toBeDefined();
+    });
+
+    it("unloads LatentSync before LTX dispatch when lipsync model is loaded", async () => {
+      // Seed lipsync as having a loaded model - simulate via lipsync health returning loaded model
+      mockFetch
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () =>
+            Promise.resolve({ is_busy: false, loaded_model: null }),
+        }) // mac-mini
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () =>
+            Promise.resolve({ is_busy: false, loaded_model: null }),
+        }) // m2-pro
+        .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({}) }) // music
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              busy: false,
+              loaded_model: "latentsync-v1.5",
+            }),
+        }); // lipsync health — has model loaded
+
+      await qm.getNodeStatuses();
+
+      // Now mock the lipsync unload-model call
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ status: "unloaded" }),
+      });
+
+      await qm.ensureSidecarMemory("ltx");
+
+      // Verify unload-model was called on lipsync sidecar
+      const unloadCall = mockFetch.mock.calls.find(
+        (c) =>
+          typeof c[0] === "string" && c[0].includes("/unload-model"),
+      );
+      expect(unloadCall).toBeDefined();
+    });
+
+    it("skips unload if target sidecar is already the active one", async () => {
+      // Seed lipsync as loaded, m2-pro as empty
+      mockFetch
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () =>
+            Promise.resolve({ is_busy: false, loaded_model: null }),
+        }) // mac-mini
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () =>
+            Promise.resolve({ is_busy: false, loaded_model: null }),
+        }) // m2-pro
+        .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({}) }) // music
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              busy: false,
+              loaded_model: "latentsync-v1.5",
+            }),
+        }); // lipsync - loaded
+
+      await qm.getNodeStatuses();
+
+      const callsBefore = mockFetch.mock.calls.length;
+
+      // Requesting lipsync when lipsync is already active — no unload needed
+      await qm.ensureSidecarMemory("lipsync");
+
+      // No additional fetch calls made (no unload needed)
+      expect(mockFetch.mock.calls.length).toBe(callsBefore);
+    });
+
+    it("throws if concurrent memory transitions are attempted", async () => {
+      // Seed m2-pro as loaded
+      mockFetch
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () =>
+            Promise.resolve({ is_busy: false, loaded_model: null }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              is_busy: false,
+              loaded_model: "ltx-video-0.9.1",
+            }),
+        })
+        .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({}) })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () =>
+            Promise.resolve({ busy: false, loaded_model: null }),
+        });
+
+      await qm.getNodeStatuses();
+
+      // Mock unload that takes a while (won't resolve immediately)
+      mockFetch.mockImplementationOnce(
+        () =>
+          new Promise((resolve) =>
+            setTimeout(
+              () =>
+                resolve({
+                  ok: true,
+                  json: () =>
+                    Promise.resolve({
+                      status: "unloaded",
+                      previous_model: "ltx-video-0.9.1",
+                    }),
+                }),
+              5000,
+            ),
+          ),
+      );
+
+      // Start first transition (won't complete immediately)
+      const first = qm.ensureSidecarMemory("lipsync");
+
+      // Second concurrent call should throw
+      await expect(qm.ensureSidecarMemory("ltx")).rejects.toThrow(
+        "Memory transition already in progress",
+      );
+
+      // Advance timer and let first complete
+      await vi.advanceTimersByTimeAsync(5000);
+      await first;
+    });
+
+    it("retries unload up to 3 times on failure then throws", async () => {
+      // Seed m2-pro as loaded
+      mockFetch
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () =>
+            Promise.resolve({ is_busy: false, loaded_model: null }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              is_busy: false,
+              loaded_model: "ltx-video-0.9.1",
+            }),
+        })
+        .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({}) })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () =>
+            Promise.resolve({ busy: false, loaded_model: null }),
+        });
+
+      await qm.getNodeStatuses();
+
+      // Fail all unload attempts
+      mockFetch
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 500,
+          text: () => Promise.resolve("Internal Server Error"),
+        })
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 500,
+          text: () => Promise.resolve("Internal Server Error"),
+        })
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 500,
+          text: () => Promise.resolve("Internal Server Error"),
+        });
+
+      const promise = qm.ensureSidecarMemory("lipsync");
+      // Prevent unhandled rejection during microtask gap between timer advances
+      promise.catch(() => {});
+
+      // Advance through retries (2s backoff between attempts) — use async to flush microtasks
+      await vi.advanceTimersByTimeAsync(2000);
+      await vi.advanceTimersByTimeAsync(2000);
+
+      await expect(promise).rejects.toThrow(
+        "Failed to unload m2-pro after 3 attempts",
+      );
+    });
+
+    it("gracefully handles unreachable lipsync sidecar during unload", async () => {
+      // Seed lipsync as having a loaded model
+      mockFetch
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () =>
+            Promise.resolve({ is_busy: false, loaded_model: null }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () =>
+            Promise.resolve({ is_busy: false, loaded_model: null }),
+        })
+        .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({}) })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              busy: false,
+              loaded_model: "latentsync-v1.5",
+            }),
+        });
+
+      await qm.getNodeStatuses();
+
+      // Lipsync sidecar unreachable during unload
+      mockFetch.mockRejectedValueOnce(new Error("Connection refused"));
+
+      // Should not throw — graceful skip
+      await qm.ensureSidecarMemory("ltx");
     });
   });
 });

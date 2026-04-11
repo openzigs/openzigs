@@ -50,6 +50,7 @@ const VALID_JOB_TYPES: MediaJobType[] = [
   "remix_analyze",
   "remix_replace",
   "remix_master",
+  "lipsync",
 ];
 
 const GALLERY_DIR = path.join(os.homedir(), ".openzigs", "gallery");

@@ -1,0 +1,566 @@
+"""
+LatentSync Lip Sync Sidecar — FastAPI (MPS / CPU)
+Issue #798: AI lip sync using LatentSync model for video + audio alignment.
+
+HTTP API:
+  POST /generate        — Submit a lip-sync job (returns 202)
+  GET  /health          — Health check + busy status
+  GET  /status/{job_id} — Poll job status and progress
+  POST /unload-model    — Unload model from memory
+
+Port: 5008 (default)
+"""
+
+import asyncio
+import base64
+import gc
+import json
+import logging
+import os
+import tempfile
+import time
+import traceback
+import ipaddress
+import subprocess
+import shutil
+from pathlib import Path
+from typing import Any, Optional
+from urllib.parse import urlparse
+from urllib.request import Request, urlopen
+from urllib.error import URLError
+
+from fastapi import FastAPI, HTTPException, Depends, Header
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field, field_validator
+import uvicorn
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+)
+logger = logging.getLogger("lipsync-sidecar")
+
+
+# ── Security Utilities ───────────────────────────────────────
+
+
+def validate_callback_url(url: str) -> str:
+    """Validate that a callback/webhook URL is safe (SSRF protection).
+
+    Allows only http/https schemes and blocks private/internal networks.
+    Returns the validated URL string, or raises ValueError.
+    """
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        raise ValueError(f"URL scheme must be http or https, got: {parsed.scheme}")
+    hostname = parsed.hostname or ""
+    if not hostname:
+        raise ValueError("URL must have a hostname")
+    _blocked = {"localhost", "0.0.0.0", "metadata.google.internal"}
+    if hostname.lower() in _blocked:
+        raise ValueError(f"Blocked hostname: {hostname}")
+    try:
+        addr = ipaddress.ip_address(hostname.strip("[]"))
+        if addr.is_private or addr.is_loopback or addr.is_link_local or addr.is_reserved:
+            raise ValueError(f"Blocked private/internal IP: {addr}")
+    except ValueError as e:
+        if "Blocked" in str(e):
+            raise
+    return url
+
+
+def safe_join(base_dir: str, user_path: str) -> str:
+    """Safely join a base directory with a user-supplied path component.
+
+    Resolves symlinks and ensures the result stays under base_dir.
+    Raises ValueError on path traversal attempts.
+    """
+    base = os.path.realpath(base_dir)
+    joined = os.path.realpath(os.path.join(base, user_path))
+    if not joined.startswith(base + os.sep) and joined != base:
+        raise ValueError(f"Path traversal blocked: {user_path}")
+    return joined
+
+
+def _safe_urlopen(url: str, data: bytes | None = None, timeout: int = 30) -> None:
+    """urlopen wrapper that validates the URL first (SSRF protection)."""
+    validate_callback_url(url)
+    headers = {"Content-Type": "application/json"}
+    _cb_secret = os.getenv("CALLBACK_SECRET") or None
+    if _cb_secret:
+        headers["Authorization"] = f"Bearer {_cb_secret}"
+    req = Request(url, data=data, headers=headers, method="POST")
+    urlopen(req, timeout=timeout)
+
+
+# ── Configuration ────────────────────────────────────────────
+
+GALLERY_DIR = os.environ.get(
+    "GALLERY_DIR",
+    os.path.expanduser("~/.openzigs/gallery"),
+)
+
+AUTH_TOKEN: Optional[str] = os.environ.get("LIPSYNC_SECRET_TOKEN")
+MODEL_IDLE_TIMEOUT = float(os.environ.get("LIPSYNC_MODEL_IDLE_TIMEOUT", "300"))
+MEMORY_LIMIT_GB = float(os.environ.get("LIPSYNC_MEMORY_LIMIT_GB", "24"))
+DEFAULT_MODEL = os.environ.get("LIPSYNC_DEFAULT_MODEL", "v1.5")
+
+
+def _resolve_device() -> str:
+    """Auto-detect compute device."""
+    if env_device := os.environ.get("LIPSYNC_DEVICE"):
+        return env_device
+    try:
+        import torch
+
+        if torch.backends.mps.is_available():
+            return "mps"
+    except ImportError:
+        pass
+    return "cpu"
+
+
+DEVICE = _resolve_device()
+
+if DEVICE == "mps":
+    os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
+
+
+# ── State ────────────────────────────────────────────────────
+
+app = FastAPI(title="LatentSync Lip Sync Sidecar", version="1.0.0")
+
+worker_state = {
+    "is_busy": False,
+    "current_job_id": None,
+    "loaded_model": None,
+    "model_version": None,
+}
+
+job_progress: dict[str, dict] = {}
+MAX_STORED_JOBS = 50
+
+_last_job_time: float = 0.0
+_idle_timer_task: Optional[asyncio.Task] = None
+_pipeline = None
+
+
+def _post_job_cleanup() -> None:
+    """Free PyTorch cached memory and run Python GC after each job."""
+    global _last_job_time
+    _last_job_time = time.monotonic()
+    try:
+        import torch
+
+        if torch.backends.mps.is_available():
+            torch.mps.empty_cache()
+        elif torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except Exception:
+        pass
+    gc.collect()
+
+
+def cleanup_old_jobs():
+    """Remove oldest finished jobs if we exceed the limit."""
+    finished = [
+        (jid, info)
+        for jid, info in job_progress.items()
+        if info.get("status") in ("complete", "failed")
+    ]
+    finished.sort(key=lambda x: x[1].get("completed_at", 0))
+    while len(finished) > MAX_STORED_JOBS:
+        oldest_id = finished.pop(0)[0]
+        job_progress.pop(oldest_id, None)
+
+
+# ── Auth Dependency ──────────────────────────────────────────
+
+
+async def verify_auth(authorization: Optional[str] = Header(default=None)):
+    """Verify Bearer token on mutating endpoints."""
+    if not AUTH_TOKEN:
+        return
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing or invalid Authorization header")
+    token = authorization.removeprefix("Bearer ").strip()
+    if token != AUTH_TOKEN:
+        raise HTTPException(status_code=403, detail="Invalid token")
+
+
+# ── Model Management ─────────────────────────────────────────
+
+
+def _load_pipeline(model_version: str = "v1.5"):
+    """Load LatentSync pipeline into memory."""
+    global _pipeline
+    logger.info("Loading LatentSync %s pipeline on %s...", model_version, DEVICE)
+
+    try:
+        import torch
+        from latentsync.pipeline import LatentSyncPipeline
+    except ImportError:
+        logger.warning("LatentSync not installed — using subprocess fallback mode")
+        _pipeline = None
+        worker_state["loaded_model"] = "subprocess"
+        worker_state["model_version"] = model_version
+        return
+
+    config_map = {
+        "v1.5": "latentsync_unet_v1.5.yaml",
+        "v1.6": "latentsync_unet_v1.6.yaml",
+    }
+    config_name = config_map.get(model_version, config_map["v1.5"])
+    latentsync_dir = os.environ.get(
+        "LATENTSYNC_DIR",
+        str(Path.home() / ".openzigs" / "models" / "latentsync"),
+    )
+    config_path = os.path.join(latentsync_dir, "configs", config_name)
+    ckpt_path = os.path.join(latentsync_dir, "checkpoints", f"latentsync_unet_{model_version}.pt")
+
+    if not os.path.exists(config_path) or not os.path.exists(ckpt_path):
+        logger.warning(
+            "Model files not found at %s — will use subprocess fallback", latentsync_dir
+        )
+        _pipeline = None
+        worker_state["loaded_model"] = "subprocess"
+        worker_state["model_version"] = model_version
+        return
+
+    _pipeline = LatentSyncPipeline.from_pretrained(
+        config_path=config_path,
+        checkpoint_path=ckpt_path,
+        device=DEVICE,
+    )
+    worker_state["loaded_model"] = f"latentsync-{model_version}"
+    worker_state["model_version"] = model_version
+    logger.info("LatentSync %s loaded on %s", model_version, DEVICE)
+
+
+def _unload_model() -> None:
+    """Unload the model from memory."""
+    global _pipeline
+    if _pipeline is not None:
+        del _pipeline
+        _pipeline = None
+    worker_state["loaded_model"] = None
+    worker_state["model_version"] = None
+    try:
+        import torch
+
+        if torch.backends.mps.is_available():
+            torch.mps.empty_cache()
+        elif torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except Exception:
+        pass
+    gc.collect()
+    logger.info("LatentSync model unloaded")
+
+
+async def _idle_timer():
+    """Background task that unloads the model after idle timeout."""
+    while True:
+        await asyncio.sleep(60)
+        if MODEL_IDLE_TIMEOUT <= 0:
+            continue
+        if worker_state["is_busy"] or worker_state["loaded_model"] is None:
+            continue
+        if _last_job_time > 0 and (time.monotonic() - _last_job_time) > MODEL_IDLE_TIMEOUT:
+            logger.info("Model idle for %.0fs — unloading", MODEL_IDLE_TIMEOUT)
+            _unload_model()
+
+
+# ── Request Models ───────────────────────────────────────────
+
+
+class LipSyncRequest(BaseModel):
+    job_id: str
+    video_path: Optional[str] = None
+    audio_path: Optional[str] = None
+    video_data: Optional[str] = None  # base64-encoded video
+    audio_data: Optional[str] = None  # base64-encoded audio
+    inference_steps: int = Field(default=20, ge=1, le=100)
+    guidance_scale: float = Field(default=1.5, ge=0.0, le=10.0)
+    enable_deepcache: bool = True
+    model_version: str = Field(default="v1.5", pattern=r"^v1\.[56]$")
+    callback_url: Optional[str] = None
+    progress_url: Optional[str] = None
+
+    @field_validator("video_path", "audio_path", mode="before")
+    @classmethod
+    def _validate_paths(cls, v: Any) -> Any:
+        if v is not None:
+            s = str(v)
+            if "\x00" in s or ".." in s:
+                raise ValueError(f"Invalid path: {v}")
+        return v
+
+
+# ── Processing ───────────────────────────────────────────────
+
+
+def report_progress(
+    job_id: str,
+    stage: str,
+    progress: float,
+    message: str,
+    progress_url: Optional[str] = None,
+):
+    """Update local progress state and POST to the progress webhook."""
+    job_progress[job_id] = {
+        **job_progress.get(job_id, {}),
+        "stage": stage,
+        "progress": progress,
+        "message": message,
+        "status": "processing",
+    }
+    if progress_url:
+        try:
+            payload = json.dumps(
+                {"job_id": job_id, "stage": stage, "progress": progress, "message": message}
+            ).encode()
+            _safe_urlopen(progress_url, data=payload)
+        except Exception as exc:
+            logger.warning("Failed to POST progress for %s: %s", job_id, exc)
+
+
+def _run_latentsync_subprocess(
+    video_path: str,
+    audio_path: str,
+    output_path: str,
+    model_version: str = "v1.5",
+    inference_steps: int = 20,
+    guidance_scale: float = 1.5,
+) -> None:
+    """Run LatentSync inference via subprocess (fallback when Python API unavailable)."""
+    latentsync_dir = os.environ.get(
+        "LATENTSYNC_DIR",
+        str(Path.home() / ".openzigs" / "models" / "latentsync"),
+    )
+    inference_script = os.path.join(latentsync_dir, "inference.py")
+    if not os.path.exists(inference_script):
+        raise FileNotFoundError(f"LatentSync inference.py not found at {inference_script}")
+
+    config_map = {
+        "v1.5": "latentsync_unet_v1.5.yaml",
+        "v1.6": "latentsync_unet_v1.6.yaml",
+    }
+    config_name = config_map.get(model_version, config_map["v1.5"])
+    config_path = os.path.join(latentsync_dir, "configs", config_name)
+    ckpt_path = os.path.join(
+        latentsync_dir, "checkpoints", f"latentsync_unet_{model_version}.pt"
+    )
+
+    cmd = [
+        "python",
+        inference_script,
+        "--config_path", config_path,
+        "--checkpoint_path", ckpt_path,
+        "--video_path", video_path,
+        "--audio_path", audio_path,
+        "--output_path", output_path,
+        "--inference_steps", str(inference_steps),
+        "--guidance_scale", str(guidance_scale),
+    ]
+
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+    if result.returncode != 0:
+        raise RuntimeError(f"LatentSync inference failed: {result.stderr[-1000:]}")
+
+
+async def process_lipsync_job(req: LipSyncRequest) -> None:
+    """Run the lip-sync pipeline for a single job."""
+    job_id = req.job_id
+    tmpdir = None
+
+    try:
+        worker_state["is_busy"] = True
+        worker_state["current_job_id"] = job_id
+        job_progress[job_id] = {"status": "processing", "stage": "init", "progress": 0}
+
+        tmpdir = tempfile.mkdtemp(prefix="lipsync_")
+
+        # ── Resolve video input ──
+        report_progress(job_id, "input", 0.1, "Preparing video input", req.progress_url)
+        if req.video_data:
+            video_file = os.path.join(tmpdir, "input_video.mp4")
+            with open(video_file, "wb") as f:
+                f.write(base64.b64decode(req.video_data))
+        elif req.video_path:
+            video_file = safe_join(GALLERY_DIR, req.video_path)
+            if not os.path.exists(video_file):
+                raise FileNotFoundError(f"Video not found: {req.video_path}")
+        else:
+            raise ValueError("Either video_data or video_path is required")
+
+        # ── Resolve audio input ──
+        report_progress(job_id, "input", 0.2, "Preparing audio input", req.progress_url)
+        if req.audio_data:
+            audio_file = os.path.join(tmpdir, "input_audio.wav")
+            with open(audio_file, "wb") as f:
+                f.write(base64.b64decode(req.audio_data))
+        elif req.audio_path:
+            audio_file = safe_join(GALLERY_DIR, req.audio_path)
+            if not os.path.exists(audio_file):
+                raise FileNotFoundError(f"Audio not found: {req.audio_path}")
+        else:
+            raise ValueError("Either audio_data or audio_path is required")
+
+        output_path = os.path.join(tmpdir, "output_lipsync.mp4")
+
+        # ── Load model if needed ──
+        report_progress(job_id, "model", 0.3, "Loading model", req.progress_url)
+        if worker_state.get("model_version") != req.model_version:
+            _unload_model()
+            _load_pipeline(req.model_version)
+
+        # ── Run inference ──
+        report_progress(job_id, "inference", 0.4, "Running lip-sync inference", req.progress_url)
+
+        if _pipeline is not None:
+            _pipeline(
+                video_path=video_file,
+                audio_path=audio_file,
+                output_path=output_path,
+                num_inference_steps=req.inference_steps,
+                guidance_scale=req.guidance_scale,
+                enable_deepcache=req.enable_deepcache,
+            )
+        else:
+            _run_latentsync_subprocess(
+                video_path=video_file,
+                audio_path=audio_file,
+                output_path=output_path,
+                model_version=req.model_version,
+                inference_steps=req.inference_steps,
+                guidance_scale=req.guidance_scale,
+            )
+
+        report_progress(job_id, "finalize", 0.9, "Finalizing output", req.progress_url)
+
+        if not os.path.exists(output_path):
+            raise RuntimeError("LatentSync produced no output file")
+
+        # ── Copy to gallery ──
+        os.makedirs(GALLERY_DIR, exist_ok=True)
+        final_filename = f"lipsync_{job_id}.mp4"
+        final_path = os.path.join(GALLERY_DIR, final_filename)
+        shutil.copy2(output_path, final_path)
+
+        result_url = f"/gallery/{final_filename}"
+
+        job_progress[job_id] = {
+            "status": "complete",
+            "progress": 1.0,
+            "stage": "done",
+            "message": "Lip-sync complete",
+            "result_url": result_url,
+            "completed_at": time.time(),
+        }
+        cleanup_old_jobs()
+
+        # ── Callback ──
+        if req.callback_url:
+            try:
+                cb_payload = json.dumps(
+                    {
+                        "job_id": job_id,
+                        "status": "complete",
+                        "result_url": result_url,
+                        "result_metadata": json.dumps(
+                            {
+                                "model_version": req.model_version,
+                                "inference_steps": req.inference_steps,
+                                "guidance_scale": req.guidance_scale,
+                            }
+                        ),
+                    }
+                ).encode()
+                _safe_urlopen(req.callback_url, data=cb_payload)
+            except Exception as exc:
+                logger.error("Callback failed for %s: %s", job_id, exc)
+
+        logger.info("Job %s complete → %s", job_id, result_url)
+
+    except Exception as exc:
+        tb = traceback.format_exc()
+        logger.error("Job %s failed: %s\n%s", job_id, exc, tb)
+        job_progress[job_id] = {
+            "status": "failed",
+            "error": str(exc)[:500],
+            "completed_at": time.time(),
+        }
+        if req.callback_url:
+            try:
+                err_payload = json.dumps(
+                    {"job_id": job_id, "status": "failed", "error": str(exc)[:500]}
+                ).encode()
+                _safe_urlopen(req.callback_url, data=err_payload)
+            except Exception:
+                pass
+    finally:
+        worker_state["is_busy"] = False
+        worker_state["current_job_id"] = None
+        _post_job_cleanup()
+        if tmpdir and os.path.exists(tmpdir):
+            shutil.rmtree(tmpdir, ignore_errors=True)
+
+
+# ── Endpoints ────────────────────────────────────────────────
+
+
+@app.post("/generate", status_code=202, dependencies=[Depends(verify_auth)])
+async def generate(req: LipSyncRequest):
+    if worker_state["is_busy"]:
+        raise HTTPException(status_code=409, detail="Worker is busy")
+    asyncio.create_task(process_lipsync_job(req))
+    return {"job_id": req.job_id, "status": "accepted"}
+
+
+@app.get("/health")
+async def health():
+    import psutil
+
+    proc = psutil.Process()
+    mem = proc.memory_info()
+    return {
+        "status": "ok",
+        "busy": worker_state["is_busy"],
+        "current_job_id": worker_state["current_job_id"],
+        "loaded_model": worker_state["loaded_model"],
+        "model_version": worker_state.get("model_version"),
+        "device": DEVICE,
+        "memory_rss_mb": round(mem.rss / 1024 / 1024, 1),
+    }
+
+
+@app.get("/status/{job_id}")
+async def status(job_id: str):
+    info = job_progress.get(job_id)
+    if not info:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return {"job_id": job_id, **info}
+
+
+@app.post("/unload-model", dependencies=[Depends(verify_auth)])
+async def unload_model():
+    _unload_model()
+    return {"status": "unloaded"}
+
+
+@app.on_event("startup")
+async def startup():
+    global _idle_timer_task
+    _idle_timer_task = asyncio.create_task(_idle_timer())
+    logger.info("LatentSync sidecar started on %s (idle timeout: %.0fs)", DEVICE, MODEL_IDLE_TIMEOUT)
+
+
+if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(description="LatentSync Lip Sync Sidecar")
+    parser.add_argument("--port", type=int, default=5008, help="Port to listen on")
+    parser.add_argument("--host", type=str, default="127.0.0.1", help="Host to bind to")
+    args = parser.parse_args()
+    uvicorn.run(app, host=args.host, port=args.port)
