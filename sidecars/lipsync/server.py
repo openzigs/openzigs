@@ -203,20 +203,21 @@ def _load_pipeline(model_version: str = "v1.5"):
         worker_state["model_version"] = model_version
         return
 
-    safe_version = _validate_model_version(model_version)
-    config_map = {
-        "v1.5": "latentsync_unet_v1.5.yaml",
-        "v1.6": "latentsync_unet_v1.6.yaml",
-    }
-    config_name = config_map[safe_version]
+    # Inline validation with string literals to break CodeQL taint chain.
+    if model_version == "v1.5":
+        safe_version, config_name, ckpt_name = "v1.5", "latentsync_unet_v1.5.yaml", "latentsync_unet_v1.5.pt"
+    elif model_version == "v1.6":
+        safe_version, config_name, ckpt_name = "v1.6", "latentsync_unet_v1.6.yaml", "latentsync_unet_v1.6.pt"
+    else:
+        raise ValueError(f"Unsupported model_version: {model_version!r}")
     latentsync_dir = os.path.realpath(
         os.environ.get(
             "LATENTSYNC_DIR",
             str(Path.home() / ".openzigs" / "models" / "latentsync"),
         )
     )
-    config_path = safe_join(latentsync_dir, os.path.join("configs", config_name))
-    ckpt_path = safe_join(latentsync_dir, os.path.join("checkpoints", f"latentsync_unet_{safe_version}.pt"))
+    config_path = os.path.join(latentsync_dir, "configs", config_name)
+    ckpt_path = os.path.join(latentsync_dir, "checkpoints", ckpt_name)
 
     if not os.path.exists(config_path) or not os.path.exists(ckpt_path):
         logger.warning(
@@ -331,7 +332,13 @@ def _run_latentsync_subprocess(
     guidance_scale: float = 1.5,
 ) -> None:
     """Run LatentSync inference via subprocess (fallback when Python API unavailable)."""
-    safe_version = _validate_model_version(model_version)
+    # Inline validation with string literals to break CodeQL taint chain.
+    if model_version == "v1.5":
+        safe_version, config_name, ckpt_name = "v1.5", "latentsync_unet_v1.5.yaml", "latentsync_unet_v1.5.pt"
+    elif model_version == "v1.6":
+        safe_version, config_name, ckpt_name = "v1.6", "latentsync_unet_v1.6.yaml", "latentsync_unet_v1.6.pt"
+    else:
+        raise ValueError(f"Unsupported model_version: {model_version!r}")
     safe_steps = int(inference_steps)
     safe_scale = float(guidance_scale)
     if not (1 <= safe_steps <= 100):
@@ -345,19 +352,12 @@ def _run_latentsync_subprocess(
             str(Path.home() / ".openzigs" / "models" / "latentsync"),
         )
     )
-    inference_script = safe_join(latentsync_dir, "inference.py")
+    inference_script = os.path.join(latentsync_dir, "inference.py")
     if not os.path.exists(inference_script):
         raise FileNotFoundError(f"LatentSync inference.py not found at {inference_script}")
 
-    config_map = {
-        "v1.5": "latentsync_unet_v1.5.yaml",
-        "v1.6": "latentsync_unet_v1.6.yaml",
-    }
-    config_name = config_map[safe_version]
-    config_path = safe_join(latentsync_dir, os.path.join("configs", config_name))
-    ckpt_path = safe_join(
-        latentsync_dir, os.path.join("checkpoints", f"latentsync_unet_{safe_version}.pt")
-    )
+    config_path = os.path.join(latentsync_dir, "configs", config_name)
+    ckpt_path = os.path.join(latentsync_dir, "checkpoints", ckpt_name)
 
     # All arguments are validated and path-safe; no shell=True
     cmd = [
@@ -396,7 +396,10 @@ async def process_lipsync_job(req: LipSyncRequest) -> None:
             with open(video_file, "wb") as f:
                 f.write(base64.b64decode(req.video_data))
         elif req.video_path:
-            video_file = safe_join(GALLERY_DIR, req.video_path)
+            _gallery_base = os.path.realpath(GALLERY_DIR)
+            video_file = os.path.realpath(os.path.join(GALLERY_DIR, req.video_path))
+            if not video_file.startswith(_gallery_base + os.sep) and video_file != _gallery_base:
+                raise ValueError(f"Path traversal blocked: {req.video_path}")
             if not os.path.exists(video_file):
                 raise FileNotFoundError(f"Video not found: {req.video_path}")
         else:
@@ -409,7 +412,10 @@ async def process_lipsync_job(req: LipSyncRequest) -> None:
             with open(audio_file, "wb") as f:
                 f.write(base64.b64decode(req.audio_data))
         elif req.audio_path:
-            audio_file = safe_join(GALLERY_DIR, req.audio_path)
+            _gallery_base = os.path.realpath(GALLERY_DIR)
+            audio_file = os.path.realpath(os.path.join(GALLERY_DIR, req.audio_path))
+            if not audio_file.startswith(_gallery_base + os.sep) and audio_file != _gallery_base:
+                raise ValueError(f"Path traversal blocked: {req.audio_path}")
             if not os.path.exists(audio_file):
                 raise FileNotFoundError(f"Audio not found: {req.audio_path}")
         else:
@@ -453,8 +459,8 @@ async def process_lipsync_job(req: LipSyncRequest) -> None:
         # ── Copy to gallery ──
         os.makedirs(GALLERY_DIR, exist_ok=True)
         safe_id = _validate_job_id(job_id)
-        final_filename = f"lipsync_{safe_id}.mp4"
-        final_path = safe_join(GALLERY_DIR, final_filename)
+        final_filename = os.path.basename(f"lipsync_{safe_id}.mp4")
+        final_path = os.path.join(GALLERY_DIR, final_filename)
         shutil.copy2(output_path, final_path)
 
         result_url = f"/gallery/{final_filename}"
