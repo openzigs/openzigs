@@ -42,6 +42,7 @@
 - [Director Mode Studio & Advanced Compositing](#director-mode-studio--advanced-compositing-epic-313)
 - [Distributed Media Queue, Worker Nodes & Asset Gallery](#distributed-media-queue-worker-nodes--asset-gallery-epic-325)
 - [Multi-Segment Video Generation Pipeline](#multi-segment-video-generation-pipeline-epic-780)
+- [LatentSync Lip Sync Sidecar](#latentsync-lip-sync-sidecar-epic-797)
 - [Music Studio — Voice2Voice Pipeline & Smart Remix Lab](#music-studio--voice2voice-pipeline--smart-remix-lab-epic-380-389-402)
 - [Creative Studio — Design & Media Tools](#creative-studio--design--media-tools-epic-766)
 - [Character Lab — LoRA Training & Identity Consistency](#character-lab--lora-training--identity-consistency-epic-374)
@@ -5870,6 +5871,121 @@ graph TB
 - **Audio Memory Safety**: The Gallery Studio UI auto-disables the audio toggle when effective frame count exceeds 97 (the safe limit for audio+video on M2 Pro 32GB).
 
 ### Tracking: [Epic #780](https://github.com/openzigs/openzigs/issues/780), [Epic #782](https://github.com/openzigs/openzigs/issues/782)
+
+---
+
+## LatentSync Lip Sync Sidecar (Epic #797)
+
+AI-powered lip synchronization using ByteDance's LatentSync model. Generates realistic lip movements on video by conditioning a latent diffusion model on audio input. Supports both Apple Silicon (MPS) and NVIDIA CUDA runtimes with automatic memory coordination against the LTX video generation sidecar.
+
+### Architecture
+
+```mermaid
+graph LR
+    UI[Gallery Studio<br/>Talking Head Mode] -->|POST /pipelines/talking-head| QAPI[Queue API]
+    QAPI -->|Stage 1: TTS| QM[QueueMaster]
+    QM -->|dispatch| TTS[F5-TTS Sidecar<br/>:5006]
+    TTS -->|complete| QM
+    QM -->|Stage 2: Video| LTX[LTX Video Worker<br/>:5007]
+    LTX -->|complete| QM
+    QM -->|unload LTX, load LatentSync| MEM[Memory Coordination]
+    MEM --> QM
+    QM -->|Stage 3: Lip Sync| LS[LatentSync Sidecar<br/>:5008 MPS / :5010 CUDA]
+    LS -->|complete| QM
+    QM -->|pipeline:progress| UI
+```
+
+### Sidecar Design
+
+| Property | MPS (macOS) | CUDA (Windows/WSL) |
+|---|---|---|
+| **Port** | 5008 | 5010 |
+| **Framework** | FastAPI + Uvicorn | FastAPI + Uvicorn |
+| **Precision** | FP32 (MPS requires full precision) | FP16 |
+| **Model Version** | v1.6 (18GB M2 Pro) | v1.5 (8GB VRAM) |
+| **Fork** | jadnohra/LatentSync (MPS patches) | bytedance/LatentSync (upstream) |
+| **Auth** | Bearer token (`LIPSYNC_API_TOKEN`) | Bearer token |
+
+**Endpoints**:
+
+| Method | Path | Description |
+|---|---|---|
+| GET | `/health` | Health check with model status |
+| POST | `/generate` | Generate lip-synced video |
+| POST | `/unload-model` | Free model from VRAM/MPS memory |
+| GET | `/model-status` | Current model load state |
+
+### Memory Coordination
+
+The M2 Pro (36GB) cannot hold both LTX-2 (~19GB) and LatentSync (~18GB) simultaneously. The `QueueMaster` implements sequential execution with a mutex-like `memoryTransitionActive` flag:
+
+1. **Before LTX dispatch**: `ensureSidecarMemory("ltx")` — if LatentSync was last active, call `/unload-model` on the LatentSync sidecar, then wait for LTX readiness.
+2. **Before LatentSync dispatch**: `ensureSidecarMemory("lipsync")` — if LTX was last active, the LTX sidecar auto-unloads on idle timeout; LatentSync loads its model on first request.
+3. **Retry logic**: `unloadWithRetry()` — 3 attempts with 2-second exponential backoff.
+4. **Graceful degradation**: If LatentSync is unreachable, pipeline completes with video-only output (no lip sync).
+
+### Talking Head Pipeline
+
+The pipeline chains three stages with automatic output forwarding:
+
+| Stage | Job Type | Input | Output |
+|---|---|---|---|
+| 1. Speech | `tts` | Text + voice ID → F5-TTS | `audio_base64` (WAV) |
+| 2. Video | `txt2video` | Video prompt → LTX | `video_base64` (MP4) |
+| 3. Lip Sync | `lipsync` | Audio + Video → LatentSync | `lipsync_video` (MP4) |
+
+Pipeline state is managed in-memory by `talking-head-pipeline.ts` with a `Map<string, PipelineState>` registry. Each stage completion triggers the next via `handleStageCompletion()`.
+
+### Configuration
+
+```json
+{
+  "lipSync": {
+    "enabled": true,
+    "networkNodeUrl": "http://192.168.1.123:5008",
+    "networkNodeToken": "your-token",
+    "defaultModel": "latentsync-v1.6",
+    "inferenceSteps": 20,
+    "guidanceScale": 1.5,
+    "enableDeepCache": true,
+    "maxDurationSec": 30,
+    "modelIdleTimeoutSec": 300,
+    "memoryLimitGB": 18
+  }
+}
+```
+
+### Port Map (Updated)
+
+| Port | Sidecar | Purpose |
+|---|---|---|
+| 5005 | FluxQ (Image Gen) | Flux Schnell/Dev image generation |
+| 5006 | F5-TTS Audio | Text-to-speech synthesis |
+| 5007 | LTX Video Worker | LTX-2 video generation |
+| 5008 | LatentSync (MPS) | Lip sync — Apple Silicon |
+| 5009 | ACE-Step Music Gen | Music generation |
+| 5010 | Music Studio / LatentSync (CUDA) | Voice2Voice pipeline / Lip sync — NVIDIA |
+
+### Setup
+
+**macOS (MPS)**:
+```bash
+./scripts/setup-lipsync-node.sh
+# Starts sidecar on port 5008
+```
+
+**Windows/WSL (CUDA)**:
+```bash
+./sidecars/setup-cuda-sidecars.sh
+./sidecars/start-cuda-sidecars.sh
+# Or via cuda-ctl:
+./scripts/cuda-ctl.sh lipsync setup
+./scripts/cuda-ctl.sh lipsync start
+```
+
+### Tracking: [Epic #797](https://github.com/openzigs/openzigs/issues/797)
+
+---
 
 ## Music Studio — Voice2Voice Pipeline & Smart Remix Lab (Epic #380, #389, #402)
 

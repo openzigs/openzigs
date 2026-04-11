@@ -71,6 +71,7 @@
 - [TikTok Content Publishing](#tiktok-content-publishing)
 - [Research & Content Synthesis Engine](#research--content-synthesis-engine)
 - [Media Queue & Asset Gallery](#media-queue--asset-gallery)
+- [Lip Sync (Talking Head Pipeline)](#lip-sync-talking-head-pipeline)
 
 ---
 
@@ -8606,6 +8607,142 @@ When a duration longer than 4s is selected:
 3. After all segments complete, they are stitched together with 0.5-second crossfade transitions
 4. If audio is enabled, it is generated once on the final stitched video (not per-segment)
 5. Progress is reported as "Segment N/M" with an aggregate percentage
+
+---
+
+## Lip Sync (Talking Head Pipeline)
+
+The Lip Sync feature uses ByteDance's [LatentSync](https://github.com/bytedance/LatentSync) model to generate realistic lip movements on AI-generated videos. Combined with TTS and video generation, this powers an end-to-end **Talking Head** pipeline: type text, get a lip-synced video.
+
+### How It Works
+
+The Talking Head pipeline chains three stages:
+
+1. **Speech** — F5-TTS converts your text to speech using a selected voice
+2. **Video** — LTX-2 generates a video from your prompt (e.g., "a person speaking to camera")
+3. **Lip Sync** — LatentSync conditions on the audio to animate the lips in the generated video
+
+### Setup (macOS — Apple Silicon)
+
+The LatentSync sidecar runs on port 5008 using the MPS backend (FP32):
+
+```bash
+# Install and start the lip sync sidecar (M2 Pro or better recommended)
+./scripts/setup-lipsync-node.sh
+
+# Verify it's running
+curl http://localhost:5008/health
+```
+
+**Requirements**: macOS with Apple Silicon, ~18GB free RAM, Python 3.10+, ffmpeg.
+
+### Setup (Windows/WSL — NVIDIA CUDA)
+
+The CUDA variant runs on port 5010 using FP16:
+
+```bash
+# Install all CUDA sidecars (including lip sync)
+./sidecars/setup-cuda-sidecars.sh
+
+# Start CUDA sidecars
+./sidecars/start-cuda-sidecars.sh
+
+# Or manage individually with cuda-ctl:
+./scripts/cuda-ctl.sh lipsync setup
+./scripts/cuda-ctl.sh lipsync start
+./scripts/cuda-ctl.sh lipsync stop
+./scripts/cuda-ctl.sh lipsync status
+```
+
+**Requirements**: NVIDIA GPU with 8GB+ VRAM, CUDA 11.8+, Python 3.10+, ffmpeg.
+
+### Using Talking Head Mode in Gallery Studio
+
+1. Navigate to **Gallery → Create Asset**
+2. Select the **Talking Head** mode (Mic icon with "LatentSync" badge)
+3. Fill in:
+   - **Speech Text** — The dialogue your character will speak
+   - **Voice** — Select a TTS voice from the dropdown
+   - **Video Prompt** — Describe the video (e.g., "a woman speaking to camera in a modern office")
+4. Optionally expand **Lip Sync Settings** to adjust:
+   - **Model Version** — v1.5 (faster) or v1.6 (higher quality)
+   - **Inference Steps** — 10–50 (default 20; more = better quality, slower)
+   - **Guidance Scale** — 1.0–3.0 (default 1.5; controls fidelity to audio)
+   - **DeepCache** — Enable for ~30% speed boost with minimal quality loss
+5. Click **Submit** — progress shows "Speech → Video → Lip Sync" stage progression
+
+### Applying Lip Sync to Existing Videos
+
+You can also submit a standalone lip sync job via the Queue API:
+
+```bash
+curl -X POST http://localhost:3000/api/queue/jobs \
+  -H "Content-Type: application/json" \
+  -d '{
+    "type": "lipsync",
+    "payload": {
+      "prompt": "lip sync",
+      "video_base64": "<base64-encoded-mp4>",
+      "audio_base64": "<base64-encoded-wav>",
+      "model": "latentsync-v1.6",
+      "inference_steps": 20,
+      "guidance_scale": 1.5,
+      "enable_deep_cache": true
+    }
+  }'
+```
+
+### `media-ctl.sh` Lip Sync Commands
+
+```bash
+# Check lipsync sidecar status
+./scripts/cuda-ctl.sh lipsync status
+
+# Start lipsync sidecar
+./scripts/cuda-ctl.sh lipsync start
+
+# Stop lipsync sidecar
+./scripts/cuda-ctl.sh lipsync stop
+
+# Full setup (install dependencies + model)
+./scripts/cuda-ctl.sh lipsync setup
+```
+
+### Performance
+
+| Device | Speed | Notes |
+|---|---|---|
+| M2 Pro (36GB) | ~8–15 sec per second of video | FP32. Sequential with LTX (shared memory). |
+| RTX 3080 (10GB) | ~3–8 sec per second of video | FP16. Can run alongside other sidecars. |
+
+### Limitations
+
+- **30-second max duration** — LatentSync quality degrades on longer clips
+- **FP32 required on MPS** — MPS does not support FP16 for this model; requires full precision
+- **Sequential execution on M2 Pro** — LTX and LatentSync cannot coexist in memory; automatic unload/reload adds ~5–10 seconds
+- **Face required** — Input video must show a clear face; "no face detected" errors mean the face isn't visible or is too small
+
+### Troubleshooting
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| Black frames in output | FP16 being used on MPS | Ensure the MPS fork is installed (uses FP32) |
+| "No face detected" error | Face not visible in video | Use a video with a clear, forward-facing face |
+| OOM crash | Both models loaded | Memory coordination should handle this; restart sidecars |
+| Sidecar unreachable | Not installed/running | Run `setup-lipsync-node.sh` or `cuda-ctl.sh lipsync start` |
+| Pipeline completes without lip sync | Sidecar down during pipeline | Pipeline degrades gracefully; check sidecar health |
+
+### Security & Ethics Notice
+
+Lip-synced video generation is **deepfake-adjacent technology**. Use responsibly:
+
+- **Do not** use to impersonate real people without consent
+- **Do not** create misleading content presented as genuine
+- Generated content should be clearly labeled as AI-generated
+- Consider adding visible watermarks to lip-synced output
+- Review your organization's acceptable use policy before deploying
+
+---
 
 ### Character Lab (LoRA Training & Identity Consistency)
 
