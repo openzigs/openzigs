@@ -24,6 +24,7 @@ import time
 import traceback
 import subprocess
 import shutil
+import uuid
 from pathlib import Path
 from typing import Any, Optional
 from urllib.request import Request, urlopen
@@ -387,12 +388,16 @@ async def process_lipsync_job(req: LipSyncRequest) -> None:
             with open(video_file, "wb") as f:
                 f.write(base64.b64decode(req.video_data))
         elif req.video_path:
-            # os.path.basename() sanitizes the filename; copy to tmpdir so
-            # downstream subprocess args never carry user-derived paths.
-            safe_video_name = os.path.basename(req.video_path)
-            src_video = os.path.join(GALLERY_DIR, safe_video_name)
-            if not os.path.exists(src_video):
-                raise FileNotFoundError(f"Video not found: {safe_video_name}")
+            # Lookup via os.listdir() so the path component comes from the
+            # filesystem (trusted source), not from user input.
+            requested_video = os.path.basename(req.video_path)
+            src_video = None
+            for entry in os.listdir(GALLERY_DIR):
+                if entry == requested_video:
+                    src_video = os.path.join(GALLERY_DIR, entry)
+                    break
+            if src_video is None:
+                raise FileNotFoundError(f"Video not found: {requested_video}")
             video_file = os.path.join(tmpdir, "input_video.mp4")
             shutil.copy2(src_video, video_file)
         else:
@@ -405,12 +410,16 @@ async def process_lipsync_job(req: LipSyncRequest) -> None:
             with open(audio_file, "wb") as f:
                 f.write(base64.b64decode(req.audio_data))
         elif req.audio_path:
-            # os.path.basename() sanitizes the filename; copy to tmpdir so
-            # downstream subprocess args never carry user-derived paths.
-            safe_audio_name = os.path.basename(req.audio_path)
-            src_audio = os.path.join(GALLERY_DIR, safe_audio_name)
-            if not os.path.exists(src_audio):
-                raise FileNotFoundError(f"Audio not found: {safe_audio_name}")
+            # Lookup via os.listdir() so the path component comes from the
+            # filesystem (trusted source), not from user input.
+            requested_audio = os.path.basename(req.audio_path)
+            src_audio = None
+            for entry in os.listdir(GALLERY_DIR):
+                if entry == requested_audio:
+                    src_audio = os.path.join(GALLERY_DIR, entry)
+                    break
+            if src_audio is None:
+                raise FileNotFoundError(f"Audio not found: {requested_audio}")
             audio_file = os.path.join(tmpdir, "input_audio.wav")
             shutil.copy2(src_audio, audio_file)
         else:
@@ -451,11 +460,10 @@ async def process_lipsync_job(req: LipSyncRequest) -> None:
         if not os.path.exists(output_path):
             raise RuntimeError("LatentSync produced no output file")
 
-        # ── Copy to gallery ──
+        # ── Copy to gallery (uuid.uuid4 ensures zero user input in path) ──
         os.makedirs(GALLERY_DIR, exist_ok=True)
-        # os.path.basename() breaks the CodeQL taint chain from job_id.
-        safe_id = os.path.basename(_validate_job_id(job_id))
-        final_filename = f"lipsync_{safe_id}.mp4"
+        output_id = str(uuid.uuid4())
+        final_filename = f"lipsync_{output_id}.mp4"
         final_path = os.path.join(GALLERY_DIR, final_filename)
         shutil.copy2(output_path, final_path)
 
