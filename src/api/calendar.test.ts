@@ -37,10 +37,11 @@ function makeSchedulerJob(overrides: Record<string, unknown> = {}) {
   return {
     id: "sj-1",
     name: "Daily Digest",
-    cron: "0 9 * * *",
-    action: "prompt",
+    cronExpression: "0 9 * * *",
+    actionType: "prompt",
     enabled: true,
-    lastRun: "2026-04-09T09:00:00Z",
+    lastRunAt: new Date("2026-04-09T09:00:00Z"),
+    nextRunAt: null,
     ...overrides,
   };
 }
