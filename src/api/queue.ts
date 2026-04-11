@@ -728,6 +728,34 @@ export const createQueueRouter = ({
     }
   });
 
+  // ── GET /sidecars/lipsync/health — Check if lipsync sidecar is reachable ──
+  router.get("/sidecars/lipsync/health", async (_req, res) => {
+    try {
+      // Try known lipsync sidecar URLs: MPS (5008) then CUDA (5010)
+      const candidates = [
+        "http://127.0.0.1:5008",
+        "http://127.0.0.1:5010",
+      ];
+      for (const url of candidates) {
+        try {
+          const resp = await fetch(`${url}/health`, {
+            signal: AbortSignal.timeout(3000),
+          });
+          if (resp.ok) {
+            const data = (await resp.json()) as Record<string, unknown>;
+            res.json({ status: "ok", url, ...data });
+            return;
+          }
+        } catch {
+          // try next
+        }
+      }
+      res.json({ status: "unreachable" });
+    } catch {
+      res.json({ status: "unreachable" });
+    }
+  });
+
   // ── POST /jobs/:id/kill — Force-fail a dispatched job ───
   router.post("/jobs/:id/kill", async (req, res) => {
     try {
