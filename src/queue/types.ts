@@ -115,6 +115,7 @@ export const LIPSYNC_MODEL_CATALOG = [
 /** Audio/music job types that have dedicated dispatch handlers and must NOT be dispatched via the video worker. */
 export const AUDIO_JOB_TYPES: ReadonlySet<MediaJobType> = new Set<MediaJobType>(
   [
+    "tts",
     "txt2music",
     "voice2voice",
     "remix_analyze",
@@ -418,6 +419,8 @@ export interface QueueConfig {
   dispatchTimeoutMs?: number;
   /** Music Studio voice2voice sidecar node config. */
   musicStudio?: WorkerNodeConfig;
+  /** Audio sidecar (TTS) node config. */
+  audioSidecar?: WorkerNodeConfig;
   /** LatentSync lip-sync sidecar node config. */
   lipSync?: WorkerNodeConfig;
 }

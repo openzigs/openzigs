@@ -168,7 +168,7 @@ export class QueueMaster extends EventEmitter {
             reachable: false,
             is_busy: false,
             loaded_model: null,
-            url: "http://localhost:5008",
+            url: "http://localhost:5010",
           },
     ];
   }
@@ -597,6 +597,7 @@ export class QueueMaster extends EventEmitter {
       await this.pollForStaleResults();
       await this.processNode("mac-mini");
       await this.processNode("m2-pro");
+      await this.processTtsJobs();
       await this.processMusicJobs();
       await this.processMusicStudioJobs();
       await this.processLipSyncJobs();
@@ -911,6 +912,50 @@ export class QueueMaster extends EventEmitter {
     } finally {
       // Clear in-memory flag — actual busy state is re-checked via /status poll on next tick
       this.musicStatus = { ...this.musicStatus, is_busy: false };
+    }
+  }
+
+  // ── Audio Sidecar (TTS jobs) ──────────────────────────────
+
+  private async processTtsJobs(): Promise<void> {
+    // Get pending TTS jobs (target m2-pro but dispatched to audio sidecar)
+    const pending = this.repo.getPendingJobsForModel("m2-pro", "f5-tts", 1);
+    if (pending.length === 0) return;
+
+    // Poll audio sidecar health
+    try {
+      const nodeConfig = await this.getAudioNodeConfig();
+      const headers: Record<string, string> = {};
+      if (nodeConfig.token)
+        headers["Authorization"] = `Bearer ${nodeConfig.token}`;
+
+      const res = await fetch(`${nodeConfig.url}/health`, {
+        headers,
+        signal: AbortSignal.timeout(5_000),
+      });
+      if (!res.ok) throw new Error(`Status check failed: ${res.status}`);
+    } catch {
+      logger.debug(
+        "[QueueMaster] Audio sidecar unreachable, skipping TTS jobs",
+      );
+      return;
+    }
+
+    const job = pending[0];
+    try {
+      this.repo.markDispatched(job.id);
+      this.emit("job:dispatched", job, "m2-pro" as TargetNode);
+      logger.info(
+        `[QueueMaster] Dispatching TTS job ${job.id} → audio sidecar`,
+      );
+
+      await this.dispatchTtsJob(job);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.warn(
+        `[QueueMaster] Failed to dispatch TTS job ${job.id}: ${msg}`,
+      );
+      this.repo.markFailed(job.id, msg);
     }
   }
 
@@ -1267,6 +1312,86 @@ export class QueueMaster extends EventEmitter {
     return { url: "http://localhost:5009" };
   }
 
+  /**
+   * Dispatch a TTS job to the audio sidecar (/tts endpoint).
+   * The audio sidecar returns WAV audio synchronously — we convert the
+   * response to base64 and feed it into handleJobCompletion to advance
+   * the talking-head pipeline.
+   */
+  private async dispatchTtsJob(job: MediaJob): Promise<void> {
+    const nodeConfig = await this.getAudioNodeConfig();
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+    };
+    if (nodeConfig.token)
+      headers["Authorization"] = `Bearer ${nodeConfig.token}`;
+
+    const body: Record<string, unknown> = {
+      text: job.payload.prompt,
+      voice: job.payload.voice ?? "af_heart",
+    };
+
+    // Handle reference audio: decode base64 to a temp file and pass the path
+    if (job.payload.reference_audio) {
+      const tmpDir = path.join(os.homedir(), ".openzigs", "tmp");
+      await fs.mkdir(tmpDir, { recursive: true });
+      const tmpFile = path.join(tmpDir, `ref-audio-${job.id}.wav`);
+      const audioBuffer = Buffer.from(job.payload.reference_audio, "base64");
+      await fs.writeFile(tmpFile, audioBuffer, { mode: 0o600 });
+      body.ref_audio_path = tmpFile;
+    }
+
+    const res = await fetch(`${nodeConfig.url}/tts`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(120_000), // TTS can take up to 2 minutes for long text
+    });
+
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      throw new Error(`Audio sidecar /tts returned ${res.status}: ${text}`);
+    }
+
+    // /tts returns audio/wav directly — convert to base64 for pipeline
+    const audioArrayBuffer = await res.arrayBuffer();
+    const audioBase64 = Buffer.from(audioArrayBuffer).toString("base64");
+
+    await this.handleJobCompletion(job.id, {
+      media_base64: audioBase64,
+      media_type: "audio/wav",
+    });
+  }
+
+  /**
+   * Returns the WorkerNodeConfig for the audio sidecar (TTS/STT)
+   * by reading audioSidecar from ~/.openzigs/config.json. Falls back to localhost:5006.
+   */
+  private async getAudioNodeConfig(): Promise<WorkerNodeConfig> {
+    if (this.config.audioSidecar?.url) {
+      return this.config.audioSidecar;
+    }
+    try {
+      const cfgPath = path.join(os.homedir(), ".openzigs", "config.json");
+      const raw = await fs.readFile(cfgPath, "utf-8");
+      const cfg = JSON.parse(raw) as Record<string, unknown>;
+      const audio = cfg.audioSidecar as Record<string, unknown> | undefined;
+      if (typeof audio?.networkNodeUrl === "string" && audio.networkNodeUrl) {
+        return {
+          url: audio.networkNodeUrl,
+          token:
+            typeof audio.networkNodeToken === "string"
+              ? audio.networkNodeToken
+              : undefined,
+        };
+      }
+    } catch {
+      // config unreadable — fall through
+    }
+    // Default: audio sidecar on localhost:5006
+    return { url: "http://localhost:5006" };
+  }
+
   private async dispatchMusicStudioJob(job: MediaJob): Promise<void> {
     const nodeConfig = await this.getMusicStudioNodeConfig();
     const headers: Record<string, string> = {
@@ -1558,8 +1683,8 @@ export class QueueMaster extends EventEmitter {
     } catch {
       // config unreadable — fall through
     }
-    // Default: lip-sync sidecar on localhost:5008
-    return { url: "http://localhost:5008" };
+    // Default: lip-sync sidecar on localhost:5010 (CUDA) or 5008 (MPS)
+    return { url: "http://localhost:5010" };
   }
 
   // ── Progress Reporting ────────────────────────────────────

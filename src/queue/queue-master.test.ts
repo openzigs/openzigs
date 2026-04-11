@@ -1617,4 +1617,248 @@ describe("QueueMaster", () => {
       await qm.ensureSidecarMemory("ltx");
     });
   });
-});
+
+  // ── TTS Dispatch ────────────────────────────────────────
+
+  describe("TTS dispatch to audio sidecar", () => {
+    it("dispatches TTS job to audio sidecar /tts and handles sync response", async () => {
+      const ttsJob = makeJob({
+        id: "tts-1",
+        type: "tts",
+        requiredModel: "f5-tts",
+        targetNode: "m2-pro",
+        payload: { prompt: "Hello world", voice: "af_heart" },
+      });
+
+      repo.getPendingJobs.mockReturnValue([]);
+      repo.getPendingJobsForModel.mockImplementation(
+        (_node: string, model: string) =>
+          model === "f5-tts" ? [ttsJob] : [],
+      );
+      repo.listJobs.mockReturnValue([]);
+      repo.getJob.mockReturnValue(ttsJob);
+
+      // Build a fake WAV response body
+      const fakeWav = new Uint8Array([0x52, 0x49, 0x46, 0x46]);
+
+      // processMacMini: no pending mac-mini jobs → no health check
+      // processM2Pro: health check → no pending non-audio m2-pro jobs
+      // processTtsJobs: audio sidecar health → /tts call
+      // processMusicJobs: music sidecar status unreachable
+      // processMusicStudioJobs: music-studio health unreachable
+      // processLipSyncJobs: lipsync health unreachable
+      // handleJobCompletion calls void this.tick() → second tick with all unreachable
+      mockFetch
+        // m2-pro health (processM2Pro)
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({ is_busy: false, loaded_model: null }),
+        })
+        // Audio sidecar health (processTtsJobs)
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({ status: "ready" }),
+        })
+        // Audio sidecar /tts response (sync — returns WAV directly)
+        .mockResolvedValueOnce({
+          ok: true,
+          arrayBuffer: () => Promise.resolve(fakeWav.buffer),
+        })
+        // Remaining sidecar checks + re-tick all return unreachable
+        .mockRejectedValue(new Error("unreachable"));
+
+      await qm.tick();
+
+      expect(repo.markDispatched).toHaveBeenCalledWith("tts-1");
+
+      // Verify the /tts call was made with correct payload
+      const ttsCall = mockFetch.mock.calls.find(
+        (c) => typeof c[0] === "string" && c[0].includes("/tts"),
+      );
+      expect(ttsCall).toBeDefined();
+      const body = JSON.parse(ttsCall![1]?.body as string);
+      expect(body.text).toBe("Hello world");
+      expect(body.voice).toBe("af_heart");
+
+      // handleJobCompletion saves to gallery and marks complete
+      expect(repo.markComplete).toHaveBeenCalledWith(
+        "tts-1",
+        expect.any(String),
+        undefined,
+        "asset-1",
+      );
+    });
+
+    it("skips TTS jobs when audio sidecar is unreachable", async () => {
+      const ttsJob = makeJob({
+        id: "tts-2",
+        type: "tts",
+        requiredModel: "f5-tts",
+        targetNode: "m2-pro",
+        payload: { prompt: "Test", voice: "af_heart" },
+      });
+
+      repo.getPendingJobs.mockReturnValue([]);
+      repo.getPendingJobsForModel.mockImplementation(
+        (_node: string, model: string) =>
+          model === "f5-tts" ? [ttsJob] : [],
+      );
+      repo.listJobs.mockReturnValue([]);
+
+      // processM2Pro health → processTtsJobs audio sidecar health = unreachable
+      mockFetch
+        // m2-pro health (processM2Pro)
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({ is_busy: false, loaded_model: null }),
+        })
+        // Audio sidecar health — unreachable
+        .mockRejectedValueOnce(new Error("Connection refused"))
+        // Remaining sidecar checks
+        .mockRejectedValue(new Error("unreachable"));
+
+      await qm.tick();
+
+      // TTS job should NOT be dispatched
+      expect(repo.markDispatched).not.toHaveBeenCalledWith("tts-2");
+    });
+
+    it("TTS jobs are excluded from M2 Pro video dispatch", async () => {
+      const ttsJob = makeJob({
+        id: "tts-3",
+        type: "tts",
+        requiredModel: "f5-tts",
+        targetNode: "m2-pro",
+        payload: { prompt: "Excluded", voice: "af_heart" },
+      });
+
+      // processM2Pro filters by !AUDIO_JOB_TYPES — tts is now in that set
+      repo.getPendingJobs.mockReturnValue([ttsJob]);
+      repo.getPendingJobsForModel.mockImplementation(
+        (_node: string, model: string) =>
+          model === "f5-tts" ? [ttsJob] : [],
+      );
+      repo.listJobs.mockReturnValue([]);
+      repo.getJob.mockReturnValue(ttsJob);
+
+      const fakeWav = new Uint8Array([0x52, 0x49, 0x46, 0x46]);
+
+      mockFetch
+        // m2-pro health (processM2Pro)
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({ is_busy: false, loaded_model: null }),
+        })
+        // Audio sidecar health (processTtsJobs)
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({ status: "ready" }),
+        })
+        // Audio sidecar /tts
+        .mockResolvedValueOnce({
+          ok: true,
+          arrayBuffer: () => Promise.resolve(fakeWav.buffer),
+        })
+        // Remaining sidecar checks + re-tick
+        .mockRejectedValue(new Error("unreachable"));
+
+      await qm.tick();
+
+      // Verify /generate was NOT called (video dispatch), only /tts was
+      const generateCall = mockFetch.mock.calls.find(
+        (c) => typeof c[0] === "string" && c[0].endsWith("/generate"),
+      );
+      expect(generateCall).toBeUndefined();
+
+      const ttsCall = mockFetch.mock.calls.find(
+        (c) => typeof c[0] === "string" && c[0].includes("/tts"),
+      );
+      expect(ttsCall).toBeDefined();
+    });
+
+    it("marks TTS job as failed when sidecar returns error", async () => {
+      const ttsJob = makeJob({
+        id: "tts-4",
+        type: "tts",
+        requiredModel: "f5-tts",
+        targetNode: "m2-pro",
+        payload: { prompt: "Error case" },
+      });
+
+      repo.getPendingJobs.mockReturnValue([]);
+      repo.getPendingJobsForModel.mockImplementation(
+        (_node: string, model: string) =>
+          model === "f5-tts" ? [ttsJob] : [],
+      );
+      repo.listJobs.mockReturnValue([]);
+
+      mockFetch
+        // m2-pro health (processM2Pro)
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({ is_busy: false, loaded_model: null }),
+        })
+        // Audio sidecar health (processTtsJobs)
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({ status: "ready" }),
+        })
+        // Audio sidecar /tts — returns 500
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 500,
+          text: () => Promise.resolve("TTS synthesis failed: model not loaded"),
+        })
+        // Remaining sidecar checks
+        .mockRejectedValue(new Error("unreachable"));
+
+      await qm.tick();
+
+      expect(repo.markDispatched).toHaveBeenCalledWith("tts-4");
+      expect(repo.markFailed).toHaveBeenCalledWith(
+        "tts-4",
+        expect.stringContaining("Audio sidecar /tts returned 500"),
+      );
+    });
+
+    it("sends reference audio as ref_audio_path when provided", async () => {
+      const ttsJob = makeJob({
+        id: "tts-5",
+        type: "tts",
+        requiredModel: "f5-tts",
+        targetNode: "m2-pro",
+        payload: {
+          prompt: "Clone voice",
+          voice: "af_heart",
+          reference_audio: "AAAA", // base64 audio data
+        },
+      });
+
+      repo.getPendingJobs.mockReturnValue([]);
+      repo.getPendingJobsForModel.mockImplementation(
+        (_node: string, model: string) =>
+          model === "f5-tts" ? [ttsJob] : [],
+      );
+      repo.listJobs.mockReturnValue([]);
+      repo.getJob.mockReturnValue(ttsJob);
+
+      const fakeWav = new Uint8Array([0x52, 0x49, 0x46, 0x46]);
+
+      mockFetch
+        // m2-pro health (processM2Pro)
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({ is_busy: false, loaded_model: null }),
+        })
+        // Audio sidecar health (processTtsJobs)
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({ status: "ready" }),
+        })
+        // Audio sidecar /tts
+        .mockResolvedValueOnce({
+          ok: true,
+          arrayBuffer: () => Promise.resolve(fakeWav.buffer),
+        })
+        // Remaining sidecar checks + re-tick
+        .mockRejectedValu

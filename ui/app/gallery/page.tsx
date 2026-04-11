@@ -88,7 +88,7 @@ interface QueueStats {
 }
 
 interface NodeStatusInfo {
-  node: "mac-mini" | "m2-pro" | "music";
+  node: "mac-mini" | "m2-pro" | "music" | "lipsync";
   reachable: boolean;
   is_busy: boolean;
   loaded_model: string | null;
@@ -584,7 +584,7 @@ export default function GalleryPage() {
               Worker Nodes
             </h3>
             <span className="text-[10px] text-muted-foreground">
-              (shared M2 memory — only one model at a time)
+              (shared GPU memory — only one model at a time)
             </span>
           </div>
           <div className="grid grid-cols-3 gap-3">
@@ -594,7 +594,9 @@ export default function GalleryPage() {
                   ? "Image Gen (FluxQ)"
                   : node.node === "music"
                     ? "Audio Gen (ACE-Step)"
-                    : "Video Gen (LTX-2)";
+                    : node.node === "lipsync"
+                      ? "Lip Sync (LatentSync)"
+                      : "Video Gen (LTX-2)";
               const isHardwareNode =
                 node.node === "mac-mini" || node.node === "m2-pro";
               return (
@@ -2174,6 +2176,10 @@ interface StudioFormState {
   lipsyncInferenceSteps: number;
   lipsyncGuidanceScale: number;
   lipsyncDeepCache: boolean;
+  talkingHeadRefImage: File | null;
+  talkingHeadRefImagePreview: string;
+  talkingHeadRefAudio: File | null;
+  talkingHeadRefAudioName: string;
 }
 
 const DEFAULT_FORM: StudioFormState = {
@@ -2214,6 +2220,10 @@ const DEFAULT_FORM: StudioFormState = {
   lipsyncInferenceSteps: 20,
   lipsyncGuidanceScale: 1.5,
   lipsyncDeepCache: true,
+  talkingHeadRefImage: null,
+  talkingHeadRefImagePreview: "",
+  talkingHeadRefAudio: null,
+  talkingHeadRefAudioName: "",
 };
 
 const MODE_INFO: Record<
@@ -2653,6 +2663,28 @@ function GalleryStudio({
           maxDurationSec: 30,
         };
 
+        // Encode reference image as base64 if provided
+        if (form.talkingHeadRefImage) {
+          const buf = await form.talkingHeadRefImage.arrayBuffer();
+          pipelinePayload.referenceImage = btoa(
+            new Uint8Array(buf).reduce(
+              (s, b) => s + String.fromCharCode(b),
+              "",
+            ),
+          );
+        }
+
+        // Encode reference audio as base64 if provided
+        if (form.talkingHeadRefAudio) {
+          const buf = await form.talkingHeadRefAudio.arrayBuffer();
+          pipelinePayload.referenceAudio = btoa(
+            new Uint8Array(buf).reduce(
+              (s, b) => s + String.fromCharCode(b),
+              "",
+            ),
+          );
+        }
+
         await fetchJson("/api/queue/pipelines/talking-head", {
           method: "POST",
           body: JSON.stringify(pipelinePayload),
@@ -3002,6 +3034,71 @@ function GalleryStudio({
                 placeholder="A person speaking in a studio..."
               />
             </div>
+          </div>
+
+          {/* Reference Image Upload (optional) */}
+          <div className="mb-4">
+            <label className="mb-1 block text-[11px] font-medium text-muted-foreground">
+              Reference Image{" "}
+              <span className="text-muted-foreground/60">(optional)</span>
+            </label>
+            <p className="mb-2 text-[10px] text-muted-foreground/70">
+              Upload a photo of the person to appear in the video
+            </p>
+            <div className="flex items-center gap-4">
+              <input
+                type="file"
+                accept="image/*"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (!file) return;
+                  update("talkingHeadRefImage", file);
+                  const reader = new FileReader();
+                  reader.onload = () =>
+                    update(
+                      "talkingHeadRefImagePreview",
+                      reader.result as string,
+                    );
+                  reader.readAsDataURL(file);
+                }}
+                className="text-sm text-foreground"
+              />
+              {form.talkingHeadRefImagePreview && (
+                <img
+                  src={form.talkingHeadRefImagePreview}
+                  alt="Reference preview"
+                  className="h-20 w-20 rounded-lg object-cover border border-border"
+                />
+              )}
+            </div>
+          </div>
+
+          {/* Reference Audio Upload (optional) */}
+          <div className="mb-4">
+            <label className="mb-1 block text-[11px] font-medium text-muted-foreground">
+              Reference Voice{" "}
+              <span className="text-muted-foreground/60">(optional)</span>
+            </label>
+            <p className="mb-2 text-[10px] text-muted-foreground/70">
+              Upload a short (3–10s) audio clip to clone this voice
+            </p>
+            <input
+              type="file"
+              accept="audio/*"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (!file) return;
+                update("talkingHeadRefAudio", file);
+                update("talkingHeadRefAudioName", file.name);
+              }}
+              className="text-sm text-foreground"
+            />
+            {form.talkingHeadRefAudioName && (
+              <p className="mt-1 text-[10px] text-muted-foreground">
+                Selected: {form.talkingHeadRefAudioName}
+                {" — will use F5-TTS voice cloning"}
+              </p>
+            )}
           </div>
 
           {/* Lip Sync Settings */}
