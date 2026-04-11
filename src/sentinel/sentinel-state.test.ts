@@ -14,6 +14,8 @@ import {
   type DigestRecord,
 } from "./sentinel-state.js";
 
+const IS_WINDOWS = process.platform === "win32";
+
 vi.mock("node:fs/promises", () => ({
   default: {
     mkdir: vi.fn().mockResolvedValue(undefined),
@@ -151,7 +153,9 @@ describe("sentinel-state", () => {
       await ensureSentinelDir();
       expect(fsMock.mkdir).toHaveBeenCalledWith(
         expect.stringContaining("sentinel"),
-        expect.objectContaining({ recursive: true, mode: 0o700 }),
+        IS_WINDOWS
+          ? expect.objectContaining({ recursive: true })
+          : expect.objectContaining({ recursive: true, mode: 0o700 }),
       );
     });
   });
@@ -201,7 +205,9 @@ describe("sentinel-state", () => {
       expect(fsMock.writeFile).toHaveBeenCalledWith(
         expect.stringContaining(".tmp"),
         expect.stringContaining("lastTaskCheckAt"),
-        expect.objectContaining({ mode: 0o600 }),
+        IS_WINDOWS
+          ? expect.anything()
+          : expect.objectContaining({ mode: 0o600 }),
       );
       expect(fsMock.rename).toHaveBeenCalled();
     });

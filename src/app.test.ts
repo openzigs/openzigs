@@ -503,7 +503,11 @@ describe("/api/logs edge cases", () => {
 
 describe("/api/prompts", () => {
   const cleanupDirs: string[] = [];
+  const cleanupDbs: Array<{ close(): void }> = [];
   afterEach(async () => {
+    for (const db of cleanupDbs.splice(0)) {
+      try { db.close(); } catch { /* ignore */ }
+    }
     await Promise.all(cleanupDirs.splice(0).map((d) => fs.rm(d, { recursive: true, force: true })));
   });
 
@@ -529,6 +533,7 @@ describe("/api/prompts", () => {
       )
     `);
     const promptManager = new PromptManager({ db });
+    cleanupDbs.push(db);
     const app = createApp(config, { promptManager });
     const { server, baseUrl } = startServer(app);
     return { server, baseUrl, config, promptManager };

@@ -59,6 +59,7 @@ describe("draft-media-tools", () => {
 
   describe("save-draft-media handler", () => {
     it("copies file to drafts base when no project_id", async () => {
+      const sourcePath = path.resolve("/tmp/test-image.png");
       const result = await tool.handler({
         source_path: "/tmp/test-image.png",
         title: "Test Image",
@@ -73,7 +74,7 @@ describe("draft-media-tools", () => {
       expect(parsed.project_id).toBeNull();
 
       expect(fs.mkdir).toHaveBeenCalledWith(DRAFTS_BASE, { recursive: true });
-      expect(fs.copyFile).toHaveBeenCalledWith("/tmp/test-image.png", parsed.path);
+      expect(fs.copyFile).toHaveBeenCalledWith(sourcePath, parsed.path);
     });
 
     it("copies file to project subdirectory when project_id provided", async () => {

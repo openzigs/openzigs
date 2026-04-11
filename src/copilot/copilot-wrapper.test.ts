@@ -1,10 +1,14 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import os from "node:os";
 import path from "node:path";
 import fs from "node:fs/promises";
 import * as z from "zod";
 import { ToolRegistry, type ToolDefinition } from "../mcp/tool-registry.js";
 import { CopilotWrapperService, type CopilotModel } from "./copilot-wrapper.js";
+
+vi.mock("../config/user-model.js", () => ({
+  getUserSelectedModel: vi.fn().mockResolvedValue(undefined),
+}));
 
 class FakeSession {
   readonly sessionId: string;
@@ -130,7 +134,9 @@ describe("copilot wrapper", () => {
     expect(saved.token).toBe("token-123");
 
     const stat = await fs.stat(authPath);
-    expect(stat.mode & 0o077).toBe(0);
+    if (process.platform !== "win32") {
+      expect(stat.mode & 0o077).toBe(0);
+    }
     expect(await wrapper.isAuthenticated()).toBe(true);
   });
 
@@ -170,6 +176,9 @@ describe("copilot wrapper", () => {
   });
 
   it("uses default model when no override is provided", async () => {
+    // Mock getUserSelectedModel to return undefined so the constructor default is used
+    const { getUserSelectedModel } = await import("../config/user-model.js");
+    vi.mocked(getUserSelectedModel).mockResolvedValue(undefined);
     const client = new FakeCopilotClient();
     const wrapper = new CopilotWrapperService({ client, model: "gpt-4.1" });
 

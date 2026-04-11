@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
+import path from "node:path";
 import fs from "node:fs/promises";
 import { createSeoGapTools } from "./seo-gap-tools.js";
 import * as pdfExport from "./shared/pdf-export.js";
@@ -542,6 +543,7 @@ describe("seo-gap-tools", () => {
 
   describe("export-pdf", () => {
     it("calls saveReportPdf and returns the path", async () => {
+      const resolvedDir = path.dirname(path.resolve("/tmp/report.md"));
       vi.spyOn(pdfExport, "saveReportPdf").mockResolvedValue("/tmp/report.pdf");
       vi.spyOn(fs, "readFile").mockResolvedValue("# Report Content");
 
@@ -553,7 +555,7 @@ describe("seo-gap-tools", () => {
       expect(pdfExport.saveReportPdf).toHaveBeenCalledWith(
         "report",
         "# Report Content",
-        "/tmp",
+        resolvedDir,
       );
     });
 

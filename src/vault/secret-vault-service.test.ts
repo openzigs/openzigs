@@ -168,6 +168,10 @@ describe("SecretVaultService", () => {
   });
 
   it("vault file has 0600 permissions", async () => {
+    if (process.platform === "win32") {
+      // Windows does not enforce Unix file mode bits
+      return;
+    }
     const vaultPath = createTmpVaultPath();
     const svc = new SecretVaultService({ vaultPath, pbkdf2Iterations: FAST_ITERATIONS });
     await svc.initialize("pass");

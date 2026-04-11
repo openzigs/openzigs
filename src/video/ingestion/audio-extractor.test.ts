@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import path from "node:path";
 
 const mockFfmpegInstance = {
   noVideo: vi.fn().mockReturnThis(),
@@ -47,7 +48,7 @@ describe("extractAudio", () => {
 
     const result = await extractAudio("/videos/test.mp4", "/output");
 
-    expect(result).toBe("/output/test.wav");
+    expect(result).toBe(path.join("/output", "test.wav"));
     expect(mockFfmpeg).toHaveBeenCalledWith("/videos/test.mp4");
     expect(mockFfmpegInstance.noVideo).toHaveBeenCalled();
     expect(mockFfmpegInstance.audioCodec).toHaveBeenCalledWith("pcm_s16le");
@@ -97,7 +98,7 @@ describe("extractAudio", () => {
     });
 
     const result = await extractAudio("/path/to/my-video.mov", "/out");
-    expect(result).toBe("/out/my-video.wav");
+    expect(result).toBe(path.join("/out", "my-video.wav"));
   });
 
   it("configures ffmpeg for 16kHz mono WAV output", async () => {

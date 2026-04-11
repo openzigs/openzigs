@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import os from "node:os";
+import path from "node:path";
 
 vi.mock("node:child_process", () => ({
   spawn: vi.fn(),
@@ -120,13 +121,14 @@ describe("asset-overlay", () => {
 
   it("allows paths under /tmp", async () => {
     mockSpawnSuccess();
+    const tmpDir = os.tmpdir();
     const opts = makeOptions({
-      backgroundPath: "/tmp/bg.mp4",
-      placements: [{ assetPath: "/tmp/overlay.png", startTimeSec: 0, endTimeSec: 5 }],
-      outputPath: "/tmp/out.mp4",
+      backgroundPath: path.join(tmpDir, "bg.mp4"),
+      placements: [{ assetPath: path.join(tmpDir, "overlay.png"), startTimeSec: 0, endTimeSec: 5 }],
+      outputPath: path.join(tmpDir, "out.mp4"),
     });
     const result = await overlayAssets(opts);
-    expect(result.outputPath).toBe("/tmp/out.mp4");
+    expect(result.outputPath).toBe(path.join(tmpDir, "out.mp4"));
   });
 
   it("removes existing output when overwrite is true", async () => {
