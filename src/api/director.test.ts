@@ -1,5 +1,4 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import os from "node:os";
 import express from "express";
 import request from "supertest";
 import Database from "better-sqlite3";
