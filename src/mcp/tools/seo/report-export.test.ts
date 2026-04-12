@@ -126,6 +126,22 @@ describe("exportIssuesToCsv", () => {
     expect(lines.length).toBeGreaterThan(1);
   });
 
+  it("data columns match header order (url, severity, category, message)", () => {
+    const csv = exportIssuesToCsv(makeAuditData());
+    const lines = csv.split("\n");
+    // First data row should start with URL, then severity, category, message
+    const firstDataRow = lines[1];
+    const columns = firstDataRow.split(",");
+    // URL should be first (https://example.com)
+    expect(columns[0]).toBe("https://example.com");
+    // Second column should be severity
+    expect(columns[1]).toBe("error");
+    // Third column should be category
+    expect(columns[2]).toBe("meta");
+    // Fourth column should be message
+    expect(columns[3]).toBe("Missing meta description");
+  });
+
   it("handles empty pages", () => {
     const csv = exportIssuesToCsv(makeAuditData({ pages: [] }));
     expect(csv).toBe("URL,Severity,Category,Message");

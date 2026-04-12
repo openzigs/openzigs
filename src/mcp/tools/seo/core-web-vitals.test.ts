@@ -4,6 +4,7 @@ import {
   getCachedResult,
   setCachedResult,
   clearCache,
+  getCacheSize,
   type CoreWebVitalsResult,
 } from "./core-web-vitals.js";
 
@@ -79,6 +80,37 @@ describe("CWV cache", () => {
     setCachedResult("https://test.com", result);
     clearCache();
     expect(getCachedResult("https://test.com")).toBeUndefined();
+  });
+
+  it("evicts oldest entries when cache exceeds 1000", () => {
+    // Fill cache beyond max size (1000)
+    for (let i = 0; i < 1010; i++) {
+      setCachedResult(`https://example.com/page-${i}`, {
+        url: `https://example.com/page-${i}`,
+        performanceScore: 50,
+        metrics: [],
+        fetchedAt: new Date().toISOString(),
+      });
+    }
+    // After eviction, should be 1010 - 200 = 810
+    expect(getCacheSize()).toBeLessThanOrEqual(1000);
+    expect(getCacheSize()).toBeGreaterThan(0);
+  });
+
+  it("getCacheSize returns correct count", () => {
+    setCachedResult("https://a.com", {
+      url: "https://a.com",
+      performanceScore: 90,
+      metrics: [],
+      fetchedAt: new Date().toISOString(),
+    });
+    setCachedResult("https://b.com", {
+      url: "https://b.com",
+      performanceScore: 80,
+      metrics: [],
+      fetchedAt: new Date().toISOString(),
+    });
+    expect(getCacheSize()).toBe(2);
   });
 });
 

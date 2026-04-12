@@ -30,36 +30,35 @@ export function ExportDialog({ snapshotId }: { snapshotId: number | null }) {
     }
   };
 
-  if (!snapshotId) {
-    return (
-      <div className="text-sm text-muted-foreground">
-        Select an audit to export
-      </div>
-    );
-  }
+  const disabled = !snapshotId || exporting;
 
   return (
     <div className="space-y-3">
       <h4 className="text-sm font-semibold">Export Audit Report</h4>
+      {!snapshotId && (
+        <p className="text-xs text-muted-foreground">
+          Run an audit first to enable export.
+        </p>
+      )}
       <div className="flex gap-2">
         <button
           onClick={() => handleExport("csv")}
-          disabled={exporting}
-          className="inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-xs font-medium hover:bg-accent/10 disabled:opacity-50"
+          disabled={disabled}
+          className="inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-xs font-medium hover:bg-accent/10 disabled:opacity-50 disabled:cursor-not-allowed"
         >
           <FileSpreadsheet className="h-3.5 w-3.5" /> CSV
         </button>
         <button
           onClick={() => handleExport("json")}
-          disabled={exporting}
-          className="inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-xs font-medium hover:bg-accent/10 disabled:opacity-50"
+          disabled={disabled}
+          className="inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-xs font-medium hover:bg-accent/10 disabled:opacity-50 disabled:cursor-not-allowed"
         >
           <FileJson className="h-3.5 w-3.5" /> JSON
         </button>
         <button
           onClick={() => handleExport("pdf")}
-          disabled={exporting}
-          className="inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-xs font-medium hover:bg-accent/10 disabled:opacity-50"
+          disabled={disabled}
+          className="inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-xs font-medium hover:bg-accent/10 disabled:opacity-50 disabled:cursor-not-allowed"
         >
           <FileText className="h-3.5 w-3.5" /> PDF
         </button>

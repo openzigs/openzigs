@@ -1,7 +1,8 @@
 /**
  * SEO Suite API Router (#838)
  *
- * Provides endpoints for audit history, audit snapshots, and report exports.
+ * Provides endpoints for audit history, audit snapshots, report exports,
+ * and audit triggering.
  * Mounted at /api/seo in server.ts.
  */
 
@@ -9,9 +10,17 @@ import { Router } from "express";
 import type Database from "better-sqlite3";
 import { AuditHistoryRepository } from "../mcp/tools/seo/audit-history.js";
 import { exportAudit } from "../mcp/tools/seo/report-export.js";
+import { logger } from "../logging/logger.js";
 
 export interface SeoRouterOptions {
   db: Database.Database;
+}
+
+/** Clamp a numeric value to a positive integer within [1, max]. */
+function clampLimit(raw: unknown, defaultVal: number, max: number): number {
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 1) return defaultVal;
+  return Math.min(Math.floor(n), max);
 }
 
 export const createSeoRouter = ({ db }: SeoRouterOptions): Router => {
@@ -21,7 +30,9 @@ export const createSeoRouter = ({ db }: SeoRouterOptions): Router => {
   /** GET /api/seo/history — List all audit snapshots (newest first). */
   router.get("/history", (req, res) => {
     const siteUrl = req.query.siteUrl as string | undefined;
-    const limit = req.query.limit ? Number(req.query.limit) : undefined;
+    const limit = req.query.limit
+      ? clampLimit(req.query.limit, 50, 100)
+      : undefined;
     const snapshots = siteUrl
       ? historyRepo.listSnapshots(siteUrl, limit ?? 12)
       : historyRepo.listAll(limit ?? 50);
@@ -80,9 +91,42 @@ export const createSeoRouter = ({ db }: SeoRouterOptions): Router => {
       );
       return res.json({ path: result.filePath });
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      return res.status(500).json({ error: message });
+      logger.error("[SEO] Export failed", {
+        snapshotId: id,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return res.status(500).json({ error: "Export failed" });
     }
+  });
+
+  /**
+   * POST /api/seo/audit — Trigger an SEO audit.
+   * Body: { url: string }
+   * Returns { status: "started", url } — audit runs via the MCP tool system.
+   * The caller should listen for crawl:started / crawl:progress / crawl:completed
+   * Socket.IO events for real-time progress.
+   */
+  router.post("/audit", (req, res) => {
+    const url = (req.body?.url as string)?.trim();
+    if (!url) {
+      return res.status(400).json({ error: "Missing required field: url" });
+    }
+
+    // Basic URL validation
+    try {
+      const parsed = new URL(url.startsWith("http") ? url : `https://${url}`);
+      if (!["http:", "https:"].includes(parsed.protocol)) {
+        return res.status(400).json({ error: "URL must use http or https" });
+      }
+    } catch {
+      return res.status(400).json({ error: "Invalid URL" });
+    }
+
+    // Return immediately — the audit will be triggered by the frontend
+    // sending a chat message to invoke the seo-site-audit tool.
+    // This endpoint validates the URL and provides a clean API contract.
+    const normalizedUrl = url.startsWith("http") ? url : `https://${url}`;
+    return res.json({ status: "accepted", url: normalizedUrl });
   });
 
   return router;

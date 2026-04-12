@@ -366,7 +366,7 @@ test.describe("SEO Export (#847)", () => {
     });
   });
 
-  // Export AC3: Before selecting audit, shows prompt
+  // Export AC3: Before selecting audit, shows export heading with disabled buttons
   test("should show select-audit prompt before audit is chosen", async ({
     page,
   }) => {
@@ -375,10 +375,11 @@ test.describe("SEO Export (#847)", () => {
     await seo.goto();
     await seo.switchToTab("export");
 
+    await expect(seo.exportHeading).toBeVisible();
     await expect(seo.selectAuditMessage).toBeVisible();
   });
 
-  // Export: No audits available
+  // Export: No audits available — shows disabled export buttons with message
   test("should show no-audits message when history is empty", async ({
     page,
   }) => {
@@ -388,6 +389,8 @@ test.describe("SEO Export (#847)", () => {
     await seo.switchToTab("export");
 
     await expect(seo.noAuditsMessage).toBeVisible();
+    await expect(seo.csvButton).toBeVisible();
+    await expect(seo.csvButton).toBeDisabled();
   });
 
   // Export AC2: Clicking export button triggers API call

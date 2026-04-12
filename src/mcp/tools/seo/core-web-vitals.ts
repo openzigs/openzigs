@@ -55,6 +55,19 @@ const cache = new Map<
   { result: CoreWebVitalsResult; expiresAt: number }
 >();
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+const CACHE_MAX_SIZE = 1000;
+const CACHE_EVICT_COUNT = 200;
+
+/** Evict oldest entries when cache exceeds max size. */
+function evictIfNeeded(): void {
+  if (cache.size <= CACHE_MAX_SIZE) return;
+  const entries = [...cache.entries()].sort(
+    (a, b) => a[1].expiresAt - b[1].expiresAt,
+  );
+  for (let i = 0; i < CACHE_EVICT_COUNT && i < entries.length; i++) {
+    cache.delete(entries[i][0]);
+  }
+}
 
 export function getCachedResult(url: string): CoreWebVitalsResult | undefined {
   const entry = cache.get(url);
@@ -71,10 +84,15 @@ export function setCachedResult(
   result: CoreWebVitalsResult,
 ): void {
   cache.set(url, { result, expiresAt: Date.now() + CACHE_TTL_MS });
+  evictIfNeeded();
 }
 
 export function clearCache(): void {
   cache.clear();
+}
+
+export function getCacheSize(): number {
+  return cache.size;
 }
 
 // ── PageSpeed Insights API ───────────────────────────────────────────────

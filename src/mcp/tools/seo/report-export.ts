@@ -59,10 +59,10 @@ export function exportIssuesToCsv(data: ExportableAuditData): string {
     for (const issue of page.issues) {
       rows.push(
         [
+          escapeCsv(page.url),
           escapeCsv(issue.severity),
           escapeCsv(issue.category),
           escapeCsv(issue.message),
-          escapeCsv(page.url),
         ].join(","),
       );
     }
