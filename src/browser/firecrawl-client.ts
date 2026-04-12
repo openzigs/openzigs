@@ -365,7 +365,7 @@ export class FirecrawlClient {
       }
     }
 
-    return this.pollCrawlJob(jobId);
+    return this.pollCrawlJob(jobId, url, options?.limit);
   }
 
   /**
@@ -749,9 +749,26 @@ export class FirecrawlClient {
     };
   }
 
-  private async pollCrawlJob(jobId: string): Promise<CrawlResult> {
+  private async pollCrawlJob(
+    jobId: string,
+    siteUrl?: string,
+    estimatedTotal?: number,
+  ): Promise<CrawlResult> {
     const maxPolls = 300; // 5 minutes at 1s intervals
     const pollInterval = 1000;
+
+    // Register with webhook handler for UI progress events (even without webhooks)
+    if (this._webhookHandler && siteUrl) {
+      this._webhookHandler.registerCrawl(jobId, siteUrl, estimatedTotal ?? 0);
+    }
+
+    logger.info("[FirecrawlClient] Polling crawl job", {
+      jobId,
+      siteUrl,
+      estimatedTotal,
+    });
+
+    let lastLogged = 0;
 
     for (let i = 0; i < maxPolls; i++) {
       this.resetIdleTimer();
@@ -766,9 +783,50 @@ export class FirecrawlClient {
 
       const data = (await resp.json()) as Record<string, unknown>;
       const status = data.status as string;
+      const completed = (data.completed ?? 0) as number;
+      const total = (data.total ?? estimatedTotal ?? 0) as number;
+
+      // Emit progress events so CrawlProgressPanel stays updated
+      if (this._webhookHandler && completed > lastLogged) {
+        const stats = this._webhookHandler.getCrawlStats(jobId);
+        if (stats) {
+          stats.pagesScraped = completed;
+          stats.estimatedTotal = total || stats.estimatedTotal;
+          stats.lastUrl = `${completed}/${total} pages`;
+        }
+        // Emit directly to avoid handleCrawlPageEvent's auto-increment
+        this._webhookHandler.emit("crawl:progress", {
+          jobId,
+          siteUrl: siteUrl ?? "",
+          pagesScraped: completed,
+          estimatedTotal: total,
+          errorCount: 0,
+          lastUrl: `${completed}/${total} pages`,
+          elapsedMs: i * pollInterval,
+        });
+        lastLogged = completed;
+      }
+
+      // Log progress every 10 polls (~10s)
+      if (i > 0 && i % 10 === 0) {
+        logger.info("[FirecrawlClient] Crawl poll progress", {
+          jobId,
+          status,
+          completed,
+          total,
+          elapsed: `${i}s`,
+        });
+      }
 
       if (status === "completed") {
         const pages = (data.data as Record<string, unknown>[]) ?? [];
+        logger.info("[FirecrawlClient] Crawl completed via polling", {
+          jobId,
+          pages: pages.length,
+        });
+        if (this._webhookHandler) {
+          this._webhookHandler.completeCrawl(jobId, "completed");
+        }
         return {
           pages: pages.map((p) => ({
             markdown: p.markdown as string | undefined,
@@ -785,6 +843,9 @@ export class FirecrawlClient {
       }
 
       if (status === "failed") {
+        if (this._webhookHandler) {
+          this._webhookHandler.completeCrawl(jobId, "failed");
+        }
         throw new Error(
           `Firecrawl crawl job ${jobId} failed: ${data.error ?? "unknown error"}`,
         );
@@ -793,6 +854,9 @@ export class FirecrawlClient {
       await new Promise((resolve) => setTimeout(resolve, pollInterval));
     }
 
+    if (this._webhookHandler) {
+      this._webhookHandler.completeCrawl(jobId, "failed");
+    }
     throw new Error(
       `Firecrawl crawl job ${jobId} timed out after ${maxPolls} seconds`,
     );

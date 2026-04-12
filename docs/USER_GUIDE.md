@@ -7924,26 +7924,161 @@ All crawl and SEO features are consolidated into a single **SEO Suite** page at 
 
 The page has **8 modes** accessible via a horizontal mode selector at the top:
 
-| Mode | Description |
-|------|-------------|
-| **Site Audit** | Run a full SEO audit — crawls pages, analyzes titles, meta, headings, images, links, and performance |
-| **Gap Analysis** | Compare your page against top-ranking competitors — keyword coverage, content depth, SERP features |
-| **Competitors** | Track competitor domains over time — add, snapshot, and compare |
-| **Extract** | Scrape and extract structured data using built-in templates (contacts, pricing, jobs, products) or custom JSON schemas |
-| **Leads** | Extract contact information from websites |
-| **Prices** | Monitor product prices over time |
-| **Dataset** | Convert a website into a structured dataset (Markdown, JSONL, CSV) |
-| **Ingest** | Crawl a website and ingest pages into the local knowledge base for RAG queries |
+#### Mode Reference
 
-Each mode provides:
-- **URL input** — Target site URL
-- **Model selection** — Choose which LLM to use for summarizing results
-- **Max pages / depth limits** — Control crawl scope (where applicable)
-- **Mode-specific options** — e.g., analysis mode for Gap Analysis, template selection for Extract
+##### Site Audit
 
-When you click **Run**, the page sends a structured prompt to the AI agent via Socket.IO, which invokes the appropriate MCP tools. Results stream in real-time through the chat interface.
+Run a full-site SEO audit analyzing titles, meta descriptions, headings, images, links, and performance.
 
-> **Note:** The SEO Gap Analysis mode does **not** require Firecrawl — it uses web search APIs. All other modes require the Firecrawl sidecar to be running.
+| Field | Description |
+|-------|-------------|
+| **Website URL** | The site to audit (e.g., `https://example.com`) |
+| **Max Pages** | Number of pages to crawl (default: 50, max: 500) |
+| **Max Depth** | How many links deep to follow (default: 3) |
+| **Model** | LLM to summarize findings |
+
+**Results:** The AI agent calls `seo-site-audit` and streams a summary into the chat. Detailed reports are saved to `~/.openzigs/seo-reports/{domain}/` as Markdown and PDF. The SEO Dashboard tabs (see below) populate with structured data from the audit.
+
+**Requires:** Firecrawl sidecar
+
+##### Gap Analysis
+
+Compare your page against the top-ranking competitors for a target keyword. Identifies content gaps, missing keywords, SERP feature opportunities, and structural weaknesses.
+
+| Field | Description |
+|-------|-------------|
+| **Target URL** | The page to analyze (e.g., `https://example.com/my-blog-post`) |
+| **Target Keyword** | The search term to compete for |
+| **Search Provider** | `auto`, `brave`, or `firecrawl-search` |
+| **Orchestration Mode** | `standard` (single agent), `session` (SDK subagents), or `task` (TaskEngine fan-out) |
+| **Export PDF** | Generate a PDF report |
+| **Model** | LLM for analysis |
+
+**Results:** Streams a competitive gap analysis into the chat with keyword coverage tables, content depth comparison, and prioritized recommendations. When PDF export is enabled, a report is saved to `~/.openzigs/seo-reports/`.
+
+**Does NOT require Firecrawl** — uses web search APIs.
+
+##### Competitors
+
+Track competitor domains over time with point-in-time snapshots and comparison reports.
+
+| Action | Fields | Description |
+|--------|--------|-------------|
+| **Add** | URL, Name | Register a competitor domain for tracking |
+| **Snapshot** | URL, Max Pages | Crawl a competitor and save current SEO metrics |
+| **Report** | (none) | Generate a comparison report across all tracked competitors |
+| **List** | (none) | Show all tracked competitor domains |
+
+**Results:** Competitor data is stored in `~/.openzigs/competitors/` with timestamped snapshots. Reports stream into the chat with field-level content diffs and trend analysis.
+
+**Requires:** Firecrawl sidecar
+
+##### Extract
+
+Scrape and extract structured data from any website using built-in templates or custom JSON schemas.
+
+| Field | Description |
+|-------|-------------|
+| **Website URL** | Page(s) to extract from |
+| **Template** | `contacts`, `pricing`, `jobs`, `products`, or `custom` |
+| **JSON Schema** | Custom schema (when template = `custom`) |
+| **Prompt** | Optional LLM guidance for extraction |
+| **Max Pages** | Pages to scrape (default: 1) |
+| **Scroll for content** | Scroll page to load lazy content before extraction |
+| **Wait for dynamic** | Wait for JS-rendered content to load |
+
+**Results:** Extracted data streams into the chat as structured tables. Results are also saved to SQLite for later retrieval.
+
+**Requires:** Firecrawl sidecar
+
+##### Leads
+
+Extract contact information (names, emails, phone numbers, titles) from websites.
+
+| Field | Description |
+|-------|-------------|
+| **Website URL** | Site to scan for contacts |
+| **Max Pages** | Pages to crawl (default: 50) |
+
+**Results:** Contact information streams into the chat as a formatted table.
+
+**Requires:** Firecrawl sidecar
+
+##### Prices
+
+Monitor product prices over time with snapshots, comparisons, and history.
+
+| Action | Fields | Description |
+|--------|--------|-------------|
+| **Snapshot** | URL, Label, Scroll to load | Capture current prices from a product page |
+| **Compare** | URL | Compare latest snapshot to previous |
+| **History** | URL | Show price change history |
+| **List** | (none) | List all tracked products |
+
+**Results:** Price data is stored in SQLite. Snapshots and comparisons stream into the chat.
+
+**Requires:** Firecrawl sidecar
+
+##### Dataset
+
+Convert a website into a structured dataset for training data, research, or knowledge bases.
+
+| Field | Description |
+|-------|-------------|
+| **Website URL** | Site to crawl |
+| **Max Pages** | Pages to include (default: 50) |
+| **Max Depth** | Crawl depth (default: 3) |
+| **Output Format** | `Markdown` (individual .md files), `JSONL` (chunked for ML training), or `CSV` (tabular) |
+| **Include paths** | Comma-separated URL patterns to include (e.g., `/docs, /blog`) |
+| **Exclude paths** | Comma-separated URL patterns to exclude (e.g., `/admin, /login`) |
+
+**Results:** Dataset files are saved to `~/.openzigs/datasets/{domain}/{timestamp}/` with a `manifest.json` containing metadata (page count, total characters, file list). A summary streams into the chat.
+
+**Requires:** Firecrawl sidecar
+
+##### Ingest
+
+Crawl a website and ingest pages into the local knowledge base for RAG (Retrieval-Augmented Generation) queries.
+
+| Field | Description |
+|-------|-------------|
+| **Website URL** | Site to ingest |
+| **Max Pages** | Pages to crawl (default: 50) |
+| **Max Depth** | Crawl depth (default: 3) |
+| **Category** | Knowledge base category (default: `document`) |
+| **Visibility** | `internal` or `public` |
+
+**Results:** Pages are chunked, embedded, and stored in the local knowledge base. A summary of ingested pages and any failures streams into the chat. Ingested content is then available for RAG queries in the Chat.
+
+**Requires:** Firecrawl sidecar
+
+#### Crawl Progress
+
+When any Firecrawl-based mode is running, the **Crawl Progress Panel** appears at the top of the page showing real-time progress:
+
+- **Site URL** being crawled
+- **Pages completed / total** with a live progress bar
+- **Status** — running, completed, or failed
+
+Progress is tracked via both webhook callbacks and polling. If Firecrawl webhooks are configured (default), page-by-page progress updates appear in real time. Otherwise, progress updates every few seconds as the poll loop reports Firecrawl's status.
+
+> **Note:** The Run button is disabled with a warning banner if Firecrawl is unavailable. Start the sidecar with: `docker compose -f docker-compose.firecrawl.yml up -d`
+
+#### Dashboard Tabs
+
+Below the mode selector and form, the SEO Dashboard provides a **7-tab interface** showing structured data from your most recent audit:
+
+| Tab | Icon | What it shows |
+|-----|------|-------------|
+| **Overview** | 🔍 | Site Health Score (0-100 circular gauge) + Recent Trends chart |
+| **Audit** | ⚠️ | Detailed issue list grouped by severity (Errors, Warnings, Info) with per-page breakdown |
+| **Links** | 🔗 | Link statistics + D3 force-directed graph visualization showing internal link structure |
+| **Content** | 📄 | Duplicate content groups + thin content pages (<300 words) |
+| **Performance** | ⏱️ | Core Web Vitals metrics (LCP, CLS, TBT, FCP, SI, TTI) with good/needs-improvement/poor ratings |
+| **History** | 📊 | Past audit snapshots with score trends and regression detection |
+| **Export** | 📥 | Download reports as CSV, JSON, or PDF |
+
+> The dashboard tabs populate after running a **Site Audit**. Other modes (Gap Analysis, Extract, etc.) stream results directly into the Chat.
 
 ### Output Reports
 
@@ -7958,38 +8093,7 @@ Reports include:
 - Category breakdowns (Critical, High, Medium, Low issues)
 - Actionable recommendations
 
-### SEO Dashboard
-
-Navigate to **Automation → SEO** in the nav bar to access the SEO Dashboard (`/seo`). The dashboard provides a comprehensive 7-tab interface for site auditing and analysis.
-
-![SEO Dashboard — Overview tab with Health Score and Trends](images/seo-dashboard-overview.png)
-
-#### Running an Audit
-
-1. Enter your site URL (e.g., `sawsonskates.com`) in the **Run Audit** input field at the top
-2. Click **Run Audit** — the button shows a loading spinner during health check
-3. The **Crawl Progress Panel** appears showing real-time progress:
-   - Current page being crawled
-   - Pages completed / total
-   - Live progress bar
-   - Error count
-   - Cancel button to abort
-
-**Note:** The Run Audit button is disabled with a warning if Firecrawl is unavailable. Start the sidecar with: `docker compose -f docker-compose.firecrawl.yml up -d`
-
-#### Dashboard Tabs
-
-| Tab | Icon | Description |
-|-----|------|-------------|
-| **Overview** | 🔍 | Site Health Score (0-100 circular gauge) + Recent Trends chart |
-| **Audit** | ⚠️ | Detailed issue list grouped by severity (Errors, Warnings, Info) with per-page breakdown |
-| **Links** | 🔗 | Link statistics + D3 force-directed graph visualization showing internal link structure |
-| **Content** | 📄 | Duplicate content groups + thin content pages (<300 words) |
-| **Performance** | ⏱️ | Core Web Vitals metrics (LCP, CLS, TBT, FCP, SI, TTI) with good/needs-improvement/poor ratings |
-| **History** | 📊 | Past audit snapshots with score trends and regression detection |
-| **Export** | 📥 | Download reports as CSV, JSON, or PDF |
-
-#### Health Score
+### Health Score
 
 The Health Score is computed from weighted issue severity:
 
@@ -8009,25 +8113,7 @@ Health Score = 100 - sum(issues × weight)
 - **50-74** (Yellow) — Good: Some issues need attention
 - **0-49** (Red) — Poor: Significant SEO problems
 
-#### Link Graph Visualization
-
-The **Links** tab includes an interactive force-directed graph powered by D3.js:
-
-- **Nodes** — Each page on your site, color-coded by issue count:
-  - 🟢 Green: No issues
-  - 🟡 Yellow: Some issues
-  - 🔴 Red: Many issues
-  - ⚪ Gray: Orphan pages (no incoming links)
-- **Edges** — Internal links between pages
-- **Interactions** — Zoom, pan, and drag nodes to explore the link structure
-- **Legend** — Color-coded key explaining node colors
-
-This visualization helps identify:
-- Orphan pages that need internal links
-- Hub pages with many outgoing links
-- Isolated content clusters
-
-#### Content Analysis
+### Content Analysis
 
 The **Content** tab shows:
 
@@ -8036,7 +8122,7 @@ The **Content** tab shows:
 - **Thin Content** — Pages with fewer than 300 words
   - Consider expanding content or consolidating with related pages
 
-#### Export Formats
+### Export Formats
 
 Download audit reports in three formats:
 

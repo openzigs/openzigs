@@ -15,16 +15,20 @@ export interface CrawlStats {
 export interface CrawlProgressEvent {
   jobId: string;
   siteUrl: string;
-  pageUrl: string;
-  pagesCompleted: number;
-  totalPages: number;
+  pagesScraped: number;
+  estimatedTotal: number;
+  lastUrl: string;
+  errorCount: number;
+  elapsedMs: number;
 }
 
 export interface CrawlCompletedEvent {
   jobId: string;
   siteUrl: string;
-  pagesCompleted: number;
-  totalPages: number;
+  pagesScraped: number;
+  errorCount: number;
+  elapsedMs: number;
+  status: "completed" | "failed";
 }
 
 export function useCrawlProgress() {
@@ -34,14 +38,14 @@ export function useCrawlProgress() {
   );
 
   const handleStarted = useCallback(
-    (event: { jobId: string; siteUrl: string }) => {
+    (event: { jobId: string; siteUrl: string; estimatedTotal?: number }) => {
       setActiveCrawls((prev) => {
         const next = new Map(prev);
         next.set(event.jobId, {
           jobId: event.jobId,
           siteUrl: event.siteUrl,
           pagesCompleted: 0,
-          totalPages: 0,
+          totalPages: event.estimatedTotal ?? 0,
           startedAt: new Date().toISOString(),
           status: "running",
         });
@@ -58,8 +62,8 @@ export function useCrawlProgress() {
       if (existing) {
         next.set(event.jobId, {
           ...existing,
-          pagesCompleted: event.pagesCompleted,
-          totalPages: event.totalPages,
+          pagesCompleted: event.pagesScraped,
+          totalPages: event.estimatedTotal || existing.totalPages,
         });
       }
       return next;
@@ -73,9 +77,9 @@ export function useCrawlProgress() {
       if (existing) {
         next.set(event.jobId, {
           ...existing,
-          pagesCompleted: event.pagesCompleted,
-          totalPages: event.totalPages,
-          status: "completed",
+          pagesCompleted: event.pagesScraped,
+          totalPages: event.pagesScraped,
+          status: event.status === "failed" ? "failed" : "completed",
         });
       }
       // Auto-remove after 10 seconds
