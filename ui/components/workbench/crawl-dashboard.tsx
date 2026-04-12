@@ -28,6 +28,16 @@ import {
   History,
 } from "lucide-react";
 import { ExtractionHistory } from "./extraction-history";
+import {
+  buildSiteAuditPrompt,
+  buildIngestPrompt,
+  buildMonitorPrompt,
+  buildExtractPrompt,
+  buildLeadPrompt,
+  buildPricePrompt,
+  buildDatasetPrompt,
+  FIRECRAWL_TOOLS,
+} from "@/lib/seo-prompts";
 
 // ── Types ────────────────────────────────────────────────────────────────
 
@@ -194,19 +204,7 @@ export function CrawlDashboardDialog({
     socket.emit("chat:message", {
       content: prompt,
       model: model || undefined,
-      tools: [
-        "seo-site-audit",
-        "ingest-website",
-        "competitive-monitor",
-        "web-extract",
-        "web-map",
-        "lead-extract",
-        "price-monitor",
-        "site-to-dataset",
-        "read-file",
-        "write-file",
-        "list-directory",
-      ],
+      tools: FIRECRAWL_TOOLS,
     });
     setLoading(false);
     onOpenChange(false);
@@ -750,184 +748,6 @@ function ActionButton({
       {label}
     </button>
   );
-}
-
-// ── Prompt Builders ──────────────────────────────────────────────────────
-
-function buildSiteAuditPrompt(
-  url: string,
-  maxPages: number,
-  maxDepth: number,
-): string {
-  return [
-    `Run a comprehensive SEO site audit using the seo-site-audit tool.`,
-    ``,
-    `Call the seo-site-audit tool with:`,
-    `\`\`\`json`,
-    JSON.stringify({ url, maxPages, maxDepth }, null, 2),
-    `\`\`\``,
-    ``,
-    `After the audit completes, summarize the key findings:`,
-    `- Total issues by severity`,
-    `- Top 5 most critical issues`,
-    `- Site-wide patterns (duplicate titles, missing schema, etc.)`,
-    `- Actionable recommendations prioritized by impact`,
-  ].join("\n");
-}
-
-function buildIngestPrompt(
-  url: string,
-  maxPages: number,
-  maxDepth: number,
-  category: string,
-  visibility: string,
-): string {
-  return [
-    `Ingest a website into the knowledge base using the ingest-website tool.`,
-    ``,
-    `Call the ingest-website tool with:`,
-    `\`\`\`json`,
-    JSON.stringify({ url, maxPages, maxDepth, category, visibility }, null, 2),
-    `\`\`\``,
-    ``,
-    `Report the ingestion results: pages successfully ingested, any failures, and recommendations.`,
-  ].join("\n");
-}
-
-function buildMonitorPrompt(
-  monitorAction: string,
-  url: string,
-  name: string,
-  maxPages: number,
-): string {
-  const args: Record<string, unknown> = { action: monitorAction };
-  if (url) args.url = url;
-  if (name && monitorAction === "add") args.name = name;
-  if (monitorAction === "snapshot") args.maxPages = maxPages;
-
-  return [
-    `Use the competitive-monitor tool to ${monitorAction} a competitor.`,
-    ``,
-    `Call the competitive-monitor tool with:`,
-    `\`\`\`json`,
-    JSON.stringify(args, null, 2),
-    `\`\`\``,
-    ``,
-    monitorAction === "report"
-      ? `Analyze the competitive intelligence report and highlight key changes and strategic implications.`
-      : `Report the result.`,
-  ].join("\n");
-}
-
-function buildExtractPrompt(
-  url: string,
-  schema: string,
-  prompt: string,
-  maxPages: number,
-  template: string,
-  scrollForContent: boolean,
-  waitForDynamic: boolean,
-): string {
-  const args: Record<string, unknown> = { url };
-  if (template !== "custom") {
-    args.template = template;
-  } else if (schema.trim()) {
-    try {
-      args.schema = JSON.parse(schema);
-    } catch {
-      args.prompt = `Extract data with this schema: ${schema}`;
-    }
-  }
-  if (prompt.trim()) args.prompt = prompt;
-  if (maxPages > 1) args.maxPages = maxPages;
-
-  const hints: string[] = [];
-  if (scrollForContent)
-    hints.push("Scroll the page to load all lazy content before extraction.");
-  if (waitForDynamic)
-    hints.push("Wait for dynamic/JavaScript-rendered content to fully load.");
-
-  return [
-    `Use the web-extract tool to scrape and extract structured data.`,
-    ``,
-    `Call the web-extract tool with:`,
-    "```json",
-    JSON.stringify(args, null, 2),
-    "```",
-    ...(hints.length ? [``, ...hints] : []),
-    ``,
-    `After extraction, present the structured results clearly.`,
-  ].join("\n");
-}
-
-function buildLeadPrompt(url: string, maxPages: number): string {
-  return [
-    `Use the lead-extract tool to find contacts and company info.`,
-    ``,
-    `Call the lead-extract tool with:`,
-    "```json",
-    JSON.stringify({ url, maxPages }, null, 2),
-    "```",
-    ``,
-    `Present the extracted contacts in a clean table format.`,
-  ].join("\n");
-}
-
-function buildPricePrompt(
-  action: string,
-  url: string,
-  label: string,
-  scrollToLoad: boolean,
-): string {
-  const args: Record<string, unknown> = { action };
-  if (url) args.url = url;
-  if (label && action === "snapshot") args.label = label;
-  if (scrollToLoad && action === "snapshot") args.scrollToLoad = true;
-
-  return [
-    `Use the price-monitor tool to ${action} pricing data.`,
-    ``,
-    `Call the price-monitor tool with:`,
-    "```json",
-    JSON.stringify(args, null, 2),
-    "```",
-    ``,
-    action === "compare"
-      ? `Analyze the price differences and highlight important changes.`
-      : `Present the results clearly.`,
-  ].join("\n");
-}
-
-function buildDatasetPrompt(
-  url: string,
-  maxPages: number,
-  maxDepth: number,
-  format: string,
-  includePaths: string,
-  excludePaths: string,
-): string {
-  const args: Record<string, unknown> = { url, maxPages, maxDepth, format };
-  if (includePaths.trim())
-    args.includePaths = includePaths
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean);
-  if (excludePaths.trim())
-    args.excludePaths = excludePaths
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean);
-
-  return [
-    `Use the site-to-dataset tool to crawl and build a structured dataset.`,
-    ``,
-    `Call the site-to-dataset tool with:`,
-    "```json",
-    JSON.stringify(args, null, 2),
-    "```",
-    ``,
-    `Report the dataset creation results and suggest next steps for processing.`,
-  ].join("\n");
 }
 
 function getButtonLabel(action: CrawlAction): string {

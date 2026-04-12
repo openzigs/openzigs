@@ -103,8 +103,12 @@ export class SeoDashboardPage {
     this.csvButton = page.getByRole("button", { name: /CSV/i });
     this.jsonButton = page.getByRole("button", { name: /JSON/i });
     this.pdfButton = page.getByRole("button", { name: /PDF/i });
-    this.selectAuditMessage = page.getByText("Run an audit first to enable export");
-    this.noAuditsMessage = page.getByText("Run an audit first to enable export");
+    this.selectAuditMessage = page.getByText(
+      "Run an audit first to enable export",
+    );
+    this.noAuditsMessage = page.getByText(
+      "Run an audit first to enable export",
+    );
 
     // Crawl Progress
     this.activeCrawlsHeading = page.getByText("Active Crawls");

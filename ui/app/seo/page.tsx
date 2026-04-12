@@ -6,12 +6,28 @@ import { useState, useCallback, useEffect } from "react";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { useSeoHistory } from "@/hooks/useSeoHistory";
 import { useQueryClient } from "@tanstack/react-query";
+import { useSocket } from "@/lib/socket-context";
 import { CrawlProgressPanel } from "@/components/seo/crawl-progress-panel";
 import { SiteHealthScore } from "@/components/seo/site-health-score";
 import { AuditTrends } from "@/components/seo/audit-trends";
 import { ExportDialog } from "@/components/seo/export-dialog";
 import { LinkGraph } from "@/components/seo/link-graph";
+import { InlineModelPicker } from "@/components/model-picker-select";
 import { fetchJson } from "@/lib/api";
+import { cn } from "@/lib/utils";
+import {
+  buildSiteAuditPrompt,
+  buildSeoGapAnalysisPrompt,
+  buildMonitorPrompt,
+  buildExtractPrompt,
+  buildLeadPrompt,
+  buildPricePrompt,
+  buildDatasetPrompt,
+  buildIngestPrompt,
+  getSeoGapAnalysisTools,
+  FIRECRAWL_TOOLS,
+  type OrchestrationMode,
+} from "@/lib/seo-prompts";
 import {
   Search,
   BarChart3,
@@ -24,7 +40,27 @@ import {
   Play,
   Loader2,
   AlertCircle,
+  Globe,
+  Database,
+  FileJson,
+  Users,
+  DollarSign,
+  HardDrive,
+  Info,
+  TrendingUp,
 } from "lucide-react";
+
+// ── Types ────────────────────────────────────────────────────────────────
+
+type SeoMode =
+  | "site-audit"
+  | "gap-analysis"
+  | "competitors"
+  | "extract"
+  | "leads"
+  | "prices"
+  | "dataset"
+  | "ingest";
 
 interface AuditIssue {
   severity: string;
@@ -92,67 +128,285 @@ interface SeoData {
   coreWebVitals?: CwvEntry[];
 }
 
+// ── Mode metadata ────────────────────────────────────────────────────────
+
+const MODES: { key: SeoMode; label: string; icon: React.ReactNode }[] = [
+  {
+    key: "site-audit",
+    label: "Site Audit",
+    icon: <Search className="h-3.5 w-3.5" />,
+  },
+  {
+    key: "gap-analysis",
+    label: "Gap Analysis",
+    icon: <TrendingUp className="h-3.5 w-3.5" />,
+  },
+  {
+    key: "competitors",
+    label: "Competitors",
+    icon: <BarChart3 className="h-3.5 w-3.5" />,
+  },
+  {
+    key: "extract",
+    label: "Extract",
+    icon: <FileJson className="h-3.5 w-3.5" />,
+  },
+  { key: "leads", label: "Leads", icon: <Users className="h-3.5 w-3.5" /> },
+  {
+    key: "prices",
+    label: "Prices",
+    icon: <DollarSign className="h-3.5 w-3.5" />,
+  },
+  {
+    key: "dataset",
+    label: "Dataset",
+    icon: <HardDrive className="h-3.5 w-3.5" />,
+  },
+  {
+    key: "ingest",
+    label: "Ingest",
+    icon: <Database className="h-3.5 w-3.5" />,
+  },
+];
+
+// ── Component ────────────────────────────────────────────────────────────
+
 export default function SeoPage() {
   const { data: history } = useSeoHistory();
   const queryClient = useQueryClient();
+  const { socket, connected } = useSocket();
   const latest = history?.[0] ?? null;
   const [selectedId, setSelectedId] = useState<number | null>(null);
-  const [auditUrl, setAuditUrl] = useState("");
-  const [auditRunning, setAuditRunning] = useState(false);
-  const [auditError, setAuditError] = useState<string | null>(null);
+
+  // ── Mode state ──
+  const [mode, setMode] = useState<SeoMode>("site-audit");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // ── Shared form fields ──
+  const [url, setUrl] = useState("");
+  const [maxPages, setMaxPages] = useState(50);
+  const [maxDepth, setMaxDepth] = useState(3);
+  const [model, setModel] = useState("");
+
+  // ── Gap Analysis fields ──
+  const [targetKeyword, setTargetKeyword] = useState("");
+  const [searchProvider, setSearchProvider] = useState("auto");
+  const [orchestrationMode, setOrchestrationMode] =
+    useState<OrchestrationMode>("standard");
+  const [exportPdf, setExportPdf] = useState(true);
+
+  // ── Ingest fields ──
+  const [category, setCategory] = useState("document");
+  const [visibility, setVisibility] = useState("internal");
+
+  // ── Competitors fields ──
+  const [monitorAction, setMonitorAction] = useState<
+    "add" | "snapshot" | "report" | "list"
+  >("add");
+  const [competitorName, setCompetitorName] = useState("");
+
+  // ── Extract fields ──
+  const [extractSchema, setExtractSchema] = useState("");
+  const [extractPrompt, setExtractPrompt] = useState("");
+  const [extractTemplate, setExtractTemplate] = useState("custom");
+  const [scrollForContent, setScrollForContent] = useState(false);
+  const [waitForDynamic, setWaitForDynamic] = useState(false);
+
+  // ── Price fields ──
+  const [priceAction, setPriceAction] = useState<
+    "snapshot" | "compare" | "history" | "list"
+  >("snapshot");
+  const [scrollToLoad, setScrollToLoad] = useState(false);
+  const [priceLabel, setPriceLabel] = useState("");
+
+  // ── Dataset fields ──
+  const [datasetFormat, setDatasetFormat] = useState<
+    "markdown" | "jsonl" | "csv"
+  >("markdown");
+  const [includePaths, setIncludePaths] = useState("");
+  const [excludePaths, setExcludePaths] = useState("");
+
+  // ── Firecrawl health ──
   const [firecrawlHealth, setFirecrawlHealth] = useState<{
     available: boolean;
     message: string;
     checking: boolean;
   }>({ available: false, message: "", checking: true });
 
-  // Check Firecrawl health on mount
   useEffect(() => {
+    let cancelled = false;
     const checkHealth = async () => {
       try {
-        const result = await fetchJson<{ available: boolean; message: string }>(
-          "/api/seo/health",
-        );
-        setFirecrawlHealth({
-          available: result.available,
-          message: result.message,
-          checking: false,
-        });
+        const [seoHealth, adminStatus] = await Promise.allSettled([
+          fetchJson<{ available: boolean; message: string }>("/api/seo/health"),
+          fetchJson<{ enabled: boolean }>("/api/admin/firecrawl/status"),
+        ]);
+        const seoAvailable =
+          seoHealth.status === "fulfilled" && seoHealth.value.available;
+        const adminEnabled =
+          adminStatus.status === "fulfilled" && adminStatus.value.enabled;
+        if (!cancelled) {
+          setFirecrawlHealth({
+            available: seoAvailable || adminEnabled,
+            message:
+              seoHealth.status === "fulfilled"
+                ? seoHealth.value.message
+                : "Failed to check status",
+            checking: false,
+          });
+        }
       } catch {
-        setFirecrawlHealth({
-          available: false,
-          message: "Failed to check Firecrawl status",
-          checking: false,
-        });
+        if (!cancelled) {
+          setFirecrawlHealth({
+            available: false,
+            message: "Failed to check Firecrawl status",
+            checking: false,
+          });
+        }
       }
     };
     checkHealth();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
-  const handleRunAudit = useCallback(async () => {
-    const trimmed = auditUrl.trim();
-    if (!trimmed) return;
-    setAuditRunning(true);
-    setAuditError(null);
-    try {
-      await fetchJson<{ status: string; url: string }>("/api/seo/audit", {
-        method: "POST",
-        body: JSON.stringify({ url: trimmed }),
-      });
-      // After accepted, clear input — user should see progress via CrawlProgressPanel
-      setAuditUrl("");
-      // Refresh history after a short delay to allow audit start
-      setTimeout(() => {
-        queryClient.invalidateQueries({ queryKey: ["seo-history"] });
-      }, 3000);
-    } catch (err) {
-      setAuditError(
-        err instanceof Error ? err.message : "Failed to start audit",
-      );
-    } finally {
-      setAuditRunning(false);
+  const isFirecrawlMode = mode !== "gap-analysis";
+  const showUrlInput =
+    !(mode === "competitors" && monitorAction === "list") &&
+    !(mode === "prices" && priceAction === "list");
+  const showMaxPagesDepth =
+    mode === "site-audit" ||
+    mode === "ingest" ||
+    mode === "leads" ||
+    mode === "dataset";
+
+  const handleSubmit = useCallback(() => {
+    if (showUrlInput && !url.trim()) {
+      setError("URL is required");
+      return;
     }
-  }, [auditUrl, queryClient]);
+    if (!socket || !connected) {
+      setError("Not connected to server");
+      return;
+    }
+    if (mode === "gap-analysis") {
+      try {
+        new URL(url.trim());
+      } catch {
+        setError("Please enter a valid URL");
+        return;
+      }
+    }
+
+    setError(null);
+    setSubmitting(true);
+
+    let prompt = "";
+    let tools: string[] = FIRECRAWL_TOOLS;
+
+    switch (mode) {
+      case "site-audit":
+        prompt = buildSiteAuditPrompt(url, maxPages, maxDepth);
+        break;
+      case "gap-analysis": {
+        prompt = buildSeoGapAnalysisPrompt({
+          targetUrl: url.trim(),
+          targetKeyword: targetKeyword.trim(),
+          searchProvider,
+          exportPdf,
+          orchestrationMode,
+        });
+        tools = getSeoGapAnalysisTools(orchestrationMode);
+        break;
+      }
+      case "competitors":
+        prompt = buildMonitorPrompt(
+          monitorAction,
+          url,
+          competitorName,
+          maxPages,
+        );
+        break;
+      case "extract":
+        prompt = buildExtractPrompt(
+          url,
+          extractSchema,
+          extractPrompt,
+          maxPages,
+          extractTemplate,
+          scrollForContent,
+          waitForDynamic,
+        );
+        break;
+      case "leads":
+        prompt = buildLeadPrompt(url, maxPages);
+        break;
+      case "prices":
+        prompt = buildPricePrompt(priceAction, url, priceLabel, scrollToLoad);
+        break;
+      case "dataset":
+        prompt = buildDatasetPrompt(
+          url,
+          maxPages,
+          maxDepth,
+          datasetFormat,
+          includePaths,
+          excludePaths,
+        );
+        break;
+      case "ingest":
+        prompt = buildIngestPrompt(
+          url,
+          maxPages,
+          maxDepth,
+          category,
+          visibility,
+        );
+        break;
+    }
+
+    socket.emit("chat:message", {
+      content: prompt,
+      model: model || undefined,
+      tools,
+    });
+
+    setSubmitting(false);
+    setTimeout(() => {
+      queryClient.invalidateQueries({ queryKey: ["seo-history"] });
+    }, 3000);
+  }, [
+    mode,
+    url,
+    maxPages,
+    maxDepth,
+    model,
+    socket,
+    connected,
+    showUrlInput,
+    targetKeyword,
+    searchProvider,
+    orchestrationMode,
+    exportPdf,
+    monitorAction,
+    competitorName,
+    extractSchema,
+    extractPrompt,
+    extractTemplate,
+    scrollForContent,
+    waitForDynamic,
+    priceAction,
+    priceLabel,
+    scrollToLoad,
+    datasetFormat,
+    includePaths,
+    excludePaths,
+    category,
+    visibility,
+    queryClient,
+  ]);
 
   const latestData = latest ? safeParseDataJson(latest.dataJson) : null;
 
@@ -165,61 +419,536 @@ export default function SeoPage() {
         </p>
       </div>
 
-      {/* Run Audit CTA */}
+      {/* ── Mode selector ──────────────────────────────────────────── */}
+      <div className="flex flex-wrap gap-2 mb-4">
+        {MODES.map((m) => (
+          <button
+            key={m.key}
+            type="button"
+            onClick={() => {
+              setMode(m.key);
+              setError(null);
+            }}
+            className={cn(
+              "inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors",
+              mode === m.key
+                ? "border-primary bg-primary/10 text-primary"
+                : "border-border bg-background text-muted-foreground hover:bg-accent",
+            )}
+          >
+            {m.icon}
+            {m.label}
+          </button>
+        ))}
+      </div>
+
+      {/* ── Mode-specific form ─────────────────────────────────────── */}
       <div className="rounded-xl border bg-card p-4 mb-4">
-        <h3 className="text-sm font-semibold mb-2 flex items-center gap-2">
-          <Play className="h-4 w-4" /> Run Audit
+        <h3 className="text-sm font-semibold mb-3 flex items-center gap-2">
+          <Play className="h-4 w-4" />
+          {MODES.find((m) => m.key === mode)?.label}
         </h3>
 
         {/* Firecrawl health warning */}
-        {!firecrawlHealth.checking && !firecrawlHealth.available && (
-          <div className="flex items-start gap-2 rounded-md bg-yellow-500/10 border border-yellow-500/30 p-3 mb-3">
-            <AlertCircle className="h-4 w-4 text-yellow-600 mt-0.5 shrink-0" />
-            <div className="text-sm">
-              <p className="font-medium text-yellow-700 dark:text-yellow-500">
-                Firecrawl sidecar not available
-              </p>
-              <p className="text-xs text-muted-foreground mt-0.5">
-                {firecrawlHealth.message}
-              </p>
+        {!firecrawlHealth.checking &&
+          !firecrawlHealth.available &&
+          isFirecrawlMode && (
+            <div className="flex items-start gap-2 rounded-md border border-yellow-500/30 bg-yellow-500/10 p-3 mb-3">
+              <Info className="mt-0.5 h-4 w-4 shrink-0 text-yellow-600" />
+              <div className="text-sm">
+                <p className="font-medium text-yellow-700 dark:text-yellow-500">
+                  Firecrawl sidecar not available
+                </p>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  {firecrawlHealth.message ||
+                    "Run docker compose -f docker-compose.firecrawl.yml up -d to start the Firecrawl sidecar."}
+                </p>
+              </div>
             </div>
-          </div>
-        )}
+          )}
 
-        <div className="flex gap-2">
-          <input
-            type="text"
-            value={auditUrl}
-            onChange={(e) => setAuditUrl(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && firecrawlHealth.available)
-                handleRunAudit();
-            }}
-            placeholder="Enter site URL, e.g. sawsonskates.com"
-            className="flex-1 rounded-md border bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-50"
-            disabled={auditRunning || !firecrawlHealth.available}
-          />
+        <div className="space-y-3">
+          {/* URL input */}
+          {showUrlInput && (
+            <div>
+              <label
+                htmlFor="seo-url"
+                className="mb-1 block text-sm font-medium"
+              >
+                {mode === "gap-analysis" ? "Target URL" : "Website URL"}{" "}
+                <span className="text-destructive">*</span>
+              </label>
+              <input
+                id="seo-url"
+                type="url"
+                value={url}
+                onChange={(e) => setUrl(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") handleSubmit();
+                }}
+                placeholder={
+                  mode === "gap-analysis"
+                    ? "https://example.com/my-blog-post"
+                    : "https://example.com"
+                }
+                className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+              />
+            </div>
+          )}
+
+          {/* Max pages & depth */}
+          {showMaxPagesDepth && (
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label
+                  htmlFor="max-pages"
+                  className="mb-1 block text-sm font-medium"
+                >
+                  Max Pages
+                </label>
+                <input
+                  id="max-pages"
+                  type="number"
+                  min={1}
+                  max={mode === "site-audit" ? 500 : 200}
+                  value={maxPages}
+                  onChange={(e) => setMaxPages(Number(e.target.value))}
+                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+                />
+              </div>
+              <div>
+                <label
+                  htmlFor="max-depth"
+                  className="mb-1 block text-sm font-medium"
+                >
+                  Max Depth
+                </label>
+                <input
+                  id="max-depth"
+                  type="number"
+                  min={1}
+                  max={10}
+                  value={maxDepth}
+                  onChange={(e) => setMaxDepth(Number(e.target.value))}
+                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+                />
+              </div>
+            </div>
+          )}
+
+          {/* ── Gap Analysis fields ─── */}
+          {mode === "gap-analysis" && (
+            <>
+              <div>
+                <label
+                  htmlFor="seo-keyword"
+                  className="mb-1 block text-sm font-medium"
+                >
+                  Target Keyword
+                </label>
+                <input
+                  id="seo-keyword"
+                  type="text"
+                  maxLength={200}
+                  value={targetKeyword}
+                  onChange={(e) => setTargetKeyword(e.target.value)}
+                  placeholder="e.g. best project management tools"
+                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+                />
+                <p className="mt-0.5 text-[10px] text-muted-foreground">
+                  Leave blank to auto-detect from page content
+                </p>
+              </div>
+              <div>
+                <label
+                  htmlFor="seo-provider"
+                  className="mb-1 block text-sm font-medium"
+                >
+                  Search Provider
+                </label>
+                <select
+                  id="seo-provider"
+                  value={searchProvider}
+                  onChange={(e) => setSearchProvider(e.target.value)}
+                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+                >
+                  <option value="auto">Auto (use available API key)</option>
+                  <option value="serper">Serper.dev (Google results)</option>
+                  <option value="brave">Brave Search</option>
+                </select>
+              </div>
+              <div>
+                <label
+                  htmlFor="seo-orch-mode"
+                  className="mb-1 block text-sm font-medium"
+                >
+                  Analysis Mode
+                </label>
+                <select
+                  id="seo-orch-mode"
+                  value={orchestrationMode}
+                  onChange={(e) =>
+                    setOrchestrationMode(e.target.value as OrchestrationMode)
+                  }
+                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+                >
+                  <option value="standard">
+                    Standard — single session, 1 API call
+                  </option>
+                  <option value="session">
+                    Session — SDK subagent delegation, ~2 API calls
+                  </option>
+                  <option value="task">
+                    Parallel — fan-out agents, ~5 API calls
+                  </option>
+                </select>
+              </div>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={exportPdf}
+                  onChange={(e) => setExportPdf(e.target.checked)}
+                  className="h-3.5 w-3.5 rounded border-input"
+                />
+                <span className="text-sm">Also export as PDF</span>
+              </label>
+            </>
+          )}
+
+          {/* ── Ingest fields ─── */}
+          {mode === "ingest" && (
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label
+                  htmlFor="category"
+                  className="mb-1 block text-sm font-medium"
+                >
+                  Category
+                </label>
+                <select
+                  id="category"
+                  value={category}
+                  onChange={(e) => setCategory(e.target.value)}
+                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+                >
+                  <option value="general">General</option>
+                  <option value="document">Document</option>
+                  <option value="reference">Reference</option>
+                  <option value="tutorial">Tutorial</option>
+                  <option value="api-docs">API Docs</option>
+                  <option value="blog">Blog</option>
+                </select>
+              </div>
+              <div>
+                <label
+                  htmlFor="visibility"
+                  className="mb-1 block text-sm font-medium"
+                >
+                  Visibility
+                </label>
+                <select
+                  id="visibility"
+                  value={visibility}
+                  onChange={(e) => setVisibility(e.target.value)}
+                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+                >
+                  <option value="internal">Internal</option>
+                  <option value="public">Public</option>
+                </select>
+              </div>
+            </div>
+          )}
+
+          {/* ── Competitors fields ─── */}
+          {mode === "competitors" && (
+            <div className="space-y-3">
+              <div>
+                <label
+                  htmlFor="monitor-action"
+                  className="mb-1 block text-sm font-medium"
+                >
+                  Action
+                </label>
+                <select
+                  id="monitor-action"
+                  value={monitorAction}
+                  onChange={(e) =>
+                    setMonitorAction(e.target.value as typeof monitorAction)
+                  }
+                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+                >
+                  <option value="add">Add Competitor</option>
+                  <option value="snapshot">Take Snapshot</option>
+                  <option value="report">Generate Report</option>
+                  <option value="list">List Competitors</option>
+                </select>
+              </div>
+              {monitorAction === "add" && (
+                <div>
+                  <label
+                    htmlFor="competitor-name"
+                    className="mb-1 block text-sm font-medium"
+                  >
+                    Name (optional)
+                  </label>
+                  <input
+                    id="competitor-name"
+                    type="text"
+                    value={competitorName}
+                    onChange={(e) => setCompetitorName(e.target.value)}
+                    placeholder="Friendly name"
+                    className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+                  />
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ── Extract fields ─── */}
+          {mode === "extract" && (
+            <div className="space-y-3">
+              <div>
+                <label
+                  htmlFor="extract-template"
+                  className="mb-1 block text-sm font-medium"
+                >
+                  Template
+                </label>
+                <select
+                  id="extract-template"
+                  value={extractTemplate}
+                  onChange={(e) => setExtractTemplate(e.target.value)}
+                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+                >
+                  <option value="custom">Custom</option>
+                  <option value="contacts">Contacts</option>
+                  <option value="pricing">Pricing</option>
+                  <option value="jobs">Job Listings</option>
+                  <option value="products">Products</option>
+                </select>
+              </div>
+              <div>
+                <label
+                  htmlFor="extract-prompt"
+                  className="mb-1 block text-sm font-medium"
+                >
+                  What to extract
+                </label>
+                <textarea
+                  id="extract-prompt"
+                  value={extractPrompt}
+                  onChange={(e) => setExtractPrompt(e.target.value)}
+                  placeholder="Describe what data to extract"
+                  rows={2}
+                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+                />
+              </div>
+              {extractTemplate === "custom" && (
+                <div>
+                  <label
+                    htmlFor="extract-schema"
+                    className="mb-1 block text-sm font-medium"
+                  >
+                    JSON Schema (optional)
+                  </label>
+                  <textarea
+                    id="extract-schema"
+                    value={extractSchema}
+                    onChange={(e) => setExtractSchema(e.target.value)}
+                    placeholder='{"products": [{"name": "string", "price": "number"}]}'
+                    rows={3}
+                    className="w-full rounded-md border border-input bg-background px-3 py-2 font-mono text-xs shadow-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+                  />
+                </div>
+              )}
+              <div className="flex items-center gap-4">
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={scrollForContent}
+                    onChange={(e) => setScrollForContent(e.target.checked)}
+                    className="rounded border-input"
+                  />
+                  Scroll to load all content
+                </label>
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={waitForDynamic}
+                    onChange={(e) => setWaitForDynamic(e.target.checked)}
+                    className="rounded border-input"
+                  />
+                  Wait for dynamic content
+                </label>
+              </div>
+              <div>
+                <label
+                  htmlFor="extract-max-pages"
+                  className="mb-1 block text-sm font-medium"
+                >
+                  Max Pages
+                </label>
+                <input
+                  id="extract-max-pages"
+                  type="number"
+                  min={1}
+                  max={200}
+                  value={maxPages}
+                  onChange={(e) => setMaxPages(Number(e.target.value))}
+                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+                />
+              </div>
+            </div>
+          )}
+
+          {/* ── Price fields ─── */}
+          {mode === "prices" && (
+            <div className="space-y-3">
+              <div>
+                <label
+                  htmlFor="price-action"
+                  className="mb-1 block text-sm font-medium"
+                >
+                  Action
+                </label>
+                <select
+                  id="price-action"
+                  value={priceAction}
+                  onChange={(e) =>
+                    setPriceAction(e.target.value as typeof priceAction)
+                  }
+                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+                >
+                  <option value="snapshot">Capture Snapshot</option>
+                  <option value="compare">Compare Snapshots</option>
+                  <option value="history">View History</option>
+                  <option value="list">List Monitored URLs</option>
+                </select>
+              </div>
+              {priceAction === "snapshot" && (
+                <>
+                  <div>
+                    <label
+                      htmlFor="price-label"
+                      className="mb-1 block text-sm font-medium"
+                    >
+                      Label (optional)
+                    </label>
+                    <input
+                      id="price-label"
+                      type="text"
+                      value={priceLabel}
+                      onChange={(e) => setPriceLabel(e.target.value)}
+                      placeholder="e.g. Competitor Pro Plan"
+                      className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+                    />
+                  </div>
+                  <label className="flex items-center gap-2 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={scrollToLoad}
+                      onChange={(e) => setScrollToLoad(e.target.checked)}
+                      className="rounded border-input"
+                    />
+                    Scroll to load dynamic content
+                  </label>
+                </>
+              )}
+            </div>
+          )}
+
+          {/* ── Dataset fields ─── */}
+          {mode === "dataset" && (
+            <div className="space-y-3">
+              <div>
+                <label
+                  htmlFor="dataset-format"
+                  className="mb-1 block text-sm font-medium"
+                >
+                  Output Format
+                </label>
+                <select
+                  id="dataset-format"
+                  value={datasetFormat}
+                  onChange={(e) =>
+                    setDatasetFormat(e.target.value as typeof datasetFormat)
+                  }
+                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+                >
+                  <option value="markdown">Markdown</option>
+                  <option value="jsonl">JSONL</option>
+                  <option value="csv">CSV</option>
+                </select>
+              </div>
+              <div>
+                <label
+                  htmlFor="include-paths"
+                  className="mb-1 block text-sm font-medium"
+                >
+                  Include paths (comma-separated)
+                </label>
+                <input
+                  id="include-paths"
+                  type="text"
+                  value={includePaths}
+                  onChange={(e) => setIncludePaths(e.target.value)}
+                  placeholder="/docs, /blog"
+                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+                />
+              </div>
+              <div>
+                <label
+                  htmlFor="exclude-paths"
+                  className="mb-1 block text-sm font-medium"
+                >
+                  Exclude paths (comma-separated)
+                </label>
+                <input
+                  id="exclude-paths"
+                  type="text"
+                  value={excludePaths}
+                  onChange={(e) => setExcludePaths(e.target.value)}
+                  placeholder="/admin, /login"
+                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+                />
+              </div>
+            </div>
+          )}
+
+          {/* Model picker */}
+          <div>
+            <label className="mb-1 block text-sm font-medium">Model</label>
+            <InlineModelPicker value={model} onChange={setModel} />
+          </div>
+
+          {/* Error */}
+          {error && (
+            <div className="flex items-center gap-2 text-sm text-destructive">
+              <AlertCircle className="h-4 w-4" />
+              {error}
+            </div>
+          )}
+
+          {/* Submit */}
           <button
-            onClick={handleRunAudit}
+            type="button"
+            onClick={handleSubmit}
             disabled={
-              auditRunning ||
-              !auditUrl.trim() ||
-              !firecrawlHealth.available ||
-              firecrawlHealth.checking
+              submitting ||
+              (isFirecrawlMode &&
+                !firecrawlHealth.available &&
+                !firecrawlHealth.checking)
             }
             className="inline-flex items-center gap-1.5 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
           >
-            {auditRunning || firecrawlHealth.checking ? (
+            {submitting || firecrawlHealth.checking ? (
               <Loader2 className="h-4 w-4 animate-spin" />
             ) : (
-              <Play className="h-4 w-4" />
+              <Globe className="h-4 w-4" />
             )}
-            Run Audit
+            {getSubmitLabel(mode)}
           </button>
         </div>
-        {auditError && (
-          <p className="text-xs text-red-500 mt-2">{auditError}</p>
-        )}
       </div>
 
       <CrawlProgressPanel />
@@ -704,6 +1433,27 @@ function EmptyState({ message }: { message: string }) {
       <p className="text-sm text-muted-foreground">{message}</p>
     </div>
   );
+}
+
+function getSubmitLabel(mode: SeoMode): string {
+  switch (mode) {
+    case "site-audit":
+      return "Run Audit";
+    case "gap-analysis":
+      return "Analyze";
+    case "competitors":
+      return "Execute";
+    case "extract":
+      return "Extract Data";
+    case "leads":
+      return "Find Leads";
+    case "prices":
+      return "Monitor Prices";
+    case "dataset":
+      return "Build Dataset";
+    case "ingest":
+      return "Start Ingestion";
+  }
 }
 
 function safeParseDataJson(json: string | undefined): SeoData | null {
