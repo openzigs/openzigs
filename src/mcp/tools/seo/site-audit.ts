@@ -243,6 +243,60 @@ export function auditPage(
   };
 }
 
+/** Build link analysis data for the UI Links dashboard tab. */
+function buildLinkAnalysis(pages: PageAuditResult[]): {
+  totalLinks: number;
+  brokenLinks: {
+    sourceUrl: string;
+    targetUrl: string;
+    anchorText: string;
+    statusCode: number;
+  }[];
+  orphanPages: string[];
+  redirectChains: { chain: string[] }[];
+  nodes: { id: string; issues: number }[];
+} {
+  const totalLinks = pages.reduce(
+    (sum, p) => sum + p.internalLinkCount + p.externalLinkCount,
+    0,
+  );
+  const nodes = pages.map((p) => ({ id: p.url, issues: p.issues.length }));
+
+  return {
+    totalLinks,
+    brokenLinks: [],
+    orphanPages: [],
+    redirectChains: [],
+    nodes,
+  };
+}
+
+/** Build content analysis data for the UI Content dashboard tab. */
+function buildContentAnalysis(pages: PageAuditResult[]): {
+  duplicateGroups: { urls: string[] }[];
+  thinContentPages: { url: string; wordCount: number }[];
+} {
+  // Thin content pages (< 300 words)
+  const thinContentPages = pages
+    .filter((p) => p.wordCount < 300)
+    .map((p) => ({ url: p.url, wordCount: p.wordCount }));
+
+  // Duplicate title groups — pages sharing the same title suggest duplicate content
+  const titleGroups = new Map<string, string[]>();
+  for (const p of pages) {
+    if (p.metaTitle) {
+      const urls = titleGroups.get(p.metaTitle) ?? [];
+      urls.push(p.url);
+      titleGroups.set(p.metaTitle, urls);
+    }
+  }
+  const duplicateGroups = [...titleGroups.values()]
+    .filter((urls) => urls.length > 1)
+    .map((urls) => ({ urls }));
+
+  return { duplicateGroups, thinContentPages };
+}
+
 /** Detect site-wide issues by analyzing patterns across all pages. */
 export function detectSiteWideIssues(pages: PageAuditResult[]): AuditIssue[] {
   const issues: AuditIssue[] = [];
@@ -524,11 +578,40 @@ export function createSeoSiteAuditTool(): ToolDefinition {
         try {
           const db = getDatabase();
           const historyRepo = new AuditHistoryRepository(db);
+
+          // Build dashboard-compatible data for the UI tabs
+          const dashboardPages = auditedPages.map((p) => ({
+            url: p.url,
+            issues: p.issues.map((i) => ({
+              severity: i.severity,
+              category: i.category,
+              message: i.message,
+            })),
+            metrics: {
+              wordCount: p.wordCount,
+              h1Count: p.h1Count,
+              headingCount: p.headingCount,
+              imagesTotal: p.imagesTotal,
+              imagesWithoutAlt: p.imagesWithoutAlt,
+              internalLinkCount: p.internalLinkCount,
+              externalLinkCount: p.externalLinkCount,
+              readabilityScore: p.readabilityScore,
+            },
+          }));
+
+          const linkAnalysis = buildLinkAnalysis(auditedPages);
+          const contentAnalysis = buildContentAnalysis(auditedPages);
+
           historyRepo.saveSnapshot(
             url,
             healthScore,
             auditedPages.length,
             JSON.stringify({
+              // Dashboard tab data (consumed by ui/app/seo/page.tsx)
+              pages: dashboardPages,
+              linkAnalysis,
+              contentAnalysis,
+              // Original audit metadata
               issues: allIssues,
               healthScore,
               reportPath,

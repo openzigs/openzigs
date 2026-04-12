@@ -74,6 +74,9 @@ pkill -f "$PROJECT_ROOT/sidecars/audio/server.py" || true
 pkill -f "$PROJECT_ROOT/sidecars/music/server.py" || true
 pkill -f "$PROJECT_ROOT/sidecars/music-studio/server.py" || true
 pkill -f "$PROJECT_ROOT.*api_v2.py" || true
+# GPT-SoVITS lives outside PROJECT_ROOT — kill by its fixed install path
+pkill -f "$HOME/.openzigs/sidecars/gptsovits" || true
+pkill -f "api_v2.py" || true
 
 # Final deterministic sweep: kill any OpenZigs-rooted node/tsx/pnpm/next/python
 # process that may have escaped the explicit patterns above.
@@ -87,10 +90,19 @@ done
 
 # Force-clear any OpenZigs stragglers still holding their ports after the sweep.
 # Non-OpenZigs apps on those ports are intentionally left untouched.
-for _port in "$BACKEND_PORT" "$UI_PORT" 3101 5005 5006 9880 5009 5010; do
+for _port in "$BACKEND_PORT" "$UI_PORT" 3101; do
   STALE_PID=$(port_pid "$_port")
   if [ -n "$STALE_PID" ] && is_own_pid "$STALE_PID"; then
     echo "[clean-start] Killing stale OpenZigs process on port $_port (PID $STALE_PID)"
+    kill -9 "$STALE_PID" 2>/dev/null || true
+  fi
+done
+
+# Sidecar ports are exclusive to OpenZigs — kill any process holding them unconditionally.
+for _port in 5005 5006 9880 5009 5010; do
+  STALE_PID=$(port_pid "$_port")
+  if [ -n "$STALE_PID" ]; then
+    echo "[clean-start] Killing stale sidecar process on port $_port (PID $STALE_PID)"
     kill -9 "$STALE_PID" 2>/dev/null || true
   fi
 done
@@ -429,6 +441,15 @@ cleanup() {
   pkill -f "$PROJECT_ROOT/sidecars/music/server.py" || true
   pkill -f "$PROJECT_ROOT/sidecars/music-studio/server.py" || true
   pkill -f "$PROJECT_ROOT.*api_v2.py" || true
+  pkill -f "$HOME/.openzigs/sidecars/gptsovits" || true
+  pkill -f "api_v2.py" || true
+  # Port-based sweep for sidecar ports — catches orphans not tracked by PID
+  for _port in 5005 5006 9880 5009 5010; do
+    _stale=$(lsof -ti:"$_port" 2>/dev/null | head -1 || true)
+    if [ -n "$_stale" ]; then
+      kill -9 "$_stale" 2>/dev/null || true
+    fi
+  done
   # Stop Firecrawl Docker containers on exit
   if [ -f "$FIRECRAWL_COMPOSE" ] && command -v docker >/dev/null 2>&1; then
     docker compose -f "$FIRECRAWL_COMPOSE" down 2>/dev/null || true

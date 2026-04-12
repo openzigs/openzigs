@@ -317,14 +317,10 @@ export class FirecrawlClient {
     if (options?.excludePaths) body.excludePaths = options.excludePaths;
     if (options?.scrapeOptions) body.scrapeOptions = options.scrapeOptions;
 
-    // Attach webhook URL if handler is available
-    let webhookJobId: string | undefined;
-    let webhookPromise: Promise<WebhookJobResult> | undefined;
-    if (this._webhookHandler?.enabled) {
-      webhookJobId = this._webhookHandler.generateJobId();
-      body.webhook = this._webhookHandler.getWebhookUrl(webhookJobId);
-      webhookPromise = this._webhookHandler.registerJob(webhookJobId);
-    }
+    // NOTE: No webhook for crawl operations. Firecrawl webhooks only deliver
+    // a final completion callback — no per-page progress. Polling gives the UI
+    // real-time page counts via crawl:progress events. Webhooks are still used
+    // for batchScrape where progress events aren't needed.
 
     const startResp = await this.request("/v1/crawl", body);
     const jobId = (startResp.id ?? startResp.jobId) as string | undefined;
@@ -349,35 +345,9 @@ export class FirecrawlClient {
       throw new Error("Firecrawl crawl response missing job ID");
     }
 
-    // Always register for UI progress tracking regardless of webhook vs polling
+    // Register for UI progress tracking (CrawlProgressPanel)
     if (this._webhookHandler) {
-      this._webhookHandler.registerCrawl(
-        webhookJobId ?? jobId,
-        url,
-        options?.limit ?? 0,
-      );
-    }
-
-    // Try webhook-based completion first, fall back to polling
-    if (webhookPromise) {
-      try {
-        const webhookResult = await webhookPromise;
-        if (this._webhookHandler) {
-          this._webhookHandler.completeCrawl(
-            webhookJobId ?? jobId,
-            webhookResult.success ? "completed" : "failed",
-          );
-        }
-        return this.parseCrawlResult(webhookResult, jobId);
-      } catch (err) {
-        logger.warn(
-          "[FirecrawlClient] Webhook delivery failed, falling back to polling",
-          {
-            jobId,
-            error: String(err),
-          },
-        );
-      }
+      this._webhookHandler.registerCrawl(jobId, url, options?.limit ?? 0);
     }
 
     return this.pollCrawlJob(jobId, url, options?.limit);
@@ -709,34 +679,6 @@ export class FirecrawlClient {
     return (await resp.json()) as Record<string, unknown>;
   }
 
-  /** Parse a webhook result into a CrawlResult */
-  private parseCrawlResult(
-    webhookResult: WebhookJobResult,
-    jobId: string,
-  ): CrawlResult {
-    if (!webhookResult.success) {
-      throw new Error(
-        `Firecrawl crawl job ${jobId} failed via webhook: ${webhookResult.error ?? "unknown error"}`,
-      );
-    }
-    const pages = (
-      Array.isArray(webhookResult.data) ? webhookResult.data : []
-    ) as Record<string, unknown>[];
-    return {
-      pages: pages.map((p) => ({
-        markdown: p.markdown as string | undefined,
-        html: p.html as string | undefined,
-        url: ((p.metadata as Record<string, unknown>)?.sourceURL ??
-          p.url ??
-          "") as string,
-        metadata: p.metadata as Record<string, unknown> | undefined,
-        statusCode: p.statusCode as number | undefined,
-      })),
-      totalPages: pages.length,
-      jobId,
-    };
-  }
-
   /** Parse a webhook result into a BatchScrapeResult */
   private parseBatchResult(
     webhookResult: WebhookJobResult,
@@ -769,7 +711,7 @@ export class FirecrawlClient {
     siteUrl?: string,
     estimatedTotal?: number,
   ): Promise<CrawlResult> {
-    const maxPolls = 300; // 5 minutes at 1s intervals
+    const maxPolls = 900; // 15 minutes at 1s intervals
     const pollInterval = 1000;
 
     // crawl:started was already emitted by crawl() — just log the poll start
