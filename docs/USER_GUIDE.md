@@ -479,6 +479,7 @@ The OpenZigs UI is a **Next.js** application with a navigation bar providing acc
 | **Content Calendar** | `/calendar` | Visual FullCalendar content schedule synced with Outbox — drag-to-reschedule, click-to-edit, upcoming events panel |
 | **Inpainting Studio** | `/inpainting` | Canvas-based AI image editing — paint a mask, describe the change, queue Flux Kontext inpainting via the media queue |
 | **Outbox** | `/outbox` | Scheduled social post queue — review, edit, and publish pending outbox items across platforms |
+| **SEO Suite** | `/seo` | Consolidated SEO dashboard — site audits, gap analysis, competitive monitoring, data extraction, link graphs, health scoring, and report exports |
 
 ### Chat
 
@@ -7917,22 +7918,32 @@ This design means Firecrawl has **no embedded LLM instructions** — you don't n
 | `web-extract` | Extract structured data from any URL using Firecrawl + LLM. Supports built-in templates (contacts, pricing, jobs, products) or custom JSON schemas. Results saved to SQLite |
 | `web-map` | Discover all URLs on a site without scraping content. Groups URLs by path section. Supports subdomain inclusion and keyword search filtering |
 
-### Using the Crawl Dashboard
+### Using the SEO Suite
 
-The **Workbench** tab in the UI includes a **Crawl Dashboard** dialog with these modes:
+All crawl and SEO features are consolidated into a single **SEO Suite** page at `/seo`. Navigate to **Automation → SEO Suite** in the nav bar.
 
-- **Site Audit** — Run a full SEO audit on any website
-- **Ingest** — Crawl and add pages to your knowledge base
-- **Monitor** — Track competitors over time
-- **Extract** — Scrape and extract structured data using templates or custom schemas
-- **Leads** — Extract contact information from websites
-- **Prices** — Monitor product prices over time
-- **Dataset** — Convert a website into a structured dataset
+The page has **8 modes** accessible via a horizontal mode selector at the top:
 
-Each mode supports:
+| Mode | Description |
+|------|-------------|
+| **Site Audit** | Run a full SEO audit — crawls pages, analyzes titles, meta, headings, images, links, and performance |
+| **Gap Analysis** | Compare your page against top-ranking competitors — keyword coverage, content depth, SERP features |
+| **Competitors** | Track competitor domains over time — add, snapshot, and compare |
+| **Extract** | Scrape and extract structured data using built-in templates (contacts, pricing, jobs, products) or custom JSON schemas |
+| **Leads** | Extract contact information from websites |
+| **Prices** | Monitor product prices over time |
+| **Dataset** | Convert a website into a structured dataset (Markdown, JSONL, CSV) |
+| **Ingest** | Crawl a website and ingest pages into the local knowledge base for RAG queries |
+
+Each mode provides:
+- **URL input** — Target site URL
 - **Model selection** — Choose which LLM to use for summarizing results
-- **Max pages / depth limits** — Control crawl scope
-- **Path filters** — Include/exclude specific URL patterns
+- **Max pages / depth limits** — Control crawl scope (where applicable)
+- **Mode-specific options** — e.g., analysis mode for Gap Analysis, template selection for Extract
+
+When you click **Run**, the page sends a structured prompt to the AI agent via Socket.IO, which invokes the appropriate MCP tools. Results stream in real-time through the chat interface.
+
+> **Note:** The SEO Gap Analysis mode does **not** require Firecrawl — it uses web search APIs. All other modes require the Firecrawl sidecar to be running.
 
 ### Output Reports
 

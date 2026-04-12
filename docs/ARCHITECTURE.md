@@ -6598,12 +6598,15 @@ Events: `crawl:started`, `crawl:page`, `crawl:completed`
 
 | Component | File | Description |
 |-----------|------|-------------|
-| **SEO Dashboard** | `ui/app/seo/page.tsx` | Main dashboard with 7 tabs (Overview, Audit, Links, Content, Performance, History, Export) |
+| **SEO Suite** | `ui/app/seo/page.tsx` | Consolidated SEO page with 8 modes (Site Audit, Gap Analysis, Competitors, Extract, Leads, Prices, Dataset, Ingest) + 7 result tabs |
+| **Prompt Builders** | `ui/lib/seo-prompts.ts` | Shared module with all prompt builders, tool arrays, and types for all SEO modes |
 | **CrawlProgressPanel** | `ui/components/seo/crawl-progress-panel.tsx` | Real-time progress bar, current URL, errors, cancel button |
 | **SiteHealthScore** | `ui/components/seo/site-health-score.tsx` | Circular SVG gauge (0-100) with color coding: green (75+), yellow (50-74), red (<50) |
 | **LinkGraph** | `ui/components/seo/link-graph.tsx` | D3 force-directed graph with zoom/pan, color-coded nodes by issue count |
 | **ExportDialog** | `ui/components/seo/export-dialog.tsx` | PDF/CSV/JSON format selection, disabled when no data |
 | **AuditTrends** | `ui/components/seo/audit-trends.tsx` | History trends with TrendingUp/TrendingDown icons |
+
+All SEO features are consolidated into the `/seo` page. The former Firecrawl Dashboard modal and SEO Gap Analysis dialog on Workbench have been replaced with a link to the SEO Suite.
 
 ### Link Graph Visualization
 
