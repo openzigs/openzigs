@@ -7949,12 +7949,93 @@ Reports include:
 
 ### SEO Dashboard
 
-Navigate to **Automation → SEO** in the nav bar to access the SEO Dashboard (`/seo`). The dashboard provides:
+Navigate to **Automation → SEO** in the nav bar to access the SEO Dashboard (`/seo`). The dashboard provides a comprehensive 7-tab interface for site auditing and analysis.
 
-- **Health Score** — A 0–100 ring chart showing your overall site health rating (excellent/good/fair/poor), computed from weighted issue severity
-- **Audit History** — Timeline of past audits with score trends, regression detection, and comparison between latest and previous runs
-- **Real-time Crawl Progress** — Live progress bars during active crawls (powered by Socket.IO)
-- **Export** — Download any audit as CSV, JSON, or PDF from the Export tab
+![SEO Dashboard — Overview tab with Health Score and Trends](images/seo-dashboard-overview.png)
+
+#### Running an Audit
+
+1. Enter your site URL (e.g., `sawsonskates.com`) in the **Run Audit** input field at the top
+2. Click **Run Audit** — the button shows a loading spinner during health check
+3. The **Crawl Progress Panel** appears showing real-time progress:
+   - Current page being crawled
+   - Pages completed / total
+   - Live progress bar
+   - Error count
+   - Cancel button to abort
+
+**Note:** The Run Audit button is disabled with a warning if Firecrawl is unavailable. Start the sidecar with: `docker compose -f docker-compose.firecrawl.yml up -d`
+
+#### Dashboard Tabs
+
+| Tab | Icon | Description |
+|-----|------|-------------|
+| **Overview** | 🔍 | Site Health Score (0-100 circular gauge) + Recent Trends chart |
+| **Audit** | ⚠️ | Detailed issue list grouped by severity (Errors, Warnings, Info) with per-page breakdown |
+| **Links** | 🔗 | Link statistics + D3 force-directed graph visualization showing internal link structure |
+| **Content** | 📄 | Duplicate content groups + thin content pages (<300 words) |
+| **Performance** | ⏱️ | Core Web Vitals metrics (LCP, CLS, TBT, FCP, SI, TTI) with good/needs-improvement/poor ratings |
+| **History** | 📊 | Past audit snapshots with score trends and regression detection |
+| **Export** | 📥 | Download reports as CSV, JSON, or PDF |
+
+#### Health Score
+
+The Health Score is computed from weighted issue severity:
+
+```
+Health Score = 100 - sum(issues × weight)
+```
+
+| Severity | Weight | Impact |
+|----------|--------|--------|
+| Critical | 10 | Missing title, broken navigation |
+| High | 3 | Missing meta description, duplicate titles |
+| Medium | 1 | Missing alt text, thin content |
+| Low | 0.25 | Minor optimizations |
+
+**Score Ranges:**
+- **75-100** (Green) — Excellent: Site is well-optimized
+- **50-74** (Yellow) — Good: Some issues need attention
+- **0-49** (Red) — Poor: Significant SEO problems
+
+#### Link Graph Visualization
+
+The **Links** tab includes an interactive force-directed graph powered by D3.js:
+
+- **Nodes** — Each page on your site, color-coded by issue count:
+  - 🟢 Green: No issues
+  - 🟡 Yellow: Some issues
+  - 🔴 Red: Many issues
+  - ⚪ Gray: Orphan pages (no incoming links)
+- **Edges** — Internal links between pages
+- **Interactions** — Zoom, pan, and drag nodes to explore the link structure
+- **Legend** — Color-coded key explaining node colors
+
+This visualization helps identify:
+- Orphan pages that need internal links
+- Hub pages with many outgoing links
+- Isolated content clusters
+
+#### Content Analysis
+
+The **Content** tab shows:
+
+- **Duplicate Groups** — Pages with >85% content similarity (SimHash-based detection)
+  - Recommendations: Merge pages, add canonical tags, or noindex duplicates
+- **Thin Content** — Pages with fewer than 300 words
+  - Consider expanding content or consolidating with related pages
+
+#### Export Formats
+
+Download audit reports in three formats:
+
+| Format | Best For |
+|--------|----------|
+| **CSV** | Importing into spreadsheets, bulk analysis, custom processing |
+| **JSON** | Programmatic access, API integrations, custom tooling |
+| **PDF** | Sharing with stakeholders, archiving, client reports |
+
+Export buttons are disabled until you run your first audit.
 
 ### Core Web Vitals
 

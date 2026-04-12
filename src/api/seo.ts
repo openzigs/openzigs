@@ -27,6 +27,32 @@ export const createSeoRouter = ({ db }: SeoRouterOptions): Router => {
   const router = Router();
   const historyRepo = new AuditHistoryRepository(db);
 
+  /**
+   * GET /api/seo/health — Check if Firecrawl sidecar is available.
+   * Returns { available: boolean, message: string }
+   */
+  router.get("/health", async (_req, res) => {
+    try {
+      const firecrawlUrl = process.env.FIRECRAWL_URL ?? "http://localhost:3002";
+      const resp = await fetch(`${firecrawlUrl}/`, {
+        signal: AbortSignal.timeout(3000),
+      });
+      if (resp.ok) {
+        return res.json({ available: true, message: "Firecrawl is ready" });
+      }
+      return res.json({
+        available: false,
+        message: "Firecrawl responded but is not healthy",
+      });
+    } catch {
+      return res.json({
+        available: false,
+        message:
+          "Firecrawl sidecar is not running. Start it with: docker compose -f docker-compose.firecrawl.yml up -d",
+      });
+    }
+  });
+
   /** GET /api/seo/history — List all audit snapshots (newest first). */
   router.get("/history", (req, res) => {
     const siteUrl = req.query.siteUrl as string | undefined;

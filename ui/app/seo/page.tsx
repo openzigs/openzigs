@@ -2,7 +2,7 @@
 
 export const dynamic = "force-dynamic";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { useSeoHistory } from "@/hooks/useSeoHistory";
 import { useQueryClient } from "@tanstack/react-query";
@@ -23,6 +23,7 @@ import {
   Gauge,
   Play,
   Loader2,
+  AlertCircle,
 } from "lucide-react";
 
 interface AuditIssue {
@@ -99,6 +100,34 @@ export default function SeoPage() {
   const [auditUrl, setAuditUrl] = useState("");
   const [auditRunning, setAuditRunning] = useState(false);
   const [auditError, setAuditError] = useState<string | null>(null);
+  const [firecrawlHealth, setFirecrawlHealth] = useState<{
+    available: boolean;
+    message: string;
+    checking: boolean;
+  }>({ available: false, message: "", checking: true });
+
+  // Check Firecrawl health on mount
+  useEffect(() => {
+    const checkHealth = async () => {
+      try {
+        const result = await fetchJson<{ available: boolean; message: string }>(
+          "/api/seo/health",
+        );
+        setFirecrawlHealth({
+          available: result.available,
+          message: result.message,
+          checking: false,
+        });
+      } catch {
+        setFirecrawlHealth({
+          available: false,
+          message: "Failed to check Firecrawl status",
+          checking: false,
+        });
+      }
+    };
+    checkHealth();
+  }, []);
 
   const handleRunAudit = useCallback(async () => {
     const trimmed = auditUrl.trim();
@@ -141,24 +170,46 @@ export default function SeoPage() {
         <h3 className="text-sm font-semibold mb-2 flex items-center gap-2">
           <Play className="h-4 w-4" /> Run Audit
         </h3>
+
+        {/* Firecrawl health warning */}
+        {!firecrawlHealth.checking && !firecrawlHealth.available && (
+          <div className="flex items-start gap-2 rounded-md bg-yellow-500/10 border border-yellow-500/30 p-3 mb-3">
+            <AlertCircle className="h-4 w-4 text-yellow-600 mt-0.5 shrink-0" />
+            <div className="text-sm">
+              <p className="font-medium text-yellow-700 dark:text-yellow-500">
+                Firecrawl sidecar not available
+              </p>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                {firecrawlHealth.message}
+              </p>
+            </div>
+          </div>
+        )}
+
         <div className="flex gap-2">
           <input
             type="text"
             value={auditUrl}
             onChange={(e) => setAuditUrl(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === "Enter") handleRunAudit();
+              if (e.key === "Enter" && firecrawlHealth.available)
+                handleRunAudit();
             }}
             placeholder="Enter site URL, e.g. sawsonskates.com"
-            className="flex-1 rounded-md border bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-            disabled={auditRunning}
+            className="flex-1 rounded-md border bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-50"
+            disabled={auditRunning || !firecrawlHealth.available}
           />
           <button
             onClick={handleRunAudit}
-            disabled={auditRunning || !auditUrl.trim()}
+            disabled={
+              auditRunning ||
+              !auditUrl.trim() ||
+              !firecrawlHealth.available ||
+              firecrawlHealth.checking
+            }
             className="inline-flex items-center gap-1.5 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
           >
-            {auditRunning ? (
+            {auditRunning || firecrawlHealth.checking ? (
               <Loader2 className="h-4 w-4 animate-spin" />
             ) : (
               <Play className="h-4 w-4" />
