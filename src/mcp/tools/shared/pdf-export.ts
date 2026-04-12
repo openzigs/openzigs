@@ -116,19 +116,28 @@ export async function saveReportPdf(
 
     try {
       await new Promise<void>((resolve, reject) => {
-        const proc = spawn(chrome, [
-          "--headless=new",
-          "--disable-gpu",
-          "--no-sandbox",
-          "--disable-dev-shm-usage",
-          `--print-to-pdf=${pdfPath}`,
-          "--print-to-pdf-no-header",
-          `--virtual-time-budget=10000`,
-          `http://127.0.0.1:${serverPort}`,
-        ], { stdio: "ignore" });
-        proc.on("close", (code) => (code === 0 ? resolve() : reject(new Error(`Chrome exited ${code}`))));
+        const proc = spawn(
+          chrome,
+          [
+            "--headless=new",
+            "--disable-gpu",
+            "--no-sandbox",
+            "--disable-dev-shm-usage",
+            `--print-to-pdf=${pdfPath}`,
+            "--print-to-pdf-no-header",
+            `--virtual-time-budget=10000`,
+            `http://127.0.0.1:${serverPort}`,
+          ],
+          { stdio: "ignore" },
+        );
+        proc.on("close", (code) =>
+          code === 0 ? resolve() : reject(new Error(`Chrome exited ${code}`)),
+        );
         proc.on("error", reject);
-        setTimeout(() => { proc.kill(); reject(new Error("Chrome PDF timeout")); }, 30000);
+        setTimeout(() => {
+          proc.kill();
+          reject(new Error("Chrome PDF timeout"));
+        }, 30000);
       });
     } finally {
       server.close();

@@ -12,7 +12,17 @@ import { ResearchGenerateDialog } from "@/components/workbench/research-generate
 import { SeoAnalysisDialog } from "@/components/workbench/seo-analysis-dialog";
 import { CrawlDashboardDialog } from "@/components/workbench/crawl-dashboard";
 import { ChatMarkdown } from "@/components/chat-markdown";
-import { Save, FileText, Circle, FileUp, Microscope, Search, Eye, Pencil, Globe } from "lucide-react";
+import {
+  Save,
+  FileText,
+  Circle,
+  FileUp,
+  Microscope,
+  Search,
+  Eye,
+  Pencil,
+  Globe,
+} from "lucide-react";
 import { showToast } from "@/components/toast";
 import { AskAiPanel, AskAiButton, PAGE_CONTEXTS } from "@/components/ask-ai";
 
@@ -25,7 +35,9 @@ export default function WorkbenchPage() {
   const [activeFile, setActiveFile] = useState<string | null>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [dirty, setDirty] = useState(false);
-  const [localContent, setLocalContent] = useState("# Welcome to the Workbench\n\nStart writing or open a file from the sidebar.");
+  const [localContent, setLocalContent] = useState(
+    "# Welcome to the Workbench\n\nStart writing or open a file from the sidebar.",
+  );
   const [importOpen, setImportOpen] = useState(false);
   const [researchOpen, setResearchOpen] = useState(false);
   const [seoOpen, setSeoOpen] = useState(false);
@@ -38,7 +50,8 @@ export default function WorkbenchPage() {
   // Fetch configurable workbench directories
   const { data: wbDirs } = useQuery({
     queryKey: ["admin", "workbench", "directories"],
-    queryFn: () => fetchJson<{ directories: string[] }>("/api/admin/workbench/directories"),
+    queryFn: () =>
+      fetchJson<{ directories: string[] }>("/api/admin/workbench/directories"),
     staleTime: 60_000,
   });
 
@@ -48,7 +61,7 @@ export default function WorkbenchPage() {
     queryFn: async () => {
       if (!activeFile) return null;
       const data = await fetchJson<{ content: string; path: string }>(
-        `/api/files/content?path=${encodeURIComponent(activeFile)}`
+        `/api/files/content?path=${encodeURIComponent(activeFile)}`,
       );
       return data;
     },
@@ -59,7 +72,13 @@ export default function WorkbenchPage() {
 
   // Save mutation
   const saveMutation = useMutation({
-    mutationFn: async ({ path, content }: { path: string; content: string }) => {
+    mutationFn: async ({
+      path,
+      content,
+    }: {
+      path: string;
+      content: string;
+    }) => {
       return fetchJson<{ success: boolean; path: string }>("/api/files/save", {
         method: "POST",
         body: JSON.stringify({ path, content }),
@@ -71,32 +90,29 @@ export default function WorkbenchPage() {
     },
   });
 
-  const handleFileSelect = useCallback(
-    async (filePath: string) => {
-      if (!filePath) {
-        // New file
-        setActiveFile(null);
-        setLocalContent("# Untitled\n\n");
-        editorRef.current?.setMarkdown("# Untitled\n\n");
-        setDirty(false);
-        return;
-      }
+  const handleFileSelect = useCallback(async (filePath: string) => {
+    if (!filePath) {
+      // New file
+      setActiveFile(null);
+      setLocalContent("# Untitled\n\n");
+      editorRef.current?.setMarkdown("# Untitled\n\n");
+      setDirty(false);
+      return;
+    }
 
-      try {
-        const data = await fetchJson<{ content: string }>(
-          `/api/files/content?path=${encodeURIComponent(filePath)}`
-        );
-        setActiveFile(filePath);
-        setLocalContent(data.content);
-        editorRef.current?.setMarkdown(data.content);
-        setDirty(false);
-      } catch (error) {
-        console.error("Failed to load file:", error);
-        showToast("Failed to load file. It may not be readable.", "error");
-      }
-    },
-    []
-  );
+    try {
+      const data = await fetchJson<{ content: string }>(
+        `/api/files/content?path=${encodeURIComponent(filePath)}`,
+      );
+      setActiveFile(filePath);
+      setLocalContent(data.content);
+      editorRef.current?.setMarkdown(data.content);
+      setDirty(false);
+    } catch (error) {
+      console.error("Failed to load file:", error);
+      showToast("Failed to load file. It may not be readable.", "error");
+    }
+  }, []);
 
   const handleSave = useCallback(() => {
     const content = editorRef.current?.getMarkdown() ?? localContent;
@@ -104,7 +120,10 @@ export default function WorkbenchPage() {
       saveMutation.mutate({ path: activeFile, content });
     } else {
       // Prompt for file name if no active file
-      const name = window.prompt("Save as (full path):", `${DEFAULT_ROOT}/untitled.md`);
+      const name = window.prompt(
+        "Save as (full path):",
+        `${DEFAULT_ROOT}/untitled.md`,
+      );
       if (name) {
         setActiveFile(name);
         saveMutation.mutate({ path: name, content });
@@ -112,13 +131,10 @@ export default function WorkbenchPage() {
     }
   }, [activeFile, localContent, saveMutation]);
 
-  const handleChange = useCallback(
-    (markdown: string) => {
-      setLocalContent(markdown);
-      setDirty(true);
-    },
-    []
-  );
+  const handleChange = useCallback((markdown: string) => {
+    setLocalContent(markdown);
+    setDirty(true);
+  }, []);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -127,7 +143,7 @@ export default function WorkbenchPage() {
         handleSave();
       }
     },
-    [handleSave]
+    [handleSave],
   );
 
   const handleImportComplete = useCallback(
@@ -139,11 +155,11 @@ export default function WorkbenchPage() {
       setActiveFile(`${baseName}.md`);
       setDirty(true);
     },
-    []
+    [],
   );
 
   const fileName = activeFile
-    ? activeFile.split("/").pop() ?? "Untitled"
+    ? (activeFile.split("/").pop() ?? "Untitled")
     : "Untitled";
 
   return (
@@ -182,7 +198,7 @@ export default function WorkbenchPage() {
                   "flex items-center gap-1 rounded-l-lg px-2.5 py-1 text-xs font-medium transition",
                   viewMode === "edit"
                     ? "bg-primary text-primary-foreground"
-                    : "text-muted-foreground hover:text-foreground"
+                    : "text-muted-foreground hover:text-foreground",
                 )}
               >
                 <Pencil className="h-3 w-3" />
@@ -194,7 +210,7 @@ export default function WorkbenchPage() {
                   "flex items-center gap-1 rounded-r-lg px-2.5 py-1 text-xs font-medium transition",
                   viewMode === "preview"
                     ? "bg-primary text-primary-foreground"
-                    : "text-muted-foreground hover:text-foreground"
+                    : "text-muted-foreground hover:text-foreground",
                 )}
               >
                 <Eye className="h-3 w-3" />
@@ -241,7 +257,7 @@ export default function WorkbenchPage() {
                 "flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition",
                 dirty
                   ? "bg-primary text-primary-foreground hover:bg-primary/90"
-                  : "bg-muted text-muted-foreground"
+                  : "bg-muted text-muted-foreground",
               )}
             >
               <Save className="h-3.5 w-3.5" />
@@ -290,21 +306,35 @@ export default function WorkbenchPage() {
       <ResearchGenerateDialog
         open={researchOpen}
         onOpenChange={setResearchOpen}
-        onSubmitted={() => { setPanelKey((k) => k + 1); setAskAiOpen(true); }}
+        onSubmitted={() => {
+          setPanelKey((k) => k + 1);
+          setAskAiOpen(true);
+        }}
       />
       {/* Crawl Dashboard Dialog */}
       <CrawlDashboardDialog
         open={crawlOpen}
         onOpenChange={setCrawlOpen}
-        onSubmitted={() => { setPanelKey((k) => k + 1); setAskAiOpen(true); }}
+        onSubmitted={() => {
+          setPanelKey((k) => k + 1);
+          setAskAiOpen(true);
+        }}
       />
       {/* SEO Gap Analysis Dialog */}
       <SeoAnalysisDialog
         open={seoOpen}
         onOpenChange={setSeoOpen}
-        onSubmitted={() => { setPanelKey((k) => k + 1); setAskAiOpen(true); }}
+        onSubmitted={() => {
+          setPanelKey((k) => k + 1);
+          setAskAiOpen(true);
+        }}
       />
-      <AskAiPanel key={panelKey} pageContext={PAGE_CONTEXTS["workbench"]} open={askAiOpen} onClose={() => setAskAiOpen(false)} />
+      <AskAiPanel
+        key={panelKey}
+        pageContext={PAGE_CONTEXTS["workbench"]}
+        open={askAiOpen}
+        onClose={() => setAskAiOpen(false)}
+      />
     </div>
   );
 }

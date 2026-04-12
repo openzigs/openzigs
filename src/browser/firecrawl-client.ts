@@ -574,8 +574,10 @@ export class FirecrawlClient {
       );
     }
 
-    // Check if already reachable
-    if (this.sidecarRunning && (await this.isAvailableQuick())) {
+    // Check if already reachable (including externally-started instances)
+    if (await this.isAvailableQuick()) {
+      this.sidecarRunning = true;
+      this.resetIdleTimer();
       return;
     }
 

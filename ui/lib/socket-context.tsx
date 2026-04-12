@@ -1,10 +1,20 @@
 "use client";
 
-import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { io, type Socket } from "socket.io-client";
 import { showToast } from "@/components/toast";
 
-const RAW_SOCKET_URL = process.env.NEXT_PUBLIC_OPENZIGS_SOCKET_URL ?? process.env.NEXT_PUBLIC_OPENZIGS_API_BASE ?? "";
+const RAW_SOCKET_URL =
+  process.env.NEXT_PUBLIC_OPENZIGS_SOCKET_URL ??
+  process.env.NEXT_PUBLIC_OPENZIGS_API_BASE ??
+  "";
 const AUTH_TOKEN = process.env.NEXT_PUBLIC_OPENZIGS_TOKEN ?? "";
 
 /**
@@ -22,7 +32,9 @@ function resolveSocketUrl(): string {
     if (base.origin !== window.location.origin) {
       return "";
     }
-  } catch { /* malformed URL, use as-is */ }
+  } catch {
+    /* malformed URL, use as-is */
+  }
   return RAW_SOCKET_URL;
 }
 const CLIENT_ID_KEY = "openzigs:client-id";
@@ -47,7 +59,10 @@ type SocketContextValue = {
   connected: boolean;
 };
 
-const SocketContext = createContext<SocketContextValue>({ socket: null, connected: false });
+const SocketContext = createContext<SocketContextValue>({
+  socket: null,
+  connected: false,
+});
 
 export const useSocket = () => useContext(SocketContext);
 

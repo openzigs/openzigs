@@ -102,10 +102,8 @@ pkill -f "openzigs-chrome-profile" || true
 # Stop Firecrawl Docker containers if running (they survive process kills)
 FIRECRAWL_COMPOSE="$PROJECT_ROOT/docker-compose.firecrawl.yml"
 if [ -f "$FIRECRAWL_COMPOSE" ] && command -v docker >/dev/null 2>&1; then
-  if docker compose -f "$FIRECRAWL_COMPOSE" ps -q 2>/dev/null | grep -q .; then
-    echo "[clean-start] Stopping Firecrawl Docker containers..."
-    docker compose -f "$FIRECRAWL_COMPOSE" down 2>/dev/null || true
-  fi
+  echo "[clean-start] Stopping Firecrawl Docker containers..."
+  docker compose -f "$FIRECRAWL_COMPOSE" down 2>/dev/null || true
 fi
 
 echo "[clean-start] Starting OpenZigs in dev mode (backend + UI)..."
@@ -199,6 +197,22 @@ for _ in {1..30}; do
   fi
   sleep 1
 done
+
+# Optional: start Firecrawl Docker sidecar (default enabled)
+# Checks if Firecrawl is already reachable before attempting Docker startup.
+if [ "${OPENZIGS_START_FIRECRAWL:-1}" != "0" ] && [ -f "$FIRECRAWL_COMPOSE" ] && command -v docker >/dev/null 2>&1; then
+  if curl -sf http://127.0.0.1:3002/ >/dev/null 2>&1; then
+    echo "[clean-start] Firecrawl already running on port 3002 — skipping Docker startup"
+  else
+    echo "[clean-start] Starting Firecrawl Docker sidecar (port 3002)..."
+    if docker compose -f "$FIRECRAWL_COMPOSE" up -d 2>/dev/null; then
+      echo "[clean-start] Probing Firecrawl sidecar health in background..."
+      start_health_probe "Firecrawl sidecar (port 3002)" "http://127.0.0.1:3002/" 30 2
+    else
+      echo "[clean-start] WARNING: Firecrawl Docker startup failed — crawl tools will be unavailable"
+    fi
+  fi
+fi
 
 # Optional: start local image-gen sidecar (default enabled)
 # The sidecar starts in lazy mode — no model loaded until first /generate request.

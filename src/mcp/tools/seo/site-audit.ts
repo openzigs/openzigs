@@ -18,7 +18,11 @@ import path from "node:path";
 import os from "node:os";
 import type { ToolDefinition } from "../../tool-registry.js";
 import { extractContent, type ExtractedContent } from "./html-extractor.js";
-import { getFirecrawlClient, isBlockedUrl, type CrawlPage } from "../../../browser/firecrawl-client.js";
+import {
+  getFirecrawlClient,
+  isBlockedUrl,
+  type CrawlPage,
+} from "../../../browser/firecrawl-client.js";
 import { buildReportSubdir, buildReportFilename } from "./report-generator.js";
 import { saveReportPdf } from "../shared/pdf-export.js";
 
@@ -105,56 +109,112 @@ export function auditPage(
 
   // Title checks
   if (!content.title && !content.metaTitle) {
-    issues.push({ severity: "error", category: "meta", message: "Missing page title" });
+    issues.push({
+      severity: "error",
+      category: "meta",
+      message: "Missing page title",
+    });
   }
   if (content.metaTitle.length > 60) {
-    issues.push({ severity: "warning", category: "meta", message: `Meta title too long (${content.metaTitle.length} chars, recommended ≤60)` });
+    issues.push({
+      severity: "warning",
+      category: "meta",
+      message: `Meta title too long (${content.metaTitle.length} chars, recommended ≤60)`,
+    });
   }
   if (content.metaTitle.length > 0 && content.metaTitle.length < 30) {
-    issues.push({ severity: "warning", category: "meta", message: `Meta title too short (${content.metaTitle.length} chars, recommended ≥30)` });
+    issues.push({
+      severity: "warning",
+      category: "meta",
+      message: `Meta title too short (${content.metaTitle.length} chars, recommended ≥30)`,
+    });
   }
 
   // Meta description checks
   if (!content.metaDescription) {
-    issues.push({ severity: "error", category: "meta", message: "Missing meta description" });
+    issues.push({
+      severity: "error",
+      category: "meta",
+      message: "Missing meta description",
+    });
   } else if (content.metaDescription.length > 160) {
-    issues.push({ severity: "warning", category: "meta", message: `Meta description too long (${content.metaDescription.length} chars, recommended ≤160)` });
+    issues.push({
+      severity: "warning",
+      category: "meta",
+      message: `Meta description too long (${content.metaDescription.length} chars, recommended ≤160)`,
+    });
   } else if (content.metaDescription.length < 50) {
-    issues.push({ severity: "warning", category: "meta", message: `Meta description too short (${content.metaDescription.length} chars, recommended ≥50)` });
+    issues.push({
+      severity: "warning",
+      category: "meta",
+      message: `Meta description too short (${content.metaDescription.length} chars, recommended ≥50)`,
+    });
   }
 
   // Heading checks
   const h1s = content.headings.filter((h) => h.level === 1);
   if (h1s.length === 0) {
-    issues.push({ severity: "error", category: "headings", message: "Missing H1 tag" });
+    issues.push({
+      severity: "error",
+      category: "headings",
+      message: "Missing H1 tag",
+    });
   } else if (h1s.length > 1) {
-    issues.push({ severity: "warning", category: "headings", message: `Multiple H1 tags found (${h1s.length})` });
+    issues.push({
+      severity: "warning",
+      category: "headings",
+      message: `Multiple H1 tags found (${h1s.length})`,
+    });
   }
   if (content.headingCount === 0) {
-    issues.push({ severity: "warning", category: "headings", message: "No heading tags found on page" });
+    issues.push({
+      severity: "warning",
+      category: "headings",
+      message: "No heading tags found on page",
+    });
   }
 
   // Content checks
   if (content.wordCount < 300) {
-    issues.push({ severity: "warning", category: "content", message: `Thin content (${content.wordCount} words, recommended ≥300)` });
+    issues.push({
+      severity: "warning",
+      category: "content",
+      message: `Thin content (${content.wordCount} words, recommended ≥300)`,
+    });
   }
   if (content.readabilityScore < 30) {
-    issues.push({ severity: "info", category: "content", message: `Low readability score (${content.readabilityScore.toFixed(1)})` });
+    issues.push({
+      severity: "info",
+      category: "content",
+      message: `Low readability score (${content.readabilityScore.toFixed(1)})`,
+    });
   }
 
   // Image checks
   if (content.imagesWithoutAlt > 0) {
-    issues.push({ severity: "warning", category: "images", message: `${content.imagesWithoutAlt} image(s) missing alt text` });
+    issues.push({
+      severity: "warning",
+      category: "images",
+      message: `${content.imagesWithoutAlt} image(s) missing alt text`,
+    });
   }
 
   // Link checks
   if (content.internalLinkCount === 0) {
-    issues.push({ severity: "warning", category: "links", message: "No internal links found (orphan page risk)" });
+    issues.push({
+      severity: "warning",
+      category: "links",
+      message: "No internal links found (orphan page risk)",
+    });
   }
 
   // Schema checks
   if (content.schemaMarkup.length === 0) {
-    issues.push({ severity: "info", category: "schema", message: "No structured data (JSON-LD) found" });
+    issues.push({
+      severity: "info",
+      category: "schema",
+      message: "No structured data (JSON-LD) found",
+    });
   }
 
   return {
@@ -250,7 +310,9 @@ export function generateAuditReport(result: SiteAuditResult): string {
   lines.push("");
   lines.push(`**Date:** ${new Date().toISOString().split("T")[0]}`);
   lines.push(`**Pages Audited:** ${result.pagesAudited}`);
-  lines.push(`**Total Issues:** ${result.totalIssues} (${result.errorCount} errors, ${result.warningCount} warnings, ${result.infoCount} info)`);
+  lines.push(
+    `**Total Issues:** ${result.totalIssues} (${result.errorCount} errors, ${result.warningCount} warnings, ${result.infoCount} info)`,
+  );
   lines.push("");
 
   // Summary table
@@ -268,7 +330,12 @@ export function generateAuditReport(result: SiteAuditResult): string {
     lines.push("## Site-Wide Issues");
     lines.push("");
     for (const issue of result.siteWideIssues) {
-      const icon = issue.severity === "error" ? "🔴" : issue.severity === "warning" ? "🟡" : "🔵";
+      const icon =
+        issue.severity === "error"
+          ? "🔴"
+          : issue.severity === "warning"
+            ? "🟡"
+            : "🔵";
       lines.push(`- ${icon} **[${issue.category}]** ${issue.message}`);
     }
     lines.push("");
@@ -286,7 +353,9 @@ export function generateAuditReport(result: SiteAuditResult): string {
     lines.push(`| Word Count | ${page.wordCount} |`);
     lines.push(`| H1 Tags | ${page.h1Count} |`);
     lines.push(`| Headings | ${page.headingCount} |`);
-    lines.push(`| Images (missing alt) | ${page.imagesWithoutAlt}/${page.imagesTotal} |`);
+    lines.push(
+      `| Images (missing alt) | ${page.imagesWithoutAlt}/${page.imagesTotal} |`,
+    );
     lines.push(`| Internal Links | ${page.internalLinkCount} |`);
     lines.push(`| External Links | ${page.externalLinkCount} |`);
     lines.push(`| Schema Types | ${page.schemaTypes.join(", ") || "*none*"} |`);
@@ -296,7 +365,12 @@ export function generateAuditReport(result: SiteAuditResult): string {
     if (page.issues.length > 0) {
       lines.push("**Issues:**");
       for (const issue of page.issues) {
-        const icon = issue.severity === "error" ? "🔴" : issue.severity === "warning" ? "🟡" : "🔵";
+        const icon =
+          issue.severity === "error"
+            ? "🔴"
+            : issue.severity === "warning"
+              ? "🟡"
+              : "🔵";
         lines.push(`- ${icon} **[${issue.category}]** ${issue.message}`);
       }
       lines.push("");
@@ -320,10 +394,24 @@ export function createSeoSiteAuditTool(): ToolDefinition {
       type: "object",
       properties: {
         url: { type: "string", description: "Root URL of the site to audit" },
-        maxPages: { type: "number", description: "Max pages to crawl (default: 50, max: 500)" },
-        maxDepth: { type: "number", description: "Max crawl depth (default: 3)" },
-        includePaths: { type: "array", items: { type: "string" }, description: "Regex patterns to include specific paths" },
-        excludePaths: { type: "array", items: { type: "string" }, description: "Regex patterns to exclude paths" },
+        maxPages: {
+          type: "number",
+          description: "Max pages to crawl (default: 50, max: 500)",
+        },
+        maxDepth: {
+          type: "number",
+          description: "Max crawl depth (default: 3)",
+        },
+        includePaths: {
+          type: "array",
+          items: { type: "string" },
+          description: "Regex patterns to include specific paths",
+        },
+        excludePaths: {
+          type: "array",
+          items: { type: "string" },
+          description: "Regex patterns to exclude paths",
+        },
       },
       required: ["url"],
     },
@@ -331,10 +419,14 @@ export function createSeoSiteAuditTool(): ToolDefinition {
     category: "search",
     riskLevel: "medium",
     handler: async (args) => {
-      const { url, maxPages, maxDepth, includePaths, excludePaths } = seoSiteAuditSchema.parse(args);
+      const { url, maxPages, maxDepth, includePaths, excludePaths } =
+        seoSiteAuditSchema.parse(args);
 
       if (isBlockedUrl(url)) {
-        return { text: `SSRF blocked: URL "${url}" targets an internal/private network address`, isError: true };
+        return {
+          text: `SSRF blocked: URL "${url}" targets an internal/private network address`,
+          isError: true,
+        };
       }
 
       const client = getFirecrawlClient();
@@ -356,14 +448,18 @@ export function createSeoSiteAuditTool(): ToolDefinition {
         });
 
         if (crawlResult.pages.length === 0) {
-          return { text: "Crawl returned no pages. Check that the URL is accessible.", isError: true };
+          return {
+            text: "Crawl returned no pages. Check that the URL is accessible.",
+            isError: true,
+          };
         }
 
         // 2. Audit each page
         const auditedPages: PageAuditResult[] = [];
         for (const page of crawlResult.pages) {
           if (!page.html && !page.markdown) continue;
-          const html = page.html ?? `<html><body>${page.markdown ?? ""}</body></html>`;
+          const html =
+            page.html ?? `<html><body>${page.markdown ?? ""}</body></html>`;
           const content = extractContent(html, page.url);
           auditedPages.push(auditPage(page, content));
         }
@@ -376,8 +472,12 @@ export function createSeoSiteAuditTool(): ToolDefinition {
           ...siteWideIssues,
           ...auditedPages.flatMap((p) => p.issues),
         ];
-        const errorCount = allIssues.filter((i) => i.severity === "error").length;
-        const warningCount = allIssues.filter((i) => i.severity === "warning").length;
+        const errorCount = allIssues.filter(
+          (i) => i.severity === "error",
+        ).length;
+        const warningCount = allIssues.filter(
+          (i) => i.severity === "warning",
+        ).length;
         const infoCount = allIssues.filter((i) => i.severity === "info").length;
 
         // 5. Build result
@@ -409,21 +509,28 @@ export function createSeoSiteAuditTool(): ToolDefinition {
         result.pdfPath = pdfPath;
 
         return {
-          text: `REPORT SAVED: ${reportPath}\n${pdfPath ? `PDF SAVED: ${pdfPath}` : "PDF: Not generated"}\n` +
+          text:
+            `REPORT SAVED: ${reportPath}\n${pdfPath ? `PDF SAVED: ${pdfPath}` : "PDF: Not generated"}\n` +
             `Pages audited: ${auditedPages.length}\n` +
             `Issues found: ${allIssues.length} (${errorCount} errors, ${warningCount} warnings, ${infoCount} info)\n\n` +
-            JSON.stringify({
-              reportPath,
-              pdfPath: pdfPath ?? null,
-              siteUrl: url,
-              pagesAudited: auditedPages.length,
-              totalIssues: allIssues.length,
-              errorCount,
-              warningCount,
-              infoCount,
-              topIssues: allIssues.filter((i) => i.severity === "error").slice(0, 10),
-              siteWideIssues,
-            }, null, 2),
+            JSON.stringify(
+              {
+                reportPath,
+                pdfPath: pdfPath ?? null,
+                siteUrl: url,
+                pagesAudited: auditedPages.length,
+                totalIssues: allIssues.length,
+                errorCount,
+                warningCount,
+                infoCount,
+                topIssues: allIssues
+                  .filter((i) => i.severity === "error")
+                  .slice(0, 10),
+                siteWideIssues,
+              },
+              null,
+              2,
+            ),
         };
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);

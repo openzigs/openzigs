@@ -3724,7 +3724,10 @@ export const createAdminRouter = ({
     if (!prov || typeof prov !== "object" || !prov.type || !prov.baseUrl) {
       return res
         .status(400)
-        .json({ success: false, error: "provider.type and provider.baseUrl are required" });
+        .json({
+          success: false,
+          error: "provider.type and provider.baseUrl are required",
+        });
     }
 
     const baseUrl = String(prov.baseUrl).replace(/\/+$/, "");
@@ -3736,14 +3739,26 @@ export const createAdminRouter = ({
     try {
       parsedUrl = new URL(baseUrl);
     } catch {
-      return res.status(400).json({ success: false, error: "Invalid base URL" });
+      return res
+        .status(400)
+        .json({ success: false, error: "Invalid base URL" });
     }
     if (parsedUrl.protocol !== "http:" && parsedUrl.protocol !== "https:") {
-      return res.status(400).json({ success: false, error: "URL scheme must be http or https" });
+      return res
+        .status(400)
+        .json({ success: false, error: "URL scheme must be http or https" });
     }
-    const ALLOWED_PROVIDER_TYPES = ["openai", "azure", "anthropic", "ollama", "custom"];
+    const ALLOWED_PROVIDER_TYPES = [
+      "openai",
+      "azure",
+      "anthropic",
+      "ollama",
+      "custom",
+    ];
     if (!ALLOWED_PROVIDER_TYPES.includes(provType)) {
-      return res.status(400).json({ success: false, error: `Unknown provider type: ${provType}` });
+      return res
+        .status(400)
+        .json({ success: false, error: `Unknown provider type: ${provType}` });
     }
 
     const start = Date.now();
@@ -3774,11 +3789,17 @@ export const createAdminRouter = ({
       }
 
       // OpenAI / Azure / Anthropic: hit /models or /v1/models
-      const modelsUrl = provType === "azure"
-        ? new URL(`/openai/models?api-version=${encodeURIComponent((prov.azure as Record<string, string>)?.apiVersion ?? "2024-10-21")}`, baseUrl).href
-        : new URL("/models", baseUrl).href;
+      const modelsUrl =
+        provType === "azure"
+          ? new URL(
+              `/openai/models?api-version=${encodeURIComponent((prov.azure as Record<string, string>)?.apiVersion ?? "2024-10-21")}`,
+              baseUrl,
+            ).href
+          : new URL("/models", baseUrl).href;
 
-      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+      };
       if (prov.apiKey) {
         if (provType === "anthropic") {
           headers["x-api-key"] = String(prov.apiKey);

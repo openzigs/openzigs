@@ -37,7 +37,14 @@ type CrawlDashboardDialogProps = {
   onSubmitted?: () => void;
 };
 
-type CrawlAction = "site-audit" | "ingest-website" | "competitive-monitor" | "web-extract" | "lead-extract" | "price-monitor" | "site-to-dataset";
+type CrawlAction =
+  | "site-audit"
+  | "ingest-website"
+  | "competitive-monitor"
+  | "web-extract"
+  | "lead-extract"
+  | "price-monitor"
+  | "site-to-dataset";
 
 // ── Component ────────────────────────────────────────────────────────────
 
@@ -60,7 +67,9 @@ export function CrawlDashboardDialog({
   const [visibility, setVisibility] = useState("internal");
 
   // Competitive monitor
-  const [monitorAction, setMonitorAction] = useState<"add" | "snapshot" | "report" | "list">("add");
+  const [monitorAction, setMonitorAction] = useState<
+    "add" | "snapshot" | "report" | "list"
+  >("add");
   const [competitorName, setCompetitorName] = useState("");
 
   // Web extract
@@ -72,12 +81,16 @@ export function CrawlDashboardDialog({
   const [showHistory, setShowHistory] = useState(false);
 
   // Price monitor
-  const [priceAction, setPriceAction] = useState<"snapshot" | "compare" | "history" | "list">("snapshot");
+  const [priceAction, setPriceAction] = useState<
+    "snapshot" | "compare" | "history" | "list"
+  >("snapshot");
   const [scrollToLoad, setScrollToLoad] = useState(false);
   const [priceLabel, setPriceLabel] = useState("");
 
   // Site-to-dataset
-  const [datasetFormat, setDatasetFormat] = useState<"markdown" | "jsonl" | "csv">("markdown");
+  const [datasetFormat, setDatasetFormat] = useState<
+    "markdown" | "jsonl" | "csv"
+  >("markdown");
   const [includePaths, setIncludePaths] = useState("");
   const [excludePaths, setExcludePaths] = useState("");
 
@@ -85,20 +98,30 @@ export function CrawlDashboardDialog({
   const [model, setModel] = useState("");
 
   // Firecrawl status
-  const [firecrawlEnabled, setFirecrawlEnabled] = useState<boolean | null>(null);
+  const [firecrawlEnabled, setFirecrawlEnabled] = useState<boolean | null>(
+    null,
+  );
 
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
     fetchJson<{ enabled: boolean }>("/api/admin/firecrawl/status")
-      .then((data) => { if (!cancelled) setFirecrawlEnabled(data.enabled); })
-      .catch(() => { if (!cancelled) setFirecrawlEnabled(false); });
-    return () => { cancelled = true; };
+      .then((data) => {
+        if (!cancelled) setFirecrawlEnabled(data.enabled);
+      })
+      .catch(() => {
+        if (!cancelled) setFirecrawlEnabled(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [open]);
 
   const handleSubmit = useCallback(() => {
-    const needsUrl = action !== "competitive-monitor" && action !== "price-monitor";
-    const monitorNeedsUrl = action === "competitive-monitor" && monitorAction !== "list";
+    const needsUrl =
+      action !== "competitive-monitor" && action !== "price-monitor";
+    const monitorNeedsUrl =
+      action === "competitive-monitor" && monitorAction !== "list";
     const priceNeedsUrl = action === "price-monitor" && priceAction !== "list";
     if (needsUrl && !url.trim()) {
       setError("URL is required");
@@ -123,13 +146,32 @@ export function CrawlDashboardDialog({
         prompt = buildSiteAuditPrompt(url, maxPages, maxDepth);
         break;
       case "ingest-website":
-        prompt = buildIngestPrompt(url, maxPages, maxDepth, category, visibility);
+        prompt = buildIngestPrompt(
+          url,
+          maxPages,
+          maxDepth,
+          category,
+          visibility,
+        );
         break;
       case "competitive-monitor":
-        prompt = buildMonitorPrompt(monitorAction, url, competitorName, maxPages);
+        prompt = buildMonitorPrompt(
+          monitorAction,
+          url,
+          competitorName,
+          maxPages,
+        );
         break;
       case "web-extract":
-        prompt = buildExtractPrompt(url, extractSchema, extractPrompt, maxPages, extractTemplate, scrollForContent, waitForDynamic);
+        prompt = buildExtractPrompt(
+          url,
+          extractSchema,
+          extractPrompt,
+          maxPages,
+          extractTemplate,
+          scrollForContent,
+          waitForDynamic,
+        );
         break;
       case "lead-extract":
         prompt = buildLeadPrompt(url, maxPages);
@@ -138,7 +180,14 @@ export function CrawlDashboardDialog({
         prompt = buildPricePrompt(priceAction, url, priceLabel, scrollToLoad);
         break;
       case "site-to-dataset":
-        prompt = buildDatasetPrompt(url, maxPages, maxDepth, datasetFormat, includePaths, excludePaths);
+        prompt = buildDatasetPrompt(
+          url,
+          maxPages,
+          maxDepth,
+          datasetFormat,
+          includePaths,
+          excludePaths,
+        );
         break;
     }
 
@@ -146,15 +195,48 @@ export function CrawlDashboardDialog({
       content: prompt,
       model: model || undefined,
       tools: [
-        "seo-site-audit", "ingest-website", "competitive-monitor",
-        "web-extract", "web-map", "lead-extract", "price-monitor", "site-to-dataset",
-        "read-file", "write-file", "list-directory",
+        "seo-site-audit",
+        "ingest-website",
+        "competitive-monitor",
+        "web-extract",
+        "web-map",
+        "lead-extract",
+        "price-monitor",
+        "site-to-dataset",
+        "read-file",
+        "write-file",
+        "list-directory",
       ],
     });
     setLoading(false);
     onOpenChange(false);
     onSubmitted?.();
-  }, [action, url, maxPages, maxDepth, category, visibility, monitorAction, competitorName, extractSchema, extractPrompt, extractTemplate, scrollForContent, waitForDynamic, priceAction, scrollToLoad, priceLabel, datasetFormat, includePaths, excludePaths, model, socket, connected, onOpenChange, onSubmitted]);
+  }, [
+    action,
+    url,
+    maxPages,
+    maxDepth,
+    category,
+    visibility,
+    monitorAction,
+    competitorName,
+    extractSchema,
+    extractPrompt,
+    extractTemplate,
+    scrollForContent,
+    waitForDynamic,
+    priceAction,
+    scrollToLoad,
+    priceLabel,
+    datasetFormat,
+    includePaths,
+    excludePaths,
+    model,
+    socket,
+    connected,
+    onOpenChange,
+    onSubmitted,
+  ]);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -165,7 +247,8 @@ export function CrawlDashboardDialog({
             Firecrawl Dashboard
           </DialogTitle>
           <DialogDescription>
-            Crawl websites for SEO audits, data extraction, price monitoring, and more.
+            Crawl websites for SEO audits, data extraction, price monitoring,
+            and more.
           </DialogDescription>
         </DialogHeader>
 
@@ -181,7 +264,8 @@ export function CrawlDashboardDialog({
                   <code className="rounded bg-blue-100 px-1 dark:bg-blue-900">
                     docker compose -f docker-compose.firecrawl.yml up -d
                   </code>{" "}
-                  to start the Firecrawl sidecar, then enable it in Admin → Settings.
+                  to start the Firecrawl sidecar, then enable it in Admin →
+                  Settings.
                 </p>
               </div>
             </div>
@@ -236,27 +320,37 @@ export function CrawlDashboardDialog({
           </div>
 
           {/* URL input */}
-          {!(action === "competitive-monitor" && monitorAction === "list") && !(action === "price-monitor" && priceAction === "list") && (
-            <div>
-              <label htmlFor="crawl-url" className="mb-1 block text-sm font-medium">
-                Website URL
-              </label>
-              <input
-                id="crawl-url"
-                type="url"
-                value={url}
-                onChange={(e) => setUrl(e.target.value)}
-                placeholder="https://example.com"
-                className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
-              />
-            </div>
-          )}
+          {!(action === "competitive-monitor" && monitorAction === "list") &&
+            !(action === "price-monitor" && priceAction === "list") && (
+              <div>
+                <label
+                  htmlFor="crawl-url"
+                  className="mb-1 block text-sm font-medium"
+                >
+                  Website URL
+                </label>
+                <input
+                  id="crawl-url"
+                  type="url"
+                  value={url}
+                  onChange={(e) => setUrl(e.target.value)}
+                  placeholder="https://example.com"
+                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+                />
+              </div>
+            )}
 
           {/* Max pages & depth */}
-          {(action === "site-audit" || action === "ingest-website" || action === "lead-extract" || action === "site-to-dataset") && (
+          {(action === "site-audit" ||
+            action === "ingest-website" ||
+            action === "lead-extract" ||
+            action === "site-to-dataset") && (
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label htmlFor="max-pages" className="mb-1 block text-sm font-medium">
+                <label
+                  htmlFor="max-pages"
+                  className="mb-1 block text-sm font-medium"
+                >
                   Max Pages
                 </label>
                 <input
@@ -270,7 +364,10 @@ export function CrawlDashboardDialog({
                 />
               </div>
               <div>
-                <label htmlFor="max-depth" className="mb-1 block text-sm font-medium">
+                <label
+                  htmlFor="max-depth"
+                  className="mb-1 block text-sm font-medium"
+                >
                   Max Depth
                 </label>
                 <input
@@ -290,7 +387,10 @@ export function CrawlDashboardDialog({
           {action === "ingest-website" && (
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label htmlFor="category" className="mb-1 block text-sm font-medium">
+                <label
+                  htmlFor="category"
+                  className="mb-1 block text-sm font-medium"
+                >
                   Category
                 </label>
                 <select
@@ -308,7 +408,10 @@ export function CrawlDashboardDialog({
                 </select>
               </div>
               <div>
-                <label htmlFor="visibility" className="mb-1 block text-sm font-medium">
+                <label
+                  htmlFor="visibility"
+                  className="mb-1 block text-sm font-medium"
+                >
                   Visibility
                 </label>
                 <select
@@ -328,13 +431,18 @@ export function CrawlDashboardDialog({
           {action === "competitive-monitor" && (
             <div className="space-y-3">
               <div>
-                <label htmlFor="monitor-action" className="mb-1 block text-sm font-medium">
+                <label
+                  htmlFor="monitor-action"
+                  className="mb-1 block text-sm font-medium"
+                >
                   Action
                 </label>
                 <select
                   id="monitor-action"
                   value={monitorAction}
-                  onChange={(e) => setMonitorAction(e.target.value as typeof monitorAction)}
+                  onChange={(e) =>
+                    setMonitorAction(e.target.value as typeof monitorAction)
+                  }
                   className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
                 >
                   <option value="add">Add Competitor</option>
@@ -345,7 +453,10 @@ export function CrawlDashboardDialog({
               </div>
               {monitorAction === "add" && (
                 <div>
-                  <label htmlFor="competitor-name" className="mb-1 block text-sm font-medium">
+                  <label
+                    htmlFor="competitor-name"
+                    className="mb-1 block text-sm font-medium"
+                  >
                     Name (optional)
                   </label>
                   <input
@@ -365,7 +476,10 @@ export function CrawlDashboardDialog({
           {action === "web-extract" && !showHistory && (
             <div className="space-y-3">
               <div>
-                <label htmlFor="extract-template" className="mb-1 block text-sm font-medium">
+                <label
+                  htmlFor="extract-template"
+                  className="mb-1 block text-sm font-medium"
+                >
                   Template
                 </label>
                 <select
@@ -382,7 +496,10 @@ export function CrawlDashboardDialog({
                 </select>
               </div>
               <div>
-                <label htmlFor="extract-prompt" className="mb-1 block text-sm font-medium">
+                <label
+                  htmlFor="extract-prompt"
+                  className="mb-1 block text-sm font-medium"
+                >
                   What to extract
                 </label>
                 <textarea
@@ -396,7 +513,10 @@ export function CrawlDashboardDialog({
               </div>
               {extractTemplate === "custom" && (
                 <div>
-                  <label htmlFor="extract-schema" className="mb-1 block text-sm font-medium">
+                  <label
+                    htmlFor="extract-schema"
+                    className="mb-1 block text-sm font-medium"
+                  >
                     JSON Schema (optional)
                   </label>
                   <textarea
@@ -451,13 +571,18 @@ export function CrawlDashboardDialog({
           {action === "price-monitor" && (
             <div className="space-y-3">
               <div>
-                <label htmlFor="price-action" className="mb-1 block text-sm font-medium">
+                <label
+                  htmlFor="price-action"
+                  className="mb-1 block text-sm font-medium"
+                >
                   Action
                 </label>
                 <select
                   id="price-action"
                   value={priceAction}
-                  onChange={(e) => setPriceAction(e.target.value as typeof priceAction)}
+                  onChange={(e) =>
+                    setPriceAction(e.target.value as typeof priceAction)
+                  }
                   className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
                 >
                   <option value="snapshot">Capture Snapshot</option>
@@ -469,7 +594,10 @@ export function CrawlDashboardDialog({
               {priceAction === "snapshot" && (
                 <>
                   <div>
-                    <label htmlFor="price-label" className="mb-1 block text-sm font-medium">
+                    <label
+                      htmlFor="price-label"
+                      className="mb-1 block text-sm font-medium"
+                    >
                       Label (optional)
                     </label>
                     <input
@@ -499,13 +627,18 @@ export function CrawlDashboardDialog({
           {action === "site-to-dataset" && (
             <div className="space-y-3">
               <div>
-                <label htmlFor="dataset-format" className="mb-1 block text-sm font-medium">
+                <label
+                  htmlFor="dataset-format"
+                  className="mb-1 block text-sm font-medium"
+                >
                   Output Format
                 </label>
                 <select
                   id="dataset-format"
                   value={datasetFormat}
-                  onChange={(e) => setDatasetFormat(e.target.value as typeof datasetFormat)}
+                  onChange={(e) =>
+                    setDatasetFormat(e.target.value as typeof datasetFormat)
+                  }
                   className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
                 >
                   <option value="markdown">Markdown</option>
@@ -514,7 +647,10 @@ export function CrawlDashboardDialog({
                 </select>
               </div>
               <div>
-                <label htmlFor="include-paths" className="mb-1 block text-sm font-medium">
+                <label
+                  htmlFor="include-paths"
+                  className="mb-1 block text-sm font-medium"
+                >
                   Include paths (comma-separated)
                 </label>
                 <input
@@ -527,7 +663,10 @@ export function CrawlDashboardDialog({
                 />
               </div>
               <div>
-                <label htmlFor="exclude-paths" className="mb-1 block text-sm font-medium">
+                <label
+                  htmlFor="exclude-paths"
+                  className="mb-1 block text-sm font-medium"
+                >
                   Exclude paths (comma-separated)
                 </label>
                 <input
@@ -615,7 +754,11 @@ function ActionButton({
 
 // ── Prompt Builders ──────────────────────────────────────────────────────
 
-function buildSiteAuditPrompt(url: string, maxPages: number, maxDepth: number): string {
+function buildSiteAuditPrompt(
+  url: string,
+  maxPages: number,
+  maxDepth: number,
+): string {
   return [
     `Run a comprehensive SEO site audit using the seo-site-audit tool.`,
     ``,
@@ -676,7 +819,15 @@ function buildMonitorPrompt(
   ].join("\n");
 }
 
-function buildExtractPrompt(url: string, schema: string, prompt: string, maxPages: number, template: string, scrollForContent: boolean, waitForDynamic: boolean): string {
+function buildExtractPrompt(
+  url: string,
+  schema: string,
+  prompt: string,
+  maxPages: number,
+  template: string,
+  scrollForContent: boolean,
+  waitForDynamic: boolean,
+): string {
   const args: Record<string, unknown> = { url };
   if (template !== "custom") {
     args.template = template;
@@ -691,8 +842,10 @@ function buildExtractPrompt(url: string, schema: string, prompt: string, maxPage
   if (maxPages > 1) args.maxPages = maxPages;
 
   const hints: string[] = [];
-  if (scrollForContent) hints.push("Scroll the page to load all lazy content before extraction.");
-  if (waitForDynamic) hints.push("Wait for dynamic/JavaScript-rendered content to fully load.");
+  if (scrollForContent)
+    hints.push("Scroll the page to load all lazy content before extraction.");
+  if (waitForDynamic)
+    hints.push("Wait for dynamic/JavaScript-rendered content to fully load.");
 
   return [
     `Use the web-extract tool to scrape and extract structured data.`,
@@ -754,8 +907,16 @@ function buildDatasetPrompt(
   excludePaths: string,
 ): string {
   const args: Record<string, unknown> = { url, maxPages, maxDepth, format };
-  if (includePaths.trim()) args.includePaths = includePaths.split(",").map((s) => s.trim()).filter(Boolean);
-  if (excludePaths.trim()) args.excludePaths = excludePaths.split(",").map((s) => s.trim()).filter(Boolean);
+  if (includePaths.trim())
+    args.includePaths = includePaths
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+  if (excludePaths.trim())
+    args.excludePaths = excludePaths
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
 
   return [
     `Use the site-to-dataset tool to crawl and build a structured dataset.`,
@@ -771,12 +932,19 @@ function buildDatasetPrompt(
 
 function getButtonLabel(action: CrawlAction): string {
   switch (action) {
-    case "site-audit": return "Run Audit";
-    case "ingest-website": return "Start Ingestion";
-    case "web-extract": return "Extract Data";
-    case "lead-extract": return "Find Leads";
-    case "price-monitor": return "Monitor Prices";
-    case "site-to-dataset": return "Build Dataset";
-    default: return "Execute";
+    case "site-audit":
+      return "Run Audit";
+    case "ingest-website":
+      return "Start Ingestion";
+    case "web-extract":
+      return "Extract Data";
+    case "lead-extract":
+      return "Find Leads";
+    case "price-monitor":
+      return "Monitor Prices";
+    case "site-to-dataset":
+      return "Build Dataset";
+    default:
+      return "Execute";
   }
 }

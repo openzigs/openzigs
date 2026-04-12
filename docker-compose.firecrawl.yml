@@ -10,7 +10,7 @@ version: "3.9"
 
 services:
   firecrawl-api:
-    image: ghcr.io/mendableai/firecrawl:v2.8.0
+    image: ghcr.io/firecrawl/firecrawl:latest
     container_name: openzigs-firecrawl-api
     restart: unless-stopped
     ports:
@@ -44,7 +44,7 @@ services:
     mem_limit: 4G
 
   firecrawl-playwright:
-    image: ghcr.io/mendableai/firecrawl-playwright:v2.8.0
+    image: ghcr.io/firecrawl/playwright-service:latest
     container_name: openzigs-firecrawl-playwright
     restart: unless-stopped
     environment:

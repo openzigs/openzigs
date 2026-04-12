@@ -330,6 +330,54 @@ export function createWebExtractTool(
           type: "array",
           description:
             "Actions to perform before extraction (click, scroll, etc.)",
+          items: {
+            type: "object",
+            properties: {
+              type: {
+                type: "string",
+                enum: [
+                  "wait",
+                  "click",
+                  "write",
+                  "press",
+                  "scroll",
+                  "screenshot",
+                  "scrape",
+                  "executeJavascript",
+                  "pdf",
+                ],
+                description: "Action type to perform",
+              },
+              selector: {
+                type: "string",
+                description: "CSS selector for click/write actions",
+              },
+              text: { type: "string", description: "Text for write action" },
+              key: { type: "string", description: "Key for press action" },
+              milliseconds: {
+                type: "number",
+                description: "Milliseconds for wait action",
+              },
+              direction: {
+                type: "string",
+                enum: ["up", "down"],
+                description: "Direction for scroll action",
+              },
+              fullPage: {
+                type: "boolean",
+                description: "Full page for screenshot action",
+              },
+              script: {
+                type: "string",
+                description: "Script for executeJavascript action",
+              },
+              all: {
+                type: "boolean",
+                description: "Select all matching elements",
+              },
+            },
+            required: ["type"],
+          },
         },
         maxPages: {
           type: "number",
