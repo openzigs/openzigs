@@ -349,10 +349,25 @@ export class FirecrawlClient {
       throw new Error("Firecrawl crawl response missing job ID");
     }
 
+    // Always register for UI progress tracking regardless of webhook vs polling
+    if (this._webhookHandler) {
+      this._webhookHandler.registerCrawl(
+        webhookJobId ?? jobId,
+        url,
+        options?.limit ?? 0,
+      );
+    }
+
     // Try webhook-based completion first, fall back to polling
     if (webhookPromise) {
       try {
         const webhookResult = await webhookPromise;
+        if (this._webhookHandler) {
+          this._webhookHandler.completeCrawl(
+            webhookJobId ?? jobId,
+            webhookResult.success ? "completed" : "failed",
+          );
+        }
         return this.parseCrawlResult(webhookResult, jobId);
       } catch (err) {
         logger.warn(
@@ -757,11 +772,7 @@ export class FirecrawlClient {
     const maxPolls = 300; // 5 minutes at 1s intervals
     const pollInterval = 1000;
 
-    // Register with webhook handler for UI progress events (even without webhooks)
-    if (this._webhookHandler && siteUrl) {
-      this._webhookHandler.registerCrawl(jobId, siteUrl, estimatedTotal ?? 0);
-    }
-
+    // crawl:started was already emitted by crawl() — just log the poll start
     logger.info("[FirecrawlClient] Polling crawl job", {
       jobId,
       siteUrl,
