@@ -7947,6 +7947,42 @@ Reports include:
 - Category breakdowns (Critical, High, Medium, Low issues)
 - Actionable recommendations
 
+### SEO Dashboard
+
+Navigate to **Automation → SEO** in the nav bar to access the SEO Dashboard (`/seo`). The dashboard provides:
+
+- **Health Score** — A 0–100 ring chart showing your overall site health rating (excellent/good/fair/poor), computed from weighted issue severity
+- **Audit History** — Timeline of past audits with score trends, regression detection, and comparison between latest and previous runs
+- **Real-time Crawl Progress** — Live progress bars during active crawls (powered by Socket.IO)
+- **Export** — Download any audit as CSV, JSON, or PDF from the Export tab
+
+### Core Web Vitals
+
+The `core-web-vitals` MCP tool fetches performance metrics from Google PageSpeed Insights:
+
+- **LCP** (Largest Contentful Paint), **CLS** (Cumulative Layout Shift), **TBT** (Total Blocking Time)
+- **FCP** (First Contentful Paint), **SI** (Speed Index), **TTI** (Time to Interactive)
+- Metrics are rated as good/needs-improvement/poor against Google's thresholds
+- Results are cached for 24 hours to respect API rate limits
+- Batch mode available for auditing multiple URLs
+
+### Content Quality Analysis
+
+The site audit now includes content quality analysis:
+
+- **Duplicate Detection** — SimHash-based similarity detection identifies pages with >85% content overlap, with recommendations (merge, canonical, noindex)
+- **Thin Content** — Flags pages with fewer than 300 words
+- **Keyword Density** — Top 5 keywords per page for content optimization
+
+### Link Analysis
+
+Advanced link analysis runs automatically during site audits:
+
+- **Broken Links** — Detects 4xx/5xx responses across all crawled pages
+- **Redirect Chains** — Identifies chains with 3+ hops and redirect loops
+- **Link Depth** — BFS traversal from homepage calculates click depth for each page
+- **Orphan Pages** — Pages with zero incoming internal links
+
 ### Example Prompts
 
 ```

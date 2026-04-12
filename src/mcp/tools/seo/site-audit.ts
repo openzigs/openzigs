@@ -25,6 +25,13 @@ import {
 } from "../../../browser/firecrawl-client.js";
 import { buildReportSubdir, buildReportFilename } from "./report-generator.js";
 import { saveReportPdf } from "../shared/pdf-export.js";
+import {
+  calculateHealthScore,
+  classifyAuditIssue,
+  type ClassifiedIssue,
+} from "./health-score.js";
+import { AuditHistoryRepository } from "./audit-history.js";
+import { getDatabase } from "../../../productivity/database.js";
 
 const SEO_REPORTS_DIR = path.join(os.homedir(), ".openzigs", "seo-reports");
 
@@ -508,11 +515,36 @@ export function createSeoSiteAuditTool(): ToolDefinition {
         const pdfPath = await saveReportPdf(pdfBasename, report, reportDir);
         result.pdfPath = pdfPath;
 
+        // 7. Compute health score and save audit snapshot
+        const classifiedIssues: ClassifiedIssue[] = allIssues.map((i) =>
+          classifyAuditIssue(i),
+        );
+        const healthScore = calculateHealthScore(classifiedIssues);
+
+        try {
+          const db = getDatabase();
+          const historyRepo = new AuditHistoryRepository(db);
+          historyRepo.saveSnapshot(
+            url,
+            healthScore,
+            auditedPages.length,
+            JSON.stringify({
+              issues: allIssues,
+              healthScore,
+              reportPath,
+              pdfPath: pdfPath ?? null,
+            }),
+          );
+        } catch {
+          // Non-fatal: audit history is optional
+        }
+
         return {
           text:
             `REPORT SAVED: ${reportPath}\n${pdfPath ? `PDF SAVED: ${pdfPath}` : "PDF: Not generated"}\n` +
             `Pages audited: ${auditedPages.length}\n` +
-            `Issues found: ${allIssues.length} (${errorCount} errors, ${warningCount} warnings, ${infoCount} info)\n\n` +
+            `Issues found: ${allIssues.length} (${errorCount} errors, ${warningCount} warnings, ${infoCount} info)\n` +
+            `Health Score: ${healthScore.score}/100 (${healthScore.rating})\n\n` +
             JSON.stringify(
               {
                 reportPath,
@@ -523,6 +555,8 @@ export function createSeoSiteAuditTool(): ToolDefinition {
                 errorCount,
                 warningCount,
                 infoCount,
+                healthScore: healthScore.score,
+                healthRating: healthScore.rating,
                 topIssues: allIssues
                   .filter((i) => i.severity === "error")
                   .slice(0, 10),

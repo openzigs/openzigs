@@ -805,6 +805,30 @@ Four native MCP tools for Pinterest SEO powered by the Pinterest API v5. Registe
 - `ui/components/admin/pinterest-panel.tsx` — Admin panel showing connection status, account stats, trending keywords
 - Admin API routes: `GET /api/admin/pinterest/status`, `/trends`, `/stats`
 
+#### SEO Suite (#838)
+
+**Source:** `src/mcp/tools/seo/` (built-in, no sidecar)
+
+Comprehensive SEO analysis toolkit for full-site auditing, content quality, link analysis, and Core Web Vitals monitoring. The suite is powered by Firecrawl crawling and the Google PageSpeed Insights API.
+
+| Tool | Risk | Description |
+|---|---|---|
+| `seo-site-audit` | 🟡 medium | Full-site SEO audit via Firecrawl deep crawl, generates Markdown + PDF reports |
+| `core-web-vitals` | 🟢 low | Fetches Core Web Vitals (LCP, CLS, TBT, FCP, SI, TTI) from Google PageSpeed Insights |
+
+**Backend Modules:**
+- `health-score.ts` — 0–100 health score with 4-level severity classification (critical/high/medium/low)
+- `link-analyzer.ts` — Broken links, redirect chains/loops, BFS link depth, orphan page detection
+- `content-analyzer.ts` — SimHash duplicate detection (>85% similarity), thin content, keyword density
+- `report-export.ts` — CSV, JSON, and PDF export of audit data
+- `audit-history.ts` — SQLite-backed snapshot storage with comparison and regression detection
+
+**Real-time Crawl Progress:** Webhook handler emits `crawl:started`, `crawl:progress`, `crawl:completed` events via Socket.IO for live progress tracking in the UI.
+
+**API Routes:** `GET /api/seo/history`, `GET /api/seo/history/:id`, `GET /api/seo/history/compare/:siteUrl`, `POST /api/seo/export/:id`
+
+**UI:** `/seo` dashboard page with tabbed layout (Overview | History | Export), health score ring, trends comparison, real-time crawl progress panel.
+
 #### Research & Content Synthesis Tools
 
 **Source:** `src/mcp/tools/draft-media-tools.ts` (built-in, no sidecar)

@@ -14,6 +14,12 @@ import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { Router, type Request, type Response } from "express";
 import { logger } from "../logging/logger.js";
+import type {
+  CrawlStats,
+  CrawlStartedEvent,
+  CrawlProgressEvent,
+  CrawlCompletedEvent,
+} from "../types/crawl-events.js";
 
 // ── Types ────────────────────────────────────────────────────────────────
 
@@ -69,6 +75,7 @@ export function validateWebhookSignature(
 
 export class FirecrawlWebhookHandler extends EventEmitter {
   private pending = new Map<string, PendingJob>();
+  private crawlStats = new Map<string, CrawlStats>();
   private config: FirecrawlWebhookConfig;
   private requestTimes: number[] = [];
   private readonly MAX_REQUESTS_PER_MINUTE = 100;
@@ -96,6 +103,99 @@ export class FirecrawlWebhookHandler extends EventEmitter {
   /** Get the shared secret (for passing to Firecrawl container) */
   get secret(): string {
     return this.config.secret;
+  }
+
+  /** Get crawl stats for a specific job */
+  getCrawlStats(jobId: string): CrawlStats | undefined {
+    return this.crawlStats.get(jobId);
+  }
+
+  /** Get all active crawl stats */
+  getAllCrawlStats(): CrawlStats[] {
+    return Array.from(this.crawlStats.values());
+  }
+
+  /** Register a new crawl for progress tracking */
+  registerCrawl(jobId: string, siteUrl: string, estimatedTotal: number): void {
+    const stats: CrawlStats = {
+      jobId,
+      siteUrl,
+      pagesScraped: 0,
+      estimatedTotal,
+      errorCount: 0,
+      lastUrl: siteUrl,
+      startedAt: new Date().toISOString(),
+      completedAt: null,
+      status: "running",
+    };
+    this.crawlStats.set(jobId, stats);
+
+    const event: CrawlStartedEvent = {
+      jobId,
+      siteUrl,
+      estimatedTotal,
+      startedAt: stats.startedAt,
+    };
+    this.emit("crawl:started", event);
+    logger.info("[FirecrawlWebhook] Crawl registered", { jobId, siteUrl });
+  }
+
+  /**
+   * Handle a per-page crawl event. Updates stats and emits progress events.
+   * Called for `crawl.page` webhook events from Firecrawl.
+   */
+  handleCrawlPageEvent(jobId: string, pageUrl: string, isError: boolean): void {
+    const stats = this.crawlStats.get(jobId);
+    if (!stats) return;
+
+    stats.pagesScraped++;
+    stats.lastUrl = pageUrl;
+    if (isError) stats.errorCount++;
+
+    const elapsedMs = Date.now() - new Date(stats.startedAt).getTime();
+    const event: CrawlProgressEvent = {
+      jobId,
+      siteUrl: stats.siteUrl,
+      pagesScraped: stats.pagesScraped,
+      estimatedTotal: stats.estimatedTotal,
+      errorCount: stats.errorCount,
+      lastUrl: pageUrl,
+      elapsedMs,
+    };
+    this.emit("crawl:progress", event);
+  }
+
+  /**
+   * Mark a crawl as completed. Emits completion event and cleans up after delay.
+   */
+  completeCrawl(
+    jobId: string,
+    status: "completed" | "failed" = "completed",
+  ): void {
+    const stats = this.crawlStats.get(jobId);
+    if (!stats) return;
+
+    stats.status = status;
+    stats.completedAt = new Date().toISOString();
+
+    const elapsedMs = Date.now() - new Date(stats.startedAt).getTime();
+    const event: CrawlCompletedEvent = {
+      jobId,
+      siteUrl: stats.siteUrl,
+      pagesScraped: stats.pagesScraped,
+      errorCount: stats.errorCount,
+      elapsedMs,
+      status,
+    };
+    this.emit("crawl:completed", event);
+    logger.info("[FirecrawlWebhook] Crawl completed", {
+      jobId,
+      status,
+      pagesScraped: stats.pagesScraped,
+    });
+
+    // Clean up stats after 5 minutes
+    setTimeout(() => this.crawlStats.delete(jobId), 300_000).unref?.();
   }
 
   /**
@@ -190,6 +290,7 @@ export class FirecrawlWebhookHandler extends EventEmitter {
       pending.reject(error);
     }
     this.pending.clear();
+    this.crawlStats.clear();
     this.removeAllListeners();
   }
 
