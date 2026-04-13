@@ -167,6 +167,48 @@ export class AuditHistoryRepository {
     };
   }
 
+  /** Get trend data for charting (score + date pairs). */
+  getTrend(
+    siteUrl: string,
+    limit = 12,
+  ): Array<{ date: string; score: number; issues: number }> {
+    const snapshots = this.listSnapshots(siteUrl, limit);
+    return snapshots
+      .map((s) => ({
+        date: s.createdAt,
+        score: s.healthScore,
+        issues: s.totalIssues,
+      }))
+      .reverse(); // oldest first for charting
+  }
+
+  /** Prune snapshots older than `days` for the given site (or all sites). */
+  pruneOldSnapshots(days: number, siteUrl?: string): number {
+    const cutoff = new Date(
+      Date.now() - days * 24 * 60 * 60 * 1000,
+    ).toISOString();
+    if (siteUrl) {
+      const info = this.db
+        .prepare(
+          "DELETE FROM seo_audit_snapshots WHERE site_url = ? AND created_at < ?",
+        )
+        .run(siteUrl, cutoff);
+      return info.changes;
+    }
+    const info = this.db
+      .prepare("DELETE FROM seo_audit_snapshots WHERE created_at < ?")
+      .run(cutoff);
+    return info.changes;
+  }
+
+  /** Delete a specific snapshot by ID. */
+  deleteSnapshot(id: number): boolean {
+    const info = this.db
+      .prepare("DELETE FROM seo_audit_snapshots WHERE id = ?")
+      .run(id);
+    return info.changes > 0;
+  }
+
   private mapRow(row: Record<string, unknown>): AuditSnapshot {
     return {
       id: row.id as number,

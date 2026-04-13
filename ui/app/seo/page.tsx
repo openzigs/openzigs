@@ -91,12 +91,20 @@ interface LinkAnalysis {
   brokenLinks?: BrokenLink[];
   orphanPages?: (string | Record<string, unknown>)[];
   redirectChains?: RedirectChain[];
+  linkDepths?: Array<{ url: string; depth: number }>;
   links?: { source: string; target: string }[];
   nodes?: { id: string; issues?: number }[];
+  linkDistribution?: Array<{
+    url: string;
+    inbound: number;
+    outbound: number;
+  }>;
 }
 
 interface DuplicateGroup {
   urls?: string[];
+  similarity?: number;
+  recommendation?: string;
 }
 
 interface ThinContentPage {
@@ -107,6 +115,12 @@ interface ThinContentPage {
 interface ContentAnalysis {
   duplicateGroups?: DuplicateGroup[];
   thinContentPages?: (string | ThinContentPage)[];
+  keywordDensity?: Array<{
+    url: string;
+    keyword: string;
+    count: number;
+    density: number;
+  }>;
 }
 
 interface CwvMetric {
@@ -1060,7 +1074,10 @@ export default function SeoPage() {
         </TabsContent>
 
         {/* ── Audit (results detail) ───────────────────────────── */}
-        <TabsContent value="audit" className="mt-6 overflow-y-auto max-h-[calc(100vh-20rem)]">
+        <TabsContent
+          value="audit"
+          className="mt-6 overflow-y-auto max-h-[calc(100vh-20rem)]"
+        >
           {latestData?.pages && latestData.pages.length > 0 ? (
             <div className="space-y-4">
               <h3 className="text-sm font-semibold">
@@ -1122,7 +1139,10 @@ export default function SeoPage() {
         </TabsContent>
 
         {/* ── Links ────────────────────────────────────────────── */}
-        <TabsContent value="links" className="mt-6 overflow-y-auto max-h-[calc(100vh-20rem)]">
+        <TabsContent
+          value="links"
+          className="mt-6 overflow-y-auto max-h-[calc(100vh-20rem)]"
+        >
           {latestData?.linkAnalysis ? (
             <div className="space-y-6">
               <div className="grid gap-4 md:grid-cols-3">
@@ -1231,6 +1251,19 @@ export default function SeoPage() {
                 <h4 className="text-sm font-semibold mb-2">Link Graph</h4>
                 <LinkGraph linkAnalysis={latestData.linkAnalysis} />
               </div>
+
+              {/* Link Depth Distribution */}
+              {latestData.linkAnalysis.linkDepths &&
+                latestData.linkAnalysis.linkDepths.length > 0 && (
+                  <div>
+                    <h4 className="text-sm font-semibold mb-2">
+                      Link Depth Distribution
+                    </h4>
+                    <LinkDepthTable
+                      depths={latestData.linkAnalysis.linkDepths}
+                    />
+                  </div>
+                )}
             </div>
           ) : (
             <EmptyState message="No link analysis data. Run an audit to analyze your site's link structure." />
@@ -1238,7 +1271,10 @@ export default function SeoPage() {
         </TabsContent>
 
         {/* ── Content ──────────────────────────────────────────── */}
-        <TabsContent value="content" className="mt-6 overflow-y-auto max-h-[calc(100vh-20rem)]">
+        <TabsContent
+          value="content"
+          className="mt-6 overflow-y-auto max-h-[calc(100vh-20rem)]"
+        >
           {latestData?.contentAnalysis ? (
             <div className="space-y-6">
               {latestData.contentAnalysis.duplicateGroups &&
@@ -1254,9 +1290,21 @@ export default function SeoPage() {
                           key={idx}
                           className="rounded-lg border bg-card p-3"
                         >
-                          <p className="text-xs font-medium text-orange-500 mb-1">
-                            Group {idx + 1} — {group.urls?.length ?? 0} pages
-                          </p>
+                          <div className="flex items-center gap-2 mb-1">
+                            <p className="text-xs font-medium text-orange-500">
+                              Group {idx + 1} — {group.urls?.length ?? 0} pages
+                            </p>
+                            {group.similarity != null && (
+                              <span className="text-[10px] rounded bg-orange-50 text-orange-600 px-1 py-0.5 font-medium">
+                                {group.similarity}% similar
+                              </span>
+                            )}
+                            {group.recommendation && (
+                              <span className="text-[10px] rounded bg-blue-50 text-blue-600 px-1 py-0.5 font-medium">
+                                {group.recommendation}
+                              </span>
+                            )}
+                          </div>
                           <ul className="space-y-0.5">
                             {(group.urls ?? []).map(
                               (url: string, i: number) => (
@@ -1322,6 +1370,65 @@ export default function SeoPage() {
                   No thin content pages detected.
                 </p>
               )}
+
+              {/* Keyword Density */}
+              {latestData.contentAnalysis.keywordDensity &&
+              latestData.contentAnalysis.keywordDensity.length > 0 ? (
+                <div>
+                  <h4 className="text-sm font-semibold mb-2">
+                    Keyword Density
+                  </h4>
+                  <div className="rounded-lg border overflow-hidden">
+                    <table className="w-full text-xs">
+                      <thead className="bg-muted/50">
+                        <tr>
+                          <th className="px-3 py-2 text-left font-medium">
+                            URL
+                          </th>
+                          <th className="px-3 py-2 text-left font-medium">
+                            Keyword
+                          </th>
+                          <th className="px-3 py-2 text-left font-medium">
+                            Count
+                          </th>
+                          <th className="px-3 py-2 text-left font-medium">
+                            Density
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {latestData.contentAnalysis.keywordDensity
+                          .slice(0, 50)
+                          .map((kd, idx) => (
+                            <tr key={idx} className="border-t">
+                              <td className="px-3 py-2 truncate max-w-[200px]">
+                                {kd.url}
+                              </td>
+                              <td className="px-3 py-2 font-medium">
+                                {kd.keyword}
+                              </td>
+                              <td className="px-3 py-2">{kd.count}</td>
+                              <td
+                                className={`px-3 py-2 font-medium ${kd.density > 3 ? "text-red-500" : ""}`}
+                              >
+                                {kd.density}%
+                                {kd.density > 3 && (
+                                  <span className="ml-1 text-[10px] text-red-500">
+                                    over-optimized
+                                  </span>
+                                )}
+                              </td>
+                            </tr>
+                          ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              ) : (
+                <p className="text-sm text-muted-foreground">
+                  No keyword density data available.
+                </p>
+              )}
             </div>
           ) : (
             <EmptyState message="No content analysis data. Run an audit to check for duplicate and thin content." />
@@ -1329,19 +1436,25 @@ export default function SeoPage() {
         </TabsContent>
 
         {/* ── Performance (CWV) ────────────────────────────────── */}
-        <TabsContent value="performance" className="mt-6 overflow-y-auto max-h-[calc(100vh-20rem)]">
+        <TabsContent
+          value="performance"
+          className="mt-6 overflow-y-auto max-h-[calc(100vh-20rem)]"
+        >
           {latestData?.coreWebVitals && latestData.coreWebVitals.length > 0 ? (
             <div className="space-y-4">
               <h3 className="text-sm font-semibold">Core Web Vitals</h3>
+
+              {/* Aggregate CWV Summary */}
+              <CwvAggregateSummary results={latestData.coreWebVitals} />
+
+              {/* Per-page results */}
               {latestData.coreWebVitals.map((cwv, idx) => (
                 <div key={idx} className="rounded-lg border bg-card p-4">
                   <div className="flex items-center justify-between mb-3">
                     <p className="text-sm font-medium truncate flex-1">
                       {cwv.url}
                     </p>
-                    <span className="text-lg font-bold ml-3">
-                      {cwv.performanceScore}
-                    </span>
+                    <PerfScoreBadge score={cwv.performanceScore} />
                   </div>
                   <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
                     {(cwv.metrics ?? []).map((m) => (
@@ -1411,6 +1524,146 @@ export default function SeoPage() {
 }
 
 // ── Helper Components ────────────────────────────────────────────────────
+
+function CwvAggregateSummary({ results }: { results: CwvEntry[] }) {
+  if (results.length === 0) return null;
+
+  let good = 0;
+  let needsImprovement = 0;
+  let poor = 0;
+  let totalScore = 0;
+
+  for (const r of results) {
+    totalScore += r.performanceScore;
+    if (r.performanceScore >= 90) good++;
+    else if (r.performanceScore >= 50) needsImprovement++;
+    else poor++;
+  }
+
+  const avgScore = Math.round(totalScore / results.length);
+
+  return (
+    <div className="grid gap-3 md:grid-cols-4 mb-4">
+      <div className="rounded-lg border bg-card p-3 text-center">
+        <p className="text-xs text-muted-foreground">Avg Score</p>
+        <p
+          className={`text-2xl font-bold mt-1 ${avgScore >= 90 ? "text-green-600" : avgScore >= 50 ? "text-yellow-600" : "text-red-600"}`}
+        >
+          {avgScore}
+        </p>
+      </div>
+      <div className="rounded-lg border bg-card p-3 text-center">
+        <p className="text-xs text-muted-foreground">Good (≥90)</p>
+        <p className="text-2xl font-bold mt-1 text-green-600">{good}</p>
+      </div>
+      <div className="rounded-lg border bg-card p-3 text-center">
+        <p className="text-xs text-muted-foreground">Needs Work (50–89)</p>
+        <p className="text-2xl font-bold mt-1 text-yellow-600">
+          {needsImprovement}
+        </p>
+      </div>
+      <div className="rounded-lg border bg-card p-3 text-center">
+        <p className="text-xs text-muted-foreground">Poor (&lt;50)</p>
+        <p className="text-2xl font-bold mt-1 text-red-600">{poor}</p>
+      </div>
+    </div>
+  );
+}
+
+function PerfScoreBadge({ score }: { score: number }) {
+  const color =
+    score >= 90
+      ? "text-green-600 bg-green-50"
+      : score >= 50
+        ? "text-yellow-600 bg-yellow-50"
+        : "text-red-600 bg-red-50";
+  return (
+    <span className={`ml-3 px-2 py-0.5 rounded text-lg font-bold ${color}`}>
+      {score}
+    </span>
+  );
+}
+
+function LinkDepthTable({
+  depths,
+}: {
+  depths: Array<{ url: string; depth: number }>;
+}) {
+  // Group by depth
+  const depthGroups = new Map<number, string[]>();
+  for (const d of depths) {
+    const key = d.depth === Infinity ? 999 : d.depth;
+    if (!depthGroups.has(key)) depthGroups.set(key, []);
+    depthGroups.get(key)!.push(d.url);
+  }
+
+  const sortedKeys = [...depthGroups.keys()].sort((a, b) => a - b);
+
+  return (
+    <div className="space-y-2">
+      {/* Depth summary bar */}
+      <div className="flex gap-2 flex-wrap">
+        {sortedKeys.map((d) => {
+          const count = depthGroups.get(d)!.length;
+          const label = d === 999 ? "Unreachable" : `Depth ${d}`;
+          const isDeep = d > 4 && d !== 999;
+          return (
+            <span
+              key={d}
+              className={`text-xs rounded-full px-2 py-0.5 font-medium ${
+                d === 999
+                  ? "bg-red-100 text-red-700"
+                  : isDeep
+                    ? "bg-orange-100 text-orange-700"
+                    : "bg-muted text-muted-foreground"
+              }`}
+            >
+              {label}: {count} page{count !== 1 ? "s" : ""}
+            </span>
+          );
+        })}
+      </div>
+
+      {/* Deep pages warning */}
+      {depths.some((d) => d.depth > 4 && d.depth !== Infinity) && (
+        <div className="flex items-start gap-2 rounded-md border border-orange-500/30 bg-orange-500/10 p-2">
+          <AlertTriangle className="h-4 w-4 text-orange-600 mt-0.5 shrink-0" />
+          <p className="text-xs text-orange-700 dark:text-orange-400">
+            Pages at depth &gt; 4 may be difficult for search engines to
+            discover. Consider restructuring your site navigation.
+          </p>
+        </div>
+      )}
+
+      {/* Per-depth URL list (collapsed for depth ≤ 2) */}
+      <div className="rounded-lg border overflow-hidden">
+        <table className="w-full text-xs">
+          <thead className="bg-muted/50">
+            <tr>
+              <th className="px-3 py-2 text-left font-medium">URL</th>
+              <th className="px-3 py-2 text-left font-medium w-24">Depth</th>
+            </tr>
+          </thead>
+          <tbody>
+            {depths
+              .filter((d) => d.depth > 2 || d.depth === Infinity)
+              .slice(0, 50)
+              .map((d, idx) => (
+                <tr key={idx} className="border-t">
+                  <td className="px-3 py-2 truncate max-w-[350px]">{d.url}</td>
+                  <td
+                    className={`px-3 py-2 font-medium ${d.depth > 4 ? "text-orange-500" : d.depth === Infinity ? "text-red-500" : ""}`}
+                  >
+                    {d.depth === Infinity ? "∞" : d.depth}
+                  </td>
+                </tr>
+              ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
 
 function Stat({
   label,

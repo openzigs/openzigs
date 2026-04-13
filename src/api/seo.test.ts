@@ -138,4 +138,23 @@ describe("SEO Router", () => {
       expect(res.status).toBe(400);
     });
   });
+
+  describe("POST /api/seo/prune", () => {
+    let app: express.Express;
+    beforeEach(() => {
+      app = createApp();
+    });
+
+    it("returns 400 for invalid days", async () => {
+      const res = await request(app).post("/api/seo/prune").send({ days: 0 });
+      expect(res.status).toBe(400);
+    });
+
+    it("returns 400 for non-numeric days", async () => {
+      const res = await request(app)
+        .post("/api/seo/prune")
+        .send({ days: "abc" });
+      expect(res.status).toBe(400);
+    });
+  });
 });

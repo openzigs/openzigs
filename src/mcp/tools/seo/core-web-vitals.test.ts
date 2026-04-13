@@ -1,10 +1,11 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach } from "vitest";
 import {
   rateMetric,
   getCachedResult,
   setCachedResult,
   clearCache,
   getCacheSize,
+  aggregateCwvStats,
   type CoreWebVitalsResult,
 } from "./core-web-vitals.js";
 
@@ -114,5 +115,84 @@ describe("CWV cache", () => {
   });
 });
 
-// Import beforeEach for cache tests
-import { beforeEach } from "vitest";
+describe("aggregateCwvStats", () => {
+  it("returns zeroes for empty input", () => {
+    const stats = aggregateCwvStats([]);
+    expect(stats.totalPages).toBe(0);
+    expect(stats.avgPerformanceScore).toBe(0);
+    expect(stats.good).toBe(0);
+  });
+
+  it("categorises pages by performance score", () => {
+    const results: CoreWebVitalsResult[] = [
+      {
+        url: "https://a.com",
+        performanceScore: 95,
+        metrics: [],
+        fetchedAt: "",
+      },
+      {
+        url: "https://b.com",
+        performanceScore: 70,
+        metrics: [],
+        fetchedAt: "",
+      },
+      {
+        url: "https://c.com",
+        performanceScore: 30,
+        metrics: [],
+        fetchedAt: "",
+      },
+    ];
+    const stats = aggregateCwvStats(results);
+    expect(stats.good).toBe(1);
+    expect(stats.needsImprovement).toBe(1);
+    expect(stats.poor).toBe(1);
+    expect(stats.totalPages).toBe(3);
+    expect(stats.avgPerformanceScore).toBe(65);
+  });
+
+  it("computes average LCP, CLS, TBT", () => {
+    const results: CoreWebVitalsResult[] = [
+      {
+        url: "https://a.com",
+        performanceScore: 90,
+        metrics: [
+          { name: "LCP", value: 2000, unit: "ms", rating: "good" },
+          { name: "CLS", value: 0.05, unit: "", rating: "good" },
+          { name: "TBT", value: 100, unit: "ms", rating: "good" },
+        ],
+        fetchedAt: "",
+      },
+      {
+        url: "https://b.com",
+        performanceScore: 80,
+        metrics: [
+          { name: "LCP", value: 3000, unit: "ms", rating: "needs-improvement" },
+          { name: "CLS", value: 0.15, unit: "", rating: "needs-improvement" },
+          { name: "TBT", value: 300, unit: "ms", rating: "needs-improvement" },
+        ],
+        fetchedAt: "",
+      },
+    ];
+    const stats = aggregateCwvStats(results);
+    expect(stats.avgLcp).toBe(2500);
+    expect(stats.avgCls).toBe(0.1);
+    expect(stats.avgTbt).toBe(200);
+  });
+
+  it("returns null averages when no metrics present", () => {
+    const results: CoreWebVitalsResult[] = [
+      {
+        url: "https://a.com",
+        performanceScore: 50,
+        metrics: [],
+        fetchedAt: "",
+      },
+    ];
+    const stats = aggregateCwvStats(results);
+    expect(stats.avgLcp).toBeNull();
+    expect(stats.avgCls).toBeNull();
+    expect(stats.avgTbt).toBeNull();
+  });
+});

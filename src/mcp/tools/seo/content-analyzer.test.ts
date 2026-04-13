@@ -4,7 +4,11 @@ import {
   hammingDistance,
   simhashSimilarity,
   analyzeContent,
+  findOverOptimizedKeywords,
+  exportDuplicatesCsv,
+  exportThinContentCsv,
   type ContentPage,
+  type KeywordDensityEntry,
 } from "./content-analyzer.js";
 
 describe("simhash", () => {
@@ -140,5 +144,59 @@ describe("analyzeContent", () => {
     expect(result.duplicateGroups).toHaveLength(0);
     expect(result.thinContentPages).toHaveLength(0);
     expect(result.keywordDensity).toHaveLength(0);
+  });
+});
+
+describe("findOverOptimizedKeywords", () => {
+  it("flags keywords with density > 3%", () => {
+    const densities: KeywordDensityEntry[] = [
+      { url: "https://a.com", keyword: "seo", count: 10, density: 5.0 },
+      { url: "https://a.com", keyword: "web", count: 3, density: 1.5 },
+      { url: "https://b.com", keyword: "rank", count: 8, density: 4.0 },
+    ];
+    const result = findOverOptimizedKeywords(densities);
+    expect(result).toHaveLength(2);
+    expect(result[0].keyword).toBe("seo");
+    expect(result[1].keyword).toBe("rank");
+  });
+
+  it("returns empty for no over-optimized keywords", () => {
+    const densities: KeywordDensityEntry[] = [
+      { url: "https://a.com", keyword: "test", count: 2, density: 1.0 },
+    ];
+    expect(findOverOptimizedKeywords(densities)).toHaveLength(0);
+  });
+});
+
+describe("exportDuplicatesCsv", () => {
+  it("exports CSV with header and rows", () => {
+    const csv = exportDuplicatesCsv([
+      {
+        urls: ["https://a.com", "https://b.com"],
+        similarity: 92,
+        recommendation: "merge",
+      },
+    ]);
+    const lines = csv.split("\n");
+    expect(lines[0]).toBe("Group,URLs,Similarity,Recommendation");
+    expect(lines).toHaveLength(2);
+    expect(lines[1]).toContain("merge");
+  });
+
+  it("returns header only for empty input", () => {
+    const csv = exportDuplicatesCsv([]);
+    expect(csv.split("\n")).toHaveLength(1);
+  });
+});
+
+describe("exportThinContentCsv", () => {
+  it("exports CSV with header and rows", () => {
+    const csv = exportThinContentCsv([
+      { url: "https://a.com/thin", title: "Thin Page", wordCount: 50 },
+    ]);
+    const lines = csv.split("\n");
+    expect(lines[0]).toBe("URL,Title,Word Count");
+    expect(lines).toHaveLength(2);
+    expect(lines[1]).toContain("50");
   });
 });

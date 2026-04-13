@@ -224,3 +224,57 @@ function computeKeywordDensity(pages: ContentPage[]): KeywordDensityEntry[] {
 
   return results;
 }
+
+// ── Over-optimized keywords ──────────────────────────────────────────────
+
+const OVER_OPTIMIZED_THRESHOLD = 3; // > 3% density
+
+export interface OverOptimizedKeyword {
+  url: string;
+  keyword: string;
+  density: number;
+}
+
+export function findOverOptimizedKeywords(
+  densities: KeywordDensityEntry[],
+): OverOptimizedKeyword[] {
+  return densities
+    .filter((d) => d.density > OVER_OPTIMIZED_THRESHOLD)
+    .map((d) => ({ url: d.url, keyword: d.keyword, density: d.density }));
+}
+
+// ── CSV exports ──────────────────────────────────────────────────────────
+
+function escapeCsv(value: string | number): string {
+  const str = String(value);
+  if (str.includes(",") || str.includes('"') || str.includes("\n")) {
+    return `"${str.replace(/"/g, '""')}"`;
+  }
+  return str;
+}
+
+export function exportDuplicatesCsv(groups: DuplicateGroup[]): string {
+  const rows: string[] = ["Group,URLs,Similarity,Recommendation"];
+  for (let i = 0; i < groups.length; i++) {
+    const g = groups[i];
+    rows.push(
+      [
+        escapeCsv(i + 1),
+        escapeCsv(g.urls.join(" | ")),
+        escapeCsv(`${g.similarity}%`),
+        escapeCsv(g.recommendation),
+      ].join(","),
+    );
+  }
+  return rows.join("\n");
+}
+
+export function exportThinContentCsv(pages: ThinContentPage[]): string {
+  const rows: string[] = ["URL,Title,Word Count"];
+  for (const p of pages) {
+    rows.push(
+      [escapeCsv(p.url), escapeCsv(p.title), escapeCsv(p.wordCount)].join(","),
+    );
+  }
+  return rows.join("\n");
+}

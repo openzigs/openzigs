@@ -229,4 +229,131 @@ describe("AuditHistoryRepository", () => {
       .all();
     expect(tables).toHaveLength(1);
   });
+
+  it("getTrend returns oldest-first score data", () => {
+    repo.saveSnapshot(
+      "https://example.com",
+      makeHealthScore({ score: 70 }),
+      10,
+      "{}",
+    );
+    repo.saveSnapshot(
+      "https://example.com",
+      makeHealthScore({ score: 80 }),
+      15,
+      "{}",
+    );
+    repo.saveSnapshot(
+      "https://example.com",
+      makeHealthScore({ score: 90 }),
+      20,
+      "{}",
+    );
+
+    const trend = repo.getTrend("https://example.com");
+    expect(trend).toHaveLength(3);
+    expect(trend[0].score).toBe(70); // oldest first
+    expect(trend[2].score).toBe(90); // newest last
+  });
+
+  it("getTrend respects limit", () => {
+    for (let i = 0; i < 5; i++) {
+      repo.saveSnapshot(
+        "https://example.com",
+        makeHealthScore({ score: 50 + i * 5 }),
+        10,
+        "{}",
+      );
+    }
+    const trend = repo.getTrend("https://example.com", 3);
+    expect(trend).toHaveLength(3);
+  });
+
+  it("pruneOldSnapshots removes old entries", () => {
+    // Insert an old snapshot by manipulating created_at
+    db.prepare(
+      "INSERT INTO seo_audit_snapshots (site_url, health_score, rating, pages_audited, total_issues, critical, high, medium, low, data_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    ).run(
+      "https://example.com",
+      80,
+      "good",
+      10,
+      5,
+      0,
+      1,
+      3,
+      1,
+      "{}",
+      "2020-01-01T00:00:00.000Z",
+    );
+
+    repo.saveSnapshot(
+      "https://example.com",
+      makeHealthScore({ score: 90 }),
+      20,
+      "{}",
+    );
+
+    const deleted = repo.pruneOldSnapshots(1); // prune older than 1 day
+    expect(deleted).toBe(1);
+
+    const remaining = repo.listAll();
+    expect(remaining).toHaveLength(1);
+    expect(remaining[0].healthScore).toBe(90);
+  });
+
+  it("pruneOldSnapshots scoped to site", () => {
+    db.prepare(
+      "INSERT INTO seo_audit_snapshots (site_url, health_score, rating, pages_audited, total_issues, critical, high, medium, low, data_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    ).run(
+      "https://a.com",
+      70,
+      "needs-improvement",
+      10,
+      5,
+      0,
+      1,
+      3,
+      1,
+      "{}",
+      "2020-01-01T00:00:00.000Z",
+    );
+    db.prepare(
+      "INSERT INTO seo_audit_snapshots (site_url, health_score, rating, pages_audited, total_issues, critical, high, medium, low, data_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    ).run(
+      "https://b.com",
+      60,
+      "poor",
+      10,
+      5,
+      0,
+      1,
+      3,
+      1,
+      "{}",
+      "2020-01-01T00:00:00.000Z",
+    );
+
+    const deleted = repo.pruneOldSnapshots(1, "https://a.com");
+    expect(deleted).toBe(1);
+
+    const remaining = repo.listAll();
+    expect(remaining).toHaveLength(1);
+    expect(remaining[0].siteUrl).toBe("https://b.com");
+  });
+
+  it("deleteSnapshot removes a single entry", () => {
+    const id = repo.saveSnapshot(
+      "https://example.com",
+      makeHealthScore(),
+      10,
+      "{}",
+    );
+    expect(repo.deleteSnapshot(id)).toBe(true);
+    expect(repo.getSnapshot(id)).toBeUndefined();
+  });
+
+  it("deleteSnapshot returns false for non-existent id", () => {
+    expect(repo.deleteSnapshot(9999)).toBe(false);
+  });
 });

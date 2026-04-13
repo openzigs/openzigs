@@ -22,7 +22,10 @@ export function sanitizePath(userPath: string, baseDir: string): string {
   }
   const resolvedBase = path.resolve(baseDir);
   const resolved = path.resolve(resolvedBase, userPath);
-  if (resolved !== resolvedBase && !resolved.startsWith(resolvedBase + path.sep)) {
+  if (
+    resolved !== resolvedBase &&
+    !resolved.startsWith(resolvedBase + path.sep)
+  ) {
     throw new Error(`Path traversal detected: ${userPath}`);
   }
   return resolved;
@@ -38,13 +41,19 @@ export function sanitizePath(userPath: string, baseDir: string): string {
  * @returns             The validated resolved path
  * @throws              Error if the path is outside the base directory
  */
-export function validateResolvedPath(resolvedPath: string, baseDir: string): string {
+export function validateResolvedPath(
+  resolvedPath: string,
+  baseDir: string,
+): string {
   if (resolvedPath.includes("\0")) {
     throw new Error("Path contains null bytes");
   }
   const resolvedBase = path.resolve(baseDir);
   const normalizedPath = path.resolve(resolvedPath);
-  if (normalizedPath !== resolvedBase && !normalizedPath.startsWith(resolvedBase + path.sep)) {
+  if (
+    normalizedPath !== resolvedBase &&
+    !normalizedPath.startsWith(resolvedBase + path.sep)
+  ) {
     throw new Error(`Path outside allowed directory: ${resolvedPath}`);
   }
   return normalizedPath;
@@ -59,11 +68,18 @@ export function validateResolvedPath(resolvedPath: string, baseDir: string): str
  * @returns           The validated component string
  * @throws            Error if the component is invalid
  */
-export function sanitizePathComponent(component: string, label = "path component"): string {
+export function sanitizePathComponent(
+  component: string,
+  label = "path component",
+): string {
   if (component.includes("\0")) {
     throw new Error(`${label} contains null bytes`);
   }
-  if (component.includes("..") || component.includes("/") || component.includes("\\")) {
+  if (
+    component.includes("..") ||
+    component.includes("/") ||
+    component.includes("\\")
+  ) {
     throw new Error(`Invalid ${label}: ${component}`);
   }
   return component;

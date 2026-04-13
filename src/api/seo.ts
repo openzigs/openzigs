@@ -2,7 +2,7 @@
  * SEO Suite API Router (#838)
  *
  * Provides endpoints for audit history, audit snapshots, report exports,
- * and audit triggering.
+ * scheduled audits, trend data, and audit triggering.
  * Mounted at /api/seo in server.ts.
  */
 
@@ -153,6 +153,40 @@ export const createSeoRouter = ({ db }: SeoRouterOptions): Router => {
     // This endpoint validates the URL and provides a clean API contract.
     const normalizedUrl = url.startsWith("http") ? url : `https://${url}`;
     return res.json({ status: "accepted", url: normalizedUrl });
+  });
+
+  /** GET /api/seo/trend/:siteUrl — Trend data for charting. */
+  router.get("/trend/:siteUrl", (req, res) => {
+    const siteUrl = decodeURIComponent(req.params.siteUrl);
+    const limit = req.query.limit ? clampLimit(req.query.limit, 12, 50) : 12;
+    const trend = historyRepo.getTrend(siteUrl, limit);
+    return res.json(trend);
+  });
+
+  /** POST /api/seo/prune — Prune audit snapshots older than N days. */
+  router.post("/prune", (req, res) => {
+    const days = Number(req.body?.days);
+    if (!Number.isFinite(days) || days < 1) {
+      return res
+        .status(400)
+        .json({ error: "Invalid days parameter. Must be >= 1." });
+    }
+    const siteUrl = (req.body?.siteUrl as string) ?? undefined;
+    const deleted = historyRepo.pruneOldSnapshots(days, siteUrl);
+    return res.json({ deleted, days });
+  });
+
+  /** DELETE /api/seo/history/:id — Delete a single snapshot. */
+  router.delete("/history/:id", (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) {
+      return res.status(400).json({ error: "Invalid snapshot ID" });
+    }
+    const deleted = historyRepo.deleteSnapshot(id);
+    if (!deleted) {
+      return res.status(404).json({ error: "Snapshot not found" });
+    }
+    return res.json({ deleted: true });
   });
 
   return router;

@@ -214,6 +214,77 @@ export async function fetchCoreWebVitalsBatch(
   return results;
 }
 
+// ── Aggregate CWV stats ──────────────────────────────────────────────────
+
+export interface AggregateCwvStats {
+  avgPerformanceScore: number;
+  good: number;
+  needsImprovement: number;
+  poor: number;
+  totalPages: number;
+  avgLcp: number | null;
+  avgCls: number | null;
+  avgTbt: number | null;
+}
+
+/**
+ * Compute aggregate CWV statistics across multiple results.
+ * Performance score thresholds: good ≥ 90, needs-improvement 50–89, poor < 50.
+ */
+export function aggregateCwvStats(
+  results: CoreWebVitalsResult[],
+): AggregateCwvStats {
+  if (results.length === 0) {
+    return {
+      avgPerformanceScore: 0,
+      good: 0,
+      needsImprovement: 0,
+      poor: 0,
+      totalPages: 0,
+      avgLcp: null,
+      avgCls: null,
+      avgTbt: null,
+    };
+  }
+
+  let good = 0;
+  let needsImprovement = 0;
+  let poor = 0;
+  let totalScore = 0;
+  const lcpValues: number[] = [];
+  const clsValues: number[] = [];
+  const tbtValues: number[] = [];
+
+  for (const r of results) {
+    totalScore += r.performanceScore;
+    if (r.performanceScore >= 90) good++;
+    else if (r.performanceScore >= 50) needsImprovement++;
+    else poor++;
+
+    for (const m of r.metrics) {
+      if (m.name === "LCP") lcpValues.push(m.value);
+      else if (m.name === "CLS") clsValues.push(m.value);
+      else if (m.name === "TBT") tbtValues.push(m.value);
+    }
+  }
+
+  const avg = (arr: number[]) =>
+    arr.length > 0
+      ? Math.round((arr.reduce((a, b) => a + b, 0) / arr.length) * 100) / 100
+      : null;
+
+  return {
+    avgPerformanceScore: Math.round(totalScore / results.length),
+    good,
+    needsImprovement,
+    poor,
+    totalPages: results.length,
+    avgLcp: avg(lcpValues),
+    avgCls: avg(clsValues),
+    avgTbt: avg(tbtValues),
+  };
+}
+
 // ── Zod Schema ───────────────────────────────────────────────────────────
 
 const coreWebVitalsSchema = z.object({
