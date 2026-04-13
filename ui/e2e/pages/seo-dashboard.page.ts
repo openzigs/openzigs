@@ -3,6 +3,7 @@ import { expect, type Page, type Locator } from "@playwright/test";
 /**
  * Page Object for the SEO Suite Dashboard (/seo).
  * Epic #838 — SEO Suite Enhancement.
+ * Extended for Epic #850 — SEO Suite Enhancement v2.
  */
 export class SeoDashboardPage {
   readonly page: Page;
@@ -15,6 +16,10 @@ export class SeoDashboardPage {
   readonly overviewTab: Locator;
   readonly historyTab: Locator;
   readonly exportTab: Locator;
+
+  // -- Inner tabs (Audit/Links/Content/Performance) --
+  readonly auditTab: Locator;
+  readonly performanceTab: Locator;
 
   // -- Overview tab: Site Health Score --
   readonly healthScoreSection: Locator;
@@ -52,6 +57,31 @@ export class SeoDashboardPage {
   // -- Crawl Progress Panel --
   readonly activeCrawlsHeading: Locator;
 
+  // -- Scheduled Audits (#856) --
+  readonly scheduledAuditsHeading: Locator;
+  readonly scheduleAuditButton: Locator;
+
+  // -- Mode buttons --
+  readonly siteAuditModeButton: Locator;
+  readonly leadsModeButton: Locator;
+  readonly pricesModeButton: Locator;
+  readonly competitorsModeButton: Locator;
+
+  // -- Leads results panel --
+  readonly leadsHeading: Locator;
+
+  // -- Prices results panel --
+  readonly pricesHeading: Locator;
+  readonly pricesExportCsv: Locator;
+
+  // -- Competitors results panel --
+  readonly competitorsHeading: Locator;
+  readonly competitorsExportCsv: Locator;
+
+  // -- Performance (CWV) --
+  readonly cwvHeading: Locator;
+  readonly reAnalyzeButton: Locator;
+
   constructor(page: Page) {
     this.page = page;
 
@@ -65,6 +95,10 @@ export class SeoDashboardPage {
     this.overviewTab = page.getByRole("tab", { name: /Overview/i });
     this.historyTab = page.getByRole("tab", { name: /History/i });
     this.exportTab = page.getByRole("tab", { name: /Export/i });
+
+    // Inner tabs
+    this.auditTab = page.getByRole("tab", { name: /Audit/i });
+    this.performanceTab = page.getByRole("tab", { name: /Performance/i });
 
     // Health Score section (scoped to the card containing the heading)
     this.healthScoreSection = page
@@ -112,6 +146,41 @@ export class SeoDashboardPage {
 
     // Crawl Progress
     this.activeCrawlsHeading = page.getByText("Active Crawls");
+
+    // Scheduled Audits (#856)
+    this.scheduledAuditsHeading = page.getByText("Scheduled Audits");
+    this.scheduleAuditButton = page.getByRole("button", {
+      name: /Schedule Audit/i,
+    });
+
+    // Mode buttons
+    this.siteAuditModeButton = page.getByRole("button", {
+      name: "Site Audit",
+    });
+    this.leadsModeButton = page.getByRole("button", { name: "Leads" });
+    this.pricesModeButton = page.getByRole("button", { name: "Prices" });
+    this.competitorsModeButton = page.getByRole("button", {
+      name: "Competitors",
+    });
+
+    // Leads results panel
+    this.leadsHeading = page.getByText("Lead Extractions");
+
+    // Prices results panel
+    this.pricesHeading = page.getByText("Monitored Price URLs");
+    this.pricesExportCsv = page.getByRole("link", {
+      name: /Export CSV/i,
+    });
+
+    // Competitors results panel
+    this.competitorsHeading = page.getByText("Tracked Competitors");
+    this.competitorsExportCsv = page.getByRole("link", {
+      name: /Export CSV/i,
+    });
+
+    // Performance (CWV)
+    this.cwvHeading = page.getByText("Core Web Vitals");
+    this.reAnalyzeButton = page.getByRole("button", { name: /Re-analyze/i });
   }
 
   async goto() {
@@ -132,6 +201,24 @@ export class SeoDashboardPage {
           : this.exportTab;
     await tabLocator.click();
     await expect(tabLocator).toHaveAttribute("data-state", "active");
+  }
+
+  async switchToInnerTab(tab: "audit" | "performance") {
+    const tabLocator = tab === "audit" ? this.auditTab : this.performanceTab;
+    await tabLocator.click();
+    await expect(tabLocator).toHaveAttribute("data-state", "active");
+  }
+
+  async selectMode(mode: "site-audit" | "leads" | "prices" | "competitors") {
+    const btn =
+      mode === "site-audit"
+        ? this.siteAuditModeButton
+        : mode === "leads"
+          ? this.leadsModeButton
+          : mode === "prices"
+            ? this.pricesModeButton
+            : this.competitorsModeButton;
+    await btn.click();
   }
 
   /** Get the SVG ring circle inside the health score gauge. */
