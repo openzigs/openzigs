@@ -117,15 +117,17 @@ export function buildExtractPrompt(
 export function buildLeadPrompt(
   url: string,
   maxPages: number,
-  outputTo?: {
-    type: "airtable";
-    baseId: string;
-    tableIdOrName: string;
-  } | {
-    type: "sheets";
-    spreadsheetId: string;
-    range: string;
-  },
+  outputTo?:
+    | {
+        type: "airtable";
+        baseId: string;
+        tableIdOrName: string;
+      }
+    | {
+        type: "sheets";
+        spreadsheetId: string;
+        range: string;
+      },
 ): string {
   const args: Record<string, unknown> = { url, maxPages };
   if (outputTo) args.outputTo = outputTo;

@@ -296,7 +296,7 @@ export default function SeoPage() {
   const [targetKeyword, setTargetKeyword] = useState("");
   const [searchProvider, setSearchProvider] = useState("auto");
   const [orchestrationMode, setOrchestrationMode] =
-    useState<OrchestrationMode>("standard");
+    useState<OrchestrationMode>("session");
   const [exportPdf, setExportPdf] = useState(true);
 
   // ── Ingest fields ──
