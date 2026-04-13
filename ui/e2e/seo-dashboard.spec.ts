@@ -1,5 +1,4 @@
 import { test, expect } from "@playwright/test";
-import { navigateTo } from "./helpers";
 import { SeoDashboardPage } from "./pages/seo-dashboard.page";
 
 /**
