@@ -136,6 +136,53 @@ describe("calculateHealthScore", () => {
     expect(result.rating).toBe("poor");
   });
 
+  it("normalizes score per-page when pageCount is provided", () => {
+    // 500 medium issues across 500 pages → 500 / 500 = 1 deduction → score 99
+    const issues: ClassifiedIssue[] = Array.from({ length: 500 }, (_, i) => ({
+      severity: "medium" as const,
+      category: "content" as const,
+      message: `Issue ${i}`,
+    }));
+    const result = calculateHealthScore(issues, 500);
+    expect(result.score).toBe(99);
+    expect(result.totalIssues).toBe(500);
+  });
+
+  it("without pageCount, large sites score 0 (backward compat)", () => {
+    const issues: ClassifiedIssue[] = Array.from({ length: 200 }, () => ({
+      severity: "medium" as const,
+      category: "technical" as const,
+      message: "Issue",
+    }));
+    // 200 × 1 = 200 → clamped to 100 deductions → score 0
+    const result = calculateHealthScore(issues);
+    expect(result.score).toBe(0);
+  });
+
+  it("caps normalized deductions at 100", () => {
+    // 10 critical issues on 1 page → 100 deductions → score 0 even normalized
+    const issues: ClassifiedIssue[] = Array.from({ length: 10 }, () => ({
+      severity: "critical" as const,
+      category: "technical" as const,
+      message: "Bad",
+    }));
+    const result = calculateHealthScore(issues, 1);
+    expect(result.score).toBe(0);
+    expect(result.rating).toBe("poor");
+  });
+
+  it("normalizes category breakdown per-page", () => {
+    const issues: ClassifiedIssue[] = Array.from({ length: 100 }, () => ({
+      severity: "medium" as const,
+      category: "links" as const,
+      message: "Broken link",
+    }));
+    const result = calculateHealthScore(issues, 100);
+    const links = result.categories.find((c) => c.category === "links")!;
+    expect(links.score).toBe(99); // 100/100 = 1 deduction
+    expect(links.issueCount).toBe(100);
+  });
+
   it("rates good for score >= 80", () => {
     const result = calculateHealthScore([
       { severity: "high", category: "technical", message: "A" },

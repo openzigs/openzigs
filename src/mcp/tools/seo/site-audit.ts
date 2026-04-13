@@ -573,7 +573,10 @@ export function createSeoSiteAuditTool(): ToolDefinition {
         const classifiedIssues: ClassifiedIssue[] = allIssues.map((i) =>
           classifyAuditIssue(i),
         );
-        const healthScore = calculateHealthScore(classifiedIssues);
+        const healthScore = calculateHealthScore(
+          classifiedIssues,
+          auditedPages.length,
+        );
 
         try {
           const db = getDatabase();

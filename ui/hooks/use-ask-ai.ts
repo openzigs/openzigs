@@ -22,7 +22,11 @@ export type UseAskAiOptions = {
  * Prepends page context to the first user message so the LLM
  * understands the screen.
  */
-export function useAskAi({ pageContext, model, reasoningEffort }: UseAskAiOptions) {
+export function useAskAi({
+  pageContext,
+  model,
+  reasoningEffort,
+}: UseAskAiOptions) {
   const { socket, connected } = useSocket();
   const [messages, setMessages] = useState<AskAiMessage[]>([]);
   const [sending, setSending] = useState(false);
@@ -54,7 +58,11 @@ export function useAskAi({ pageContext, model, reasoningEffort }: UseAskAiOption
       finalizeStream();
       setMessages((prev) => [
         ...prev,
-        { id: `err-${Date.now()}`, role: "error", content: "No response received. Check server logs." },
+        {
+          id: `err-${Date.now()}`,
+          role: "error",
+          content: "No response received. Check server logs.",
+        },
       ]);
     }, 600_000);
   }, [clearStuckTimer, finalizeStream]);
@@ -69,13 +77,18 @@ export function useAskAi({ pageContext, model, reasoningEffort }: UseAskAiOption
       if (!streamRef.current) {
         const id = `stream-${Date.now()}`;
         streamRef.current = { id, content: "" };
-        setMessages((prev) => [...prev, { id, role: "assistant", content: "" }]);
+        setMessages((prev) => [
+          ...prev,
+          { id, role: "assistant", content: "" },
+        ]);
       }
       streamRef.current.content += data.chunk;
       const currentContent = streamRef.current.content;
       const currentId = streamRef.current.id;
       setMessages((prev) =>
-        prev.map((m) => (m.id === currentId ? { ...m, content: currentContent } : m)),
+        prev.map((m) =>
+          m.id === currentId ? { ...m, content: currentContent } : m,
+        ),
       );
     };
 
@@ -83,14 +96,25 @@ export function useAskAi({ pageContext, model, reasoningEffort }: UseAskAiOption
     const onResponse = (data: { content?: string }) => {
       finalizeStream();
       if (data.content) {
-        setMessages((prev) => [...prev, { id: `msg-${Date.now()}`, role: "assistant", content: data.content! }]);
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: `msg-${Date.now()}`,
+            role: "assistant",
+            content: data.content!,
+          },
+        ]);
       }
     };
     const onError = (data: { error?: string }) => {
       finalizeStream();
       setMessages((prev) => [
         ...prev,
-        { id: `err-${Date.now()}`, role: "error", content: data.error ?? "An error occurred" },
+        {
+          id: `err-${Date.now()}`,
+          role: "error",
+          content: data.error ?? "An error occurred",
+        },
       ]);
     };
     const onToolCall = () => resetStuckTimer();
@@ -125,17 +149,32 @@ export function useAskAi({ pageContext, model, reasoningEffort }: UseAskAiOption
         contextSentRef.current = true;
       }
 
-      setMessages((prev) => [...prev, { id: nextId(), role: "user", content: trimmed }]);
+      setMessages((prev) => [
+        ...prev,
+        { id: nextId(), role: "user", content: trimmed },
+      ]);
       socket.emit("chat:message", {
         content,
         model: model || undefined,
-        reasoningEffort: reasoningEffort && reasoningEffort !== "medium" ? reasoningEffort : undefined,
+        reasoningEffort:
+          reasoningEffort && reasoningEffort !== "medium"
+            ? reasoningEffort
+            : undefined,
       });
       setSending(true);
       setThinking(true);
       resetStuckTimer();
     },
-    [socket, sending, connected, model, reasoningEffort, pageContext, nextId, resetStuckTimer],
+    [
+      socket,
+      sending,
+      connected,
+      model,
+      reasoningEffort,
+      pageContext,
+      nextId,
+      resetStuckTimer,
+    ],
   );
 
   const clearMessages = useCallback(() => {

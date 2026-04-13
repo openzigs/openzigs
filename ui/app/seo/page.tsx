@@ -12,6 +12,7 @@ import { SiteHealthScore } from "@/components/seo/site-health-score";
 import { AuditTrends } from "@/components/seo/audit-trends";
 import { ExportDialog } from "@/components/seo/export-dialog";
 import { LinkGraph } from "@/components/seo/link-graph";
+import { ActivityLog } from "@/components/seo/activity-log";
 import { InlineModelPicker } from "@/components/model-picker-select";
 import { fetchJson } from "@/lib/api";
 import { cn } from "@/lib/utils";
@@ -373,10 +374,7 @@ export default function SeoPage() {
       tools,
     });
 
-    setSubmitting(false);
-    setTimeout(() => {
-      queryClient.invalidateQueries({ queryKey: ["seo-history"] });
-    }, 3000);
+    // submitting stays true — cleared by handleOperationComplete
   }, [
     mode,
     url,
@@ -407,6 +405,31 @@ export default function SeoPage() {
     visibility,
     queryClient,
   ]);
+
+  const handleOperationComplete = useCallback(() => {
+    setSubmitting(false);
+    queryClient.invalidateQueries({ queryKey: ["seo-history"] });
+  }, [queryClient]);
+
+  // Listen for socket events that indicate operation completion
+  useEffect(() => {
+    if (!socket) return;
+    if (!submitting) return;
+
+    const onEnd = () => handleOperationComplete();
+    const onResponse = () => handleOperationComplete();
+    const onError = () => handleOperationComplete();
+
+    socket.on("chat:stream:end", onEnd);
+    socket.on("chat:response", onResponse);
+    socket.on("chat:error", onError);
+
+    return () => {
+      socket.off("chat:stream:end", onEnd);
+      socket.off("chat:response", onResponse);
+      socket.off("chat:error", onError);
+    };
+  }, [socket, submitting, handleOperationComplete]);
 
   const latestData = latest ? safeParseDataJson(latest.dataJson) : null;
 
@@ -946,12 +969,26 @@ export default function SeoPage() {
             ) : (
               <Globe className="h-4 w-4" />
             )}
-            {getSubmitLabel(mode)}
+            {submitting ? "Processing…" : getSubmitLabel(mode)}
           </button>
+
+          {/* Persistent loading indicator */}
+          {submitting && (
+            <div className="flex items-center gap-2 rounded-md border border-blue-500/30 bg-blue-500/10 p-3">
+              <Loader2 className="h-4 w-4 animate-spin text-blue-500 shrink-0" />
+              <p className="text-sm text-blue-700 dark:text-blue-400">
+                Running{" "}
+                {MODES.find((m) => m.key === mode)?.label?.toLowerCase() ??
+                  "operation"}
+                … This may take a few minutes.
+              </p>
+            </div>
+          )}
         </div>
       </div>
 
       <CrawlProgressPanel />
+      <ActivityLog active={submitting} onComplete={handleOperationComplete} />
 
       <Tabs defaultValue="overview" className="mt-4">
         <TabsList className="flex-wrap">
@@ -979,7 +1016,10 @@ export default function SeoPage() {
         </TabsList>
 
         {/* ── Overview ─────────────────────────────────────────── */}
-        <TabsContent value="overview" className="mt-6">
+        <TabsContent
+          value="overview"
+          className="mt-6 overflow-y-auto max-h-[calc(100vh-20rem)]"
+        >
           <div className="grid gap-6 md:grid-cols-2">
             <div className="rounded-xl border bg-card p-6">
               <h3 className="text-sm font-semibold mb-4 flex items-center gap-2">
@@ -1020,7 +1060,7 @@ export default function SeoPage() {
         </TabsContent>
 
         {/* ── Audit (results detail) ───────────────────────────── */}
-        <TabsContent value="audit" className="mt-6">
+        <TabsContent value="audit" className="mt-6 overflow-y-auto max-h-[calc(100vh-20rem)]">
           {latestData?.pages && latestData.pages.length > 0 ? (
             <div className="space-y-4">
               <h3 className="text-sm font-semibold">
@@ -1082,7 +1122,7 @@ export default function SeoPage() {
         </TabsContent>
 
         {/* ── Links ────────────────────────────────────────────── */}
-        <TabsContent value="links" className="mt-6">
+        <TabsContent value="links" className="mt-6 overflow-y-auto max-h-[calc(100vh-20rem)]">
           {latestData?.linkAnalysis ? (
             <div className="space-y-6">
               <div className="grid gap-4 md:grid-cols-3">
@@ -1198,7 +1238,7 @@ export default function SeoPage() {
         </TabsContent>
 
         {/* ── Content ──────────────────────────────────────────── */}
-        <TabsContent value="content" className="mt-6">
+        <TabsContent value="content" className="mt-6 overflow-y-auto max-h-[calc(100vh-20rem)]">
           {latestData?.contentAnalysis ? (
             <div className="space-y-6">
               {latestData.contentAnalysis.duplicateGroups &&
@@ -1289,7 +1329,7 @@ export default function SeoPage() {
         </TabsContent>
 
         {/* ── Performance (CWV) ────────────────────────────────── */}
-        <TabsContent value="performance" className="mt-6">
+        <TabsContent value="performance" className="mt-6 overflow-y-auto max-h-[calc(100vh-20rem)]">
           {latestData?.coreWebVitals && latestData.coreWebVitals.length > 0 ? (
             <div className="space-y-4">
               <h3 className="text-sm font-semibold">Core Web Vitals</h3>
@@ -1353,10 +1393,15 @@ export default function SeoPage() {
                     ))}
                   </select>
                 </div>
+                {!selectedId && (
+                  <p className="text-xs text-muted-foreground">
+                    Select an audit from the dropdown above to export.
+                  </p>
+                )}
                 <ExportDialog snapshotId={selectedId} />
               </>
             ) : (
-              <ExportDialog snapshotId={null} />
+              <EmptyState message="No audits available yet. Run an audit first to enable export." />
             )}
           </div>
         </TabsContent>

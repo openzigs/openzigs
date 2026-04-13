@@ -37,7 +37,7 @@ export function ExportDialog({ snapshotId }: { snapshotId: number | null }) {
       <h4 className="text-sm font-semibold">Export Audit Report</h4>
       {!snapshotId && (
         <p className="text-xs text-muted-foreground">
-          Run an audit first to enable export.
+          Select an audit above to enable export.
         </p>
       )}
       <div className="flex gap-2">

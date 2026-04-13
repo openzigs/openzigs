@@ -18,7 +18,9 @@ function CrawlItem({ crawl }: { crawl: CrawlStats }) {
         <Loader2 className="h-4 w-4 animate-spin text-blue-500 shrink-0" />
       )}
       <div className="flex-1 min-w-0">
-        <p className="text-sm font-medium truncate">{crawl.siteUrl}</p>
+        <p className="text-sm font-medium truncate" title={crawl.siteUrl}>
+          {crawl.siteUrl}
+        </p>
         <div className="mt-1 h-1.5 w-full rounded-full bg-muted overflow-hidden">
           <div
             className="h-full rounded-full bg-blue-500 transition-all duration-300"

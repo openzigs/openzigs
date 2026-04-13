@@ -123,18 +123,32 @@ function mapCategory(original: string): HealthCategory {
 
 // ── Health score calculation ─────────────────────────────────────────────
 
+/**
+ * Calculates a site health score from classified issues.
+ *
+ * When `pageCount` is provided the raw deductions are averaged per-page
+ * so that a large site with many pages doesn't automatically score 0.
+ *
+ * Formula:
+ *   rawDeductions  = sum(issues × severity_weight)
+ *   normalizedDed  = rawDeductions / max(pageCount, 1)
+ *   healthScore    = max(0, round(100 - min(normalizedDed, 100)))
+ */
 export function calculateHealthScore(
   issues: ClassifiedIssue[],
+  pageCount?: number,
 ): HealthScoreResult {
   const counts = { critical: 0, high: 0, medium: 0, low: 0 };
-  let penalty = 0;
+  let rawPenalty = 0;
 
   for (const issue of issues) {
     counts[issue.severity]++;
-    penalty += SEVERITY_WEIGHTS[issue.severity];
+    rawPenalty += SEVERITY_WEIGHTS[issue.severity];
   }
 
-  const score = Math.max(0, Math.min(100, Math.round(100 - penalty)));
+  const divisor = Math.max(pageCount ?? 1, 1);
+  const normalizedPenalty = rawPenalty / divisor;
+  const score = Math.max(0, Math.round(100 - Math.min(normalizedPenalty, 100)));
 
   const categories: HealthCategory[] = [
     "technical",
@@ -145,17 +159,18 @@ export function calculateHealthScore(
 
   const categoryBreakdowns: CategoryBreakdown[] = categories.map((category) => {
     const catIssues = issues.filter((i) => i.category === category);
-    let catPenalty = 0;
+    let catRawPenalty = 0;
     const catCounts = { critical: 0, high: 0, medium: 0, low: 0 };
 
     for (const issue of catIssues) {
       catCounts[issue.severity]++;
-      catPenalty += SEVERITY_WEIGHTS[issue.severity];
+      catRawPenalty += SEVERITY_WEIGHTS[issue.severity];
     }
 
+    const catNormalized = catRawPenalty / divisor;
     return {
       category,
-      score: Math.max(0, Math.min(100, Math.round(100 - catPenalty))),
+      score: Math.max(0, Math.round(100 - Math.min(catNormalized, 100))),
       issueCount: catIssues.length,
       ...catCounts,
     };
