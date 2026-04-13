@@ -356,4 +356,44 @@ describe("AuditHistoryRepository", () => {
   it("deleteSnapshot returns false for non-existent id", () => {
     expect(repo.deleteSnapshot(9999)).toBe(false);
   });
+
+  // ── patchDataJson (#855/#863) ──────────────────────────────────────────
+
+  it("patchDataJson merges new fields into existing data", () => {
+    const id = repo.saveSnapshot(
+      "https://example.com",
+      makeHealthScore(),
+      10,
+      JSON.stringify({ healthScore: 85, pages: [] }),
+    );
+    repo.patchDataJson(id, {
+      cwvDual: [{ url: "https://example.com", mobile: 60, desktop: 90 }],
+    });
+
+    const snapshot = repo.getSnapshot(id);
+    expect(snapshot).toBeDefined();
+    const data = JSON.parse(snapshot!.dataJson);
+    expect(data.healthScore).toBe(85);
+    expect(data.cwvDual).toHaveLength(1);
+    expect(data.cwvDual[0].mobile).toBe(60);
+  });
+
+  it("patchDataJson overwrites existing fields", () => {
+    const id = repo.saveSnapshot(
+      "https://example.com",
+      makeHealthScore(),
+      10,
+      JSON.stringify({ healthScore: 85, pages: [] }),
+    );
+    repo.patchDataJson(id, { healthScore: 92 });
+
+    const snapshot = repo.getSnapshot(id);
+    const data = JSON.parse(snapshot!.dataJson);
+    expect(data.healthScore).toBe(92);
+  });
+
+  it("patchDataJson is a no-op for non-existent id", () => {
+    // Should not throw
+    repo.patchDataJson(9999, { foo: "bar" });
+  });
 });

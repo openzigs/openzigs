@@ -209,6 +209,19 @@ export class AuditHistoryRepository {
     return info.changes > 0;
   }
 
+  /** Merge additional fields into the data_json column of a snapshot. */
+  patchDataJson(id: number, patch: Record<string, unknown>): void {
+    const row = this.db
+      .prepare("SELECT data_json FROM seo_audit_snapshots WHERE id = ?")
+      .get(id) as { data_json: string } | undefined;
+    if (!row) return;
+    const existing = JSON.parse(row.data_json) as Record<string, unknown>;
+    const merged = { ...existing, ...patch };
+    this.db
+      .prepare("UPDATE seo_audit_snapshots SET data_json = ? WHERE id = ?")
+      .run(JSON.stringify(merged), id);
+  }
+
   private mapRow(row: Record<string, unknown>): AuditSnapshot {
     return {
       id: row.id as number,

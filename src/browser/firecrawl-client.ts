@@ -27,6 +27,8 @@ export interface ScrapeOptions {
   formats?: ("markdown" | "html")[];
   actions?: ScrapeAction[];
   waitFor?: number;
+  /** Firecrawl cache maxAge in ms — reuse cached pages if still fresh. */
+  maxAge?: number;
 }
 
 export interface ScrapeAction {
@@ -63,6 +65,8 @@ export interface CrawlOptions {
   includePaths?: string[];
   excludePaths?: string[];
   scrapeOptions?: ScrapeOptions;
+  /** Firecrawl cache maxAge in ms — reuse cached pages if still fresh. */
+  maxAge?: number;
 }
 
 export interface CrawlPage {
@@ -288,6 +292,7 @@ export class FirecrawlClient {
     };
     if (options?.actions) body.actions = options.actions;
     if (options?.waitFor) body.waitFor = options.waitFor;
+    if (options?.maxAge) body.maxAge = options.maxAge;
 
     const resp = await this.request("/v1/scrape", body);
     const data = resp.data as Record<string, unknown> | undefined;
@@ -316,6 +321,7 @@ export class FirecrawlClient {
     if (options?.includePaths) body.includePaths = options.includePaths;
     if (options?.excludePaths) body.excludePaths = options.excludePaths;
     if (options?.scrapeOptions) body.scrapeOptions = options.scrapeOptions;
+    if (options?.maxAge) body.maxAge = options.maxAge;
 
     // NOTE: No webhook for crawl operations. Firecrawl webhooks only deliver
     // a final completion callback — no per-page progress. Polling gives the UI
