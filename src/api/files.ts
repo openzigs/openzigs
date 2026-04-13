@@ -25,10 +25,27 @@ const execFileAsync = (
 
 /** File extensions the convert endpoint accepts for document import. */
 export const CONVERTIBLE_EXTENSIONS = new Set([
-  ".docx", ".pdf", ".pptx", ".xlsx", ".html", ".htm",
-  ".rtf", ".csv", ".tsv", ".epub",
-  ".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tiff", ".webp",
-  ".mp3", ".wav", ".m4a", ".ogg",
+  ".docx",
+  ".pdf",
+  ".pptx",
+  ".xlsx",
+  ".html",
+  ".htm",
+  ".rtf",
+  ".csv",
+  ".tsv",
+  ".epub",
+  ".jpg",
+  ".jpeg",
+  ".png",
+  ".gif",
+  ".bmp",
+  ".tiff",
+  ".webp",
+  ".mp3",
+  ".wav",
+  ".m4a",
+  ".ogg",
 ]);
 
 export type FilesRouterOptions = {
@@ -89,11 +106,16 @@ const convertToMarkdown = async (
   }
 };
 
-export const createFilesRouter = ({ allowedDirs, markitdownUrl }: FilesRouterOptions): Router => {
+export const createFilesRouter = ({
+  allowedDirs,
+  markitdownUrl,
+}: FilesRouterOptions): Router => {
   const router = Router();
 
   /** Resolve and validate a raw path against the sandbox. */
-  const guardPath = (rawPath: string | undefined): { resolved: string } | { error: string } => {
+  const guardPath = (
+    rawPath: string | undefined,
+  ): { resolved: string } | { error: string } => {
     if (!rawPath || typeof rawPath !== "string") {
       return { error: "path query parameter is required" };
     }
@@ -107,7 +129,11 @@ export const createFilesRouter = ({ allowedDirs, markitdownUrl }: FilesRouterOpt
         return { error: "Access denied" };
       }
       // Tilde-expanded or absolute paths: resolve directly and validate
-      if (rawPath.startsWith("~/") || rawPath === "~" || path.isAbsolute(rawPath)) {
+      if (
+        rawPath.startsWith("~/") ||
+        rawPath === "~" ||
+        path.isAbsolute(rawPath)
+      ) {
         const resolved = path.resolve(effectivePath);
         if (!isPathAllowed(resolved, allowedDirs)) {
           return { error: "Access denied" };
@@ -126,7 +152,10 @@ export const createFilesRouter = ({ allowedDirs, markitdownUrl }: FilesRouterOpt
   };
 
   /** Send a guardPath error with the appropriate status code. */
-  const sendGuardError = (res: import("express").Response, error: string): void => {
+  const sendGuardError = (
+    res: import("express").Response,
+    error: string,
+  ): void => {
     const status = error === "Access denied" ? 403 : 400;
     res.status(status).json({ error });
   };
@@ -149,14 +178,19 @@ export const createFilesRouter = ({ allowedDirs, markitdownUrl }: FilesRouterOpt
   /** GET /api/files/list?path=/dir — List directory entries. */
   router.get("/list", async (req, res) => {
     const result = guardPath(req.query.path as string | undefined);
-    if ("error" in result) { sendGuardError(res, result.error); return; }
+    if ("error" in result) {
+      sendGuardError(res, result.error);
+      return;
+    }
 
     try {
-      const entries = await fs.readdir(result.resolved, { withFileTypes: true });
+      const entries = await fs.readdir(result.resolved, {
+        withFileTypes: true,
+      });
       res.json({
         entries: entries.map((e) => ({
           name: e.name,
-          type: e.isDirectory() ? "directory" as const : "file" as const,
+          type: e.isDirectory() ? ("directory" as const) : ("file" as const),
         })),
       });
     } catch (err) {
@@ -167,7 +201,10 @@ export const createFilesRouter = ({ allowedDirs, markitdownUrl }: FilesRouterOpt
   /** GET /api/files/content?path=/file — Read file content. */
   router.get("/content", async (req, res) => {
     const result = guardPath(req.query.path as string | undefined);
-    if ("error" in result) { sendGuardError(res, result.error); return; }
+    if ("error" in result) {
+      sendGuardError(res, result.error);
+      return;
+    }
 
     try {
       const content = await fs.readFile(result.resolved, "utf-8");
@@ -180,7 +217,10 @@ export const createFilesRouter = ({ allowedDirs, markitdownUrl }: FilesRouterOpt
   /** GET /api/files/serve?path=/file — Stream/serve a file (video/audio/image). */
   router.get("/serve", async (req, res) => {
     const result = guardPath(req.query.path as string | undefined);
-    if ("error" in result) { sendGuardError(res, result.error); return; }
+    if ("error" in result) {
+      sendGuardError(res, result.error);
+      return;
+    }
 
     try {
       await fs.access(result.resolved);
@@ -218,7 +258,10 @@ export const createFilesRouter = ({ allowedDirs, markitdownUrl }: FilesRouterOpt
     }
 
     const result = guardPath(rawPath);
-    if ("error" in result) { sendGuardError(res, result.error); return; }
+    if ("error" in result) {
+      sendGuardError(res, result.error);
+      return;
+    }
 
     try {
       await fs.mkdir(path.dirname(result.resolved), { recursive: true });
@@ -236,7 +279,10 @@ export const createFilesRouter = ({ allowedDirs, markitdownUrl }: FilesRouterOpt
     const rawPath = typeof body.path === "string" ? body.path : undefined;
 
     const result = guardPath(rawPath);
-    if ("error" in result) { sendGuardError(res, result.error); return; }
+    if ("error" in result) {
+      sendGuardError(res, result.error);
+      return;
+    }
 
     try {
       await fs.mkdir(result.resolved, { recursive: true });
@@ -250,7 +296,10 @@ export const createFilesRouter = ({ allowedDirs, markitdownUrl }: FilesRouterOpt
   /** DELETE /api/files?path=/file — Delete a file. */
   router.delete("/", async (req, res) => {
     const result = guardPath(req.query.path as string | undefined);
-    if ("error" in result) { sendGuardError(res, result.error); return; }
+    if ("error" in result) {
+      sendGuardError(res, result.error);
+      return;
+    }
 
     try {
       await fs.unlink(result.resolved);
@@ -277,7 +326,10 @@ export const createFilesRouter = ({ allowedDirs, markitdownUrl }: FilesRouterOpt
     }
 
     const result = guardPath(rawPath);
-    if ("error" in result) { sendGuardError(res, result.error); return; }
+    if ("error" in result) {
+      sendGuardError(res, result.error);
+      return;
+    }
 
     // Validate the file exists
     try {

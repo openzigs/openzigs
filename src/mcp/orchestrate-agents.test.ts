@@ -45,7 +45,14 @@ const createMockCopilot = (responseChunks: string[] = ["result"]) => ({
   listSdkSessions: vi.fn().mockResolvedValue([]),
   getSdkSessionMessages: vi.fn().mockResolvedValue([]),
   deleteSdkSession: vi.fn().mockResolvedValue(undefined),
-  getSessionAnalytics: vi.fn().mockReturnValue({ sessionsCreated: 0, sessionsResumed: 0, sessionsDestroyed: 0, compactionCount: 0, lifecycleEvents: [], lastUpdated: "" }),
+  getSessionAnalytics: vi.fn().mockReturnValue({
+    sessionsCreated: 0,
+    sessionsResumed: 0,
+    sessionsDestroyed: 0,
+    compactionCount: 0,
+    lifecycleEvents: [],
+    lastUpdated: "",
+  }),
   resetSessionAnalytics: vi.fn(),
   chat: vi.fn().mockImplementation(async function* () {
     for (const chunk of responseChunks) {
@@ -87,7 +94,10 @@ describe("orchestrate-agents tool", () => {
     });
     worker.start();
 
-    const tools = createOrchestrateAgentsTools({ taskEngine: engine, copilot: mockCopilot });
+    const tools = createOrchestrateAgentsTools({
+      taskEngine: engine,
+      copilot: mockCopilot,
+    });
     const orchestrateTool = tools.find((t) => t.name === "orchestrate-agents")!;
     expect(orchestrateTool).toBeDefined();
 
@@ -111,7 +121,9 @@ describe("orchestrate-agents tool", () => {
     const allTasks = engine.listTasks({});
     // 1 orchestration parent + 3 sub-agents = 4
     expect(allTasks.length).toBe(4);
-    const orchParent = allTasks.find((t) => t.goal.startsWith("Orchestrate 3 agents"));
+    const orchParent = allTasks.find((t) =>
+      t.goal.startsWith("Orchestrate 3 agents"),
+    );
     expect(orchParent).toBeDefined();
     expect(orchParent!.status).toBe("completed");
 
@@ -146,7 +158,10 @@ describe("orchestrate-agents tool", () => {
     });
     worker.start();
 
-    const tools = createOrchestrateAgentsTools({ taskEngine: engine, copilot: mockCopilot });
+    const tools = createOrchestrateAgentsTools({
+      taskEngine: engine,
+      copilot: mockCopilot,
+    });
     const orchestrateTool = tools[0];
 
     const result = await orchestrateTool.handler({
@@ -164,7 +179,9 @@ describe("orchestrate-agents tool", () => {
     expect(parsed.metadata.completed).toBe(2);
     expect(parsed.metadata.failed).toBe(1);
     // The failed agent should have an error field
-    const failedResult = parsed.results.find((r: { status: string }) => r.status === "failed");
+    const failedResult = parsed.results.find(
+      (r: { status: string }) => r.status === "failed",
+    );
     expect(failedResult).toBeDefined();
     expect(failedResult.error).toContain("Agent 2 exploded");
   }, 15_000);
@@ -194,15 +211,16 @@ describe("orchestrate-agents tool", () => {
     });
     worker.start();
 
-    const tools = createOrchestrateAgentsTools({ taskEngine: engine, copilot: mockCopilot });
+    const tools = createOrchestrateAgentsTools({
+      taskEngine: engine,
+      copilot: mockCopilot,
+    });
     const orchestrateTool = tools[0];
 
     const result = await orchestrateTool.handler({
-      agents: [
-        { goal: "Research topic A" },
-        { goal: "Research topic B" },
-      ],
-      aggregation_prompt: "Combine these research findings into a comprehensive report.",
+      agents: [{ goal: "Research topic A" }, { goal: "Research topic B" }],
+      aggregation_prompt:
+        "Combine these research findings into a comprehensive report.",
       timeout_seconds: 30,
     });
 
@@ -218,7 +236,10 @@ describe("orchestrate-agents tool", () => {
     const mockCopilot = createMockCopilot();
     // Don't start a worker — tasks stay queued, abort fires on timeout
 
-    const tools = createOrchestrateAgentsTools({ taskEngine: engine, copilot: mockCopilot });
+    const tools = createOrchestrateAgentsTools({
+      taskEngine: engine,
+      copilot: mockCopilot,
+    });
     const orchestrateTool = tools[0];
 
     const resultPromise = orchestrateTool.handler({
@@ -239,7 +260,9 @@ describe("orchestrate-agents tool", () => {
     const allTasks = engine.listTasks({});
     // 1 orchestration parent + 1 sub-agent = 2
     expect(allTasks.length).toBe(2);
-    const orchParent = allTasks.find((t) => t.goal.startsWith("Orchestrate 1 agent"));
+    const orchParent = allTasks.find((t) =>
+      t.goal.startsWith("Orchestrate 1 agent"),
+    );
     expect(orchParent).toBeDefined();
     expect(orchParent!.status).toBe("completed");
 
@@ -258,7 +281,10 @@ describe("orchestrate-agents tool", () => {
     });
     worker.start();
 
-    const tools = createOrchestrateAgentsTools({ taskEngine: engine, copilot: mockCopilot });
+    const tools = createOrchestrateAgentsTools({
+      taskEngine: engine,
+      copilot: mockCopilot,
+    });
     const orchestrateTool = tools[0];
 
     const result = await orchestrateTool.handler({
@@ -283,12 +309,18 @@ describe("orchestrate-agents tool", () => {
     });
     worker.start();
 
-    const tools = createOrchestrateAgentsTools({ taskEngine: engine, copilot: mockCopilot });
+    const tools = createOrchestrateAgentsTools({
+      taskEngine: engine,
+      copilot: mockCopilot,
+    });
     const orchestrateTool = tools[0];
 
     const result = await orchestrateTool.handler({
       agents: [
-        { goal: "Research with context", context: "Focus on AI coding assistants" },
+        {
+          goal: "Research with context",
+          context: "Focus on AI coding assistants",
+        },
       ],
       timeout_seconds: 30,
     });
@@ -314,7 +346,10 @@ describe("orchestrate-agents tool", () => {
     });
     worker.start();
 
-    const tools = createOrchestrateAgentsTools({ taskEngine: engine, copilot: mockCopilot });
+    const tools = createOrchestrateAgentsTools({
+      taskEngine: engine,
+      copilot: mockCopilot,
+    });
     const orchestrateTool = tools[0];
 
     const result = await orchestrateTool.handler({
@@ -332,7 +367,9 @@ describe("orchestrate-agents tool", () => {
 
     // Verify models were passed through to the tasks
     const allTasks = engine.listTasks({});
-    const orchParent = allTasks.find((t) => t.goal.startsWith("Orchestrate 3 agents"));
+    const orchParent = allTasks.find((t) =>
+      t.goal.startsWith("Orchestrate 3 agents"),
+    );
     expect(orchParent).toBeDefined();
 
     const children = engine.getChildren(orchParent!.id);
@@ -361,19 +398,23 @@ describe("orchestrate-agents tool", () => {
 
     // Simulate a chat task (the root)
     const chatTask = engine.submit(
-      { trigger: "chat", goal: "Compare cloud pricing", sessionId: "test-session" },
-      { mode: "immediate" }
+      {
+        trigger: "chat",
+        goal: "Compare cloud pricing",
+        sessionId: "test-session",
+      },
+      { mode: "immediate" },
     );
 
-    const tools = createOrchestrateAgentsTools({ taskEngine: engine, copilot: mockCopilot });
+    const tools = createOrchestrateAgentsTools({
+      taskEngine: engine,
+      copilot: mockCopilot,
+    });
     const orchestrateTool = tools[0];
 
     // Call with parentTaskId pointing to the chat task
     const result = await orchestrateTool.handler({
-      agents: [
-        { goal: "Research AWS" },
-        { goal: "Research GCP" },
-      ],
+      agents: [{ goal: "Research AWS" }, { goal: "Research GCP" }],
       timeout_seconds: 30,
       parentTaskId: chatTask.id,
       sessionId: "test-session",
@@ -393,17 +434,25 @@ describe("orchestrate-agents tool", () => {
     expect(orchParent).toBeDefined();
     expect(orchParent!.goal).toContain("Orchestrate 2 agents");
 
-    const subAgents = descendants.filter((t) => t.parentTaskId === orchParent!.id);
+    const subAgents = descendants.filter(
+      (t) => t.parentTaskId === orchParent!.id,
+    );
     expect(subAgents.length).toBe(2);
-    expect(subAgents.map((a) => a.goal).sort()).toEqual(["Research AWS", "Research GCP"]);
+    expect(subAgents.map((a) => a.goal).sort()).toEqual([
+      "Research AWS",
+      "Research GCP",
+    ]);
   }, 15_000);
 
   // ── Session Mode ──
 
-  it("session mode composes a single prompt and calls copilot.chat() with enableSubagents", async () => {
+  it("session mode composes a single prompt and calls copilot.chat() without enableSubagents", async () => {
     const mockCopilot = createMockCopilot(["session orchestration result"]);
 
-    const tools = createOrchestrateAgentsTools({ taskEngine: engine, copilot: mockCopilot });
+    const tools = createOrchestrateAgentsTools({
+      taskEngine: engine,
+      copilot: mockCopilot,
+    });
     const orchestrateTool = tools[0];
 
     const result = await orchestrateTool.handler({
@@ -423,7 +472,8 @@ describe("orchestrate-agents tool", () => {
     expect(parsed.metadata.completed).toBe(2);
     expect(parsed.metadata.failed).toBe(0);
 
-    // Verify copilot.chat() was called with enableSubagents
+    // Verify copilot.chat() was called without enableSubagents (removed to
+    // prevent SDK subagent handshake hangs when tools: [] is passed)
     expect(mockCopilot.chat).toHaveBeenCalledTimes(1);
     const chatCall = mockCopilot.chat.mock.calls[0];
     const prompt = chatCall[0] as string;
@@ -431,13 +481,16 @@ describe("orchestrate-agents tool", () => {
     expect(prompt).toContain("Focus on word count");
     expect(prompt).toContain("Task 2: Audit technical SEO");
     const opts = chatCall[1] as Record<string, unknown>;
-    expect(opts.enableSubagents).toBe(true);
+    expect(opts.enableSubagents).toBeUndefined();
   });
 
   it("session mode includes aggregation_prompt in composed prompt", async () => {
     const mockCopilot = createMockCopilot(["synthesized report"]);
 
-    const tools = createOrchestrateAgentsTools({ taskEngine: engine, copilot: mockCopilot });
+    const tools = createOrchestrateAgentsTools({
+      taskEngine: engine,
+      copilot: mockCopilot,
+    });
     const orchestrateTool = tools[0];
 
     const result = await orchestrateTool.handler({
@@ -448,14 +501,17 @@ describe("orchestrate-agents tool", () => {
     });
 
     expect(result.isError).toBeUndefined();
-    const prompt = (mockCopilot.chat.mock.calls[0][0]) as string;
+    const prompt = mockCopilot.chat.mock.calls[0][0] as string;
     expect(prompt).toContain("Combine findings into a comprehensive report.");
   });
 
   it("session mode creates a tracking task with [session] prefix", async () => {
     const mockCopilot = createMockCopilot(["done"]);
 
-    const tools = createOrchestrateAgentsTools({ taskEngine: engine, copilot: mockCopilot });
+    const tools = createOrchestrateAgentsTools({
+      taskEngine: engine,
+      copilot: mockCopilot,
+    });
     const orchestrateTool = tools[0];
 
     await orchestrateTool.handler({
@@ -484,7 +540,10 @@ describe("orchestrate-agents tool", () => {
       getCustomAgents: vi.fn().mockReturnValue([]),
     };
 
-    const tools = createOrchestrateAgentsTools({ taskEngine: engine, copilot: mockCopilot });
+    const tools = createOrchestrateAgentsTools({
+      taskEngine: engine,
+      copilot: mockCopilot,
+    });
     const orchestrateTool = tools[0];
 
     const result = await orchestrateTool.handler({
@@ -509,7 +568,10 @@ describe("orchestrate-agents tool", () => {
     });
     worker.start();
 
-    const tools = createOrchestrateAgentsTools({ taskEngine: engine, copilot: mockCopilot });
+    const tools = createOrchestrateAgentsTools({
+      taskEngine: engine,
+      copilot: mockCopilot,
+    });
     const orchestrateTool = tools[0];
 
     const result = await orchestrateTool.handler({

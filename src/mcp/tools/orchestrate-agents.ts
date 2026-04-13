@@ -183,7 +183,7 @@ export const createOrchestrateAgentsTools = ({
 
 /**
  * Session mode: compose a single prompt from all agent goals and run via
- * copilot.chat() with enableSubagents: true. Lower API cost, sequential execution.
+ * copilot.chat(). Lower API cost, sequential execution.
  */
 async function handleSessionMode(
   input: OrchestrateAgentsInput,
@@ -191,6 +191,8 @@ async function handleSessionMode(
   taskEngine: TaskEngine,
   startTime: number,
 ): Promise<{ text: string; isError?: boolean }> {
+  const timeoutMs = (input.timeout_seconds ?? 300) * 1_000;
+
   try {
     const sessionId = input.sessionId ?? activeOrchestrateContext.sessionId;
     const channelType =
@@ -201,7 +203,7 @@ async function handleSessionMode(
       input.parentTaskId ?? activeOrchestrateContext.parentTaskId;
 
     logger.info(
-      `orchestrate-agents [session mode]: composing prompt for ${input.agents.length} agents`,
+      `orchestrate-agents [session mode]: composing prompt for ${input.agents.length} agents (timeout=${Math.round(timeoutMs / 1000)}s)`,
     );
 
     // Build composed prompt
@@ -220,20 +222,35 @@ async function handleSessionMode(
       ...(input.aggregation_prompt ? [input.aggregation_prompt] : []),
     ].join("\n");
 
-    // Get custom agents from the wrapper for SDK subagent delegation
-    const customAgents = copilot.getCustomAgents();
-
-    // Call copilot.chat() once with enableSubagents
+    // Call copilot.chat() once — no tools needed, this is pure text synthesis.
+    // Do NOT pass enableSubagents: with zero tools there is nothing to delegate,
+    // and the SDK subagent handshake can cause the session to hang indefinitely.
     const aggModel = activeOrchestrateContext.model;
-    let fullResponse = "";
-    for await (const chunk of copilot.chat(composedPrompt, {
-      enableSubagents: true,
-      tools: [],
-      ...(customAgents.length > 0 ? { customAgents } : {}),
-      ...(aggModel ? { model: aggModel } : {}),
-    })) {
-      fullResponse += chunk;
-    }
+
+    const chatPromise = (async () => {
+      let fullResponse = "";
+      for await (const chunk of copilot.chat(composedPrompt, {
+        tools: [],
+        ...(aggModel ? { model: aggModel } : {}),
+      })) {
+        fullResponse += chunk;
+      }
+      return fullResponse;
+    })();
+
+    const timeoutPromise = new Promise<never>((_, reject) =>
+      setTimeout(
+        () =>
+          reject(
+            new Error(
+              `Session orchestration timed out after ${Math.round(timeoutMs / 1000)}s`,
+            ),
+          ),
+        timeoutMs,
+      ),
+    );
+
+    const fullResponse = await Promise.race([chatPromise, timeoutPromise]);
 
     const elapsedMs = Date.now() - startTime;
 

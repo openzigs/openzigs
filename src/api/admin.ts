@@ -3722,12 +3722,10 @@ export const createAdminRouter = ({
     const prov = body.provider as Record<string, unknown> | undefined;
 
     if (!prov || typeof prov !== "object" || !prov.type || !prov.baseUrl) {
-      return res
-        .status(400)
-        .json({
-          success: false,
-          error: "provider.type and provider.baseUrl are required",
-        });
+      return res.status(400).json({
+        success: false,
+        error: "provider.type and provider.baseUrl are required",
+      });
     }
 
     const baseUrl = String(prov.baseUrl).replace(/\/+$/, "");
