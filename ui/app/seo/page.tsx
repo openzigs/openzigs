@@ -250,6 +250,42 @@ export default function SeoPage() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // ── Results data (leads / prices / competitors) ──
+  const { data: leadsData, refetch: refetchLeads } = useQuery<
+    Array<{
+      domain: string;
+      files: Array<{ name: string; capturedAt: string; sizeBytes: number }>;
+    }>
+  >({
+    queryKey: ["seo-leads"],
+    queryFn: () => fetchJson("/api/seo/leads"),
+    staleTime: 30_000,
+  });
+  const { data: pricesData, refetch: refetchPrices } = useQuery<
+    Array<{
+      url: string;
+      label: string | null;
+      snapshotCount: number;
+      lastCapture: string;
+    }>
+  >({
+    queryKey: ["seo-prices"],
+    queryFn: () => fetchJson("/api/seo/prices"),
+    staleTime: 30_000,
+  });
+  const { data: competitorsData, refetch: refetchCompetitors } = useQuery<
+    Array<{
+      url: string;
+      name: string | null;
+      addedAt: string;
+      lastSnapshotAt: string | null;
+    }>
+  >({
+    queryKey: ["seo-competitors"],
+    queryFn: () => fetchJson("/api/seo/competitors"),
+    staleTime: 30_000,
+  });
+
   // ── Shared form fields ──
   const [url, setUrl] = useState("");
   const [maxPages, setMaxPages] = useState(50);
@@ -286,6 +322,15 @@ export default function SeoPage() {
   >("snapshot");
   const [scrollToLoad, setScrollToLoad] = useState(false);
   const [priceLabel, setPriceLabel] = useState("");
+
+  // ── Leads export fields ──
+  const [leadsOutputType, setLeadsOutputType] = useState<
+    "" | "airtable" | "sheets"
+  >("" as "" | "airtable" | "sheets");
+  const [leadsAirtableBase, setLeadsAirtableBase] = useState("");
+  const [leadsAirtableTable, setLeadsAirtableTable] = useState("Leads");
+  const [leadsSheetsId, setLeadsSheetsId] = useState("");
+  const [leadsSheetsRange, setLeadsSheetsRange] = useState("Sheet1");
 
   // ── Dataset fields ──
   const [datasetFormat, setDatasetFormat] = useState<
@@ -436,7 +481,23 @@ export default function SeoPage() {
         );
         break;
       case "leads":
-        prompt = buildLeadPrompt(url, maxPages);
+        prompt = buildLeadPrompt(
+          url,
+          maxPages,
+          leadsOutputType === "airtable" && leadsAirtableBase
+            ? {
+                type: "airtable" as const,
+                baseId: leadsAirtableBase,
+                tableIdOrName: leadsAirtableTable,
+              }
+            : leadsOutputType === "sheets" && leadsSheetsId
+              ? {
+                  type: "sheets" as const,
+                  spreadsheetId: leadsSheetsId,
+                  range: leadsSheetsRange,
+                }
+              : undefined,
+        );
         break;
       case "prices":
         prompt = buildPricePrompt(priceAction, url, priceLabel, scrollToLoad);
@@ -503,7 +564,11 @@ export default function SeoPage() {
   const handleOperationComplete = useCallback(() => {
     setSubmitting(false);
     queryClient.invalidateQueries({ queryKey: ["seo-history"] });
-  }, [queryClient]);
+    // Refresh mode-specific data panels
+    void refetchLeads();
+    void refetchPrices();
+    void refetchCompetitors();
+  }, [queryClient, refetchLeads, refetchPrices, refetchCompetitors]);
 
   // Listen for socket events that indicate operation completion
   useEffect(() => {
@@ -1032,6 +1097,83 @@ export default function SeoPage() {
             </div>
           )}
 
+          {/* ── Leads export ─── */}
+          {mode === "leads" && (
+            <div className="rounded-md border border-input p-3 space-y-2">
+              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                Export results to (optional)
+              </p>
+              <div className="flex gap-2">
+                {(["", "airtable", "sheets"] as const).map((t) => (
+                  <button
+                    key={t}
+                    type="button"
+                    onClick={() => setLeadsOutputType(t)}
+                    className={`text-xs px-2.5 py-1 rounded border ${leadsOutputType === t ? "bg-primary text-primary-foreground border-primary" : "border-input hover:bg-muted"}`}
+                  >
+                    {t === ""
+                      ? "None"
+                      : t === "airtable"
+                        ? "Airtable"
+                        : "Google Sheets"}
+                  </button>
+                ))}
+              </div>
+              {leadsOutputType === "airtable" && (
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="text-xs text-muted-foreground">
+                      Base ID
+                    </label>
+                    <input
+                      value={leadsAirtableBase}
+                      onChange={(e) => setLeadsAirtableBase(e.target.value)}
+                      placeholder="appXXXXXX"
+                      className="mt-0.5 w-full rounded border border-input bg-background px-2 py-1 text-xs shadow-sm focus:outline-none focus:ring-1 focus:ring-primary"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs text-muted-foreground">
+                      Table name
+                    </label>
+                    <input
+                      value={leadsAirtableTable}
+                      onChange={(e) => setLeadsAirtableTable(e.target.value)}
+                      placeholder="Leads"
+                      className="mt-0.5 w-full rounded border border-input bg-background px-2 py-1 text-xs shadow-sm focus:outline-none focus:ring-1 focus:ring-primary"
+                    />
+                  </div>
+                </div>
+              )}
+              {leadsOutputType === "sheets" && (
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="text-xs text-muted-foreground">
+                      Spreadsheet ID
+                    </label>
+                    <input
+                      value={leadsSheetsId}
+                      onChange={(e) => setLeadsSheetsId(e.target.value)}
+                      placeholder="1ABC..."
+                      className="mt-0.5 w-full rounded border border-input bg-background px-2 py-1 text-xs shadow-sm focus:outline-none focus:ring-1 focus:ring-primary"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs text-muted-foreground">
+                      Range
+                    </label>
+                    <input
+                      value={leadsSheetsRange}
+                      onChange={(e) => setLeadsSheetsRange(e.target.value)}
+                      placeholder="Sheet1"
+                      className="mt-0.5 w-full rounded border border-input bg-background px-2 py-1 text-xs shadow-sm focus:outline-none focus:ring-1 focus:ring-primary"
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Model picker */}
           <div>
             <label className="mb-1 block text-sm font-medium">Model</label>
@@ -1083,6 +1225,201 @@ export default function SeoPage() {
 
       <CrawlProgressPanel />
       <ActivityLog active={submitting} onComplete={handleOperationComplete} />
+
+      {/* ── Leads results panel ─────────────────────────────────────── */}
+      {mode === "leads" && (
+        <div className="mt-4 rounded-lg border bg-card p-4 space-y-3">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-semibold flex items-center gap-2">
+              <Users className="h-4 w-4" /> Lead Extractions
+            </h3>
+            <button
+              type="button"
+              onClick={() => void refetchLeads()}
+              className="text-xs text-muted-foreground hover:text-foreground"
+            >
+              Refresh
+            </button>
+          </div>
+          {!leadsData || leadsData.length === 0 ? (
+            <p className="text-xs text-muted-foreground py-4 text-center">
+              No lead extractions yet. Run &quot;Find Leads&quot; to extract
+              contacts.
+            </p>
+          ) : (
+            <div className="space-y-3">
+              {leadsData.map((domain) => (
+                <div
+                  key={domain.domain}
+                  className="rounded-md border bg-muted/20 p-3"
+                >
+                  <p className="text-xs font-medium mb-2">{domain.domain}</p>
+                  <div className="space-y-1">
+                    {domain.files.map((f) => (
+                      <div
+                        key={f.name}
+                        className="flex items-center justify-between gap-2"
+                      >
+                        <span className="text-xs text-muted-foreground truncate flex-1">
+                          {new Date(f.capturedAt).toLocaleString()} —{" "}
+                          {Math.round(f.sizeBytes / 1024)} KB
+                        </span>
+                        <a
+                          href={`/api/seo/leads/${encodeURIComponent(domain.domain)}/${encodeURIComponent(f.name)}`}
+                          download={f.name}
+                          className="text-xs text-primary hover:underline flex items-center gap-0.5 flex-shrink-0"
+                        >
+                          <Download className="h-3 w-3" /> Download
+                        </a>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+          <p className="text-[10px] text-muted-foreground">
+            Raw scraped content only — the AI-extracted contacts appear in the
+            chat above.
+          </p>
+        </div>
+      )}
+
+      {/* ── Prices results panel ─────────────────────────────────────── */}
+      {mode === "prices" && (
+        <div className="mt-4 rounded-lg border bg-card p-4 space-y-3">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-semibold flex items-center gap-2">
+              <DollarSign className="h-4 w-4" /> Monitored Price URLs
+            </h3>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => void refetchPrices()}
+                className="text-xs text-muted-foreground hover:text-foreground"
+              >
+                Refresh
+              </button>
+              {pricesData && pricesData.length > 0 && (
+                <a
+                  href="/api/seo/prices/export.csv"
+                  download="price-monitors.csv"
+                  className="text-xs text-primary hover:underline flex items-center gap-0.5"
+                >
+                  <Download className="h-3 w-3" /> Export CSV
+                </a>
+              )}
+            </div>
+          </div>
+          {!pricesData || pricesData.length === 0 ? (
+            <p className="text-xs text-muted-foreground py-4 text-center">
+              No price snapshots yet. Use &quot;Capture Snapshot&quot; to start
+              monitoring.
+            </p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="border-b text-left text-muted-foreground">
+                    <th className="pb-1.5 pr-3 font-medium">URL / Label</th>
+                    <th className="pb-1.5 pr-3 font-medium text-right">
+                      Snapshots
+                    </th>
+                    <th className="pb-1.5 font-medium">Last Captured</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {pricesData.map((r) => (
+                    <tr key={r.url} className="border-b last:border-0">
+                      <td className="py-1.5 pr-3">
+                        <p className="truncate max-w-[260px]">{r.url}</p>
+                        {r.label && (
+                          <p className="text-muted-foreground">{r.label}</p>
+                        )}
+                      </td>
+                      <td className="py-1.5 pr-3 text-right font-medium">
+                        {r.snapshotCount}
+                      </td>
+                      <td className="py-1.5 text-muted-foreground">
+                        {new Date(r.lastCapture).toLocaleDateString()}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── Competitors results panel ────────────────────────────────── */}
+      {mode === "competitors" && (
+        <div className="mt-4 rounded-lg border bg-card p-4 space-y-3">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-semibold flex items-center gap-2">
+              <TrendingUp className="h-4 w-4" /> Tracked Competitors
+            </h3>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => void refetchCompetitors()}
+                className="text-xs text-muted-foreground hover:text-foreground"
+              >
+                Refresh
+              </button>
+              {competitorsData && competitorsData.length > 0 && (
+                <a
+                  href="/api/seo/competitors/export.csv"
+                  download="competitors.csv"
+                  className="text-xs text-primary hover:underline flex items-center gap-0.5"
+                >
+                  <Download className="h-3 w-3" /> Export CSV
+                </a>
+              )}
+            </div>
+          </div>
+          {!competitorsData || competitorsData.length === 0 ? (
+            <p className="text-xs text-muted-foreground py-4 text-center">
+              No competitors tracked yet. Use &quot;Add Competitor&quot; to
+              start monitoring.
+            </p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="border-b text-left text-muted-foreground">
+                    <th className="pb-1.5 pr-3 font-medium">Competitor</th>
+                    <th className="pb-1.5 pr-3 font-medium">Added</th>
+                    <th className="pb-1.5 font-medium">Last Snapshot</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {competitorsData.map((c) => (
+                    <tr key={c.url} className="border-b last:border-0">
+                      <td className="py-1.5 pr-3">
+                        <p className="truncate max-w-[260px]">{c.url}</p>
+                        {c.name && (
+                          <p className="text-muted-foreground">{c.name}</p>
+                        )}
+                      </td>
+                      <td className="py-1.5 pr-3 text-muted-foreground">
+                        {new Date(c.addedAt).toLocaleDateString()}
+                      </td>
+                      <td className="py-1.5 text-muted-foreground">
+                        {c.lastSnapshotAt ? (
+                          new Date(c.lastSnapshotAt).toLocaleDateString()
+                        ) : (
+                          <span className="italic">Never</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
 
       <Tabs defaultValue="overview" className="mt-4">
         <TabsList className="flex-wrap">

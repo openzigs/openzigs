@@ -114,13 +114,27 @@ export function buildExtractPrompt(
   ].join("\n");
 }
 
-export function buildLeadPrompt(url: string, maxPages: number): string {
+export function buildLeadPrompt(
+  url: string,
+  maxPages: number,
+  outputTo?: {
+    type: "airtable";
+    baseId: string;
+    tableIdOrName: string;
+  } | {
+    type: "sheets";
+    spreadsheetId: string;
+    range: string;
+  },
+): string {
+  const args: Record<string, unknown> = { url, maxPages };
+  if (outputTo) args.outputTo = outputTo;
   return [
     `Use the lead-extract tool to find contacts and company info.`,
     ``,
     `Call the lead-extract tool with:`,
     "```json",
-    JSON.stringify({ url, maxPages }, null, 2),
+    JSON.stringify(args, null, 2),
     "```",
     ``,
     `Present the extracted contacts in a clean table format.`,
