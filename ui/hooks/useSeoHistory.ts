@@ -34,6 +34,8 @@ export function useSeoHistory(siteUrl?: string) {
       const params = siteUrl ? `?siteUrl=${encodeURIComponent(siteUrl)}` : "";
       return fetchJson<AuditSnapshot[]>(`/api/seo/history${params}`);
     },
+    staleTime: 30_000,
+    refetchOnWindowFocus: false,
     refetchInterval: 30_000,
   });
 }

@@ -27,7 +27,8 @@ interface LinkAnalysis {
   redirectChains?: unknown[];
   orphanPages?: unknown[];
   linkDepths?: Array<{ url: string; depth: number }>;
-  linkDistribution?: Array<{ url: string; inbound: number; outbound: number }>;
+  linkDistribution?: Array<{ url: string; incomingCount: number; outgoingCount: number }>;
+  links?: Array<{ source: string; target: string }>;
 }
 
 interface GraphNode extends SimulationNodeDatum {
@@ -73,7 +74,7 @@ export function LinkGraph({
     const svg = select(svgRef.current);
     svg.selectAll("*").remove();
 
-    // Build graph data from link distribution + broken links
+    // Build graph data from link data
     const nodeMap = new Map<string, GraphNode>();
     const links: GraphLink[] = [];
 
@@ -94,17 +95,23 @@ export function LinkGraph({
       }
       const target = nodeMap.get(bl.targetUrl)!;
       target.issueCount += 1;
-      links.push({ source: bl.sourceUrl, target: bl.targetUrl });
     }
 
-    // Add simple internal link edges from link distribution
-    const distEntries = linkAnalysis.linkDistribution ?? [];
-    for (let i = 0; i < distEntries.length && i < 50; i++) {
-      for (let j = i + 1; j < distEntries.length && j < i + 3; j++) {
-        links.push({
-          source: distEntries[i].url,
-          target: distEntries[j].url,
-        });
+    // Use real link pairs if available, otherwise fall back to broken links
+    if (linkAnalysis.links && linkAnalysis.links.length > 0) {
+      for (const l of linkAnalysis.links.slice(0, 200)) {
+        if (!nodeMap.has(l.source)) {
+          nodeMap.set(l.source, { id: l.source, issueCount: 0 });
+        }
+        if (!nodeMap.has(l.target)) {
+          nodeMap.set(l.target, { id: l.target, issueCount: 0 });
+        }
+        links.push({ source: l.source, target: l.target });
+      }
+    } else {
+      // Fallback: edges from broken links
+      for (const bl of linkAnalysis.brokenLinks ?? []) {
+        links.push({ source: bl.sourceUrl, target: bl.targetUrl });
       }
     }
 
@@ -184,7 +191,8 @@ export function LinkGraph({
 
   if (
     !linkAnalysis ||
-    ((linkAnalysis.brokenLinks?.length ?? 0) === 0 &&
+    ((linkAnalysis.links?.length ?? 0) === 0 &&
+      (linkAnalysis.brokenLinks?.length ?? 0) === 0 &&
       (linkAnalysis.linkDistribution?.length ?? 0) === 0)
   ) {
     return (

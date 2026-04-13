@@ -5,7 +5,7 @@ export const dynamic = "force-dynamic";
 import { useState, useCallback, useEffect } from "react";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { useSeoHistory } from "@/hooks/useSeoHistory";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQueryClient, useQuery, useMutation } from "@tanstack/react-query";
 import { useSocket } from "@/lib/socket-context";
 import { CrawlProgressPanel } from "@/components/seo/crawl-progress-panel";
 import { SiteHealthScore } from "@/components/seo/site-health-score";
@@ -49,6 +49,10 @@ import {
   HardDrive,
   Info,
   TrendingUp,
+  Calendar,
+  Plus,
+  Power,
+  Trash2,
 } from "lucide-react";
 
 // ── Types ────────────────────────────────────────────────────────────────
@@ -96,8 +100,8 @@ interface LinkAnalysis {
   nodes?: { id: string; issues?: number }[];
   linkDistribution?: Array<{
     url: string;
-    inbound: number;
-    outbound: number;
+    incomingCount: number;
+    outgoingCount: number;
   }>;
 }
 
@@ -1235,12 +1239,18 @@ export default function SeoPage() {
                   <div>
                     <h4 className="text-sm font-semibold mb-2">Orphan Pages</h4>
                     <ul className="space-y-1">
-                      {latestData.linkAnalysis.orphanPages.map((url, idx) => (
+                      {latestData.linkAnalysis.orphanPages.map((item, idx) => (
                         <li
                           key={idx}
                           className="text-xs bg-card border rounded-lg px-3 py-2 truncate"
                         >
-                          {typeof url === "string" ? url : JSON.stringify(url)}
+                          {typeof item === "string"
+                            ? item
+                            : typeof item === "object" &&
+                                item !== null &&
+                                "url" in item
+                              ? String(item.url)
+                              : JSON.stringify(item)}
                         </li>
                       ))}
                     </ul>
@@ -1477,8 +1487,9 @@ export default function SeoPage() {
         </TabsContent>
 
         {/* ── History ──────────────────────────────────────────── */}
-        <TabsContent value="history" className="mt-6">
-          <AuditTrends />
+        <TabsContent value="history" className="mt-6 space-y-6">
+          <AuditTrends siteUrl={latest?.siteUrl} />
+          <ScheduledAudits />
         </TabsContent>
 
         {/* ── Export ───────────────────────────────────────────── */}
@@ -1761,4 +1772,215 @@ function safeParseDataJson(json: string | undefined): SeoData | null {
   } catch {
     return null;
   }
+}
+
+// ── Scheduled Audits ─────────────────────────────────────────────────────
+
+interface ScheduledJob {
+  id: string;
+  name: string;
+  cronExpression: string;
+  enabled: boolean;
+  actionPayload?: Record<string, unknown>;
+}
+
+function ScheduledAudits() {
+  const queryClient = useQueryClient();
+  const [showForm, setShowForm] = useState(false);
+  const [formUrl, setFormUrl] = useState("");
+  const [frequency, setFrequency] = useState("weekly");
+  const [formError, setFormError] = useState<string | null>(null);
+
+  const cronMap: Record<string, string> = {
+    daily: "0 6 * * *",
+    weekly: "0 6 * * 1",
+    monthly: "0 6 1 * *",
+  };
+
+  const { data, isLoading } = useQuery<{ jobs: ScheduledJob[] }>({
+    queryKey: ["seo-scheduled-jobs"],
+    queryFn: () => fetchJson<{ jobs: ScheduledJob[] }>("/api/admin/jobs"),
+    staleTime: 30_000,
+    refetchOnWindowFocus: false,
+    select: (data) => ({
+      jobs: data.jobs.filter(
+        (j) =>
+          j.name.toLowerCase().includes("seo") ||
+          j.name.toLowerCase().includes("audit") ||
+          (j.actionPayload?.promptName as string | undefined)
+            ?.toLowerCase()
+            .includes("seo"),
+      ),
+    }),
+  });
+
+  const createJob = useMutation({
+    mutationFn: (payload: Record<string, unknown>) =>
+      fetchJson<ScheduledJob>("/api/admin/jobs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["seo-scheduled-jobs"] });
+      setShowForm(false);
+      setFormUrl("");
+      setFormError(null);
+    },
+    onError: (err: Error) => setFormError(err.message),
+  });
+
+  const toggleJob = useMutation({
+    mutationFn: (id: string) =>
+      fetchJson<ScheduledJob>(`/api/admin/jobs/${id}/toggle`, {
+        method: "POST",
+      }),
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: ["seo-scheduled-jobs"] }),
+  });
+
+  const deleteJob = useMutation({
+    mutationFn: (id: string) =>
+      fetchJson<void>(`/api/admin/jobs/${id}`, { method: "DELETE" }),
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: ["seo-scheduled-jobs"] }),
+  });
+
+  const handleCreate = () => {
+    if (!formUrl.trim()) {
+      setFormError("URL is required");
+      return;
+    }
+    try {
+      new URL(formUrl.trim());
+    } catch {
+      setFormError("Please enter a valid URL");
+      return;
+    }
+    setFormError(null);
+    createJob.mutate({
+      name: `SEO Audit — ${new URL(formUrl.trim()).hostname}`,
+      cronExpression: cronMap[frequency],
+      actionType: "prompt",
+      actionPayload: {
+        promptName: "seo-site-audit",
+        variables: { url: formUrl.trim() },
+      },
+      allowedTools: ["seo-site-audit", "firecrawl-crawl", "firecrawl-scrape"],
+      enabled: true,
+    });
+  };
+
+  const jobs = data?.jobs ?? [];
+
+  return (
+    <div className="rounded-xl border bg-card p-4 space-y-3">
+      <div className="flex items-center justify-between">
+        <h4 className="text-sm font-semibold flex items-center gap-2">
+          <Calendar className="h-4 w-4" /> Scheduled Audits
+        </h4>
+        <button
+          type="button"
+          onClick={() => setShowForm(!showForm)}
+          className="inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-medium hover:bg-accent transition-colors"
+        >
+          <Plus className="h-3 w-3" /> Schedule Audit
+        </button>
+      </div>
+
+      {showForm && (
+        <div className="rounded-lg border bg-muted/20 p-3 space-y-2">
+          <div>
+            <label className="text-xs font-medium">Site URL</label>
+            <input
+              type="url"
+              value={formUrl}
+              onChange={(e) => setFormUrl(e.target.value)}
+              placeholder="https://example.com"
+              className="mt-1 w-full rounded-md border bg-background px-3 py-1.5 text-sm"
+            />
+          </div>
+          <div>
+            <label className="text-xs font-medium">Frequency</label>
+            <select
+              value={frequency}
+              onChange={(e) => setFrequency(e.target.value)}
+              className="mt-1 w-full rounded-md border bg-background px-3 py-1.5 text-sm"
+            >
+              <option value="daily">Daily (6:00 AM)</option>
+              <option value="weekly">Weekly (Monday 6:00 AM)</option>
+              <option value="monthly">Monthly (1st, 6:00 AM)</option>
+            </select>
+          </div>
+          {formError && <p className="text-xs text-red-500">{formError}</p>}
+          <div className="flex justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                setShowForm(false);
+                setFormError(null);
+              }}
+              className="rounded-md border px-3 py-1 text-xs hover:bg-accent transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={handleCreate}
+              disabled={createJob.isPending}
+              className="rounded-md bg-primary px-3 py-1 text-xs text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50"
+            >
+              {createJob.isPending ? "Creating…" : "Create"}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {isLoading ? (
+        <p className="text-xs text-muted-foreground">Loading…</p>
+      ) : jobs.length === 0 ? (
+        <p className="text-xs text-muted-foreground">
+          No scheduled audits yet. Click &quot;Schedule Audit&quot; to set up
+          recurring site audits.
+        </p>
+      ) : (
+        <div className="space-y-2">
+          {jobs.map((job) => (
+            <div
+              key={job.id}
+              className="flex items-center gap-3 rounded-lg border bg-background p-3"
+            >
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium truncate">{job.name}</p>
+                <p className="text-xs text-muted-foreground">
+                  {job.cronExpression}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => toggleJob.mutate(job.id)}
+                title={job.enabled ? "Disable" : "Enable"}
+                className={cn(
+                  "rounded-md p-1.5 transition-colors",
+                  job.enabled
+                    ? "text-green-600 hover:bg-green-50"
+                    : "text-muted-foreground hover:bg-muted",
+                )}
+              >
+                <Power className="h-3.5 w-3.5" />
+              </button>
+              <button
+                type="button"
+                onClick={() => deleteJob.mutate(job.id)}
+                title="Delete"
+                className="rounded-md p-1.5 text-muted-foreground hover:text-red-500 hover:bg-red-50 transition-colors"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }

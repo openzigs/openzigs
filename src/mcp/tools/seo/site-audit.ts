@@ -32,6 +32,16 @@ import {
 } from "./health-score.js";
 import { AuditHistoryRepository } from "./audit-history.js";
 import { getDatabase } from "../../../productivity/database.js";
+import {
+  analyzeLinks,
+  type CrawledPageLinks,
+  type LinkAnalysisResult,
+} from "./link-analyzer.js";
+import {
+  analyzeContent,
+  type ContentPage,
+  type ContentAnalysisResult,
+} from "./content-analyzer.js";
 
 const SEO_REPORTS_DIR = path.join(os.homedir(), ".openzigs", "seo-reports");
 
@@ -244,57 +254,68 @@ export function auditPage(
 }
 
 /** Build link analysis data for the UI Links dashboard tab. */
-function buildLinkAnalysis(pages: PageAuditResult[]): {
-  totalLinks: number;
-  brokenLinks: {
-    sourceUrl: string;
-    targetUrl: string;
-    anchorText: string;
-    statusCode: number;
-  }[];
-  orphanPages: string[];
-  redirectChains: { chain: string[] }[];
-  nodes: { id: string; issues: number }[];
+function buildLinkAnalysis(
+  pages: PageAuditResult[],
+  crawledContents: Map<string, ExtractedContent>,
+  siteUrl: string,
+): LinkAnalysisResult & {
+  links: { source: string; target: string }[];
 } {
-  const totalLinks = pages.reduce(
-    (sum, p) => sum + p.internalLinkCount + p.externalLinkCount,
-    0,
-  );
-  const nodes = pages.map((p) => ({ id: p.url, issues: p.issues.length }));
+  const crawledPages: CrawledPageLinks[] = pages.map((p) => {
+    const content = crawledContents.get(p.url);
+    const links = content
+      ? [
+          ...content.internalLinks.map((l) => ({
+            href: l.href,
+            text: l.text,
+            isInternal: true,
+          })),
+          ...content.externalLinks.map((l) => ({
+            href: l.href,
+            text: l.text,
+            isInternal: false,
+          })),
+        ]
+      : [];
+    return { url: p.url, links, statusCode: p.statusCode };
+  });
 
-  return {
-    totalLinks,
-    brokenLinks: [],
-    orphanPages: [],
-    redirectChains: [],
-    nodes,
-  };
+  const result = analyzeLinks(crawledPages, siteUrl);
+
+  // Build source→target link pairs for the force-directed graph (cap at 200)
+  const graphLinks: { source: string; target: string }[] = [];
+  const seen = new Set<string>();
+  for (const page of crawledPages) {
+    for (const link of page.links) {
+      if (!link.isInternal) continue;
+      const key = `${page.url}→${link.href}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      graphLinks.push({ source: page.url, target: link.href });
+      if (graphLinks.length >= 200) break;
+    }
+    if (graphLinks.length >= 200) break;
+  }
+
+  return { ...result, links: graphLinks };
 }
 
 /** Build content analysis data for the UI Content dashboard tab. */
-function buildContentAnalysis(pages: PageAuditResult[]): {
-  duplicateGroups: { urls: string[] }[];
-  thinContentPages: { url: string; wordCount: number }[];
-} {
-  // Thin content pages (< 300 words)
-  const thinContentPages = pages
-    .filter((p) => p.wordCount < 300)
-    .map((p) => ({ url: p.url, wordCount: p.wordCount }));
+function buildContentAnalysis(
+  pages: PageAuditResult[],
+  crawledContents: Map<string, ExtractedContent>,
+): ContentAnalysisResult {
+  const contentPages: ContentPage[] = pages.map((p) => {
+    const content = crawledContents.get(p.url);
+    return {
+      url: p.url,
+      title: p.title,
+      bodyText: content?.bodyText ?? "",
+      wordCount: p.wordCount,
+    };
+  });
 
-  // Duplicate title groups — pages sharing the same title suggest duplicate content
-  const titleGroups = new Map<string, string[]>();
-  for (const p of pages) {
-    if (p.metaTitle) {
-      const urls = titleGroups.get(p.metaTitle) ?? [];
-      urls.push(p.url);
-      titleGroups.set(p.metaTitle, urls);
-    }
-  }
-  const duplicateGroups = [...titleGroups.values()]
-    .filter((urls) => urls.length > 1)
-    .map((urls) => ({ urls }));
-
-  return { duplicateGroups, thinContentPages };
+  return analyzeContent(contentPages);
 }
 
 /** Detect site-wide issues by analyzing patterns across all pages. */
@@ -517,11 +538,13 @@ export function createSeoSiteAuditTool(): ToolDefinition {
 
         // 2. Audit each page
         const auditedPages: PageAuditResult[] = [];
+        const crawledContents = new Map<string, ExtractedContent>();
         for (const page of crawlResult.pages) {
           if (!page.html && !page.markdown) continue;
           const html =
             page.html ?? `<html><body>${page.markdown ?? ""}</body></html>`;
           const content = extractContent(html, page.url);
+          crawledContents.set(page.url, content);
           auditedPages.push(auditPage(page, content));
         }
 
@@ -602,8 +625,15 @@ export function createSeoSiteAuditTool(): ToolDefinition {
             },
           }));
 
-          const linkAnalysis = buildLinkAnalysis(auditedPages);
-          const contentAnalysis = buildContentAnalysis(auditedPages);
+          const linkAnalysis = buildLinkAnalysis(
+            auditedPages,
+            crawledContents,
+            url,
+          );
+          const contentAnalysis = buildContentAnalysis(
+            auditedPages,
+            crawledContents,
+          );
 
           historyRepo.saveSnapshot(
             url,
