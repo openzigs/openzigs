@@ -25,27 +25,10 @@ const execFileAsync = (
 
 /** File extensions the convert endpoint accepts for document import. */
 export const CONVERTIBLE_EXTENSIONS = new Set([
-  ".docx",
-  ".pdf",
-  ".pptx",
-  ".xlsx",
-  ".html",
-  ".htm",
-  ".rtf",
-  ".csv",
-  ".tsv",
-  ".epub",
-  ".jpg",
-  ".jpeg",
-  ".png",
-  ".gif",
-  ".bmp",
-  ".tiff",
-  ".webp",
-  ".mp3",
-  ".wav",
-  ".m4a",
-  ".ogg",
+  ".docx", ".pdf", ".pptx", ".xlsx", ".html", ".htm",
+  ".rtf", ".csv", ".tsv", ".epub",
+  ".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tiff", ".webp",
+  ".mp3", ".wav", ".m4a", ".ogg",
 ]);
 
 export type FilesRouterOptions = {
@@ -106,16 +89,11 @@ const convertToMarkdown = async (
   }
 };
 
-export const createFilesRouter = ({
-  allowedDirs,
-  markitdownUrl,
-}: FilesRouterOptions): Router => {
+export const createFilesRouter = ({ allowedDirs, markitdownUrl }: FilesRouterOptions): Router => {
   const router = Router();
 
   /** Resolve and validate a raw path against the sandbox. */
-  const guardPath = (
-    rawPath: string | undefined,
-  ): { resolved: string } | { error: string } => {
+  const guardPath = (rawPath: string | undefined): { resolved: string } | { error: string } => {
     if (!rawPath || typeof rawPath !== "string") {
       return { error: "path query parameter is required" };
     }
@@ -129,11 +107,7 @@ export const createFilesRouter = ({
         return { error: "Access denied" };
       }
       // Tilde-expanded or absolute paths: resolve directly and validate
-      if (
-        rawPath.startsWith("~/") ||
-        rawPath === "~" ||
-        path.isAbsolute(rawPath)
-      ) {
+      if (rawPath.startsWith("~/") || rawPath === "~" || path.isAbsolute(rawPath)) {
         const resolved = path.resolve(effectivePath);
         if (!isPathAllowed(resolved, allowedDirs)) {
           return { error: "Access denied" };
@@ -151,29 +125,8 @@ export const createFilesRouter = ({
     }
   };
 
-  /**
-   * Re-verify path containment inline so CodeQL can trace the check
-   * from the guard result to the fs operation. Throws on violation.
-   *
-   * Uses an explicit for-loop with path.resolve() + startsWith() so
-   * CodeQL's taint analysis recognizes the sanitization barrier.
-   */
-  const assertContained = (resolved: string): string => {
-    const abs = path.resolve(resolved);
-    for (const dir of allowedDirs) {
-      const base = path.resolve(dir);
-      if (abs === base || abs.startsWith(base + path.sep)) {
-        return abs;
-      }
-    }
-    throw new Error("Access denied");
-  };
-
   /** Send a guardPath error with the appropriate status code. */
-  const sendGuardError = (
-    res: import("express").Response,
-    error: string,
-  ): void => {
+  const sendGuardError = (res: import("express").Response, error: string): void => {
     const status = error === "Access denied" ? 403 : 400;
     res.status(status).json({ error });
   };
@@ -196,20 +149,14 @@ export const createFilesRouter = ({
   /** GET /api/files/list?path=/dir — List directory entries. */
   router.get("/list", async (req, res) => {
     const result = guardPath(req.query.path as string | undefined);
-    if ("error" in result) {
-      sendGuardError(res, result.error);
-      return;
-    }
+    if ("error" in result) { sendGuardError(res, result.error); return; }
 
     try {
-      const safePath = assertContained(result.resolved);
-      const entries = await fs.readdir(safePath, {
-        withFileTypes: true,
-      });
+      const entries = await fs.readdir(result.resolved, { withFileTypes: true });
       res.json({
         entries: entries.map((e) => ({
           name: e.name,
-          type: e.isDirectory() ? ("directory" as const) : ("file" as const),
+          type: e.isDirectory() ? "directory" as const : "file" as const,
         })),
       });
     } catch (err) {
@@ -220,15 +167,11 @@ export const createFilesRouter = ({
   /** GET /api/files/content?path=/file — Read file content. */
   router.get("/content", async (req, res) => {
     const result = guardPath(req.query.path as string | undefined);
-    if ("error" in result) {
-      sendGuardError(res, result.error);
-      return;
-    }
+    if ("error" in result) { sendGuardError(res, result.error); return; }
 
     try {
-      const safePath = assertContained(result.resolved);
-      const content = await fs.readFile(safePath, "utf-8");
-      res.json({ content, path: safePath });
+      const content = await fs.readFile(result.resolved, "utf-8");
+      res.json({ content, path: result.resolved });
     } catch (err) {
       sendFsError(res, err, "File not found", result.resolved);
     }
@@ -237,30 +180,21 @@ export const createFilesRouter = ({
   /** GET /api/files/serve?path=/file — Stream/serve a file (video/audio/image). */
   router.get("/serve", async (req, res) => {
     const result = guardPath(req.query.path as string | undefined);
-    if ("error" in result) {
-      sendGuardError(res, result.error);
-      return;
-    }
+    if ("error" in result) { sendGuardError(res, result.error); return; }
 
-    let safePath: string;
     try {
-      safePath = assertContained(result.resolved);
-      await fs.access(safePath);
-    } catch (e) {
-      if (e instanceof Error && e.message === "Access denied") {
-        res.status(403).json({ error: "Access denied" });
-        return;
-      }
+      await fs.access(result.resolved);
+    } catch {
       res.status(404).json({ error: `File not found: ${result.resolved}` });
       return;
     }
 
-    res.sendFile(safePath, (err) => {
+    res.sendFile(result.resolved, (err) => {
       if (!err) return;
       if (!res.headersSent) {
         const code = (err as NodeJS.ErrnoException).code;
         if (code === "ENOENT") {
-          res.status(404).json({ error: `File not found: ${safePath}` });
+          res.status(404).json({ error: `File not found: ${result.resolved}` });
           return;
         }
         res.status(500).json({ error: err.message });
@@ -284,16 +218,12 @@ export const createFilesRouter = ({
     }
 
     const result = guardPath(rawPath);
-    if ("error" in result) {
-      sendGuardError(res, result.error);
-      return;
-    }
+    if ("error" in result) { sendGuardError(res, result.error); return; }
 
     try {
-      const safePath = assertContained(result.resolved);
-      await fs.mkdir(path.dirname(safePath), { recursive: true });
-      await fs.writeFile(safePath, content, "utf-8");
-      res.json({ success: true, path: safePath });
+      await fs.mkdir(path.dirname(result.resolved), { recursive: true });
+      await fs.writeFile(result.resolved, content, "utf-8");
+      res.json({ success: true, path: result.resolved });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       res.status(500).json({ error: msg });
@@ -306,15 +236,11 @@ export const createFilesRouter = ({
     const rawPath = typeof body.path === "string" ? body.path : undefined;
 
     const result = guardPath(rawPath);
-    if ("error" in result) {
-      sendGuardError(res, result.error);
-      return;
-    }
+    if ("error" in result) { sendGuardError(res, result.error); return; }
 
     try {
-      const safePath = assertContained(result.resolved);
-      await fs.mkdir(safePath, { recursive: true });
-      res.json({ success: true, path: safePath });
+      await fs.mkdir(result.resolved, { recursive: true });
+      res.json({ success: true, path: result.resolved });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       res.status(500).json({ error: msg });
@@ -324,15 +250,11 @@ export const createFilesRouter = ({
   /** DELETE /api/files?path=/file — Delete a file. */
   router.delete("/", async (req, res) => {
     const result = guardPath(req.query.path as string | undefined);
-    if ("error" in result) {
-      sendGuardError(res, result.error);
-      return;
-    }
+    if ("error" in result) { sendGuardError(res, result.error); return; }
 
     try {
-      const safePath = assertContained(result.resolved);
-      await fs.unlink(safePath);
-      res.json({ success: true, path: safePath });
+      await fs.unlink(result.resolved);
+      res.json({ success: true, path: result.resolved });
     } catch (err) {
       sendFsError(res, err, "File not found", result.resolved);
     }
@@ -355,23 +277,18 @@ export const createFilesRouter = ({
     }
 
     const result = guardPath(rawPath);
-    if ("error" in result) {
-      sendGuardError(res, result.error);
-      return;
-    }
-
-    const safePath = assertContained(result.resolved);
+    if ("error" in result) { sendGuardError(res, result.error); return; }
 
     // Validate the file exists
     try {
-      await fs.access(safePath);
+      await fs.access(result.resolved);
     } catch {
-      res.status(404).json({ error: `File not found: ${safePath}` });
+      res.status(404).json({ error: `File not found: ${result.resolved}` });
       return;
     }
 
     // Validate file extension is convertible
-    const ext = path.extname(safePath).toLowerCase();
+    const ext = path.extname(result.resolved).toLowerCase();
     if (!CONVERTIBLE_EXTENSIONS.has(ext)) {
       res.status(400).json({
         error: `Unsupported file type: ${ext}. Supported: ${[...CONVERTIBLE_EXTENSIONS].join(", ")}`,
@@ -380,8 +297,8 @@ export const createFilesRouter = ({
     }
 
     try {
-      const markdown = await convertToMarkdown(safePath, markitdownUrl);
-      res.json({ markdown, originalPath: safePath });
+      const markdown = await convertToMarkdown(result.resolved, markitdownUrl);
+      res.json({ markdown, originalPath: result.resolved });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       res.status(502).json({ error: `Conversion failed: ${msg}` });
