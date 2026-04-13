@@ -1,6 +1,13 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import Database from "better-sqlite3";
-import { CompetitorRepository, computeDiff, computeContentDiff, aggregatePages, createCompetitorMonitorTool, type CompetitorSnapshot } from "./competitive-monitor.js";
+import {
+  CompetitorRepository,
+  computeDiff,
+  computeContentDiff,
+  aggregatePages,
+  createCompetitorMonitorTool,
+  type CompetitorSnapshot,
+} from "./competitive-monitor.js";
 import type { ExtractedContent } from "./seo/html-extractor.js";
 
 // ── Helpers ──────────────────────────────────────────────────────────────
@@ -12,7 +19,9 @@ function makeInMemoryRepo(): CompetitorRepository {
   return new CompetitorRepository(db);
 }
 
-function makeContent(overrides: Partial<ExtractedContent> = {}): ExtractedContent {
+function makeContent(
+  overrides: Partial<ExtractedContent> = {},
+): ExtractedContent {
   return {
     title: "Test",
     headings: [{ level: 1, text: "Test" }],
@@ -21,7 +30,10 @@ function makeContent(overrides: Partial<ExtractedContent> = {}): ExtractedConten
     headingCount: 1,
     paragraphCount: 3,
     readingTime: 2,
-    keywords: [{ term: "test", tfidf: 5 }, { term: "page", tfidf: 3 }],
+    keywords: [
+      { term: "test", tfidf: 5 },
+      { term: "page", tfidf: 3 },
+    ],
     readabilityScore: 65,
     metaTitle: "Test Page",
     metaDescription: "A test page",
@@ -37,6 +49,10 @@ function makeContent(overrides: Partial<ExtractedContent> = {}): ExtractedConten
     externalLinks: [],
     internalLinkCount: 0,
     externalLinkCount: 0,
+    canonical: null,
+    hreflangTags: [],
+    metaRobots: null,
+    jsonLdBlocks: [],
     ...overrides,
   };
 }
@@ -147,7 +163,10 @@ describe("computeDiff", () => {
     const current = { ...base, id: 2, totalWordCount: 3000 };
     const changes = computeDiff(current, base);
     expect(changes).toContainEqual(
-      expect.objectContaining({ field: "totalWordCount", direction: "decreased" }),
+      expect.objectContaining({
+        field: "totalWordCount",
+        direction: "decreased",
+      }),
     );
   });
 
@@ -155,7 +174,10 @@ describe("computeDiff", () => {
     const current = { ...base, id: 2, avgReadability: 80 };
     const changes = computeDiff(current, base);
     expect(changes).toContainEqual(
-      expect.objectContaining({ field: "avgReadability", direction: "increased" }),
+      expect.objectContaining({
+        field: "avgReadability",
+        direction: "increased",
+      }),
     );
   });
 
@@ -184,8 +206,16 @@ describe("computeDiff", () => {
 describe("aggregatePages", () => {
   it("aggregates metrics from multiple pages", () => {
     const pages = [
-      makeContent({ wordCount: 500, readabilityScore: 60, schemaMarkup: [{ type: "WebPage", properties: [] }] }),
-      makeContent({ wordCount: 300, readabilityScore: 70, schemaMarkup: [{ type: "Article", properties: [] }] }),
+      makeContent({
+        wordCount: 500,
+        readabilityScore: 60,
+        schemaMarkup: [{ type: "WebPage", properties: [] }],
+      }),
+      makeContent({
+        wordCount: 300,
+        readabilityScore: 70,
+        schemaMarkup: [{ type: "Article", properties: [] }],
+      }),
     ];
 
     const result = aggregatePages(pages);
@@ -227,7 +257,11 @@ describe("createCompetitorMonitorTool", () => {
   it("add action adds a competitor", async () => {
     const repo = makeInMemoryRepo();
     const tool = createCompetitorMonitorTool(repo);
-    const result = await tool.handler({ action: "add", url: "https://example.com", name: "Example" });
+    const result = await tool.handler({
+      action: "add",
+      url: "https://example.com",
+      name: "Example",
+    });
     expect(result.text).toContain("Added competitor");
     expect(repo.listCompetitors()).toHaveLength(1);
   });
@@ -235,7 +269,10 @@ describe("createCompetitorMonitorTool", () => {
   it("add action blocks SSRF URLs", async () => {
     const repo = makeInMemoryRepo();
     const tool = createCompetitorMonitorTool(repo);
-    const result = await tool.handler({ action: "add", url: "http://localhost/admin" });
+    const result = await tool.handler({
+      action: "add",
+      url: "http://localhost/admin",
+    });
     expect(result.isError).toBe(true);
     expect(result.text).toContain("SSRF blocked");
   });
@@ -244,7 +281,10 @@ describe("createCompetitorMonitorTool", () => {
     const repo = makeInMemoryRepo();
     repo.addCompetitor("https://example.com");
     const tool = createCompetitorMonitorTool(repo);
-    const result = await tool.handler({ action: "remove", url: "https://example.com" });
+    const result = await tool.handler({
+      action: "remove",
+      url: "https://example.com",
+    });
     expect(result.text).toContain("Removed");
   });
 
@@ -267,7 +307,10 @@ describe("createCompetitorMonitorTool", () => {
     const repo = makeInMemoryRepo();
     repo.addCompetitor("https://example.com");
     const tool = createCompetitorMonitorTool(repo);
-    const result = await tool.handler({ action: "report", url: "https://example.com" });
+    const result = await tool.handler({
+      action: "report",
+      url: "https://example.com",
+    });
     expect(result.text).toContain("No snapshots");
   });
 
@@ -283,7 +326,10 @@ describe("createCompetitorMonitorTool", () => {
       metaTitles: "[]",
     });
     const tool = createCompetitorMonitorTool(repo);
-    const result = await tool.handler({ action: "report", url: "https://example.com" });
+    const result = await tool.handler({
+      action: "report",
+      url: "https://example.com",
+    });
     expect(result.text).toContain("baseline");
   });
 
@@ -307,7 +353,10 @@ describe("createCompetitorMonitorTool", () => {
       metaTitles: "[]",
     });
     const tool = createCompetitorMonitorTool(repo);
-    const result = await tool.handler({ action: "report", url: "https://example.com" });
+    const result = await tool.handler({
+      action: "report",
+      url: "https://example.com",
+    });
     expect(result.text).toContain("pageCount");
     expect(result.text).toContain("increased");
   });
@@ -316,7 +365,10 @@ describe("createCompetitorMonitorTool", () => {
     const repo = makeInMemoryRepo();
     repo.addCompetitor("https://example.com");
     const tool = createCompetitorMonitorTool(repo);
-    const result = await tool.handler({ action: "snapshot", url: "https://example.com" });
+    const result = await tool.handler({
+      action: "snapshot",
+      url: "https://example.com",
+    });
     expect(result.isError).toBe(true);
     expect(result.text).toContain("not enabled");
   });
@@ -324,24 +376,35 @@ describe("createCompetitorMonitorTool", () => {
   it("report action includes content diff when extracted data exists", async () => {
     const repo = makeInMemoryRepo();
     repo.addCompetitor("https://example.com");
-    repo.saveSnapshot("https://example.com", {
-      pageCount: 10,
-      totalWordCount: 5000,
-      avgReadability: 65,
-      schemaTypes: "[]",
-      topKeywords: "[]",
-      metaTitles: "[]",
-    }, { price: "$10", plan: "Basic" });
-    repo.saveSnapshot("https://example.com", {
-      pageCount: 10,
-      totalWordCount: 5000,
-      avgReadability: 65,
-      schemaTypes: "[]",
-      topKeywords: "[]",
-      metaTitles: "[]",
-    }, { price: "$15", plan: "Basic" });
+    repo.saveSnapshot(
+      "https://example.com",
+      {
+        pageCount: 10,
+        totalWordCount: 5000,
+        avgReadability: 65,
+        schemaTypes: "[]",
+        topKeywords: "[]",
+        metaTitles: "[]",
+      },
+      { price: "$10", plan: "Basic" },
+    );
+    repo.saveSnapshot(
+      "https://example.com",
+      {
+        pageCount: 10,
+        totalWordCount: 5000,
+        avgReadability: 65,
+        schemaTypes: "[]",
+        topKeywords: "[]",
+        metaTitles: "[]",
+      },
+      { price: "$15", plan: "Basic" },
+    );
     const tool = createCompetitorMonitorTool(repo);
-    const result = await tool.handler({ action: "report", url: "https://example.com" });
+    const result = await tool.handler({
+      action: "report",
+      url: "https://example.com",
+    });
     expect(result.text).toContain("extracted.price");
     expect(result.text).toContain("changed");
   });
@@ -370,36 +433,24 @@ describe("computeContentDiff", () => {
   });
 
   it("detects numeric increases", () => {
-    const changes = computeContentDiff(
-      { count: 20 },
-      { count: 10 },
-    );
+    const changes = computeContentDiff({ count: 20 }, { count: 10 });
     expect(changes[0].direction).toBe("increased");
   });
 
   it("detects numeric decreases", () => {
-    const changes = computeContentDiff(
-      { count: 5 },
-      { count: 10 },
-    );
+    const changes = computeContentDiff({ count: 5 }, { count: 10 });
     expect(changes[0].direction).toBe("decreased");
   });
 
   it("detects added keys", () => {
-    const changes = computeContentDiff(
-      { a: 1, b: 2 },
-      { a: 1 },
-    );
+    const changes = computeContentDiff({ a: 1, b: 2 }, { a: 1 });
     expect(changes).toHaveLength(1);
     expect(changes[0].field).toBe("extracted.b");
     expect(changes[0].previous).toBe("(not present)");
   });
 
   it("detects removed keys", () => {
-    const changes = computeContentDiff(
-      { a: 1 },
-      { a: 1, b: 2 },
-    );
+    const changes = computeContentDiff({ a: 1 }, { a: 1, b: 2 });
     expect(changes).toHaveLength(1);
     expect(changes[0].field).toBe("extracted.b");
     expect(changes[0].current).toBe("(removed)");

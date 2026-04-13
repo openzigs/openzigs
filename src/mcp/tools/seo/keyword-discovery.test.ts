@@ -2,7 +2,9 @@ import { describe, it, expect } from "vitest";
 import { discoverKeyword } from "./keyword-discovery.js";
 import type { ExtractedContent } from "./html-extractor.js";
 
-function makeContent(overrides: Partial<ExtractedContent> = {}): ExtractedContent {
+function makeContent(
+  overrides: Partial<ExtractedContent> = {},
+): ExtractedContent {
   return {
     title: "Best Project Management Tools for Teams",
     headings: [
@@ -41,6 +43,10 @@ function makeContent(overrides: Partial<ExtractedContent> = {}): ExtractedConten
     externalLinks: [],
     internalLinkCount: 0,
     externalLinkCount: 0,
+    canonical: null,
+    hreflangTags: [],
+    metaRobots: null,
+    jsonLdBlocks: [],
     ...overrides,
   };
 }
@@ -48,7 +54,10 @@ function makeContent(overrides: Partial<ExtractedContent> = {}): ExtractedConten
 describe("discoverKeyword", () => {
   it("detects keyword from title/H1 content", () => {
     const content = makeContent();
-    const result = discoverKeyword(content, "https://example.com/best-pm-tools");
+    const result = discoverKeyword(
+      content,
+      "https://example.com/best-pm-tools",
+    );
 
     expect(result).not.toBeNull();
     expect(result!.keyword).toBeTruthy();
@@ -80,14 +89,18 @@ describe("discoverKeyword", () => {
     const content = makeContent({
       title: "Best CRM Software Comparison 2026",
       headings: [{ level: 1, text: "Best CRM Software Comparison 2026" }],
-      bodyText: "We compare the best CRM software tools. The top-rated CRM platforms include...",
+      bodyText:
+        "We compare the best CRM software tools. The top-rated CRM platforms include...",
       keywords: [
         { term: "crm", tfidf: 3.5 },
         { term: "software", tfidf: 2.0 },
         { term: "comparison", tfidf: 1.8 },
       ],
     });
-    const result = discoverKeyword(content, "https://example.com/best-crm-comparison");
+    const result = discoverKeyword(
+      content,
+      "https://example.com/best-crm-comparison",
+    );
 
     expect(result).not.toBeNull();
     expect(result!.intent).toBe("commercial");
@@ -97,7 +110,8 @@ describe("discoverKeyword", () => {
     const content = makeContent({
       title: "Jira Documentation - Getting Started",
       headings: [{ level: 1, text: "Jira Documentation - Getting Started" }],
-      bodyText: "Welcome to the official Jira documentation. Learn how to install and configure...",
+      bodyText:
+        "Welcome to the official Jira documentation. Learn how to install and configure...",
       keywords: [
         { term: "jira", tfidf: 3.0 },
         { term: "documentation", tfidf: 2.5 },
@@ -113,13 +127,17 @@ describe("discoverKeyword", () => {
     const content = makeContent({
       title: "",
       headings: [],
-      bodyText: "Some generic content about various topics and subjects for testing.",
+      bodyText:
+        "Some generic content about various topics and subjects for testing.",
       keywords: [
         { term: "content", tfidf: 1.0 },
         { term: "topics", tfidf: 0.8 },
       ],
     });
-    const result = discoverKeyword(content, "https://example.com/blog/react-performance-optimization");
+    const result = discoverKeyword(
+      content,
+      "https://example.com/blog/react-performance-optimization",
+    );
 
     expect(result).not.toBeNull();
     expect(result!.keyword).toContain("react performance optimization");
@@ -160,7 +178,10 @@ describe("discoverKeyword", () => {
         { term: "state", tfidf: 1.2 },
       ],
     });
-    const result = discoverKeyword(content, "https://blog.example.com/react-hooks-guide");
+    const result = discoverKeyword(
+      content,
+      "https://blog.example.com/react-hooks-guide",
+    );
 
     expect(result).not.toBeNull();
     expect(result!.keyword).toContain("react");
@@ -178,7 +199,9 @@ describe("discoverKeyword", () => {
   it("strips common stop words from title phrases", () => {
     const content = makeContent({
       title: "The Ultimate Guide to Project Management",
-      headings: [{ level: 1, text: "The Ultimate Guide to Project Management" }],
+      headings: [
+        { level: 1, text: "The Ultimate Guide to Project Management" },
+      ],
     });
     const result = discoverKeyword(content, "https://example.com/pm-guide");
 

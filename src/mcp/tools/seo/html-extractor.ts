@@ -24,6 +24,13 @@ export type ImageInfo = {
 };
 export type SchemaMarkup = { type: string; properties: string[] };
 export type LinkInfo = { href: string; text: string; isInternal: boolean };
+export type CanonicalInfo = { href: string; count: number };
+export type HreflangTag = { lang: string; href: string };
+export type MetaRobotsInfo = {
+  content: string;
+  directives: string[];
+};
+export type JsonLdBlock = { raw: string; parsed: unknown };
 
 export type ExtractedContent = {
   title: string;
@@ -49,6 +56,10 @@ export type ExtractedContent = {
   externalLinks: LinkInfo[];
   internalLinkCount: number;
   externalLinkCount: number;
+  canonical: CanonicalInfo | null;
+  hreflangTags: HreflangTag[];
+  metaRobots: MetaRobotsInfo | null;
+  jsonLdBlocks: JsonLdBlock[];
 };
 
 /** Selectors for elements that are navigation/chrome, not article content. */
@@ -194,11 +205,13 @@ export function extractContent(
 
   // Schema markup (JSON-LD)
   const schemaMarkup: SchemaMarkup[] = [];
+  const jsonLdBlocks: JsonLdBlock[] = [];
   $('script[type="application/ld+json"]').each((_i, el) => {
     try {
       const raw = $(el).html();
       if (!raw) return;
       const parsed = JSON.parse(raw);
+      jsonLdBlocks.push({ raw, parsed });
       const items = Array.isArray(parsed) ? parsed : [parsed];
       for (const item of items) {
         extractJsonLdTypes(item, schemaMarkup);
@@ -207,6 +220,33 @@ export function extractContent(
       // Ignore malformed JSON-LD
     }
   });
+
+  // Canonical URL (#851)
+  const canonicalEls = $('link[rel="canonical"]');
+  const canonicalHref = canonicalEls.first().attr("href")?.trim() ?? "";
+  const canonical: CanonicalInfo | null =
+    canonicalEls.length > 0
+      ? { href: canonicalHref, count: canonicalEls.length }
+      : null;
+
+  // Hreflang tags (#853)
+  const hreflangTags: HreflangTag[] = [];
+  $('link[rel="alternate"][hreflang]').each((_i, el) => {
+    const lang = $(el).attr("hreflang")?.trim() ?? "";
+    const href = $(el).attr("href")?.trim() ?? "";
+    if (lang && href) {
+      hreflangTags.push({ lang, href });
+    }
+  });
+
+  // Meta robots (#852)
+  const robotsContent = $('meta[name="robots"]').attr("content")?.trim() ?? "";
+  const metaRobots: MetaRobotsInfo | null = robotsContent
+    ? {
+        content: robotsContent,
+        directives: robotsContent.split(",").map((d) => d.trim().toLowerCase()),
+      }
+    : null;
 
   // Images
   const images: ImageInfo[] = [];
@@ -349,6 +389,10 @@ export function extractContent(
     externalLinks,
     internalLinkCount: internalLinks.length,
     externalLinkCount: externalLinks.length,
+    canonical,
+    hreflangTags,
+    metaRobots,
+    jsonLdBlocks,
   };
 }
 

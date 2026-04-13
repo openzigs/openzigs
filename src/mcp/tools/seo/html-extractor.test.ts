@@ -42,7 +42,8 @@ describe("html-extractor", () => {
     });
 
     it("scores simple text as high readability", () => {
-      const simple = "The cat sat on the mat. The dog ran fast. The sun is hot.";
+      const simple =
+        "The cat sat on the mat. The dog ran fast. The sun is hot.";
       const score = fleschKincaid(simple);
       expect(score).toBeGreaterThan(50);
     });
@@ -55,7 +56,9 @@ describe("html-extractor", () => {
     });
 
     it("returns a number", () => {
-      expect(typeof fleschKincaid("Hello world. This is a test.")).toBe("number");
+      expect(typeof fleschKincaid("Hello world. This is a test.")).toBe(
+        "number",
+      );
     });
   });
 
@@ -69,7 +72,9 @@ describe("html-extractor", () => {
     });
 
     it("handles quotes and angle brackets", () => {
-      expect(cleanText("&lt;div&gt;&quot;test&quot;&lt;/div&gt;")).toBe('<div>"test"</div>');
+      expect(cleanText("&lt;div&gt;&quot;test&quot;&lt;/div&gt;")).toBe(
+        '<div>"test"</div>',
+      );
     });
 
     it("strips numeric entities", () => {
@@ -80,7 +85,8 @@ describe("html-extractor", () => {
 
   describe("extractKeywords", () => {
     it("returns an array of keyword entries", () => {
-      const text = "coffee brewing methods coffee beans espresso latte cappuccino coffee grounds drip brewing pour over french press cold brew coffee flavor aroma";
+      const text =
+        "coffee brewing methods coffee beans espresso latte cappuccino coffee grounds drip brewing pour over french press cold brew coffee flavor aroma";
       const keywords = extractKeywords(text, 5);
       expect(keywords.length).toBeLessThanOrEqual(5);
       expect(keywords.length).toBeGreaterThan(0);
@@ -97,7 +103,10 @@ describe("html-extractor", () => {
     });
 
     it("defaults to top 15", () => {
-      const text = Array.from({ length: 100 }, (_, i) => `word${i} sentence`).join(" ");
+      const text = Array.from(
+        { length: 100 },
+        (_, i) => `word${i} sentence`,
+      ).join(" ");
       const keywords = extractKeywords(text);
       expect(keywords.length).toBeLessThanOrEqual(15);
     });
@@ -105,13 +114,15 @@ describe("html-extractor", () => {
 
   describe("extractContent", () => {
     it("extracts title from h1", () => {
-      const html = "<html><body><h1>My Title</h1><p>Some content here.</p></body></html>";
+      const html =
+        "<html><body><h1>My Title</h1><p>Some content here.</p></body></html>";
       const result = extractContent(html);
       expect(result.title).toBe("My Title");
     });
 
     it("falls back to <title> tag if no h1", () => {
-      const html = "<html><head><title>Page Title</title></head><body><p>Some content here for reading purposes.</p></body></html>";
+      const html =
+        "<html><head><title>Page Title</title></head><body><p>Some content here for reading purposes.</p></body></html>";
       const result = extractContent(html);
       expect(result.title).toBe("Page Title");
     });
@@ -188,7 +199,8 @@ describe("html-extractor", () => {
     });
 
     it("reading time is at least 1 minute", () => {
-      const html = "<html><body><h1>Title</h1><p>This short paragraph has very few words here.</p></body></html>";
+      const html =
+        "<html><body><h1>Title</h1><p>This short paragraph has very few words here.</p></body></html>";
       const result = extractContent(html);
       expect(result.readingTime).toBeGreaterThanOrEqual(1);
     });
@@ -227,7 +239,9 @@ describe("html-extractor", () => {
       const result = extractContent(html);
       expect(result.keywords.length).toBeGreaterThan(0);
       const terms = result.keywords.map((k) => k.term);
-      expect(terms.some((t) => t.includes("coffee") || t.includes("brewing"))).toBe(true);
+      expect(
+        terms.some((t) => t.includes("coffee") || t.includes("brewing")),
+      ).toBe(true);
     });
 
     it("handles empty HTML", () => {
@@ -238,7 +252,8 @@ describe("html-extractor", () => {
     });
 
     it("handles malformed HTML gracefully", () => {
-      const html = "<div><p>Unclosed paragraph with enough text content here<h2>Heading";
+      const html =
+        "<div><p>Unclosed paragraph with enough text content here<h2>Heading";
       const result = extractContent(html);
       // Should not throw
       expect(result).toBeDefined();
@@ -262,7 +277,8 @@ describe("html-extractor", () => {
     });
 
     it("provides default values for new fields when no metadata present", () => {
-      const html = "<html><body><h1>Title</h1><p>Some content here for testing.</p></body></html>";
+      const html =
+        "<html><body><h1>Title</h1><p>Some content here for testing.</p></body></html>";
       const result = extractContent(html);
       expect(result.metaTitle).toBe("");
       expect(result.metaDescription).toBe("");
@@ -303,9 +319,18 @@ describe("html-extractor", () => {
       `;
       const result = extractContent(html);
       expect(result.metaTags).toHaveLength(3);
-      expect(result.metaTags).toContainEqual({ name: "description", content: "Page desc" });
-      expect(result.metaTags).toContainEqual({ name: "keywords", content: "test,seo" });
-      expect(result.metaTags).toContainEqual({ name: "robots", content: "index,follow" });
+      expect(result.metaTags).toContainEqual({
+        name: "description",
+        content: "Page desc",
+      });
+      expect(result.metaTags).toContainEqual({
+        name: "keywords",
+        content: "test,seo",
+      });
+      expect(result.metaTags).toContainEqual({
+        name: "robots",
+        content: "index,follow",
+      });
     });
 
     it("extracts schema markup from JSON-LD", () => {
@@ -357,9 +382,24 @@ describe("html-extractor", () => {
       `;
       const result = extractContent(html);
       expect(result.images).toHaveLength(3);
-      expect(result.images[0]).toMatchObject({ src: "/img/hero.jpg", alt: "Hero image", hasAlt: true, altStatus: "present" });
-      expect(result.images[1]).toMatchObject({ src: "/img/chart.png", alt: "", hasAlt: false, altStatus: "empty" });
-      expect(result.images[2]).toMatchObject({ src: "/img/logo.svg", alt: "", hasAlt: false, altStatus: "missing" });
+      expect(result.images[0]).toMatchObject({
+        src: "/img/hero.jpg",
+        alt: "Hero image",
+        hasAlt: true,
+        altStatus: "present",
+      });
+      expect(result.images[1]).toMatchObject({
+        src: "/img/chart.png",
+        alt: "",
+        hasAlt: false,
+        altStatus: "empty",
+      });
+      expect(result.images[2]).toMatchObject({
+        src: "/img/logo.svg",
+        alt: "",
+        hasAlt: false,
+        altStatus: "missing",
+      });
       expect(result.imagesWithoutAlt).toBe(2);
     });
 
@@ -520,13 +560,16 @@ describe("html-extractor", () => {
 
     it("handles @graph array", () => {
       const out: { type: string; properties: string[] }[] = [];
-      extractJsonLdTypes({
-        "@context": "https://schema.org",
-        "@graph": [
-          { "@type": "Article", headline: "Test" },
-          { "@type": "WebPage", name: "Page" },
-        ],
-      }, out);
+      extractJsonLdTypes(
+        {
+          "@context": "https://schema.org",
+          "@graph": [
+            { "@type": "Article", headline: "Test" },
+            { "@type": "WebPage", name: "Page" },
+          ],
+        },
+        out,
+      );
       const types = out.map((s) => s.type);
       expect(types).toContain("Article");
       expect(types).toContain("WebPage");
@@ -534,11 +577,14 @@ describe("html-extractor", () => {
 
     it("recursively extracts nested types", () => {
       const out: { type: string; properties: string[] }[] = [];
-      extractJsonLdTypes({
-        "@type": "Article",
-        headline: "Test",
-        publisher: { "@type": "Organization", name: "Acme" },
-      }, out);
+      extractJsonLdTypes(
+        {
+          "@type": "Article",
+          headline: "Test",
+          publisher: { "@type": "Organization", name: "Acme" },
+        },
+        out,
+      );
       const types = out.map((s) => s.type);
       expect(types).toContain("Article");
       expect(types).toContain("Organization");
@@ -546,7 +592,10 @@ describe("html-extractor", () => {
 
     it("handles multi-type arrays", () => {
       const out: { type: string; properties: string[] }[] = [];
-      extractJsonLdTypes({ "@type": ["Article", "NewsArticle"], headline: "Test" }, out);
+      extractJsonLdTypes(
+        { "@type": ["Article", "NewsArticle"], headline: "Test" },
+        out,
+      );
       const types = out.map((s) => s.type);
       expect(types).toContain("Article");
       expect(types).toContain("NewsArticle");
@@ -572,6 +621,118 @@ describe("html-extractor", () => {
       extractJsonLdTypes("string", out);
       extractJsonLdTypes(42, out);
       expect(out).toHaveLength(0);
+    });
+  });
+
+  // ── New fields: canonical, hreflang, metaRobots, jsonLdBlocks (#851, #852, #853, #860) ──
+
+  describe("extractContent — canonical", () => {
+    it("extracts canonical URL with count", () => {
+      const html = `<html><head><link rel="canonical" href="https://example.com/page"></head><body><p>text</p></body></html>`;
+      const result = extractContent(html, "https://example.com/page");
+      expect(result.canonical).toEqual({
+        href: "https://example.com/page",
+        count: 1,
+      });
+    });
+
+    it("counts multiple canonical tags", () => {
+      const html = `<html><head><link rel="canonical" href="https://example.com/a"><link rel="canonical" href="https://example.com/b"></head><body><p>text</p></body></html>`;
+      const result = extractContent(html, "https://example.com/page");
+      expect(result.canonical).toBeDefined();
+      expect(result.canonical!.count).toBe(2);
+    });
+
+    it("returns null when no canonical tag exists", () => {
+      const html = `<html><head></head><body><p>text</p></body></html>`;
+      const result = extractContent(html, "https://example.com/page");
+      expect(result.canonical).toBeNull();
+    });
+  });
+
+  describe("extractContent — hreflang", () => {
+    it("extracts hreflang tags", () => {
+      const html = `<html><head>
+        <link rel="alternate" hreflang="en" href="https://example.com/en/page">
+        <link rel="alternate" hreflang="es" href="https://example.com/es/page">
+        <link rel="alternate" hreflang="x-default" href="https://example.com/page">
+      </head><body><p>text</p></body></html>`;
+      const result = extractContent(html, "https://example.com/page");
+      expect(result.hreflangTags).toHaveLength(3);
+      expect(result.hreflangTags[0]).toEqual({
+        lang: "en",
+        href: "https://example.com/en/page",
+      });
+    });
+
+    it("returns empty array when no hreflang tags", () => {
+      const html = `<html><head></head><body><p>text</p></body></html>`;
+      const result = extractContent(html, "https://example.com/page");
+      expect(result.hreflangTags).toEqual([]);
+    });
+  });
+
+  describe("extractContent — meta robots", () => {
+    it("extracts meta robots directives", () => {
+      const html = `<html><head><meta name="robots" content="noindex, nofollow"></head><body><p>text</p></body></html>`;
+      const result = extractContent(html, "https://example.com/page");
+      expect(result.metaRobots).toBeDefined();
+      expect(result.metaRobots!.content).toBe("noindex, nofollow");
+      expect(result.metaRobots!.directives).toContain("noindex");
+      expect(result.metaRobots!.directives).toContain("nofollow");
+    });
+
+    it("returns null when no meta robots tag", () => {
+      const html = `<html><head></head><body><p>text</p></body></html>`;
+      const result = extractContent(html, "https://example.com/page");
+      expect(result.metaRobots).toBeNull();
+    });
+
+    it("parses index, follow directives", () => {
+      const html = `<html><head><meta name="robots" content="index, follow"></head><body><p>text</p></body></html>`;
+      const result = extractContent(html, "https://example.com/page");
+      expect(result.metaRobots!.directives).toContain("index");
+      expect(result.metaRobots!.directives).toContain("follow");
+      expect(result.metaRobots!.directives).not.toContain("noindex");
+    });
+  });
+
+  describe("extractContent — JSON-LD blocks", () => {
+    it("extracts parsed JSON-LD blocks", () => {
+      const html = `<html><head>
+        <script type="application/ld+json">{"@type":"Article","headline":"Test"}</script>
+      </head><body><p>text</p></body></html>`;
+      const result = extractContent(html, "https://example.com/page");
+      expect(result.jsonLdBlocks).toHaveLength(1);
+      expect(result.jsonLdBlocks[0].parsed).toEqual({
+        "@type": "Article",
+        headline: "Test",
+      });
+    });
+
+    it("handles multiple JSON-LD blocks", () => {
+      const html = `<html><head>
+        <script type="application/ld+json">{"@type":"WebSite","name":"Test"}</script>
+        <script type="application/ld+json">{"@type":"Organization","name":"Org"}</script>
+      </head><body><p>text</p></body></html>`;
+      const result = extractContent(html, "https://example.com/page");
+      expect(result.jsonLdBlocks).toHaveLength(2);
+    });
+
+    it("returns empty array when no JSON-LD", () => {
+      const html = `<html><head></head><body><p>text</p></body></html>`;
+      const result = extractContent(html, "https://example.com/page");
+      expect(result.jsonLdBlocks).toEqual([]);
+    });
+
+    it("handles malformed JSON-LD gracefully", () => {
+      const html = `<html><head>
+        <script type="application/ld+json">{invalid json}</script>
+        <script type="application/ld+json">{"@type":"Article","headline":"Valid"}</script>
+      </head><body><p>text</p></body></html>`;
+      const result = extractContent(html, "https://example.com/page");
+      // Should still extract the valid block
+      expect(result.jsonLdBlocks.length).toBeGreaterThanOrEqual(1);
     });
   });
 });

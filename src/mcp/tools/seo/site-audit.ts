@@ -42,6 +42,17 @@ import {
   type ContentPage,
   type ContentAnalysisResult,
 } from "./content-analyzer.js";
+import {
+  type RobotsTxtResult,
+  fetchRobotsTxt,
+  isUrlAllowed,
+  detectRobotsIssues,
+} from "./robots-checker.js";
+import {
+  fetchAndValidateSitemap,
+  compareSitemapToCrawl,
+} from "./sitemap-validator.js";
+import { validateStructuredData } from "./structured-data-validator.js";
 
 const SEO_REPORTS_DIR = path.join(os.homedir(), ".openzigs", "seo-reports");
 
@@ -81,6 +92,7 @@ export interface SiteAuditResult {
   infoCount: number;
   pages: PageAuditResult[];
   siteWideIssues: AuditIssue[];
+  categoryStats: CategoryStats[];
   reportPath: string;
   pdfPath: string | null;
 }
@@ -116,6 +128,55 @@ const seoSiteAuditSchema = z.object({
 });
 
 // ── Audit Logic ──────────────────────────────────────────────────────────
+
+/**
+ * Validate a BCP 47 language code (simplified).
+ * Accepts: en, en-US, zh-Hans, pt-BR, etc.
+ */
+export function isValidBcp47(code: string): boolean {
+  return /^[a-zA-Z]{2,3}(-[a-zA-Z]{2,4}(-[a-zA-Z]{2})?)?$/.test(code);
+}
+
+/**
+ * Calculate the percentage of total URLs affected for each issue category.
+ * Returns a map of category → { count, percentage }.
+ */
+export interface CategoryStats {
+  category: string;
+  affectedCount: number;
+  percentage: number;
+}
+
+export function calculateAffectedPercentages(
+  pages: PageAuditResult[],
+  siteWideIssues: AuditIssue[],
+): CategoryStats[] {
+  const totalUrls = pages.length;
+  if (totalUrls === 0) return [];
+
+  const categoryUrls = new Map<string, Set<string>>();
+
+  for (const page of pages) {
+    for (const issue of page.issues) {
+      const urls = categoryUrls.get(issue.category) ?? new Set();
+      urls.add(page.url);
+      categoryUrls.set(issue.category, urls);
+    }
+  }
+
+  // Site-wide issues affect all pages
+  for (const issue of siteWideIssues) {
+    if (!categoryUrls.has(issue.category)) {
+      categoryUrls.set(issue.category, new Set(pages.map((p) => p.url)));
+    }
+  }
+
+  return [...categoryUrls.entries()].map(([category, urls]) => ({
+    category,
+    affectedCount: urls.size,
+    percentage: Math.round((urls.size / totalUrls) * 100),
+  }));
+}
 
 /** Audit a single crawled page for SEO issues. */
 export function auditPage(
@@ -232,6 +293,107 @@ export function auditPage(
       category: "schema",
       message: "No structured data (JSON-LD) found",
     });
+  }
+
+  // Canonical URL checks (#851)
+  if (!content.canonical) {
+    issues.push({
+      severity: "warning",
+      category: "canonical",
+      message: "Missing canonical tag",
+    });
+  } else {
+    if (content.canonical.count > 1) {
+      issues.push({
+        severity: "error",
+        category: "canonical",
+        message: `Multiple canonical tags found (${content.canonical.count})`,
+      });
+    }
+    try {
+      const canonicalUrl = new URL(content.canonical.href, page.url);
+      const pageUrl = new URL(page.url);
+      if (canonicalUrl.hostname !== pageUrl.hostname) {
+        issues.push({
+          severity: "warning",
+          category: "canonical",
+          message: `Canonical points to different domain: ${canonicalUrl.hostname}`,
+        });
+      } else if (canonicalUrl.href === pageUrl.href) {
+        issues.push({
+          severity: "info",
+          category: "canonical",
+          message: "Self-referencing canonical (good practice)",
+        });
+      }
+    } catch {
+      issues.push({
+        severity: "error",
+        category: "canonical",
+        message: `Invalid canonical URL: ${content.canonical.href}`,
+      });
+    }
+  }
+
+  // Hreflang checks (#853)
+  if (content.hreflangTags.length > 0) {
+    const hasXDefault = content.hreflangTags.some(
+      (t) => t.lang === "x-default",
+    );
+    if (!hasXDefault) {
+      issues.push({
+        severity: "warning",
+        category: "hreflang",
+        message: "Hreflang tags present but missing x-default",
+      });
+    }
+
+    for (const tag of content.hreflangTags) {
+      if (tag.lang !== "x-default" && !isValidBcp47(tag.lang)) {
+        issues.push({
+          severity: "error",
+          category: "hreflang",
+          message: `Invalid hreflang language code: "${tag.lang}"`,
+        });
+      }
+    }
+
+    // Check for conflicting hreflang (same language, different URL)
+    const langMap = new Map<string, string[]>();
+    for (const tag of content.hreflangTags) {
+      const existing = langMap.get(tag.lang) ?? [];
+      existing.push(tag.href);
+      langMap.set(tag.lang, existing);
+    }
+    for (const [lang, hrefs] of langMap) {
+      const unique = new Set(hrefs);
+      if (unique.size > 1) {
+        issues.push({
+          severity: "error",
+          category: "hreflang",
+          message: `Conflicting hreflang: language "${lang}" points to ${unique.size} different URLs`,
+        });
+      }
+    }
+  }
+
+  // Meta robots checks (#852)
+  if (content.metaRobots) {
+    if (content.metaRobots.directives.includes("noindex")) {
+      issues.push({
+        severity: "info",
+        category: "robots",
+        message: "Page has noindex directive",
+      });
+    }
+    if (content.metaRobots.directives.includes("nofollow")) {
+      issues.push({
+        severity: "warning",
+        category: "robots",
+        message:
+          "Page has nofollow directive — internal links will not be followed",
+      });
+    }
   }
 
   return {
@@ -520,6 +682,23 @@ export function createSeoSiteAuditTool(): ToolDefinition {
       }
 
       try {
+        // 0. Check for recent audit to enable Firecrawl caching (#863)
+        let maxAge: number | undefined;
+        try {
+          const db = getDatabase();
+          const recent = new AuditHistoryRepository(db).listSnapshots(url, 1);
+          if (recent.length > 0) {
+            const lastAuditMs = new Date(recent[0].createdAt).getTime();
+            const ageMs = Date.now() - lastAuditMs;
+            const TWENTY_FOUR_HOURS = 24 * 60 * 60 * 1000;
+            if (ageMs < TWENTY_FOUR_HOURS) {
+              maxAge = TWENTY_FOUR_HOURS;
+            }
+          }
+        } catch {
+          // Non-fatal: caching is an optimization
+        }
+
         // 1. Crawl the site
         const crawlResult = await client.crawl(url, {
           limit: maxPages,
@@ -527,6 +706,7 @@ export function createSeoSiteAuditTool(): ToolDefinition {
           includePaths,
           excludePaths,
           scrapeOptions: { formats: ["markdown", "html"] },
+          maxAge,
         });
 
         if (crawlResult.pages.length === 0) {
@@ -551,6 +731,120 @@ export function createSeoSiteAuditTool(): ToolDefinition {
         // 3. Detect site-wide issues
         const siteWideIssues = detectSiteWideIssues(auditedPages);
 
+        // 3b. Robots.txt analysis (#852)
+        let robotsTxtResult: RobotsTxtResult | undefined;
+        try {
+          robotsTxtResult = await fetchRobotsTxt(url);
+          if (!robotsTxtResult.exists) {
+            siteWideIssues.push({
+              severity: "info",
+              category: "robots",
+              message: "No robots.txt found",
+            });
+          } else {
+            const robotsIssues = detectRobotsIssues(robotsTxtResult);
+            siteWideIssues.push(...robotsIssues);
+
+            // Check for noindex pages that are in sitemap (detected below)
+            for (const page of auditedPages) {
+              const content = crawledContents.get(page.url);
+              if (!content) continue;
+              try {
+                const urlPath = new URL(page.url).pathname;
+                const check = isUrlAllowed(urlPath, robotsTxtResult.rules);
+                if (!check.allowed && page.wordCount > 0) {
+                  siteWideIssues.push({
+                    severity: "warning",
+                    category: "robots",
+                    message: `Page blocked by robots.txt but has content (${page.wordCount} words): ${page.url}`,
+                    url: page.url,
+                  });
+                }
+              } catch {
+                // Skip invalid URLs
+              }
+            }
+          }
+        } catch {
+          // Non-fatal: robots.txt analysis is optional
+        }
+
+        // 3c. Sitemap validation (#857)
+        try {
+          const sitemapResult = await fetchAndValidateSitemap(
+            url,
+            robotsTxtResult?.sitemaps ?? [],
+          );
+          siteWideIssues.push(
+            ...sitemapResult.issues.map((i) => ({
+              severity: i.severity,
+              category: i.category,
+              message: i.message,
+              url: i.url,
+            })),
+          );
+
+          if (sitemapResult.found) {
+            const crawledUrls = auditedPages.map((p) => p.url);
+            const { orphanedUrls, missingUrls } = compareSitemapToCrawl(
+              sitemapResult.sitemapUrls,
+              crawledUrls,
+            );
+            if (orphanedUrls.length > 0) {
+              siteWideIssues.push({
+                severity: "warning",
+                category: "sitemap",
+                message: `${orphanedUrls.length} URL(s) in sitemap but not found during crawl`,
+              });
+            }
+            if (missingUrls.length > 0) {
+              siteWideIssues.push({
+                severity: "info",
+                category: "sitemap",
+                message: `${missingUrls.length} crawled URL(s) not in sitemap`,
+              });
+            }
+
+            // Check for noindex pages in sitemap (#852)
+            for (const page of auditedPages) {
+              const content = crawledContents.get(page.url);
+              if (
+                content?.metaRobots?.directives.includes("noindex") &&
+                sitemapResult.sitemapUrls.some((su) => {
+                  try {
+                    return new URL(su).pathname === new URL(page.url).pathname;
+                  } catch {
+                    return false;
+                  }
+                })
+              ) {
+                siteWideIssues.push({
+                  severity: "error",
+                  category: "robots",
+                  message: `Page has noindex but is in sitemap: ${page.url}`,
+                  url: page.url,
+                });
+              }
+            }
+          }
+        } catch {
+          // Non-fatal: sitemap validation is optional
+        }
+
+        // 3d. Structured data validation (#860)
+        for (const page of auditedPages) {
+          const content = crawledContents.get(page.url);
+          if (!content || content.jsonLdBlocks.length === 0) continue;
+          const sdResult = validateStructuredData(content.jsonLdBlocks);
+          for (const issue of sdResult.issues) {
+            page.issues.push({
+              severity: issue.severity,
+              category: issue.category,
+              message: issue.message,
+            });
+          }
+        }
+
         // 4. Tally issues
         const allIssues = [
           ...siteWideIssues,
@@ -563,6 +857,12 @@ export function createSeoSiteAuditTool(): ToolDefinition {
           (i) => i.severity === "warning",
         ).length;
         const infoCount = allIssues.filter((i) => i.severity === "info").length;
+
+        // 4b. Calculate % affected (#854)
+        const categoryStats = calculateAffectedPercentages(
+          auditedPages,
+          siteWideIssues,
+        );
 
         // 5. Build result
         const subdir = buildReportSubdir(url);
@@ -580,6 +880,7 @@ export function createSeoSiteAuditTool(): ToolDefinition {
           infoCount,
           pages: auditedPages,
           siteWideIssues,
+          categoryStats,
           reportPath,
           pdfPath: null,
         };
@@ -644,6 +945,7 @@ export function createSeoSiteAuditTool(): ToolDefinition {
               pages: dashboardPages,
               linkAnalysis,
               contentAnalysis,
+              categoryStats,
               // Original audit metadata
               issues: allIssues,
               healthScore,

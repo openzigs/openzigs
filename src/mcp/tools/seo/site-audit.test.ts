@@ -48,6 +48,10 @@ function makeContent(
     externalLinks: [],
     internalLinkCount: 1,
     externalLinkCount: 0,
+    canonical: null,
+    hreflangTags: [],
+    metaRobots: null,
+    jsonLdBlocks: [],
     ...overrides,
   };
 }
@@ -337,6 +341,10 @@ describe("generateAuditReport", () => {
       ],
       reportPath: "/tmp/report.md",
       pdfPath: null,
+      categoryStats: [
+        { category: "meta", affectedCount: 1, percentage: 50 },
+        { category: "images", affectedCount: 1, percentage: 50 },
+      ],
     };
 
     const report = generateAuditReport(result);

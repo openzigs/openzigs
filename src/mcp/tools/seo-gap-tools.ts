@@ -149,6 +149,10 @@ function mergeExtractedContents(pages: ExtractedContent[]): ExtractedContent {
     internalLinkCount: 0,
     externalLinkCount: 0,
     keywords: mergeKeywords(pages.flatMap((p) => p.keywords)),
+    canonical: first.canonical ?? null,
+    hreflangTags: pages.flatMap((p) => p.hreflangTags),
+    metaRobots: first.metaRobots ?? null,
+    jsonLdBlocks: pages.flatMap((p) => p.jsonLdBlocks),
   };
   merged.internalLinkCount = merged.internalLinks.length;
   merged.externalLinkCount = merged.externalLinks.length;
