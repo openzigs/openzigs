@@ -140,6 +140,7 @@ interface CwvEntry {
   performanceScore: number;
   metrics?: CwvMetric[];
   fetchedAt?: string;
+  strategy?: "mobile" | "desktop";
   error?: string;
 }
 
@@ -350,6 +351,69 @@ export default function SeoPage() {
   const [cwvAnalyzing, setCwvAnalyzing] = useState(false);
   const [cwvError, setCwvError] = useState<string | null>(null);
 
+  // ── Schedule Audit (inline near Run Audit) ──
+  const [showScheduleInline, setShowScheduleInline] = useState(false);
+  const [scheduleFrequency, setScheduleFrequency] = useState("weekly");
+  const [scheduleError, setScheduleError] = useState<string | null>(null);
+  const [scheduleCreating, setScheduleCreating] = useState(false);
+
+  const scheduleCronMap: Record<string, string> = {
+    daily: "0 6 * * *",
+    weekly: "0 6 * * 1",
+    monthly: "0 6 1 * *",
+  };
+
+  const handleScheduleCreate = useCallback(async () => {
+    const trimmedUrl = url.trim();
+    if (!trimmedUrl) {
+      setScheduleError("Enter a site URL first");
+      return;
+    }
+    try {
+      new URL(
+        trimmedUrl.startsWith("http") ? trimmedUrl : `https://${trimmedUrl}`,
+      );
+    } catch {
+      setScheduleError("Please enter a valid URL");
+      return;
+    }
+    const normalizedUrl = trimmedUrl.startsWith("http")
+      ? trimmedUrl
+      : `https://${trimmedUrl}`;
+    setScheduleError(null);
+    setScheduleCreating(true);
+    try {
+      await fetchJson("/api/admin/jobs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: `SEO Audit — ${new URL(normalizedUrl).hostname}`,
+          cronExpression: scheduleCronMap[scheduleFrequency],
+          actionType: "prompt",
+          actionPayload: {
+            promptName: "seo-site-audit",
+            variables: { url: normalizedUrl },
+          },
+          allowedTools: [
+            "seo-site-audit",
+            "firecrawl-crawl",
+            "firecrawl-scrape",
+          ],
+          enabled: true,
+        }),
+      });
+      setShowScheduleInline(false);
+      setScheduleError(null);
+      queryClient.invalidateQueries({ queryKey: ["seo-scheduled-jobs"] });
+    } catch (err) {
+      setScheduleError(
+        err instanceof Error ? err.message : "Failed to create schedule",
+      );
+    } finally {
+      setScheduleCreating(false);
+    }
+  }, [url, scheduleFrequency, scheduleCronMap, queryClient]);
+
   const runCwvAnalysis = useCallback(async () => {
     if (!latest?.id) return;
     setCwvAnalyzing(true);
@@ -360,7 +424,7 @@ export default function SeoPage() {
         urlsAnalyzed: number;
       }>("/api/seo/cwv", {
         method: "POST",
-        body: JSON.stringify({ snapshotId: latest.id, maxUrls: 5 }),
+        body: JSON.stringify({ snapshotId: latest.id, maxUrls: 5, dual: true }),
       });
       if (result.urlsAnalyzed === 0) {
         setCwvError("No pages analyzed. The snapshot may have no page data.");
@@ -1189,24 +1253,84 @@ export default function SeoPage() {
           )}
 
           {/* Submit */}
-          <button
-            type="button"
-            onClick={handleSubmit}
-            disabled={
-              submitting ||
-              (isFirecrawlMode &&
-                !firecrawlHealth.available &&
-                !firecrawlHealth.checking)
-            }
-            className="inline-flex items-center gap-1.5 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
-          >
-            {submitting || firecrawlHealth.checking ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <Globe className="h-4 w-4" />
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handleSubmit}
+              disabled={
+                submitting ||
+                (isFirecrawlMode &&
+                  !firecrawlHealth.available &&
+                  !firecrawlHealth.checking)
+              }
+              className="inline-flex items-center gap-1.5 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+            >
+              {submitting || firecrawlHealth.checking ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Globe className="h-4 w-4" />
+              )}
+              {submitting ? "Processing…" : getSubmitLabel(mode)}
+            </button>
+
+            {mode === "site-audit" && (
+              <button
+                type="button"
+                onClick={() => setShowScheduleInline(!showScheduleInline)}
+                className="inline-flex items-center gap-1.5 rounded-md border px-3 py-2 text-sm font-medium hover:bg-accent transition-colors"
+              >
+                <Calendar className="h-4 w-4" />
+                Schedule Audit
+              </button>
             )}
-            {submitting ? "Processing…" : getSubmitLabel(mode)}
-          </button>
+          </div>
+
+          {/* Inline schedule form */}
+          {showScheduleInline && mode === "site-audit" && (
+            <div className="rounded-lg border bg-muted/20 p-3 space-y-2">
+              <p className="text-xs font-medium">
+                Schedule recurring audit for{" "}
+                <span className="font-semibold">
+                  {url.trim() || "(enter URL above)"}
+                </span>
+              </p>
+              <div>
+                <label className="text-xs font-medium">Frequency</label>
+                <select
+                  value={scheduleFrequency}
+                  onChange={(e) => setScheduleFrequency(e.target.value)}
+                  className="mt-1 w-full rounded-md border bg-background px-3 py-1.5 text-sm"
+                >
+                  <option value="daily">Daily (6:00 AM)</option>
+                  <option value="weekly">Weekly (Monday 6:00 AM)</option>
+                  <option value="monthly">Monthly (1st, 6:00 AM)</option>
+                </select>
+              </div>
+              {scheduleError && (
+                <p className="text-xs text-red-500">{scheduleError}</p>
+              )}
+              <div className="flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowScheduleInline(false);
+                    setScheduleError(null);
+                  }}
+                  className="rounded-md border px-3 py-1 text-xs hover:bg-accent transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleScheduleCreate}
+                  disabled={scheduleCreating}
+                  className="rounded-md bg-primary px-3 py-1 text-xs text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50"
+                >
+                  {scheduleCreating ? "Creating…" : "Create Schedule"}
+                </button>
+              </div>
+            </div>
+          )}
 
           {/* Persistent loading indicator */}
           {submitting && (
@@ -1505,6 +1629,11 @@ export default function SeoPage() {
                   p.issues.some((i) => i.severity === severity),
                 );
                 if (pagesWithIssues.length === 0) return null;
+                const totalPages = latestData.pages!.length;
+                const percentAffected =
+                  totalPages > 0
+                    ? Math.round((pagesWithIssues.length / totalPages) * 100)
+                    : 0;
                 return (
                   <div key={severity} className="space-y-2">
                     <h4 className="text-xs font-semibold uppercase tracking-wide flex items-center gap-1.5">
@@ -1523,6 +1652,18 @@ export default function SeoPage() {
                         0,
                       )}
                       )
+                      <span
+                        className={cn(
+                          "ml-1.5 inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium",
+                          severity === "error"
+                            ? "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400"
+                            : severity === "warning"
+                              ? "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400"
+                              : "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400",
+                        )}
+                      >
+                        Affects {percentAffected}% of pages
+                      </span>
                     </h4>
                     {pagesWithIssues.map((page) => (
                       <div
@@ -1892,9 +2033,25 @@ export default function SeoPage() {
                     {/* Card header */}
                     <div className="flex items-start justify-between gap-2 mb-3">
                       <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium truncate">
-                          {cwv.url}
-                        </p>
+                        <div className="flex items-center gap-2">
+                          <p className="text-sm font-medium truncate">
+                            {cwv.url}
+                          </p>
+                          {cwv.strategy && (
+                            <span
+                              className={cn(
+                                "inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide shrink-0",
+                                cwv.strategy === "mobile"
+                                  ? "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400"
+                                  : "bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400",
+                              )}
+                            >
+                              {cwv.strategy === "mobile"
+                                ? "📱 Mobile"
+                                : "🖥️ Desktop"}
+                            </span>
+                          )}
+                        </div>
                         {cwv.fetchedAt && (
                           <p className="text-[10px] text-muted-foreground mt-0.5">
                             Analyzed {new Date(cwv.fetchedAt).toLocaleString()}

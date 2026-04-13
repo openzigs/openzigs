@@ -213,13 +213,8 @@ export async function fetchCoreWebVitalsBatch(
         performanceScore: 0,
         metrics: [],
         fetchedAt: new Date().toISOString(),
+        strategy: "mobile",
         error: errMsg,
-      });
-      results.push({
-        url: urls[i],
-        performanceScore: 0,
-        metrics: [],
-        fetchedAt: new Date().toISOString(),
       });
     }
     // Rate limit: wait between requests (except after last)

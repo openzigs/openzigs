@@ -339,6 +339,8 @@ export const createSeoRouter = ({
           performanceScore: r.performanceScore,
           metrics: r.metrics,
           fetchedAt: r.fetchedAt,
+          strategy: r.strategy ?? "mobile",
+          error: r.error,
         })),
       });
 
