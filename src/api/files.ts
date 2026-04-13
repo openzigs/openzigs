@@ -154,15 +154,19 @@ export const createFilesRouter = ({
   /**
    * Re-verify path containment inline so CodeQL can trace the check
    * from the guard result to the fs operation. Throws on violation.
+   *
+   * Uses an explicit for-loop with path.resolve() + startsWith() so
+   * CodeQL's taint analysis recognizes the sanitization barrier.
    */
   const assertContained = (resolved: string): string => {
     const abs = path.resolve(resolved);
-    const ok = allowedDirs.some((dir) => {
+    for (const dir of allowedDirs) {
       const base = path.resolve(dir);
-      return abs === base || abs.startsWith(base + path.sep);
-    });
-    if (!ok) throw new Error("Access denied");
-    return abs;
+      if (abs === base || abs.startsWith(base + path.sep)) {
+        return abs;
+      }
+    }
+    throw new Error("Access denied");
   };
 
   /** Send a guardPath error with the appropriate status code. */
