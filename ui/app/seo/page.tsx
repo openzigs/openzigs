@@ -53,6 +53,7 @@ import {
   Plus,
   Power,
   Trash2,
+  ExternalLink,
 } from "lucide-react";
 
 // ── Types ────────────────────────────────────────────────────────────────
@@ -138,7 +139,54 @@ interface CwvEntry {
   url: string;
   performanceScore: number;
   metrics?: CwvMetric[];
+  fetchedAt?: string;
+  error?: string;
 }
+
+// Metric definitions with thresholds and formatters
+const CWV_METRIC_DEFS: Array<{
+  name: string;
+  label: string;
+  hint: string;
+  format: (v: number) => string;
+}> = [
+  {
+    name: "LCP",
+    label: "Largest Contentful Paint",
+    hint: "Good < 2.5 s",
+    format: (v) => `${(v / 1000).toFixed(1)} s`,
+  },
+  {
+    name: "FCP",
+    label: "First Contentful Paint",
+    hint: "Good < 1.8 s",
+    format: (v) => `${(v / 1000).toFixed(1)} s`,
+  },
+  {
+    name: "TBT",
+    label: "Total Blocking Time",
+    hint: "Good < 200 ms",
+    format: (v) => `${Math.round(v)} ms`,
+  },
+  {
+    name: "CLS",
+    label: "Cumulative Layout Shift",
+    hint: "Good < 0.1",
+    format: (v) => v.toFixed(3),
+  },
+  {
+    name: "SI",
+    label: "Speed Index",
+    hint: "Good < 3.4 s",
+    format: (v) => `${(v / 1000).toFixed(1)} s`,
+  },
+  {
+    name: "TTI",
+    label: "Time to Interactive",
+    hint: "Good < 3.8 s",
+    format: (v) => `${(v / 1000).toFixed(1)} s`,
+  },
+];
 
 interface SeoData {
   pages?: AuditPage[];
@@ -252,6 +300,34 @@ export default function SeoPage() {
     message: string;
     checking: boolean;
   }>({ available: false, message: "", checking: true });
+
+  // ── Core Web Vitals on-demand analysis ──
+  const [cwvAnalyzing, setCwvAnalyzing] = useState(false);
+  const [cwvError, setCwvError] = useState<string | null>(null);
+
+  const runCwvAnalysis = useCallback(async () => {
+    if (!latest?.id) return;
+    setCwvAnalyzing(true);
+    setCwvError(null);
+    try {
+      const result = await fetchJson<{
+        results: unknown[];
+        urlsAnalyzed: number;
+      }>("/api/seo/cwv", {
+        method: "POST",
+        body: JSON.stringify({ snapshotId: latest.id, maxUrls: 5 }),
+      });
+      if (result.urlsAnalyzed === 0) {
+        setCwvError("No pages analyzed. The snapshot may have no page data.");
+      } else {
+        queryClient.invalidateQueries({ queryKey: ["seo-history"] });
+      }
+    } catch (err) {
+      setCwvError(err instanceof Error ? err.message : "Analysis failed");
+    } finally {
+      setCwvAnalyzing(false);
+    }
+  }, [latest?.id, queryClient]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1452,37 +1528,146 @@ export default function SeoPage() {
         >
           {latestData?.coreWebVitals && latestData.coreWebVitals.length > 0 ? (
             <div className="space-y-4">
-              <h3 className="text-sm font-semibold">Core Web Vitals</h3>
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-semibold">Core Web Vitals</h3>
+                <button
+                  onClick={runCwvAnalysis}
+                  disabled={cwvAnalyzing || !latest?.id}
+                  className="text-xs px-3 py-1.5 rounded-md border bg-background hover:bg-muted disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {cwvAnalyzing ? "Analyzing…" : "Re-analyze"}
+                </button>
+              </div>
 
               {/* Aggregate CWV Summary */}
               <CwvAggregateSummary results={latestData.coreWebVitals} />
 
               {/* Per-page results */}
-              {latestData.coreWebVitals.map((cwv, idx) => (
-                <div key={idx} className="rounded-lg border bg-card p-4">
-                  <div className="flex items-center justify-between mb-3">
-                    <p className="text-sm font-medium truncate flex-1">
-                      {cwv.url}
-                    </p>
-                    <PerfScoreBadge score={cwv.performanceScore} />
-                  </div>
-                  <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                    {(cwv.metrics ?? []).map((m) => (
-                      <div key={m.name} className="text-xs">
-                        <span className="font-medium">{m.name}</span>
-                        <span className="ml-1 text-muted-foreground">
-                          {m.value}
-                          {m.unit}
-                        </span>
-                        <CwvRatingBadge rating={m.rating} />
+              {latestData.coreWebVitals.map((cwv, idx) => {
+                const metricMap = new Map(
+                  (cwv.metrics ?? []).map((m) => [m.name, m]),
+                );
+                const hasFailed =
+                  !!cwv.error || (cwv.metrics ?? []).length === 0;
+                const psiUrl = `https://pagespeed.web.dev/analysis/${encodeURIComponent(cwv.url)}`;
+                return (
+                  <div key={idx} className="rounded-lg border bg-card p-4">
+                    {/* Card header */}
+                    <div className="flex items-start justify-between gap-2 mb-3">
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium truncate">
+                          {cwv.url}
+                        </p>
+                        {cwv.fetchedAt && (
+                          <p className="text-[10px] text-muted-foreground mt-0.5">
+                            Analyzed {new Date(cwv.fetchedAt).toLocaleString()}
+                          </p>
+                        )}
                       </div>
-                    ))}
+                      <div className="flex items-center gap-2 flex-shrink-0">
+                        <a
+                          href={psiUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-[10px] text-muted-foreground hover:text-foreground flex items-center gap-0.5"
+                          title="Open in PageSpeed Insights"
+                        >
+                          <ExternalLink className="h-3 w-3" /> PSI
+                        </a>
+                        <PerfScoreBadge score={cwv.performanceScore} />
+                      </div>
+                    </div>
+
+                    {/* Error / no-data state */}
+                    {hasFailed && (
+                      <div className="mb-3 rounded bg-destructive/10 border border-destructive/20 px-3 py-2 text-xs text-destructive">
+                        {cwv.error?.includes("429") ||
+                        cwv.error?.includes("quota")
+                          ? "Rate limited by PageSpeed Insights API. Add a GOOGLE_PSI_API_KEY for higher limits."
+                          : cwv.error
+                            ? `PSI fetch failed: ${cwv.error}`
+                            : "PSI returned no lighthouse metrics — the page may have timed out or blocked the crawler."}
+                      </div>
+                    )}
+
+                    {/* Metric grid — always show all 6 slots */}
+                    <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+                      {CWV_METRIC_DEFS.map((def) => {
+                        const m = metricMap.get(def.name);
+                        const ratingColor = !m
+                          ? "text-muted-foreground"
+                          : m.rating === "good"
+                            ? "text-green-600"
+                            : m.rating === "poor"
+                              ? "text-red-600"
+                              : "text-yellow-600";
+                        return (
+                          <div
+                            key={def.name}
+                            className="rounded border bg-muted/20 px-2.5 py-2"
+                          >
+                            <div className="text-[10px] text-muted-foreground font-medium uppercase tracking-wide mb-0.5">
+                              {def.name}
+                            </div>
+                            <div
+                              className={`text-lg font-bold leading-tight ${ratingColor}`}
+                            >
+                              {m ? def.format(m.value) : "—"}
+                            </div>
+                            <div className="flex items-center justify-between mt-0.5">
+                              <span className="text-[10px] text-muted-foreground">
+                                {def.hint}
+                              </span>
+                              {m && <CwvRatingBadge rating={m.rating} />}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           ) : (
-            <EmptyState message="No Core Web Vitals data. Run an audit with performance analysis enabled." />
+            <div className="flex flex-col items-center justify-center gap-4 py-12">
+              <div className="flex flex-col items-center gap-2 text-center">
+                <Gauge className="h-10 w-10 text-muted-foreground/40" />
+                <p className="text-sm font-medium">
+                  No Core Web Vitals data yet
+                </p>
+                <p className="text-xs text-muted-foreground max-w-sm">
+                  Fetch performance metrics from Google PageSpeed Insights for
+                  the pages in your latest audit.
+                  {!latest?.id && " Run a site audit first."}
+                </p>
+              </div>
+              {latest?.id && (
+                <div className="flex flex-col items-center gap-2">
+                  <button
+                    onClick={runCwvAnalysis}
+                    disabled={cwvAnalyzing}
+                    className="px-4 py-2 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {cwvAnalyzing
+                      ? "Analyzing performance…"
+                      : "Analyze Performance"}
+                  </button>
+                  {cwvAnalyzing && (
+                    <p className="text-xs text-muted-foreground">
+                      Fetching metrics from PageSpeed Insights (may take 30–60
+                      s)…
+                    </p>
+                  )}
+                  {cwvError && (
+                    <p className="text-xs text-destructive">{cwvError}</p>
+                  )}
+                  <p className="text-xs text-muted-foreground">
+                    Analyzes up to 5 pages · Uses Google PSI free tier · Results
+                    cached 24 h
+                  </p>
+                </div>
+              )}
+            </div>
           )}
         </TabsContent>
 
@@ -1543,40 +1728,112 @@ function CwvAggregateSummary({ results }: { results: CwvEntry[] }) {
   let needsImprovement = 0;
   let poor = 0;
   let totalScore = 0;
+  let failedCount = 0;
+  const lcpVals: number[] = [];
+  const clsVals: number[] = [];
+  const tbtVals: number[] = [];
 
   for (const r of results) {
+    if (r.error || (r.metrics ?? []).length === 0) {
+      failedCount++;
+      continue;
+    }
     totalScore += r.performanceScore;
     if (r.performanceScore >= 90) good++;
     else if (r.performanceScore >= 50) needsImprovement++;
     else poor++;
+    for (const m of r.metrics ?? []) {
+      if (m.name === "LCP") lcpVals.push(m.value);
+      if (m.name === "CLS") clsVals.push(m.value);
+      if (m.name === "TBT") tbtVals.push(m.value);
+    }
   }
 
-  const avgScore = Math.round(totalScore / results.length);
+  const scored = results.length - failedCount;
+  const avgScore = scored > 0 ? Math.round(totalScore / scored) : 0;
+  const avg = (arr: number[]) =>
+    arr.length > 0 ? arr.reduce((a, b) => a + b, 0) / arr.length : null;
+  const avgLcp = avg(lcpVals);
+  const avgCls = avg(clsVals);
+  const avgTbt = avg(tbtVals);
 
   return (
-    <div className="grid gap-3 md:grid-cols-4 mb-4">
-      <div className="rounded-lg border bg-card p-3 text-center">
-        <p className="text-xs text-muted-foreground">Avg Score</p>
-        <p
-          className={`text-2xl font-bold mt-1 ${avgScore >= 90 ? "text-green-600" : avgScore >= 50 ? "text-yellow-600" : "text-red-600"}`}
-        >
-          {avgScore}
-        </p>
+    <div className="space-y-3 mb-4">
+      <div className="grid gap-3 grid-cols-2 md:grid-cols-4">
+        <div className="rounded-lg border bg-card p-3 text-center">
+          <p className="text-xs text-muted-foreground">Avg Score</p>
+          <p
+            className={`text-2xl font-bold mt-1 ${avgScore >= 90 ? "text-green-600" : avgScore >= 50 ? "text-yellow-600" : "text-red-600"}`}
+          >
+            {scored > 0 ? avgScore : "—"}
+          </p>
+        </div>
+        <div className="rounded-lg border bg-card p-3 text-center">
+          <p className="text-xs text-muted-foreground">Good (≥90)</p>
+          <p className="text-2xl font-bold mt-1 text-green-600">{good}</p>
+        </div>
+        <div className="rounded-lg border bg-card p-3 text-center">
+          <p className="text-xs text-muted-foreground">Needs Work (50–89)</p>
+          <p className="text-2xl font-bold mt-1 text-yellow-600">
+            {needsImprovement}
+          </p>
+        </div>
+        <div className="rounded-lg border bg-card p-3 text-center">
+          <p className="text-xs text-muted-foreground">Poor (&lt;50)</p>
+          <p className="text-2xl font-bold mt-1 text-red-600">{poor}</p>
+        </div>
       </div>
-      <div className="rounded-lg border bg-card p-3 text-center">
-        <p className="text-xs text-muted-foreground">Good (≥90)</p>
-        <p className="text-2xl font-bold mt-1 text-green-600">{good}</p>
-      </div>
-      <div className="rounded-lg border bg-card p-3 text-center">
-        <p className="text-xs text-muted-foreground">Needs Work (50–89)</p>
-        <p className="text-2xl font-bold mt-1 text-yellow-600">
-          {needsImprovement}
-        </p>
-      </div>
-      <div className="rounded-lg border bg-card p-3 text-center">
-        <p className="text-xs text-muted-foreground">Poor (&lt;50)</p>
-        <p className="text-2xl font-bold mt-1 text-red-600">{poor}</p>
-      </div>
+
+      {/* Avg metric stats row */}
+      {(avgLcp !== null || avgCls !== null || avgTbt !== null) && (
+        <div className="grid gap-3 grid-cols-3 text-center">
+          {avgLcp !== null && (
+            <div className="rounded-lg border bg-card p-2.5">
+              <p className="text-[10px] text-muted-foreground uppercase tracking-wide">
+                Avg LCP
+              </p>
+              <p
+                className={`text-base font-bold mt-0.5 ${avgLcp <= 2500 ? "text-green-600" : avgLcp <= 4000 ? "text-yellow-600" : "text-red-600"}`}
+              >
+                {(avgLcp / 1000).toFixed(1)} s
+              </p>
+            </div>
+          )}
+          {avgCls !== null && (
+            <div className="rounded-lg border bg-card p-2.5">
+              <p className="text-[10px] text-muted-foreground uppercase tracking-wide">
+                Avg CLS
+              </p>
+              <p
+                className={`text-base font-bold mt-0.5 ${avgCls <= 0.1 ? "text-green-600" : avgCls <= 0.25 ? "text-yellow-600" : "text-red-600"}`}
+              >
+                {avgCls.toFixed(3)}
+              </p>
+            </div>
+          )}
+          {avgTbt !== null && (
+            <div className="rounded-lg border bg-card p-2.5">
+              <p className="text-[10px] text-muted-foreground uppercase tracking-wide">
+                Avg TBT
+              </p>
+              <p
+                className={`text-base font-bold mt-0.5 ${avgTbt <= 200 ? "text-green-600" : avgTbt <= 600 ? "text-yellow-600" : "text-red-600"}`}
+              >
+                {Math.round(avgTbt)} ms
+              </p>
+            </div>
+          )}
+        </div>
+      )}
+
+      {failedCount > 0 && (
+        <div className="rounded bg-amber-500/10 border border-amber-500/20 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
+          {failedCount} of {results.length} pages failed to fetch from PageSpeed
+          Insights. This is usually caused by anonymous API rate-limits. Set{" "}
+          <code className="font-mono">GOOGLE_PSI_API_KEY</code> in your config
+          for higher quota.
+        </div>
+      )}
     </div>
   );
 }

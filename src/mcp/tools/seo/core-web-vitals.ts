@@ -26,6 +26,8 @@ export interface CoreWebVitalsResult {
   performanceScore: number;
   metrics: CoreWebVitalsMetric[];
   fetchedAt: string;
+  /** Set when PSI fetch failed or returned no lighthouse data. */
+  error?: string;
 }
 
 // ── Thresholds (Google's official thresholds) ────────────────────────────
@@ -195,9 +197,17 @@ export async function fetchCoreWebVitalsBatch(
       const result = await fetchCoreWebVitals(urls[i], apiKey);
       results.push(result);
     } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err);
       logger.warn("[CoreWebVitals] Failed to fetch for URL", {
         url: urls[i],
-        error: err instanceof Error ? err.message : String(err),
+        error: errMsg,
+      });
+      results.push({
+        url: urls[i],
+        performanceScore: 0,
+        metrics: [],
+        fetchedAt: new Date().toISOString(),
+        error: errMsg,
       });
       results.push({
         url: urls[i],
