@@ -828,7 +828,7 @@ Comprehensive SEO analysis toolkit for full-site auditing, content quality, link
 
 **API Routes:** `GET /api/seo/history`, `GET /api/seo/history/:id`, `GET /api/seo/history/compare/:siteUrl`, `POST /api/seo/export/:id`
 
-**UI:** `/seo` dashboard page with tabbed layout (Overview | History | Export), health score ring, trends comparison, real-time crawl progress panel.
+**UI:** `/seo` dashboard page with tabbed layout (Overview | Audit | Links | Content | Performance | History | Export), health score ring, trends comparison, real-time crawl progress panel.
 
 #### Research & Content Synthesis Tools
 

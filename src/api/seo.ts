@@ -236,7 +236,7 @@ export const createSeoRouter = ({
         error: err instanceof Error ? err.message : String(err),
       });
       return res.status(502).json({
-        error: err instanceof Error ? err.message : "URL mapping failed",
+        error: "URL mapping failed",
       });
     }
   });
@@ -351,10 +351,7 @@ export const createSeoRouter = ({
         error: err instanceof Error ? err.message : String(err),
       });
       return res.status(502).json({
-        error:
-          err instanceof Error
-            ? err.message
-            : "Core Web Vitals analysis failed",
+        error: "Core Web Vitals analysis failed",
       });
     }
   });
@@ -573,10 +570,7 @@ export const createSeoRouter = ({
         error: err instanceof Error ? err.message : String(err),
       });
       return res.status(500).json({
-        error:
-          err instanceof Error
-            ? err.message
-            : "Failed to create scheduled audit",
+        error: "Failed to create scheduled audit",
       });
     }
   });
