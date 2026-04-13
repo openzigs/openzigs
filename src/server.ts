@@ -2265,7 +2265,7 @@ const tasksRouter = createTasksRouter({ taskEngine, taskRepository });
 app.use("/api/tasks", authMiddleware, tasksRouter);
 
 // SEO Suite API routes (#838)
-const seoRouter = createSeoRouter({ db });
+const seoRouter = createSeoRouter({ db, scheduler });
 app.use("/api/seo", authMiddleware, seoRouter);
 
 // Media Queue API routes (push-based distributed queue + gallery)

@@ -305,3 +305,135 @@ export function computeLinkDepths(
 
   return results.sort((a, b) => a.depth - b.depth);
 }
+
+// ── Redirect Chain Following (#858) ──────────────────────────────────────
+
+export interface FollowedRedirectChain {
+  startUrl: string;
+  chain: string[];
+  finalUrl: string;
+  finalStatus: number;
+  hops: number;
+  isLoop: boolean;
+  hasMixedScheme: boolean;
+}
+
+export interface RedirectChainIssue {
+  severity: "error" | "warning" | "info";
+  category: string;
+  message: string;
+  url?: string;
+}
+
+/**
+ * Follow redirect chains via HEAD requests, up to maxHops.
+ * Returns the full chain and detected issues.
+ */
+export async function followRedirectChain(
+  url: string,
+  maxHops = 10,
+  fetchFn: typeof fetch = globalThis.fetch,
+): Promise<{ chain: FollowedRedirectChain; issues: RedirectChainIssue[] }> {
+  const chain: string[] = [url];
+  const visited = new Set<string>([url]);
+  let current = url;
+  let finalStatus = 0;
+  let isLoop = false;
+  let hasMixedScheme = false;
+  const issues: RedirectChainIssue[] = [];
+
+  for (let hop = 0; hop < maxHops; hop++) {
+    try {
+      const resp = await fetchFn(current, {
+        method: "HEAD",
+        redirect: "manual",
+        signal: AbortSignal.timeout(10_000),
+      });
+      finalStatus = resp.status;
+
+      if (resp.status >= 300 && resp.status < 400) {
+        const location = resp.headers.get("location");
+        if (!location) break;
+
+        let nextUrl: string;
+        try {
+          nextUrl = new URL(location, current).href;
+        } catch {
+          break;
+        }
+
+        // Detect mixed HTTP/HTTPS
+        try {
+          const currentScheme = new URL(current).protocol;
+          const nextScheme = new URL(nextUrl).protocol;
+          if (currentScheme !== nextScheme) {
+            hasMixedScheme = true;
+          }
+        } catch {
+          // ignore
+        }
+
+        if (visited.has(nextUrl)) {
+          isLoop = true;
+          chain.push(nextUrl);
+          break;
+        }
+
+        visited.add(nextUrl);
+        chain.push(nextUrl);
+        current = nextUrl;
+      } else {
+        break;
+      }
+    } catch {
+      break;
+    }
+  }
+
+  // Generate issues
+  if (isLoop) {
+    issues.push({
+      severity: "error",
+      category: "redirects",
+      message: `Redirect loop detected: ${chain.join(" → ")}`,
+      url,
+    });
+  }
+  if (chain.length > 3) {
+    issues.push({
+      severity: "warning",
+      category: "redirects",
+      message: `Long redirect chain (${chain.length - 1} hops): ${chain[0]} → ${chain[chain.length - 1]}`,
+      url,
+    });
+  }
+  if (hasMixedScheme) {
+    issues.push({
+      severity: "warning",
+      category: "redirects",
+      message: `Mixed HTTP/HTTPS redirect chain starting from ${url}`,
+      url,
+    });
+  }
+  if (finalStatus >= 400) {
+    issues.push({
+      severity: "error",
+      category: "redirects",
+      message: `Redirect chain ends with HTTP ${finalStatus}: ${chain.join(" → ")}`,
+      url,
+    });
+  }
+
+  return {
+    chain: {
+      startUrl: url,
+      chain,
+      finalUrl: chain[chain.length - 1],
+      finalStatus,
+      hops: chain.length - 1,
+      isLoop,
+      hasMixedScheme,
+    },
+    issues,
+  };
+}

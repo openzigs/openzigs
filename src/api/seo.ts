@@ -13,13 +13,22 @@ import path from "node:path";
 import os from "node:os";
 import { AuditHistoryRepository } from "../mcp/tools/seo/audit-history.js";
 import { exportAudit } from "../mcp/tools/seo/report-export.js";
-import { fetchCoreWebVitalsBatch } from "../mcp/tools/seo/core-web-vitals.js";
+import {
+  fetchCoreWebVitalsBatch,
+  fetchCoreWebVitalsDual,
+} from "../mcp/tools/seo/core-web-vitals.js";
+import {
+  getFirecrawlClient,
+  isBlockedUrl,
+} from "../browser/firecrawl-client.js";
 import { PriceSnapshotRepository } from "../mcp/tools/price-monitor.js";
 import { CompetitorRepository } from "../mcp/tools/competitive-monitor.js";
 import { logger } from "../logging/logger.js";
+import type { Scheduler } from "../productivity/scheduler.js";
 
 export interface SeoRouterOptions {
   db: Database.Database;
+  scheduler?: Scheduler;
 }
 
 /** Clamp a numeric value to a positive integer within [1, max]. */
@@ -29,7 +38,10 @@ function clampLimit(raw: unknown, defaultVal: number, max: number): number {
   return Math.min(Math.floor(n), max);
 }
 
-export const createSeoRouter = ({ db }: SeoRouterOptions): Router => {
+export const createSeoRouter = ({
+  db,
+  scheduler,
+}: SeoRouterOptions): Router => {
   const router = Router();
   const historyRepo = new AuditHistoryRepository(db);
 
@@ -196,15 +208,47 @@ export const createSeoRouter = ({ db }: SeoRouterOptions): Router => {
   });
 
   /**
+   * POST /api/seo/map — Discover URLs via Firecrawl /map endpoint (#862).
+   * Body: { url: string, limit?: number }
+   * Returns { urls: string[], count: number }
+   */
+  router.post("/map", async (req, res) => {
+    const url = (req.body?.url as string)?.trim();
+    if (!url) {
+      return res.status(400).json({ error: "Missing required field: url" });
+    }
+    if (isBlockedUrl(url)) {
+      return res.status(400).json({ error: "Blocked URL" });
+    }
+
+    const limit = Math.min(Number(req.body?.limit) || 200, 500);
+    const client = getFirecrawlClient();
+    if (!client.getConfig().enabled) {
+      return res.status(503).json({ error: "Firecrawl is not enabled" });
+    }
+
+    try {
+      const result = await client.map(url, { limit });
+      return res.json({ urls: result.urls, count: result.urls.length });
+    } catch (err) {
+      logger.error("[SEO] URL map failed", {
+        url,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return res.status(502).json({
+        error: err instanceof Error ? err.message : "URL mapping failed",
+      });
+    }
+  });
+
+  /**
    * POST /api/seo/cwv — Run Core Web Vitals analysis for a snapshot's pages.
    *
-   * Body: { snapshotId: number, maxUrls?: number }
+   * Body: { snapshotId: number, maxUrls?: number, dual?: boolean }
+   * When dual=true, fetches both mobile and desktop strategies.
    * Fetches PageSpeed Insights for the top pages in the snapshot,
    * patches the snapshot's dataJson with coreWebVitals results,
    * and returns the results array.
-   *
-   * Uses Google PageSpeed Insights API (free; no key needed for low volume).
-   * Optional: set GOOGLE_PSI_API_KEY env var for higher rate limits.
    */
   router.post("/cwv", async (req, res) => {
     const snapshotId = Number(req.body?.snapshotId);
@@ -213,6 +257,7 @@ export const createSeoRouter = ({ db }: SeoRouterOptions): Router => {
     }
 
     const maxUrls = Math.min(Number(req.body?.maxUrls) || 5, 10);
+    const dual = req.body?.dual === true;
     const snapshot = historyRepo.getSnapshot(snapshotId);
     if (!snapshot) {
       return res.status(404).json({ error: "Snapshot not found" });
@@ -241,7 +286,49 @@ export const createSeoRouter = ({ db }: SeoRouterOptions): Router => {
       logger.info("[SEO] Running Core Web Vitals analysis", {
         snapshotId,
         urlCount: pages.length,
+        dual,
       });
+
+      if (dual) {
+        const dualResults = [];
+        for (let i = 0; i < pages.length; i++) {
+          try {
+            dualResults.push(await fetchCoreWebVitalsDual(pages[i], apiKey));
+          } catch (err) {
+            const errMsg = err instanceof Error ? err.message : String(err);
+            logger.warn("[SEO] CWV dual fetch failed", {
+              url: pages[i],
+              error: errMsg,
+            });
+          }
+          if (i < pages.length - 1) {
+            await new Promise((resolve) => setTimeout(resolve, 2400));
+          }
+        }
+
+        historyRepo.patchDataJson(snapshotId, {
+          coreWebVitals: dualResults.flatMap((r) => [
+            { ...r.mobile, strategy: "mobile" },
+            { ...r.desktop, strategy: "desktop" },
+          ]),
+          cwvDual: dualResults.map((r) => ({
+            url: r.url,
+            mobile: {
+              performanceScore: r.mobile.performanceScore,
+              metrics: r.mobile.metrics,
+            },
+            desktop: {
+              performanceScore: r.desktop.performanceScore,
+              metrics: r.desktop.metrics,
+            },
+          })),
+        });
+
+        return res.json({
+          results: dualResults,
+          urlsAnalyzed: dualResults.length,
+        });
+      }
 
       const results = await fetchCoreWebVitalsBatch(pages, apiKey, 1200);
 
@@ -443,6 +530,65 @@ export const createSeoRouter = ({ db }: SeoRouterOptions): Router => {
         .status(500)
         .json({ error: "Failed to export competitor data" });
     }
+  });
+
+  /**
+   * POST /api/seo/schedule — Create a scheduled SEO audit job (#856).
+   * Body: { url: string, cron: string, name?: string, timezone?: string }
+   */
+  router.post("/schedule", (req, res) => {
+    if (!scheduler) {
+      return res.status(503).json({ error: "Scheduler not available" });
+    }
+    const url = (req.body?.url as string)?.trim();
+    const cronExpr = (req.body?.cron as string)?.trim();
+    if (!url || !cronExpr) {
+      return res
+        .status(400)
+        .json({ error: "Missing required fields: url, cron" });
+    }
+    const name = (req.body?.name as string)?.trim() || `SEO Audit: ${url}`;
+    const timezone = (req.body?.timezone as string)?.trim() || "UTC";
+
+    try {
+      const job = scheduler.create({
+        name,
+        cronExpression: cronExpr,
+        timezone,
+        actionType: "prompt",
+        actionPayload: {
+          promptText: `Run a comprehensive SEO site audit on ${url} using the seo-site-audit tool. Save the results.`,
+          seoAuditUrl: url,
+        },
+        allowedTools: ["seo-site-audit"],
+        enabled: true,
+      });
+      return res.json({ job });
+    } catch (err) {
+      logger.error("[SEO] Failed to create scheduled audit", {
+        url,
+        cron: cronExpr,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return res.status(500).json({
+        error:
+          err instanceof Error
+            ? err.message
+            : "Failed to create scheduled audit",
+      });
+    }
+  });
+
+  /** GET /api/seo/schedule — List scheduled SEO audit jobs. */
+  router.get("/schedule", (_req, res) => {
+    if (!scheduler) {
+      return res.status(503).json({ error: "Scheduler not available" });
+    }
+    const allJobs = scheduler.list();
+    const seoJobs = allJobs.filter(
+      (j) => (j.actionPayload as Record<string, unknown>)?.seoAuditUrl,
+    );
+    return res.json(seoJobs);
   });
 
   return router;

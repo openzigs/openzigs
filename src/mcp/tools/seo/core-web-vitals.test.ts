@@ -196,3 +196,35 @@ describe("aggregateCwvStats", () => {
     expect(stats.avgTbt).toBeNull();
   });
 });
+
+// ── Dual strategy & strategy-aware cache (#855) ─────────────────────────
+
+describe("strategy-aware cache", () => {
+  beforeEach(() => clearCache());
+
+  it("caches mobile and desktop results separately", () => {
+    const mobileResult: CoreWebVitalsResult = {
+      url: "https://a.com",
+      performanceScore: 60,
+      metrics: [],
+      fetchedAt: "",
+      strategy: "mobile",
+    };
+    const desktopResult: CoreWebVitalsResult = {
+      url: "https://a.com",
+      performanceScore: 90,
+      metrics: [],
+      fetchedAt: "",
+      strategy: "desktop",
+    };
+
+    setCachedResult("mobile:https://a.com", mobileResult);
+    setCachedResult("desktop:https://a.com", desktopResult);
+
+    const cached1 = getCachedResult("mobile:https://a.com");
+    const cached2 = getCachedResult("desktop:https://a.com");
+
+    expect(cached1?.performanceScore).toBe(60);
+    expect(cached2?.performanceScore).toBe(90);
+  });
+});

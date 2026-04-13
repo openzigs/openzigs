@@ -1,7 +1,8 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import {
   analyzeLinks,
   computeLinkDepths,
+  followRedirectChain,
   type CrawledPageLinks,
 } from "./link-analyzer.js";
 
@@ -154,5 +155,153 @@ describe("computeLinkDepths", () => {
     for (let i = 1; i < depths.length; i++) {
       expect(depths[i].depth).toBeGreaterThanOrEqual(depths[i - 1].depth);
     }
+  });
+});
+
+// ── followRedirectChain (#858) ───────────────────────────────────────────
+
+describe("followRedirectChain", () => {
+  it("follows a simple redirect chain", async () => {
+    const mockFetch = vi
+      .fn()
+      .mockResolvedValueOnce({
+        status: 301,
+        headers: new Headers({ location: "https://example.com/b" }),
+      })
+      .mockResolvedValueOnce({
+        status: 301,
+        headers: new Headers({ location: "https://example.com/c" }),
+      })
+      .mockResolvedValueOnce({
+        status: 200,
+        headers: new Headers(),
+      });
+
+    const result = await followRedirectChain(
+      "https://example.com/a",
+      10,
+      mockFetch,
+    );
+    expect(result.chain.chain).toEqual([
+      "https://example.com/a",
+      "https://example.com/b",
+      "https://example.com/c",
+    ]);
+    expect(result.chain.hops).toBe(2);
+    expect(result.chain.finalStatus).toBe(200);
+    expect(result.chain.isLoop).toBe(false);
+  });
+
+  it("detects redirect loops", async () => {
+    const mockFetch = vi
+      .fn()
+      .mockResolvedValueOnce({
+        status: 302,
+        headers: new Headers({ location: "https://example.com/b" }),
+      })
+      .mockResolvedValueOnce({
+        status: 302,
+        headers: new Headers({ location: "https://example.com/a" }),
+      });
+
+    const result = await followRedirectChain(
+      "https://example.com/a",
+      10,
+      mockFetch,
+    );
+    expect(result.chain.isLoop).toBe(true);
+    expect(result.issues.some((i) => i.message.includes("loop"))).toBe(true);
+  });
+
+  it("warns on long redirect chains (>2 hops)", async () => {
+    const mockFetch = vi
+      .fn()
+      .mockResolvedValueOnce({
+        status: 301,
+        headers: new Headers({ location: "https://example.com/b" }),
+      })
+      .mockResolvedValueOnce({
+        status: 301,
+        headers: new Headers({ location: "https://example.com/c" }),
+      })
+      .mockResolvedValueOnce({
+        status: 301,
+        headers: new Headers({ location: "https://example.com/d" }),
+      })
+      .mockResolvedValueOnce({
+        status: 200,
+        headers: new Headers(),
+      });
+
+    const result = await followRedirectChain(
+      "https://example.com/a",
+      10,
+      mockFetch,
+    );
+    expect(result.chain.hops).toBe(3);
+    expect(
+      result.issues.some((i) => i.message.includes("Long redirect chain")),
+    ).toBe(true);
+  });
+
+  it("detects mixed HTTP/HTTPS", async () => {
+    const mockFetch = vi
+      .fn()
+      .mockResolvedValueOnce({
+        status: 301,
+        headers: new Headers({ location: "https://example.com/page" }),
+      })
+      .mockResolvedValueOnce({
+        status: 200,
+        headers: new Headers(),
+      });
+
+    const result = await followRedirectChain(
+      "http://example.com/page",
+      10,
+      mockFetch,
+    );
+    expect(result.chain.hasMixedScheme).toBe(true);
+    expect(
+      result.issues.some((i) => i.message.includes("Mixed HTTP/HTTPS")),
+    ).toBe(true);
+  });
+
+  it("reports error when chain ends in 4xx/5xx", async () => {
+    const mockFetch = vi
+      .fn()
+      .mockResolvedValueOnce({
+        status: 301,
+        headers: new Headers({ location: "https://example.com/broken" }),
+      })
+      .mockResolvedValueOnce({
+        status: 404,
+        headers: new Headers(),
+      });
+
+    const result = await followRedirectChain(
+      "https://example.com/old",
+      10,
+      mockFetch,
+    );
+    expect(result.chain.finalStatus).toBe(404);
+    expect(result.issues.some((i) => i.message.includes("HTTP 404"))).toBe(
+      true,
+    );
+  });
+
+  it("returns 0 hops when no redirect", async () => {
+    const mockFetch = vi.fn().mockResolvedValueOnce({
+      status: 200,
+      headers: new Headers(),
+    });
+
+    const result = await followRedirectChain(
+      "https://example.com/direct",
+      10,
+      mockFetch,
+    );
+    expect(result.chain.hops).toBe(0);
+    expect(result.issues).toHaveLength(0);
   });
 });

@@ -26,6 +26,7 @@ export interface CoreWebVitalsResult {
   performanceScore: number;
   metrics: CoreWebVitalsMetric[];
   fetchedAt: string;
+  strategy?: CwvStrategy;
   /** Set when PSI fetch failed or returned no lighthouse data. */
   error?: string;
 }
@@ -115,16 +116,20 @@ interface PsiResponse {
   error?: { message?: string };
 }
 
+export type CwvStrategy = "mobile" | "desktop";
+
 export async function fetchCoreWebVitals(
   url: string,
   apiKey?: string,
+  strategy: CwvStrategy = "mobile",
 ): Promise<CoreWebVitalsResult> {
-  const cached = getCachedResult(url);
+  const cacheKey = `${strategy}:${url}`;
+  const cached = getCachedResult(cacheKey);
   if (cached) return cached;
 
   const params = new URLSearchParams({
     url,
-    strategy: "mobile",
+    strategy,
     category: "performance",
   });
   if (apiKey) params.set("key", apiKey);
@@ -178,9 +183,10 @@ export async function fetchCoreWebVitals(
     performanceScore: perfScore,
     metrics,
     fetchedAt: new Date().toISOString(),
+    strategy,
   };
 
-  setCachedResult(url, result);
+  setCachedResult(cacheKey, result);
   return result;
 }
 
@@ -222,6 +228,28 @@ export async function fetchCoreWebVitalsBatch(
     }
   }
   return results;
+}
+
+// ── Dual-strategy fetch (#855) ───────────────────────────────────────────
+
+export interface DualStrategyResult {
+  url: string;
+  mobile: CoreWebVitalsResult;
+  desktop: CoreWebVitalsResult;
+}
+
+/**
+ * Fetch CWV for both mobile and desktop strategies for a single URL.
+ */
+export async function fetchCoreWebVitalsDual(
+  url: string,
+  apiKey?: string,
+): Promise<DualStrategyResult> {
+  const [mobile, desktop] = await Promise.all([
+    fetchCoreWebVitals(url, apiKey, "mobile"),
+    fetchCoreWebVitals(url, apiKey, "desktop"),
+  ]);
+  return { url, mobile, desktop };
 }
 
 // ── Aggregate CWV stats ──────────────────────────────────────────────────
