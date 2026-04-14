@@ -319,11 +319,17 @@ export function auditPage(
           category: "canonical",
           message: `Canonical points to different domain: ${canonicalUrl.hostname}`,
         });
-      } else if (canonicalUrl.href === pageUrl.href) {
+      } else if (canonicalUrl.href.replace(/\/$/, "") === pageUrl.href.replace(/\/$/, "")) {
         issues.push({
           severity: "info",
           category: "canonical",
           message: "Self-referencing canonical (good practice)",
+        });
+      } else {
+        issues.push({
+          severity: "info",
+          category: "canonical",
+          message: `Canonical points to a different URL (cross-page canonical): ${canonicalUrl.href}`,
         });
       }
     } catch {

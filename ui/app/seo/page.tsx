@@ -93,6 +93,8 @@ interface RedirectChain {
 
 interface LinkAnalysis {
   totalLinks: number;
+  internalLinks?: number;
+  externalLinks?: number;
   brokenLinks?: BrokenLink[];
   orphanPages?: (string | Record<string, unknown>)[];
   redirectChains?: RedirectChain[];
@@ -194,6 +196,18 @@ interface SeoData {
   linkAnalysis?: LinkAnalysis;
   contentAnalysis?: ContentAnalysis;
   coreWebVitals?: CwvEntry[];
+  issues?: Array<{
+    severity: string;
+    category: string;
+    message: string;
+    url?: string;
+  }>;
+  categoryStats?: Array<{
+    category: string;
+    affectedCount: number;
+    percentage: number;
+  }>;
+  healthScore?: { score: number; rating: string };
 }
 
 // ── Mode metadata ────────────────────────────────────────────────────────
@@ -1619,77 +1633,156 @@ export default function SeoPage() {
           value="audit"
           className="mt-6 overflow-y-auto max-h-[calc(100vh-20rem)]"
         >
-          {latestData?.pages && latestData.pages.length > 0 ? (
+          {(latestData?.pages && latestData.pages.length > 0) ||
+          (latestData?.issues && latestData.issues.length > 0) ? (
             <div className="space-y-4">
               <h3 className="text-sm font-semibold">
                 Audit Results — {latest?.siteUrl}
               </h3>
-              {(["error", "warning", "info"] as const).map((severity) => {
-                const pagesWithIssues = latestData.pages!.filter((p) =>
-                  p.issues.some((i) => i.severity === severity),
-                );
-                if (pagesWithIssues.length === 0) return null;
-                const totalPages = latestData.pages!.length;
-                const percentAffected =
-                  totalPages > 0
-                    ? Math.round((pagesWithIssues.length / totalPages) * 100)
-                    : 0;
-                return (
-                  <div key={severity} className="space-y-2">
-                    <h4 className="text-xs font-semibold uppercase tracking-wide flex items-center gap-1.5">
-                      <SeverityDot severity={severity} />
-                      {severity === "error"
-                        ? "Errors"
-                        : severity === "warning"
-                          ? "Warnings"
-                          : "Info"}{" "}
-                      (
-                      {pagesWithIssues.reduce(
-                        (acc, p) =>
-                          acc +
-                          p.issues.filter((i) => i.severity === severity)
-                            .length,
-                        0,
-                      )}
-                      )
-                      <span
-                        className={cn(
-                          "ml-1.5 inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium",
-                          severity === "error"
-                            ? "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400"
-                            : severity === "warning"
-                              ? "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400"
-                              : "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400",
-                        )}
-                      >
-                        Affects {percentAffected}% of pages
-                      </span>
+
+              {/* Category Stats */}
+              {latestData.categoryStats &&
+                latestData.categoryStats.length > 0 && (
+                  <div className="rounded-xl border bg-card p-4">
+                    <h4 className="text-xs font-semibold uppercase tracking-wide mb-3">
+                      Issue Categories
                     </h4>
-                    {pagesWithIssues.map((page) => (
-                      <div
-                        key={page.url}
-                        className="rounded-lg border bg-card p-3"
-                      >
-                        <p className="text-sm font-medium truncate">
-                          {page.url}
-                        </p>
-                        <ul className="mt-1 space-y-0.5">
-                          {page.issues
-                            .filter((i) => i.severity === severity)
-                            .map((issue, idx) => (
-                              <li
-                                key={idx}
-                                className="text-xs text-muted-foreground"
-                              >
-                                [{issue.category}] {issue.message}
-                              </li>
-                            ))}
+                    <div className="space-y-2">
+                      {latestData.categoryStats.map((cat) => (
+                        <div
+                          key={cat.category}
+                          className="flex items-center gap-3"
+                        >
+                          <span className="text-xs font-medium w-28 truncate capitalize">
+                            {cat.category}
+                          </span>
+                          <div className="flex-1 h-2 rounded-full bg-muted overflow-hidden">
+                            <div
+                              className="h-full rounded-full bg-primary"
+                              style={{
+                                width: `${Math.min(cat.percentage, 100)}%`,
+                              }}
+                            />
+                          </div>
+                          <span className="text-xs text-muted-foreground w-24 text-right">
+                            {cat.affectedCount} pages ({cat.percentage}%)
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+              {/* Site-Wide Issues */}
+              {latestData.issues && latestData.issues.length > 0 && (
+                <div className="rounded-xl border bg-card p-4">
+                  <h4 className="text-xs font-semibold uppercase tracking-wide mb-3">
+                    Site-Wide Issues ({latestData.issues.length})
+                  </h4>
+                  {(["error", "warning", "info"] as const).map((sev) => {
+                    const filtered = latestData.issues!.filter(
+                      (i) => i.severity === sev,
+                    );
+                    if (filtered.length === 0) return null;
+                    return (
+                      <div key={sev} className="mb-3 last:mb-0">
+                        <h5 className="text-xs font-semibold flex items-center gap-1.5 mb-1">
+                          <SeverityDot severity={sev} />
+                          {sev === "error"
+                            ? "Errors"
+                            : sev === "warning"
+                              ? "Warnings"
+                              : "Info"}{" "}
+                          ({filtered.length})
+                        </h5>
+                        <ul className="space-y-1 ml-3.5">
+                          {filtered.map((issue, idx) => (
+                            <li
+                              key={idx}
+                              className="text-xs text-muted-foreground"
+                            >
+                              <span className="font-medium capitalize">
+                                [{issue.category}]
+                              </span>{" "}
+                              {issue.message}
+                            </li>
+                          ))}
                         </ul>
                       </div>
-                    ))}
-                  </div>
-                );
-              })}
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* Per-Page Issues */}
+              {latestData.pages &&
+                latestData.pages.length > 0 &&
+                (["error", "warning", "info"] as const).map((severity) => {
+                  const pagesWithIssues = latestData.pages!.filter((p) =>
+                    p.issues.some((i) => i.severity === severity),
+                  );
+                  if (pagesWithIssues.length === 0) return null;
+                  const totalPages = latestData.pages!.length;
+                  const percentAffected =
+                    totalPages > 0
+                      ? Math.round((pagesWithIssues.length / totalPages) * 100)
+                      : 0;
+                  return (
+                    <div key={severity} className="space-y-2">
+                      <h4 className="text-xs font-semibold uppercase tracking-wide flex items-center gap-1.5">
+                        <SeverityDot severity={severity} />
+                        {severity === "error"
+                          ? "Errors"
+                          : severity === "warning"
+                            ? "Warnings"
+                            : "Info"}{" "}
+                        (
+                        {pagesWithIssues.reduce(
+                          (acc, p) =>
+                            acc +
+                            p.issues.filter((i) => i.severity === severity)
+                              .length,
+                          0,
+                        )}
+                        )
+                        <span
+                          className={cn(
+                            "ml-1.5 inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium",
+                            severity === "error"
+                              ? "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400"
+                              : severity === "warning"
+                                ? "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400"
+                                : "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400",
+                          )}
+                        >
+                          Affects {percentAffected}% of pages
+                        </span>
+                      </h4>
+                      {pagesWithIssues.map((page) => (
+                        <div
+                          key={page.url}
+                          className="rounded-lg border bg-card p-3"
+                        >
+                          <p className="text-sm font-medium truncate">
+                            {page.url}
+                          </p>
+                          <ul className="mt-1 space-y-0.5">
+                            {page.issues
+                              .filter((i) => i.severity === severity)
+                              .map((issue, idx) => (
+                                <li
+                                  key={idx}
+                                  className="text-xs text-muted-foreground"
+                                >
+                                  [{issue.category}] {issue.message}
+                                </li>
+                              ))}
+                          </ul>
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })}
             </div>
           ) : (
             <EmptyState message="No audit results yet. Run an audit to see detailed findings." />
@@ -1703,10 +1796,18 @@ export default function SeoPage() {
         >
           {latestData?.linkAnalysis ? (
             <div className="space-y-6">
-              <div className="grid gap-4 md:grid-cols-3">
+              <div className="grid gap-4 md:grid-cols-5">
                 <StatCard
                   label="Total Links"
                   value={latestData.linkAnalysis.totalLinks}
+                />
+                <StatCard
+                  label="Internal"
+                  value={latestData.linkAnalysis.internalLinks ?? 0}
+                />
+                <StatCard
+                  label="External"
+                  value={latestData.linkAnalysis.externalLinks ?? 0}
                 />
                 <StatCard
                   label="Broken Links"
@@ -1808,6 +1909,59 @@ export default function SeoPage() {
                         </li>
                       ))}
                     </ul>
+                  </div>
+                )}
+
+              {(!latestData.linkAnalysis.brokenLinks ||
+                latestData.linkAnalysis.brokenLinks.length === 0) &&
+                (!latestData.linkAnalysis.orphanPages ||
+                  latestData.linkAnalysis.orphanPages.length === 0) && (
+                  <div className="rounded-lg border bg-emerald-50 dark:bg-emerald-950/20 p-3 text-sm text-emerald-700 dark:text-emerald-400">
+                    ✓ No broken links or orphan pages detected.
+                  </div>
+                )}
+
+              {/* Link Distribution Table */}
+              {latestData.linkAnalysis.linkDistribution &&
+                latestData.linkAnalysis.linkDistribution.length > 0 && (
+                  <div>
+                    <h4 className="text-sm font-semibold mb-2">
+                      Link Distribution (Top Pages)
+                    </h4>
+                    <div className="rounded-lg border overflow-hidden">
+                      <table className="w-full text-xs">
+                        <thead className="bg-muted/50">
+                          <tr>
+                            <th className="px-3 py-2 text-left font-medium">
+                              URL
+                            </th>
+                            <th className="px-3 py-2 text-right font-medium">
+                              Incoming
+                            </th>
+                            <th className="px-3 py-2 text-right font-medium">
+                              Outgoing
+                            </th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {latestData.linkAnalysis.linkDistribution
+                            .slice(0, 20)
+                            .map((entry, idx) => (
+                              <tr key={idx} className="border-t">
+                                <td className="px-3 py-2 truncate max-w-[300px]">
+                                  {entry.url}
+                                </td>
+                                <td className="px-3 py-2 text-right font-medium">
+                                  {entry.incomingCount}
+                                </td>
+                                <td className="px-3 py-2 text-right font-medium">
+                                  {entry.outgoingCount}
+                                </td>
+                              </tr>
+                            ))}
+                        </tbody>
+                      </table>
+                    </div>
                   </div>
                 )}
 

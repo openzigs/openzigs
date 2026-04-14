@@ -27,7 +27,11 @@ interface LinkAnalysis {
   redirectChains?: unknown[];
   orphanPages?: unknown[];
   linkDepths?: Array<{ url: string; depth: number }>;
-  linkDistribution?: Array<{ url: string; incomingCount: number; outgoingCount: number }>;
+  linkDistribution?: Array<{
+    url: string;
+    incomingCount: number;
+    outgoingCount: number;
+  }>;
   links?: Array<{ source: string; target: string }>;
 }
 
