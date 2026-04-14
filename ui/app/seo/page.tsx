@@ -320,9 +320,29 @@ export default function SeoPage() {
 
   // ── Competitors fields ──
   const [monitorAction, setMonitorAction] = useState<
-    "add" | "snapshot" | "report" | "list"
+    "add" | "snapshot" | "report" | "list" | "discover"
   >("add");
   const [competitorName, setCompetitorName] = useState("");
+
+  // ── Competitor discovery state ──
+  const [discoveredCompetitors, setDiscoveredCompetitors] = useState<
+    Array<{
+      domain: string;
+      url: string;
+      title: string;
+      snippet: string;
+      bestPosition: number;
+      keywordsFound: string[];
+      frequencyScore: number;
+    }>
+  >([]);
+  const [discoveryError, setDiscoveryError] = useState<string | null>(null);
+  const [isDiscovering, setIsDiscovering] = useState(false);
+  const [discoveryRequiresKey, setDiscoveryRequiresKey] = useState(false);
+  const [selectedDiscovered, setSelectedDiscovered] = useState<Set<string>>(
+    new Set(),
+  );
+  const [isAddingBulk, setIsAddingBulk] = useState(false);
 
   // ── Extract fields ──
   const [extractSchema, setExtractSchema] = useState("");
@@ -490,6 +510,85 @@ export default function SeoPage() {
     };
   }, []);
 
+  // ── Competitor discovery handlers ──
+  const handleDiscover = useCallback(async () => {
+    const trimmedUrl = url.trim();
+    if (!trimmedUrl) {
+      setError("URL is required");
+      return;
+    }
+    setError(null);
+    setDiscoveryError(null);
+    setIsDiscovering(true);
+    setDiscoveredCompetitors([]);
+    setDiscoveryRequiresKey(false);
+    setSelectedDiscovered(new Set());
+
+    try {
+      const result = await fetchJson<{
+        targetDomain: string;
+        keywordsSearched: string[];
+        competitors: Array<{
+          domain: string;
+          url: string;
+          title: string;
+          snippet: string;
+          bestPosition: number;
+          keywordsFound: string[];
+          frequencyScore: number;
+        }>;
+        serpFeatures: { paa: string[]; relatedSearches: string[] };
+        requiresApiKey: boolean;
+        error?: string;
+      }>("/api/seo/competitors/discover", {
+        method: "POST",
+        body: JSON.stringify({ url: trimmedUrl }),
+      });
+
+      if (result.error) {
+        setDiscoveryError(result.error);
+        return;
+      }
+
+      if (result.requiresApiKey) {
+        setDiscoveryRequiresKey(true);
+        return;
+      }
+
+      setDiscoveredCompetitors(result.competitors);
+    } catch (err) {
+      setDiscoveryError(
+        err instanceof Error ? err.message : "Discovery failed",
+      );
+    } finally {
+      setIsDiscovering(false);
+    }
+  }, [url]);
+
+  const handleAddBulkCompetitors = useCallback(async () => {
+    if (selectedDiscovered.size === 0) return;
+    setIsAddingBulk(true);
+    try {
+      const items = discoveredCompetitors
+        .filter((c) => selectedDiscovered.has(c.domain))
+        .map((c) => ({ url: c.url, name: c.domain }));
+
+      await fetchJson("/api/seo/competitors/add-bulk", {
+        method: "POST",
+        body: JSON.stringify({ competitors: items }),
+      });
+
+      setSelectedDiscovered(new Set());
+      void refetchCompetitors();
+    } catch (err) {
+      setDiscoveryError(
+        err instanceof Error ? err.message : "Failed to add competitors",
+      );
+    } finally {
+      setIsAddingBulk(false);
+    }
+  }, [selectedDiscovered, discoveredCompetitors, refetchCompetitors]);
+
   const isFirecrawlMode = mode !== "gap-analysis";
   const showUrlInput =
     !(mode === "competitors" && monitorAction === "list") &&
@@ -505,6 +604,13 @@ export default function SeoPage() {
       setError("URL is required");
       return;
     }
+
+    // Discover action uses REST API, not Socket.IO chat
+    if (mode === "competitors" && monitorAction === "discover") {
+      handleDiscover();
+      return;
+    }
+
     if (!socket || !connected) {
       setError("Not connected to server");
       return;
@@ -637,6 +743,7 @@ export default function SeoPage() {
     category,
     visibility,
     queryClient,
+    handleDiscover,
   ]);
 
   const handleOperationComplete = useCallback(() => {
@@ -938,6 +1045,7 @@ export default function SeoPage() {
                   className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
                 >
                   <option value="add">Add Competitor</option>
+                  <option value="discover">Discover</option>
                   <option value="snapshot">Take Snapshot</option>
                   <option value="report">Generate Report</option>
                   <option value="list">List Competitors</option>
@@ -1556,6 +1664,168 @@ export default function SeoPage() {
               </table>
             </div>
           )}
+        </div>
+      )}
+
+      {/* ── Competitor Discovery Results ───────────────────────────── */}
+      {mode === "competitors" && monitorAction === "discover" && (
+        <div className="mt-4 rounded-lg border bg-card p-4 space-y-3">
+          <div className="rounded-md bg-muted/50 p-3 text-xs text-muted-foreground flex items-start gap-2">
+            <Info className="h-4 w-4 shrink-0 mt-0.5" />
+            <span>
+              Competitor discovery searches Google/Brave for your site&apos;s
+              top keywords. Requires a Serper.dev API key (SERPER_API_KEY) or
+              Brave Search API key (BRAVE_API_KEY).
+            </span>
+          </div>
+
+          {isDiscovering && (
+            <div className="flex items-center gap-2 py-4 justify-center text-sm text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Discovering competitors…
+            </div>
+          )}
+
+          {discoveryRequiresKey && !isDiscovering && (
+            <div className="rounded-md bg-destructive/10 border border-destructive/20 p-3 text-xs text-destructive flex items-start gap-2">
+              <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
+              <span>
+                No search API key configured. Add SERPER_API_KEY or
+                BRAVE_API_KEY in your environment variables.
+              </span>
+            </div>
+          )}
+
+          {discoveryError && !isDiscovering && (
+            <div className="rounded-md bg-destructive/10 border border-destructive/20 p-3 text-xs text-destructive flex items-start gap-2">
+              <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
+              <span>{discoveryError}</span>
+            </div>
+          )}
+
+          {discoveredCompetitors.length > 0 && !isDiscovering && (
+            <>
+              <div className="flex items-center justify-between">
+                <h4 className="text-sm font-semibold">
+                  Discovered Competitors ({discoveredCompetitors.length})
+                </h4>
+                <button
+                  type="button"
+                  disabled={selectedDiscovered.size === 0 || isAddingBulk}
+                  onClick={() => void handleAddBulkCompetitors()}
+                  className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground shadow-sm hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {isAddingBulk ? (
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                  ) : (
+                    <Plus className="h-3 w-3" />
+                  )}
+                  Add Selected to Monitoring
+                </button>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="border-b text-left text-muted-foreground">
+                      <th className="pb-1.5 pr-2 font-medium w-8">
+                        <input
+                          type="checkbox"
+                          checked={
+                            selectedDiscovered.size ===
+                            discoveredCompetitors.length
+                          }
+                          onChange={(e) => {
+                            if (e.target.checked) {
+                              setSelectedDiscovered(
+                                new Set(
+                                  discoveredCompetitors.map((c) => c.domain),
+                                ),
+                              );
+                            } else {
+                              setSelectedDiscovered(new Set());
+                            }
+                          }}
+                          className="rounded border-input"
+                        />
+                      </th>
+                      <th className="pb-1.5 pr-3 font-medium">Domain</th>
+                      <th className="pb-1.5 pr-3 font-medium">Best Rank</th>
+                      <th className="pb-1.5 pr-3 font-medium">Keywords</th>
+                      <th className="pb-1.5 font-medium">Frequency</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {discoveredCompetitors.map((c) => (
+                      <tr key={c.domain} className="border-b last:border-0">
+                        <td className="py-1.5 pr-2">
+                          <input
+                            type="checkbox"
+                            checked={selectedDiscovered.has(c.domain)}
+                            onChange={(e) => {
+                              const next = new Set(selectedDiscovered);
+                              if (e.target.checked) {
+                                next.add(c.domain);
+                              } else {
+                                next.delete(c.domain);
+                              }
+                              setSelectedDiscovered(next);
+                            }}
+                            className="rounded border-input"
+                          />
+                        </td>
+                        <td className="py-1.5 pr-3">
+                          <a
+                            href={c.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-primary hover:underline flex items-center gap-1"
+                          >
+                            {c.domain}
+                            <ExternalLink className="h-3 w-3" />
+                          </a>
+                        </td>
+                        <td className="py-1.5 pr-3 text-center">
+                          <span className="inline-flex items-center rounded-full bg-muted px-2 py-0.5 text-xs font-medium">
+                            #{c.bestPosition}
+                          </span>
+                        </td>
+                        <td className="py-1.5 pr-3">
+                          <div className="flex flex-wrap gap-1">
+                            {c.keywordsFound.slice(0, 3).map((kw) => (
+                              <span
+                                key={kw}
+                                className="inline-flex items-center rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-medium text-primary"
+                              >
+                                {kw}
+                              </span>
+                            ))}
+                            {c.keywordsFound.length > 3 && (
+                              <span className="inline-flex items-center rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
+                                +{c.keywordsFound.length - 3} more
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                        <td className="py-1.5 text-center font-medium">
+                          {c.frequencyScore}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+
+          {!isDiscovering &&
+            !discoveryError &&
+            !discoveryRequiresKey &&
+            discoveredCompetitors.length === 0 && (
+              <p className="text-xs text-muted-foreground py-4 text-center">
+                Enter a website URL and click Execute to discover competitors
+                from your latest audit data.
+              </p>
+            )}
         </div>
       )}
 

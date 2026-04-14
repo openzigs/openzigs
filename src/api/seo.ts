@@ -23,6 +23,7 @@ import {
 } from "../browser/firecrawl-client.js";
 import { PriceSnapshotRepository } from "../mcp/tools/price-monitor.js";
 import { CompetitorRepository } from "../mcp/tools/competitive-monitor.js";
+import { discoverCompetitorsFromAudit } from "../mcp/tools/seo/competitive-discover.js";
 import { logger } from "../logging/logger.js";
 import type { Scheduler } from "../productivity/scheduler.js";
 
@@ -528,6 +529,127 @@ export const createSeoRouter = ({
       return res
         .status(500)
         .json({ error: "Failed to export competitor data" });
+    }
+  });
+
+  /**
+   * POST /api/seo/competitors/discover — Discover competitors from audit data (#864).
+   * Body: { url: string }
+   * Returns DiscoveryResult from competitive-discover pipeline.
+   */
+  router.post("/competitors/discover", async (req, res) => {
+    const url = (req.body?.url as string)?.trim();
+    if (!url) {
+      return res.status(400).json({ error: "Missing required field: url" });
+    }
+
+    let normalizedUrl: string;
+    try {
+      normalizedUrl = url.startsWith("http") ? url : `https://${url}`;
+      new URL(normalizedUrl);
+    } catch {
+      return res.status(400).json({ error: "Invalid URL" });
+    }
+
+    // Get the latest audit snapshot for this URL
+    const snapshots = historyRepo.listSnapshots(normalizedUrl, 1);
+    if (snapshots.length === 0) {
+      return res.json({
+        error: "No audit data found. Run a site audit first.",
+        requiresApiKey: true,
+        competitors: [],
+        keywordsSearched: [],
+        serpFeatures: { paa: [], relatedSearches: [] },
+        targetDomain: "",
+      });
+    }
+
+    // Parse the snapshot data to extract pages with keywords
+    let pages: Array<{
+      url: string;
+      keywords?: Array<{ word: string; score: number }>;
+    }> = [];
+    try {
+      const data = JSON.parse(snapshots[0].dataJson) as {
+        pages?: Array<{
+          url: string;
+          keywords?: Array<{ word: string; score: number }>;
+        }>;
+      };
+      if (Array.isArray(data.pages)) {
+        pages = data.pages;
+      }
+    } catch {
+      return res.status(500).json({ error: "Failed to parse audit data" });
+    }
+
+    // Extract domain from the URL
+    let domain: string;
+    try {
+      domain = new URL(normalizedUrl).hostname.replace(/^www\./, "");
+    } catch {
+      return res.status(400).json({ error: "Could not extract domain" });
+    }
+
+    try {
+      const result = await discoverCompetitorsFromAudit(pages, domain);
+      return res.json(result);
+    } catch (err) {
+      logger.error("[SEO] Competitor discovery failed", {
+        url,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return res.status(500).json({ error: "Competitor discovery failed" });
+    }
+  });
+
+  /**
+   * POST /api/seo/competitors/add-bulk — Add multiple competitors at once (#864).
+   * Body: { competitors: Array<{ url: string; name?: string }> }
+   * Returns { added: number, errors: Array<{ url: string; error: string }> }
+   */
+  router.post("/competitors/add-bulk", (req, res) => {
+    const items = req.body?.competitors;
+    if (!Array.isArray(items) || items.length === 0) {
+      return res
+        .status(400)
+        .json({ error: "Missing or empty competitors array" });
+    }
+
+    try {
+      const repo = new CompetitorRepository(db);
+      let added = 0;
+      const errors: Array<{ url: string; error: string }> = [];
+
+      for (const item of items) {
+        const itemUrl = (item?.url as string)?.trim();
+        if (!itemUrl) {
+          errors.push({ url: "", error: "Missing URL" });
+          continue;
+        }
+        try {
+          new URL(itemUrl);
+        } catch {
+          errors.push({ url: itemUrl, error: "Invalid URL" });
+          continue;
+        }
+        try {
+          repo.addCompetitor(itemUrl, (item?.name as string) ?? undefined);
+          added++;
+        } catch (err) {
+          errors.push({
+            url: itemUrl,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
+
+      return res.json({ added, errors });
+    } catch (err) {
+      logger.error("[SEO] Failed to add competitors in bulk", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return res.status(500).json({ error: "Failed to add competitors" });
     }
   });
 

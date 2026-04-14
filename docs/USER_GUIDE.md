@@ -7965,13 +7965,24 @@ Track competitor domains over time with point-in-time snapshots and comparison r
 | Action | Fields | Description |
 |--------|--------|-------------|
 | **Add** | URL, Name | Register a competitor domain for tracking |
+| **Discover** | URL | Auto-discover competitors from your latest site audit keywords |
 | **Snapshot** | URL, Max Pages | Crawl a competitor and save current SEO metrics |
 | **Report** | (none) | Generate a comparison report across all tracked competitors |
 | **List** | (none) | Show all tracked competitor domains |
 
+**Discover Competitors**
+
+The **Discover** action automatically finds competitor domains by analyzing the keywords extracted from your most recent site audit:
+
+1. **Prerequisites:** Run a Site Audit first — discovery uses the keyword data from your latest audit snapshot.
+2. **API Key Required:** Requires a Serper.dev API key (`SERPER_API_KEY`) or Brave Search API key (`BRAVE_API_KEY`) set in your environment variables. Without one, an error message is shown.
+3. **How it works:** The pipeline aggregates TF-IDF keyword scores across all audited pages, selects the top 10 keywords, and searches Google/Brave SERPs for each. Competitor domains are deduplicated, ranked by how many of your keywords they appear for (frequency score), and sorted by best SERP position.
+4. **Results table:** Shows each discovered domain with its best ranking position, the keywords it ranks for (as badges), and a frequency score.
+5. **Add to Monitoring:** Select competitors via checkboxes and click "Add Selected to Monitoring" to start tracking them with snapshots and comparison reports.
+
 **Results:** Competitor data is stored in `~/.openzigs/competitors/` with timestamped snapshots. Reports stream into the chat with field-level content diffs and trend analysis.
 
-**Requires:** Firecrawl sidecar
+**Requires:** Firecrawl sidecar (for audit), Serper.dev or Brave Search API key (for discovery)
 
 ##### Extract
 

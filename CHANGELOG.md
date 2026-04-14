@@ -14,6 +14,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **SEO Suite Enhancement** (#838):
+  - **Competitor Discovery Pipeline** (#867): `discoverCompetitorsFromAudit()` aggregates TF-IDF keywords across audited pages and searches Google/Brave SERPs to produce a ranked, deduplicated list of competitor domains
+  - **Competitor Discovery API** (#864): `POST /api/seo/competitors/discover` endpoint finds competitors from latest audit data; `POST /api/seo/competitors/add-bulk` adds multiple competitors at once
+  - **Discover Competitors UI** (#866): "Discover" action in the Competitors mode with results table (domain, best rank, keyword badges, frequency score), select-all checkbox, and "Add Selected to Monitoring" bulk action
+  - **Competitor Discovery Documentation** (#865): USER_GUIDE.md updated with Discover Competitors workflow and prerequisites
+
 - **OpusClip Feature Parity — Video Clipping, Editing & Publishing Pipeline** (#817):
   - **Intelligent Video Clipping** (#821): Multi-modal AI clip extraction via scene graph analysis (transcript + visual + audio), LLM virality scoring, and FFmpeg extraction. MCP tool: `clip-video`.
   - **AI Video Reframing** (#818): Subject-tracking reframing with Bezier-interpolated crop trajectories. Supports 9:16, 1:1, 4:5 targets and auto/single-speaker/split-screen/gameplay/action layouts. MCP tool: `reframe-video`.
