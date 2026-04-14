@@ -319,7 +319,9 @@ export function auditPage(
           category: "canonical",
           message: `Canonical points to different domain: ${canonicalUrl.hostname}`,
         });
-      } else if (canonicalUrl.href.replace(/\/$/, "") === pageUrl.href.replace(/\/$/, "")) {
+      } else if (
+        canonicalUrl.href.replace(/\/$/, "") === pageUrl.href.replace(/\/$/, "")
+      ) {
         issues.push({
           severity: "info",
           category: "canonical",
@@ -688,23 +690,6 @@ export function createSeoSiteAuditTool(): ToolDefinition {
       }
 
       try {
-        // 0. Check for recent audit to enable Firecrawl caching (#863)
-        let maxAge: number | undefined;
-        try {
-          const db = getDatabase();
-          const recent = new AuditHistoryRepository(db).listSnapshots(url, 1);
-          if (recent.length > 0) {
-            const lastAuditMs = new Date(recent[0].createdAt).getTime();
-            const ageMs = Date.now() - lastAuditMs;
-            const TWENTY_FOUR_HOURS = 24 * 60 * 60 * 1000;
-            if (ageMs < TWENTY_FOUR_HOURS) {
-              maxAge = TWENTY_FOUR_HOURS;
-            }
-          }
-        } catch {
-          // Non-fatal: caching is an optimization
-        }
-
         // 1. Crawl the site
         const crawlResult = await client.crawl(url, {
           limit: maxPages,
@@ -712,7 +697,6 @@ export function createSeoSiteAuditTool(): ToolDefinition {
           includePaths,
           excludePaths,
           scrapeOptions: { formats: ["markdown", "html"] },
-          maxAge,
         });
 
         if (crawlResult.pages.length === 0) {
