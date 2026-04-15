@@ -24,6 +24,11 @@ import {
 import { PriceSnapshotRepository } from "../mcp/tools/price-monitor.js";
 import { CompetitorRepository } from "../mcp/tools/competitive-monitor.js";
 import { discoverCompetitorsFromAudit } from "../mcp/tools/seo/competitive-discover.js";
+import {
+  generateSchemaMarkup,
+  getSchemaFields,
+  SUPPORTED_SCHEMA_TYPES,
+} from "../mcp/tools/seo/schema-generator.js";
 import { logger } from "../logging/logger.js";
 import type { Scheduler } from "../productivity/scheduler.js";
 
@@ -709,5 +714,45 @@ export const createSeoRouter = ({
     return res.json(seoJobs);
   });
 
+  // ── Schema Generator (#879) ──
+
+  /** POST /api/seo/schema/generate
+   *  Body: { type: string, data: Record<string, unknown> }
+   */
+  router.post("/schema/generate", (req, res) => {
+    try {
+      const schemaType = (req.body?.type as string)?.trim();
+      const data = req.body?.data as Record<string, unknown> | undefined;
+
+      if (
+        !schemaType ||
+        !SUPPORTED_SCHEMA_TYPES.includes(
+          schemaType as (typeof SUPPORTED_SCHEMA_TYPES)[number],
+        )
+      ) {
+        return res.status(400).json({
+          error: `Invalid schema type. Supported: ${SUPPORTED_SCHEMA_TYPES.join(", ")}`,
+        });
+      }
+
+      const json = generateSchemaMarkup(
+        schemaType as (typeof SUPPORTED_SCHEMA_TYPES)[number],
+        data ?? {},
+      );
+      return res.json({ schema: JSON.parse(json), raw: json });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return res.status(500).json({ error: msg });
+    }
+  });
+
+  /** GET /api/seo/schema/types — List supported schema types with fields. */
+  router.get("/schema/types", (_req, res) => {
+    const types = SUPPORTED_SCHEMA_TYPES.map((t) => ({
+      type: t,
+      fields: getSchemaFields(t),
+    }));
+    return res.json(types);
+  });
   return router;
 };

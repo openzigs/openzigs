@@ -243,6 +243,119 @@ export function findOverOptimizedKeywords(
     .map((d) => ({ url: d.url, keyword: d.keyword, density: d.density }));
 }
 
+// ── Content Freshness Analysis (#877) ────────────────────────────────────
+
+export type FreshnessRating = "Fresh" | "Aging" | "Stale" | "Unknown";
+
+export interface ContentFreshnessResult {
+  url: string;
+  datePublished: string | null;
+  dateModified: string | null;
+  freshnessRating: FreshnessRating;
+  ageInDays: number | null;
+}
+
+/**
+ * Analyze content freshness using JSON-LD datePublished/dateModified.
+ * Scoring: Fresh < 6 months, Aging 6–12 months, Stale > 12 months, Unknown = no date.
+ */
+export function analyzeContentFreshness(
+  pages: Array<{
+    url: string;
+    jsonLdBlocks: Array<{ parsed: unknown }>;
+  }>,
+  now: Date = new Date(),
+): ContentFreshnessResult[] {
+  return pages.map((page) => {
+    let datePublished: string | null = null;
+    let dateModified: string | null = null;
+
+    for (const block of page.jsonLdBlocks) {
+      const dates = extractDatesFromJsonLd(block.parsed);
+      if (dates.datePublished && !datePublished)
+        datePublished = dates.datePublished;
+      if (dates.dateModified && !dateModified)
+        dateModified = dates.dateModified;
+    }
+
+    const referenceDate = dateModified ?? datePublished;
+    if (!referenceDate) {
+      return {
+        url: page.url,
+        datePublished,
+        dateModified,
+        freshnessRating: "Unknown" as FreshnessRating,
+        ageInDays: null,
+      };
+    }
+
+    const parsed = new Date(referenceDate);
+    if (isNaN(parsed.getTime())) {
+      return {
+        url: page.url,
+        datePublished,
+        dateModified,
+        freshnessRating: "Unknown" as FreshnessRating,
+        ageInDays: null,
+      };
+    }
+
+    const ageMs = now.getTime() - parsed.getTime();
+    const ageInDays = Math.floor(ageMs / (1000 * 60 * 60 * 24));
+    const sixMonths = 182;
+    const twelveMonths = 365;
+
+    let freshnessRating: FreshnessRating;
+    if (ageInDays < sixMonths) freshnessRating = "Fresh";
+    else if (ageInDays < twelveMonths) freshnessRating = "Aging";
+    else freshnessRating = "Stale";
+
+    return {
+      url: page.url,
+      datePublished,
+      dateModified,
+      freshnessRating,
+      ageInDays,
+    };
+  });
+}
+
+function extractDatesFromJsonLd(
+  parsed: unknown,
+  depth = 0,
+): { datePublished: string | null; dateModified: string | null } {
+  if (depth > 5 || parsed == null || typeof parsed !== "object") {
+    return { datePublished: null, dateModified: null };
+  }
+
+  if (Array.isArray(parsed)) {
+    for (const item of parsed) {
+      const result = extractDatesFromJsonLd(item, depth + 1);
+      if (result.datePublished || result.dateModified) return result;
+    }
+    return { datePublished: null, dateModified: null };
+  }
+
+  const record = parsed as Record<string, unknown>;
+
+  // Handle @graph
+  if (Array.isArray(record["@graph"])) {
+    for (const entry of record["@graph"]) {
+      const result = extractDatesFromJsonLd(entry, depth + 1);
+      if (result.datePublished || result.dateModified) return result;
+    }
+  }
+
+  const dp =
+    typeof record["datePublished"] === "string"
+      ? record["datePublished"]
+      : null;
+  const dm =
+    typeof record["dateModified"] === "string" ? record["dateModified"] : null;
+
+  return { datePublished: dp, dateModified: dm };
+}
+
 // ── CSV exports ──────────────────────────────────────────────────────────
 
 function escapeCsv(value: string | number): string {

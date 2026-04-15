@@ -7910,6 +7910,8 @@ This design means Firecrawl has **no embedded LLM instructions** — you don't n
 | Tool | Description |
 |---|---|
 | `seo-site-audit` | Full-site SEO audit: crawls up to 500 pages, analyzes titles, meta descriptions, headings, images, links, and performance |
+| `seo-schema-generator` | Generate JSON-LD structured data for 9 Schema.org types (Article, Product, LocalBusiness, FAQPage, HowTo, Recipe, Event, Organization, BreadcrumbList) |
+| `seo-meta-generator` | AI-powered title & meta description generator — produces 3 variants each with character counts, pixel width estimates, and SERP preview data |
 | `knowledge-ingest-website` | Crawl a website and ingest pages into the local knowledge base for RAG queries |
 | `competitive-monitor-add` | Add a competitor domain to the monitoring list |
 | `competitive-monitor-snapshot` | Take a point-in-time snapshot of a competitor's SEO metrics. Supports `extractSchema` for structured data extraction |
@@ -7922,7 +7924,20 @@ This design means Firecrawl has **no embedded LLM instructions** — you don't n
 
 All crawl and SEO features are consolidated into a single **SEO Suite** page at `/seo`. Navigate to **Automation → SEO Suite** in the nav bar.
 
-The page has **8 modes** accessible via a horizontal mode selector at the top:
+The page has **8 modes** accessible via a horizontal mode selector at the top, and **9 dashboard tabs**: Overview, Audit, Links, Content, Performance, History, Export, **Schema**, and **Meta Gen**.
+
+#### Advanced SEO Features (v3)
+
+The SEO Suite includes several advanced analysis and generation features:
+
+- **Social Meta Audit** — Automatically checks every audited page for Open Graph (`og:title`, `og:description`, `og:image`, `og:url`, `og:type`) and Twitter Card tags. Missing tags surface as errors/warnings in the Audit tab.
+- **Content Freshness** — Extracts publish and modified dates from JSON-LD structured data and rates each page as Fresh (<6 months), Aging (6–12 months), Stale (>12 months), or Unknown. View in the **Content** tab.
+- **Lighthouse Optimizations** — After running Core Web Vitals analysis, each page card in the **Performance** tab shows actionable optimization opportunities (e.g., "Eliminate render-blocking resources — save ~1.5s") extracted from PageSpeed Insights.
+- **Content Ideas (PAA)** — "People Also Ask" questions from competitor discovery SERP data are surfaced in the **Content** tab as content topic suggestions.
+- **Internal Linking Suggestions** — TF-IDF keyword overlap analysis suggests internal cross-links between pages, prioritizing orphan and deeply-nested pages. View in the **Links** tab.
+- **Schema Generator** — The **Schema** tab lets you generate JSON-LD structured data for 9 Schema.org types: Article, Product, LocalBusiness, FAQPage, HowTo, Recipe, Event, Organization, and BreadcrumbList. Dynamic form based on required/optional fields, with live JSON-LD preview and copy-to-clipboard.
+- **AI Meta Generator** — The **Meta Gen** tab uses AI to generate 3 optimized title variants (<60 chars) and 3 description variants (<160 chars) for a target keyword. Shows character counts, pixel width estimates, truncation warnings, and a Google-style SERP preview.
+- **SERP Preview** — Realistic Google search result preview component with truncation indicators, used throughout the Meta Generator panel.
 
 #### Mode Reference
 

@@ -57,6 +57,8 @@ import { createMemoryTools } from "./tools/memory-tools.js";
 import { createOutboxTools } from "./tools/outbox-tools.js";
 import { createSeoGapTools } from "./tools/seo-gap-tools.js";
 import { createSeoSiteAuditTool } from "./tools/seo/site-audit.js";
+import { createSchemaGeneratorTool } from "./tools/seo/schema-generator.js";
+import { createMetaGeneratorTool } from "./tools/seo/meta-generator.js";
 import { createIngestWebsiteTool } from "./tools/knowledge-ingest-website.js";
 import { createCompetitorMonitorTool } from "./tools/competitive-monitor.js";
 import { createWebExtractTool } from "./tools/web-extract.js";
@@ -675,6 +677,22 @@ export const registerMcpTools = (
 
   // ── SEO Site Audit Tool (Firecrawl-powered) ──
   registerTool(createSeoSiteAuditTool());
+
+  // ── SEO Schema Markup Generator (#879) ──
+  registerTool(createSchemaGeneratorTool());
+
+  // ── SEO Meta Generator (#878) ──
+  if (options.copilot) {
+    const copilot = options.copilot;
+    const chatFn = async (prompt: string): Promise<string> => {
+      let result = "";
+      for await (const chunk of copilot.chat(prompt)) {
+        result += chunk;
+      }
+      return result;
+    };
+    registerTool(createMetaGeneratorTool(chatFn));
+  }
 
   // ── Website-to-Knowledge-Base Ingestion Tool ──
   registerTool(createIngestWebsiteTool(options.knowledgeService ?? null));

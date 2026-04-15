@@ -13,6 +13,8 @@ import { AuditTrends } from "@/components/seo/audit-trends";
 import { ExportDialog } from "@/components/seo/export-dialog";
 import { LinkGraph } from "@/components/seo/link-graph";
 import { ActivityLog } from "@/components/seo/activity-log";
+import { SchemaGeneratorPanel } from "@/components/seo/schema-generator-panel";
+import { MetaGeneratorPanel } from "@/components/seo/meta-generator-panel";
 import { InlineModelPicker } from "@/components/model-picker-select";
 import { fetchJson } from "@/lib/api";
 import { cn } from "@/lib/utils";
@@ -54,6 +56,8 @@ import {
   Power,
   Trash2,
   ExternalLink,
+  Wand2,
+  Code2,
 } from "lucide-react";
 
 // ── Types ────────────────────────────────────────────────────────────────
@@ -106,6 +110,13 @@ interface LinkAnalysis {
     incomingCount: number;
     outgoingCount: number;
   }>;
+  linkingSuggestions?: Array<{
+    sourcePage: string;
+    targetPage: string;
+    suggestedAnchor: string;
+    reason: string;
+    priority: string;
+  }>;
 }
 
 interface DuplicateGroup {
@@ -128,6 +139,14 @@ interface ContentAnalysis {
     count: number;
     density: number;
   }>;
+  freshness?: Array<{
+    url: string;
+    freshnessRating: string;
+    ageInDays: number | null;
+    dateModified?: string;
+    datePublished?: string;
+  }>;
+  paaQuestions?: string[];
 }
 
 interface CwvMetric {
@@ -141,6 +160,15 @@ interface CwvEntry {
   url: string;
   performanceScore: number;
   metrics?: CwvMetric[];
+  optimizations?: Array<{
+    auditId: string;
+    title: string;
+    description: string;
+    score: number;
+    savingsMs: number | null;
+    savingsBytes: number | null;
+    category: "opportunity" | "diagnostic";
+  }>;
   fetchedAt?: string;
   strategy?: "mobile" | "desktop";
   error?: string;
@@ -1852,6 +1880,12 @@ export default function SeoPage() {
           <TabsTrigger value="export" className="gap-1.5">
             <Download className="h-3.5 w-3.5" /> Export
           </TabsTrigger>
+          <TabsTrigger value="schema" className="gap-1.5">
+            <Code2 className="h-3.5 w-3.5" /> Schema
+          </TabsTrigger>
+          <TabsTrigger value="meta-gen" className="gap-1.5">
+            <Wand2 className="h-3.5 w-3.5" /> Meta Gen
+          </TabsTrigger>
         </TabsList>
 
         {/* ── Overview ─────────────────────────────────────────── */}
@@ -2252,6 +2286,73 @@ export default function SeoPage() {
                     />
                   </div>
                 )}
+
+              {/* Internal Linking Suggestions (#881) */}
+              {latestData.linkAnalysis.linkingSuggestions &&
+                latestData.linkAnalysis.linkingSuggestions.length > 0 && (
+                  <div>
+                    <h4 className="text-sm font-semibold mb-2">
+                      Internal Linking Suggestions
+                    </h4>
+                    <p className="text-xs text-muted-foreground mb-3">
+                      Opportunities to improve your internal link structure
+                      based on keyword overlap analysis.
+                    </p>
+                    <div className="space-y-2">
+                      {latestData.linkAnalysis.linkingSuggestions
+                        .slice(0, 20)
+                        .map(
+                          (
+                            s: {
+                              sourcePage: string;
+                              targetPage: string;
+                              suggestedAnchor: string;
+                              reason: string;
+                              priority: string;
+                            },
+                            idx: number,
+                          ) => (
+                            <div
+                              key={idx}
+                              className="rounded-lg border bg-card p-3 text-xs"
+                            >
+                              <div className="flex items-start justify-between gap-2">
+                                <div className="flex-1 min-w-0">
+                                  <p>
+                                    <span className="font-medium">From:</span>{" "}
+                                    <span className="truncate">
+                                      {s.sourcePage}
+                                    </span>
+                                  </p>
+                                  <p>
+                                    <span className="font-medium">To:</span>{" "}
+                                    <span className="truncate">
+                                      {s.targetPage}
+                                    </span>
+                                  </p>
+                                  <p className="text-muted-foreground mt-1">
+                                    Anchor: &quot;{s.suggestedAnchor}&quot; —{" "}
+                                    {s.reason}
+                                  </p>
+                                </div>
+                                <span
+                                  className={`shrink-0 inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                                    s.priority === "high"
+                                      ? "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400"
+                                      : s.priority === "medium"
+                                        ? "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400"
+                                        : "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400"
+                                  }`}
+                                >
+                                  {s.priority}
+                                </span>
+                              </div>
+                            </div>
+                          ),
+                        )}
+                    </div>
+                  </div>
+                )}
             </div>
           ) : (
             <EmptyState message="No link analysis data. Run an audit to analyze your site's link structure." />
@@ -2417,6 +2518,108 @@ export default function SeoPage() {
                   No keyword density data available.
                 </p>
               )}
+
+              {/* Content Freshness (#877) */}
+              {latestData.contentAnalysis.freshness &&
+                latestData.contentAnalysis.freshness.length > 0 && (
+                  <div>
+                    <h4 className="text-sm font-semibold mb-2">
+                      Content Freshness
+                    </h4>
+                    <div className="rounded-lg border overflow-hidden">
+                      <table className="w-full text-xs">
+                        <thead className="bg-muted/50">
+                          <tr>
+                            <th className="px-3 py-2 text-left font-medium">
+                              URL
+                            </th>
+                            <th className="px-3 py-2 text-left font-medium">
+                              Status
+                            </th>
+                            <th className="px-3 py-2 text-left font-medium">
+                              Age
+                            </th>
+                            <th className="px-3 py-2 text-left font-medium">
+                              Last Modified
+                            </th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {latestData.contentAnalysis.freshness.map(
+                            (
+                              f: {
+                                url: string;
+                                freshnessRating: string;
+                                ageInDays: number | null;
+                                dateModified?: string;
+                                datePublished?: string;
+                              },
+                              idx: number,
+                            ) => (
+                              <tr key={idx} className="border-t">
+                                <td className="px-3 py-2 truncate max-w-[200px]">
+                                  {f.url}
+                                </td>
+                                <td className="px-3 py-2">
+                                  <span
+                                    className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                                      f.freshnessRating === "Fresh"
+                                        ? "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400"
+                                        : f.freshnessRating === "Aging"
+                                          ? "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400"
+                                          : f.freshnessRating === "Stale"
+                                            ? "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400"
+                                            : "bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-400"
+                                    }`}
+                                  >
+                                    {f.freshnessRating}
+                                  </span>
+                                </td>
+                                <td className="px-3 py-2 text-muted-foreground">
+                                  {f.ageInDays != null
+                                    ? `${f.ageInDays}d`
+                                    : "—"}
+                                </td>
+                                <td className="px-3 py-2 text-muted-foreground">
+                                  {f.dateModified ?? f.datePublished ?? "—"}
+                                </td>
+                              </tr>
+                            ),
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
+              {/* Content Ideas / PAA (#880) */}
+              {latestData.contentAnalysis.paaQuestions &&
+                latestData.contentAnalysis.paaQuestions.length > 0 && (
+                  <div>
+                    <h4 className="text-sm font-semibold mb-2">
+                      Content Ideas (People Also Ask)
+                    </h4>
+                    <p className="text-xs text-muted-foreground mb-3">
+                      Questions from Google&apos;s &quot;People Also Ask&quot;
+                      section — use these as content topics or FAQ entries.
+                    </p>
+                    <div className="grid gap-1.5">
+                      {latestData.contentAnalysis.paaQuestions.map(
+                        (q: string, idx: number) => (
+                          <div
+                            key={idx}
+                            className="flex items-center gap-2 rounded-lg border bg-card px-3 py-2 text-xs"
+                          >
+                            <span className="text-muted-foreground shrink-0">
+                              Q:
+                            </span>
+                            <span>{q}</span>
+                          </div>
+                        ),
+                      )}
+                    </div>
+                  </div>
+                )}
             </div>
           ) : (
             <EmptyState message="No content analysis data. Run an audit to check for duplicate and thin content." />
@@ -2542,6 +2745,49 @@ export default function SeoPage() {
                         );
                       })}
                     </div>
+
+                    {/* Lighthouse Optimizations (#875) */}
+                    {cwv.optimizations && cwv.optimizations.length > 0 && (
+                      <div className="mt-3">
+                        <h5 className="text-xs font-semibold mb-1.5">
+                          Optimization Opportunities
+                        </h5>
+                        <div className="space-y-1">
+                          {cwv.optimizations.slice(0, 5).map((opt) => (
+                            <div
+                              key={opt.auditId}
+                              className="flex items-start gap-2 rounded border bg-muted/20 px-2.5 py-1.5"
+                            >
+                              <span
+                                className={`shrink-0 mt-0.5 w-1.5 h-1.5 rounded-full ${
+                                  opt.category === "opportunity"
+                                    ? "bg-orange-500"
+                                    : "bg-blue-500"
+                                }`}
+                              />
+                              <div className="flex-1 min-w-0">
+                                <p className="text-xs font-medium">
+                                  {opt.title}
+                                </p>
+                                {(opt.savingsMs || opt.savingsBytes) && (
+                                  <p className="text-[10px] text-muted-foreground">
+                                    {opt.savingsMs
+                                      ? `Save ~${(opt.savingsMs / 1000).toFixed(1)}s`
+                                      : ""}
+                                    {opt.savingsMs && opt.savingsBytes
+                                      ? " · "
+                                      : ""}
+                                    {opt.savingsBytes
+                                      ? `${(opt.savingsBytes / 1024).toFixed(0)} KB`
+                                      : ""}
+                                  </p>
+                                )}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 );
               })}
@@ -2630,6 +2876,35 @@ export default function SeoPage() {
             ) : (
               <EmptyState message="No audits available yet. Run an audit first to enable export." />
             )}
+          </div>
+        </TabsContent>
+
+        {/* ── Schema Generator (#879) ─────────────────────────── */}
+        <TabsContent value="schema" className="mt-6">
+          <div className="rounded-xl border bg-card p-6">
+            <h3 className="text-sm font-semibold mb-4">
+              Schema Markup Generator
+            </h3>
+            <p className="text-xs text-muted-foreground mb-4">
+              Generate JSON-LD structured data for your pages. Choose a
+              Schema.org type, fill in the fields, and copy the output.
+            </p>
+            <SchemaGeneratorPanel />
+          </div>
+        </TabsContent>
+
+        {/* ── Meta Generator (#878) ───────────────────────────── */}
+        <TabsContent value="meta-gen" className="mt-6">
+          <div className="rounded-xl border bg-card p-6">
+            <h3 className="text-sm font-semibold mb-4">
+              AI Meta Tag Generator
+            </h3>
+            <p className="text-xs text-muted-foreground mb-4">
+              Generate SEO-optimized title and meta description variants using
+              AI. Produces 3 options each with character counts and SERP
+              previews.
+            </p>
+            <MetaGeneratorPanel />
           </div>
         </TabsContent>
       </Tabs>

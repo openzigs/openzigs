@@ -178,6 +178,89 @@ export function calculateAffectedPercentages(
   }));
 }
 
+// ── Social Meta (OG & Twitter Card) Audit (#876) ────────────────────────
+
+const VALID_TWITTER_CARD_TYPES = new Set([
+  "summary",
+  "summary_large_image",
+  "app",
+  "player",
+]);
+
+/**
+ * Audit Open Graph and Twitter Card meta tags for a single page.
+ * Returns issues in the "Social" category.
+ */
+export function auditSocialMeta(content: ExtractedContent): AuditIssue[] {
+  const issues: AuditIssue[] = [];
+  const metaMap = new Map<string, string>();
+
+  for (const tag of content.metaTags) {
+    const key = tag.name.toLowerCase();
+    if (key.startsWith("og:") || key.startsWith("twitter:")) {
+      metaMap.set(key, tag.content);
+    }
+  }
+
+  // Open Graph checks
+  if (!metaMap.has("og:title")) {
+    issues.push({
+      severity: "error",
+      category: "Social",
+      message: "Missing og:title — required for social sharing previews",
+    });
+  }
+  if (!metaMap.has("og:description")) {
+    issues.push({
+      severity: "error",
+      category: "Social",
+      message: "Missing og:description — required for social sharing previews",
+    });
+  }
+  if (!metaMap.has("og:image")) {
+    issues.push({
+      severity: "warning",
+      category: "Social",
+      message: "Missing og:image — social shares will lack a preview image",
+    });
+  }
+  if (!metaMap.has("og:url")) {
+    issues.push({
+      severity: "info",
+      category: "Social",
+      message: "Missing og:url — recommended for canonical social sharing URL",
+    });
+  }
+  if (!metaMap.has("og:type")) {
+    issues.push({
+      severity: "info",
+      category: "Social",
+      message: 'Missing og:type — defaults to "website" but explicit is better',
+    });
+  }
+
+  // Twitter Card checks
+  if (!metaMap.has("twitter:card")) {
+    issues.push({
+      severity: "warning",
+      category: "Social",
+      message:
+        "Missing twitter:card — Twitter will not display a rich card preview",
+    });
+  } else {
+    const cardValue = metaMap.get("twitter:card")!;
+    if (!VALID_TWITTER_CARD_TYPES.has(cardValue)) {
+      issues.push({
+        severity: "warning",
+        category: "Social",
+        message: `Invalid twitter:card value "${cardValue}" — must be one of: summary, summary_large_image, app, player`,
+      });
+    }
+  }
+
+  return issues;
+}
+
 /** Audit a single crawled page for SEO issues. */
 export function auditPage(
   page: CrawlPage,
@@ -384,6 +467,9 @@ export function auditPage(
       }
     }
   }
+
+  // Social meta (Open Graph & Twitter Card) checks (#876)
+  issues.push(...auditSocialMeta(content));
 
   // Meta robots checks (#852)
   if (content.metaRobots) {

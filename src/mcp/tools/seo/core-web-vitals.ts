@@ -21,6 +21,16 @@ export interface CoreWebVitalsMetric {
   rating: CwvRating;
 }
 
+export interface LighthouseOptimization {
+  auditId: string;
+  title: string;
+  description: string;
+  score: number | null;
+  savingsMs: number | null;
+  savingsBytes: number | null;
+  category: "opportunity" | "diagnostic";
+}
+
 export interface CoreWebVitalsResult {
   url: string;
   performanceScore: number;
@@ -29,6 +39,8 @@ export interface CoreWebVitalsResult {
   strategy?: CwvStrategy;
   /** Set when PSI fetch failed or returned no lighthouse data. */
   error?: string;
+  /** Lighthouse optimization opportunities and diagnostics (#875). */
+  optimizations?: LighthouseOptimization[];
 }
 
 // ── Thresholds (Google's official thresholds) ────────────────────────────
@@ -102,8 +114,15 @@ export function getCacheSize(): number {
 
 interface PsiAudit {
   id: string;
+  title?: string;
+  description?: string;
   numericValue?: number;
   score?: number;
+  details?: {
+    type?: string;
+    overallSavingsMs?: number;
+    overallSavingsBytes?: number;
+  };
 }
 
 interface PsiResponse {
@@ -117,6 +136,90 @@ interface PsiResponse {
 }
 
 export type CwvStrategy = "mobile" | "desktop";
+
+// ── Lighthouse Optimization Extraction (#875) ────────────────────────────
+
+/** Audit IDs that represent actionable opportunities with time/byte savings. */
+const OPPORTUNITY_AUDIT_IDS = new Set([
+  "render-blocking-resources",
+  "unused-css-rules",
+  "unused-javascript",
+  "modern-image-formats",
+  "offscreen-images",
+  "uses-optimized-images",
+  "uses-text-compression",
+  "uses-responsive-images",
+  "efficient-animated-content",
+  "duplicated-javascript",
+  "legacy-javascript",
+  "total-byte-weight",
+  "dom-size",
+  "critical-request-chains",
+  "redirects",
+  "server-response-time",
+  "uses-rel-preconnect",
+  "uses-rel-preload",
+  "font-display",
+  "unminified-css",
+  "unminified-javascript",
+  "uses-long-cache-ttl",
+  "third-party-summary",
+  "largest-contentful-paint-element",
+  "layout-shift-elements",
+  "long-tasks",
+  "no-document-write",
+  "uses-passive-event-listeners",
+  "uses-http2",
+  "bootup-time",
+  "mainthread-work-breakdown",
+]);
+
+/**
+ * Extract actionable optimization suggestions from Lighthouse audits.
+ * Filters to audits with savings or score < 1 (room for improvement).
+ */
+export function extractLighthouseOptimizations(
+  audits: Record<string, PsiAudit>,
+): LighthouseOptimization[] {
+  const results: LighthouseOptimization[] = [];
+
+  for (const [id, audit] of Object.entries(audits)) {
+    if (!OPPORTUNITY_AUDIT_IDS.has(id)) continue;
+
+    const score = audit.score ?? null;
+    const savingsMs = audit.details?.overallSavingsMs ?? null;
+    const savingsBytes = audit.details?.overallSavingsBytes ?? null;
+
+    // Only include audits with room for improvement
+    if (score === 1 && savingsMs === null && savingsBytes === null) continue;
+    if (score !== null && score >= 1) continue;
+
+    const isOpportunity =
+      audit.details?.type === "opportunity" ||
+      savingsMs !== null ||
+      savingsBytes !== null;
+
+    results.push({
+      auditId: id,
+      title: audit.title ?? id,
+      description: (audit.description ?? "")
+        .replace(/\[.*?\]\(.*?\)/g, "")
+        .trim(),
+      score,
+      savingsMs: savingsMs !== null ? Math.round(savingsMs) : null,
+      savingsBytes,
+      category: isOpportunity ? "opportunity" : "diagnostic",
+    });
+  }
+
+  // Sort by savings (opportunities first, then by savings descending)
+  results.sort((a, b) => {
+    if (a.category !== b.category) return a.category === "opportunity" ? -1 : 1;
+    return (b.savingsMs ?? 0) - (a.savingsMs ?? 0);
+  });
+
+  return results;
+}
 
 export async function fetchCoreWebVitals(
   url: string,
@@ -178,12 +281,16 @@ export async function fetchCoreWebVitals(
     }
   }
 
+  // Extract Lighthouse optimization opportunities & diagnostics (#875)
+  const optimizations = extractLighthouseOptimizations(audits);
+
   const result: CoreWebVitalsResult = {
     url,
     performanceScore: perfScore,
     metrics,
     fetchedAt: new Date().toISOString(),
     strategy,
+    optimizations,
   };
 
   setCachedResult(cacheKey, result);

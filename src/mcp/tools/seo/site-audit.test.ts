@@ -63,6 +63,14 @@ describe("auditPage", () => {
     const page = makePage();
     const content = makeContent({
       schemaMarkup: [{ type: "WebPage", properties: ["name"] }],
+      metaTags: [
+        { name: "og:title", content: "Test Page" },
+        { name: "og:description", content: "A well-optimized test page." },
+        { name: "og:image", content: "https://example.com/image.jpg" },
+        { name: "og:url", content: "https://example.com/" },
+        { name: "og:type", content: "website" },
+        { name: "twitter:card", content: "summary_large_image" },
+      ],
     });
     const result = auditPage(page, content);
     expect(result.url).toBe("https://example.com/");
