@@ -1102,14 +1102,22 @@ def _relocate_adapter(character_id: str, search_dir: str) -> Optional[str]:
     the user-supplied `search_dir` argument. The original `search_dir` is only
     used for an equality comparison against entries discovered via os.walk().
     """
-    training_root = os.path.realpath(_TRAINING_BASE_DIR)
-    if not os.path.isdir(training_root):
+    # search_dir argument is intentionally ignored - we re-derive the search
+    # subtree from the validated character_id so no user-tainted path reaches a
+    # filesystem sink.
+    del search_dir
+    if (
+        not character_id
+        or os.sep in character_id
+        or "/" in character_id
+        or "\\" in character_id
+        or ".." in character_id
+    ):
         return None
-    target_search = os.path.realpath(search_dir) if search_dir else ""
-    for actual_root, _dirs, files in os.walk(training_root):
-        # Only operate inside the originally requested character subtree.
-        if target_search and actual_root != target_search and not actual_root.startswith(target_search + os.sep):
-            continue
+    char_root = os.path.realpath(safe_join(_TRAINING_BASE_DIR, character_id))
+    if not os.path.isdir(char_root):
+        return None
+    for actual_root, _dirs, files in os.walk(char_root):
         for f in files:
             if f.endswith(".safetensors") and "adapter" in f.lower():
                 src = os.path.join(actual_root, f)
