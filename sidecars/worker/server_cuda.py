@@ -916,6 +916,20 @@ async def list_models():
     }
 
 
+@app.post("/unload", dependencies=[Depends(verify_token)])
+async def unload():
+    """Unload the current model and free VRAM.
+    Used by QueueMaster for cross-sidecar VRAM coordination
+    (e.g., LTX worker ↔ LatentSync lipsync handoff).
+    """
+    if state.is_busy:
+        raise HTTPException(status_code=409, detail="Worker is busy, cannot unload")
+    prev = state.loaded_model
+    unload_model()
+    state.loaded_model = None
+    return {"status": "unloaded", "previous_model": prev}
+
+
 @app.post("/generate", status_code=202, dependencies=[Depends(verify_token)])
 async def generate(request: GenerateRequest):
     if state.is_busy:

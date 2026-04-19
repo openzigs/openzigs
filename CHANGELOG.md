@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **CUDA worker `/unload` route restored** (`sidecars/worker/server_cuda.py`): The CUDA worker had `unload_model()` defined internally but no HTTP route exposed it, so `QueueMaster.unloadNode("worker")` was hitting `404 Not Found` and silently failing memory coordination during LTX ↔ LatentSync handoffs on shared-VRAM hosts. Added `POST /unload` (token-gated, 409 if busy) matching the original `server.py` contract used by FluxQ and the M2 Pro worker.
+
 ### Added
 
 - **Multi-GPU Awareness & Tiered Model Selection** (Epic #883):
