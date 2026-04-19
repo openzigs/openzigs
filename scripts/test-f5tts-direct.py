@@ -10,7 +10,8 @@ GEN_TEXT = "Good morning everyone, and welcome to today's presentation on artifi
 ref_audio = REF_AUDIO.replace("C:\\", "/mnt/c/").replace("\\", "/")
 
 # Convert to 24kHz mono WAV
-tmp_wav = tempfile.mktemp(suffix=".wav")
+fd, tmp_wav = tempfile.mkstemp(suffix=".wav")
+os.close(fd)
 subprocess.run(["ffmpeg", "-y", "-i", ref_audio, "-ar", "24000", "-ac", "1", "-t", "15", "-c:a", "pcm_s16le", tmp_wav],
                capture_output=True, check=True)
 print(f"Converted reference audio to: {tmp_wav}")

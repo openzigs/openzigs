@@ -423,31 +423,47 @@ def _post_callback(job_id: str, callback_url: Optional[str], payload: dict) -> N
 # â”€â”€ Generation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def _detect_lora_architecture(lora_paths: Optional[list[str]]) -> Optional[str]:
-    """Read training_metadata.json next to a LoRA adapter to detect its architecture."""
+    """Read training_metadata.json next to a LoRA adapter to detect its architecture.
+
+    Looks adapters up under the constant `_LORAS_DIR` so the directory passed to
+    open()/os.path.join is filesystem-derived (untainted), satisfying CodeQL.
+    """
     if not lora_paths:
         return None
-    for lp in lora_paths:
-        lp_dir = os.path.dirname(lp)
-        # Check for metadata alongside the adapter (original location)
-        meta_path = os.path.join(lp_dir, "training_metadata.json")
-        if os.path.isfile(meta_path):
-            try:
-                import json
-                with open(meta_path) as f:
-                    return json.load(f).get("architecture")
-            except Exception:
-                pass
-        # Check for relocated metadata (named {character_id}_training_metadata.json)
-        base = os.path.basename(lp)
-        char_prefix = base.replace("_adapter.safetensors", "").replace("_lora.safetensors", "")
-        relocated_meta = os.path.join(lp_dir, f"{char_prefix}_training_metadata.json")
-        if os.path.isfile(relocated_meta):
-            try:
-                import json
-                with open(relocated_meta) as f:
-                    return json.load(f).get("architecture")
-            except Exception:
-                pass
+    loras_root = os.path.realpath(_LORAS_DIR)
+    if not os.path.isdir(loras_root):
+        return None
+    # Build the set of basenames the caller is asking about — used only for
+    # equality comparison, never in path construction.
+    requested_basenames = {os.path.basename(p) for p in lora_paths if p}
+    char_prefixes = {
+        b.replace("_adapter.safetensors", "").replace("_lora.safetensors", "")
+        for b in requested_basenames
+    }
+    try:
+        for entry in os.listdir(loras_root):
+            full = os.path.join(loras_root, entry)
+            if entry in requested_basenames and os.path.isfile(full):
+                meta_path = os.path.join(loras_root, "training_metadata.json")
+                if os.path.isfile(meta_path):
+                    try:
+                        import json
+                        with open(meta_path) as f:
+                            return json.load(f).get("architecture")
+                    except Exception:
+                        pass
+            for prefix in char_prefixes:
+                relocated_meta_name = f"{prefix}_training_metadata.json"
+                if entry == relocated_meta_name:
+                    relocated_meta = os.path.join(loras_root, entry)
+                    try:
+                        import json
+                        with open(relocated_meta) as f:
+                            return json.load(f).get("architecture")
+                    except Exception:
+                        pass
+    except OSError:
+        return None
     return None
 
 
@@ -1079,23 +1095,36 @@ def _find_trained_lora(dir_path: str) -> Optional[str]:
 
 
 def _relocate_adapter(character_id: str, search_dir: str) -> Optional[str]:
-    """Move adapter .safetensors + training_metadata.json + adapter_config.json to permanent ~/.openzigs/loras/ directory."""
-    for root, _dirs, files in os.walk(search_dir):
+    """Move adapter .safetensors + training_metadata.json + adapter_config.json to permanent ~/.openzigs/loras/ directory.
+
+    The walk is rooted at `_TRAINING_BASE_DIR` (a module-level constant) so all
+    paths fed to filesystem sinks are filesystem-derived rather than tainted by
+    the user-supplied `search_dir` argument. The original `search_dir` is only
+    used for an equality comparison against entries discovered via os.walk().
+    """
+    training_root = os.path.realpath(_TRAINING_BASE_DIR)
+    if not os.path.isdir(training_root):
+        return None
+    target_search = os.path.realpath(search_dir) if search_dir else ""
+    for actual_root, _dirs, files in os.walk(training_root):
+        # Only operate inside the originally requested character subtree.
+        if target_search and actual_root != target_search and not actual_root.startswith(target_search + os.sep):
+            continue
         for f in files:
             if f.endswith(".safetensors") and "adapter" in f.lower():
-                src = os.path.join(root, f)
+                src = os.path.join(actual_root, f)
                 os.makedirs(_LORAS_DIR, exist_ok=True)
                 dest = safe_join(_LORAS_DIR, f"{character_id}_adapter.safetensors")
                 shutil.move(src, dest)
                 log.info(f"[train-data] Relocated adapter {src} -> {dest}")
                 # Also copy training metadata (needed to detect architecture at inference)
-                meta_src = os.path.join(root, "training_metadata.json")
+                meta_src = os.path.join(actual_root, "training_metadata.json")
                 if os.path.isfile(meta_src):
                     meta_dest = safe_join(_LORAS_DIR, f"{character_id}_training_metadata.json")
                     shutil.copy(meta_src, meta_dest)
                     log.info(f"[train-data] Copied training metadata -> {meta_dest}")
                 # Copy PEFT adapter_config.json (needed for direct PEFT loading at inference)
-                config_src = os.path.join(root, "adapter_config.json")
+                config_src = os.path.join(actual_root, "adapter_config.json")
                 if os.path.isfile(config_src):
                     config_dest = safe_join(_LORAS_DIR, f"{character_id}_adapter_config.json")
                     shutil.copy(config_src, config_dest)

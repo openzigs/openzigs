@@ -527,25 +527,36 @@ async def _synthesize_tts_with_voice_clone(req: TTSRequest) -> Response:
     """Synthesize via /tts when ref_audio_path is present (Engine C shortcut)."""
     global _f5tts_last_used
 
-    # Sanitize the user-supplied ref_audio_path by splitting into dir + basename
-    # and re-deriving the path via os.listdir(), which breaks CodeQL's taint chain.
-    user_dir = os.path.realpath(os.path.dirname(req.ref_audio_path or ""))  # type: ignore[arg-type]
-    user_basename = os.path.basename(req.ref_audio_path or "")  # type: ignore[arg-type]
-    allowed_dirs = [
-        os.path.realpath(tempfile.gettempdir()),
-        os.path.realpath(str(Path.home() / ".openzigs")),
-    ]
-    if not any(user_dir == d or user_dir.startswith(d + os.sep) for d in allowed_dirs):
+    # Look the file up under a fixed allowlist of roots (matches the lipsync
+    # sidecar pattern). The directory passed to os.listdir() must be a constant
+    # so that CodeQL's taint flow does NOT reach any filesystem sink.
+    requested_basename = os.path.basename(req.ref_audio_path or "")
+    if (
+        not requested_basename
+        or requested_basename in (".", "..")
+        or "/" in requested_basename
+        or "\\" in requested_basename
+    ):
         raise HTTPException(status_code=400, detail="Invalid ref_audio_path")
-    # Lookup via os.listdir() so the path component used downstream is filesystem-derived.
+
+    allowed_roots = [
+        os.path.realpath(str(Path.home() / ".openzigs")),
+        os.path.realpath(tempfile.gettempdir()),
+    ]
     ref_path: Optional[str] = None
-    try:
-        for entry in os.listdir(user_dir):
-            if entry == user_basename:
-                ref_path = os.path.join(user_dir, entry)
+    for root in allowed_roots:
+        if not os.path.isdir(root):
+            continue
+        for dirpath, _dirs, filenames in os.walk(root):
+            for entry in filenames:
+                # entry comes from os.walk(root) where root is constant — untainted.
+                if entry == requested_basename:
+                    ref_path = os.path.join(dirpath, entry)
+                    break
+            if ref_path is not None:
                 break
-    except OSError:
-        ref_path = None
+        if ref_path is not None:
+            break
     if ref_path is None or not os.path.isfile(ref_path):
         raise HTTPException(status_code=400, detail="ref_audio_path file not found")
 
