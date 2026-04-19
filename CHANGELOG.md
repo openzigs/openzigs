@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **Optional model parallelism flag** (#886): Documented `LTX_DEVICE_MAP=balanced` / `FLUX_DEVICE_MAP=balanced` env vars (default OFF) for opting into accelerate's multi-GPU sharding on hosts with ≥ 2 cards. Trade-off documented in `docs/MULTI_GPU.md`.
   - **GPU stress-test harness** (#887): New `scripts/gpu-stress-test.py` (and PowerShell wrapper `scripts/gpu-stress-test.ps1`) runs concurrent jobs across image-gen, video, audio, and lipsync sidecars while sampling `nvidia-smi`. Emits markdown reports to `~/.openzigs/stress-tests/<timestamp>-<scenario>.md` with per-GPU peak VRAM, per-job wall times, and OOM counts. Scenarios: `smoke`, `full`, `oom`.
   - **Multi-GPU documentation** (`docs/MULTI_GPU.md`): Hardware reality check, override reference, and tier table.
+  - **vLLM dual-GPU reference** (#888): `examples/multi-gpu/vllm-dual-gpu.py` (TP=2 launcher with NCCL/PyTorch tuning for PCIe-only consumer cards) and `examples/multi-gpu/vllm-client.ts` (async client with single-flight queue + `VllmBackpressureError` to prevent VRAM→system-RAM spillover). Outlined as reference; integration tracked in #888.
 
 - **LatentSync Lip Sync Sidecar** (#797):
   - **Lip Sync Sidecar Servers** (#798): FastAPI servers for MPS (port 5008, FP32) and CUDA (port 5010, FP16) with `/generate`, `/health`, `/unload-model`, `/model-status` endpoints
