@@ -756,7 +756,10 @@ const readJsonFile = async (
 ): Promise<Record<string, unknown> | null> => {
   try {
     const raw = await fs.readFile(filePath, "utf-8");
-    return JSON.parse(raw) as Record<string, unknown>;
+    // Strip UTF-8 BOM if present (e.g. when config was edited by Windows tools
+    // such as PowerShell 5.1's Set-Content/Out-File which prepend EF BB BF).
+    const stripped = raw.charCodeAt(0) === 0xfeff ? raw.slice(1) : raw;
+    return JSON.parse(stripped) as Record<string, unknown>;
   } catch (error) {
     if (
       error instanceof Error &&
