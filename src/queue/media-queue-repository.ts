@@ -59,7 +59,7 @@ export class MediaQueueRepository {
         id TEXT PRIMARY KEY,
         type TEXT NOT NULL CHECK(type IN ('txt2img','img2img','txt2video','img2video','tts','txt2music')),
         required_model TEXT NOT NULL,
-        target_node TEXT NOT NULL CHECK(target_node IN ('mac-mini','m2-pro','local')),
+        target_node TEXT NOT NULL CHECK(target_node IN ('image-gen','m2-pro','local')),
         payload TEXT NOT NULL,
         status TEXT NOT NULL DEFAULT 'pending'
           CHECK(status IN ('pending','dispatched','processing','complete','failed')),
@@ -108,7 +108,7 @@ export class MediaQueueRepository {
           id TEXT PRIMARY KEY,
           type TEXT NOT NULL CHECK(type IN ('txt2img','img2img','txt2video','img2video','tts','txt2music','voice2voice','remix_analyze','remix_replace','remix_master')),
           required_model TEXT NOT NULL,
-          target_node TEXT NOT NULL CHECK(target_node IN ('mac-mini','m2-pro','local')),
+          target_node TEXT NOT NULL CHECK(target_node IN ('image-gen','m2-pro','local')),
           payload TEXT NOT NULL,
           status TEXT NOT NULL DEFAULT 'pending'
             CHECK(status IN ('pending','dispatched','processing','complete','failed')),
@@ -163,7 +163,7 @@ export class MediaQueueRepository {
           id TEXT PRIMARY KEY,
           type TEXT NOT NULL CHECK(type IN ('txt2img','img2img','txt2video','img2video','tts','txt2music','voice2voice','remix_analyze','remix_replace','remix_master')),
           required_model TEXT NOT NULL,
-          target_node TEXT NOT NULL CHECK(target_node IN ('mac-mini','m2-pro','local')),
+          target_node TEXT NOT NULL CHECK(target_node IN ('image-gen','m2-pro','local')),
           payload TEXT NOT NULL,
           status TEXT NOT NULL DEFAULT 'pending'
             CHECK(status IN ('pending','dispatched','processing','complete','failed')),
@@ -218,7 +218,7 @@ export class MediaQueueRepository {
           id TEXT PRIMARY KEY,
           type TEXT NOT NULL CHECK(type IN ('txt2img','img2img','txt2video','img2video','tts','txt2music','voice2voice','remix_analyze','remix_replace','remix_master')),
           required_model TEXT NOT NULL,
-          target_node TEXT NOT NULL CHECK(target_node IN ('mac-mini','m2-pro','local')),
+          target_node TEXT NOT NULL CHECK(target_node IN ('image-gen','m2-pro','local')),
           payload TEXT NOT NULL,
           status TEXT NOT NULL DEFAULT 'pending'
             CHECK(status IN ('pending','dispatched','processing','complete','failed')),
@@ -273,7 +273,7 @@ export class MediaQueueRepository {
           id TEXT PRIMARY KEY,
           type TEXT NOT NULL CHECK(type IN ('txt2img','img2img','txt2video','img2video','tts','txt2music','voice2voice','remix_analyze','remix_replace','remix_master','lipsync')),
           required_model TEXT NOT NULL,
-          target_node TEXT NOT NULL CHECK(target_node IN ('mac-mini','m2-pro','local')),
+          target_node TEXT NOT NULL CHECK(target_node IN ('image-gen','m2-pro','local')),
           payload TEXT NOT NULL,
           status TEXT NOT NULL DEFAULT 'pending'
             CHECK(status IN ('pending','dispatched','processing','complete','failed')),
@@ -296,7 +296,123 @@ export class MediaQueueRepository {
           priority, retries, max_retries, error, retry_after,
           created_at, dispatched_at, completed_at
         ) SELECT
+          id, type, required_model,
+          CASE target_node WHEN 'mac-mini' THEN 'image-gen' ELSE target_node END,
+          payload, status,
+          result_url, result_metadata, project_id, gallery_asset_id,
+          priority, retries, max_retries, error, retry_after,
+          created_at, dispatched_at, completed_at
+        FROM media_jobs_old;
+        DROP TABLE media_jobs_old;
+        CREATE INDEX IF NOT EXISTS idx_media_jobs_status ON media_jobs(status);
+        CREATE INDEX IF NOT EXISTS idx_media_jobs_target ON media_jobs(target_node, status);
+        CREATE INDEX IF NOT EXISTS idx_media_jobs_project ON media_jobs(project_id);
+        COMMIT;
+      `);
+    }
+
+    // ── media_jobs CHECK constraint migration: add 'sadtalker' ──
+    const needsSadTalkerRebuild = (() => {
+      const row = this.db
+        .prepare(
+          "SELECT sql FROM sqlite_master WHERE type='table' AND name='media_jobs'",
+        )
+        .get() as { sql: string } | undefined;
+      if (!row) return false;
+      return !row.sql.includes("'sadtalker'");
+    })();
+
+    if (needsSadTalkerRebuild) {
+      this.db.exec(`
+        BEGIN;
+        ALTER TABLE media_jobs RENAME TO media_jobs_old;
+        CREATE TABLE media_jobs (
+          id TEXT PRIMARY KEY,
+          type TEXT NOT NULL CHECK(type IN ('txt2img','img2img','txt2video','img2video','tts','txt2music','voice2voice','remix_analyze','remix_replace','remix_master','lipsync','sadtalker')),
+          required_model TEXT NOT NULL,
+          target_node TEXT NOT NULL CHECK(target_node IN ('image-gen','m2-pro','local')),
+          payload TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'pending'
+            CHECK(status IN ('pending','dispatched','processing','complete','failed')),
+          result_url TEXT,
+          result_metadata TEXT,
+          project_id TEXT,
+          gallery_asset_id TEXT,
+          priority INTEGER NOT NULL DEFAULT 0,
+          retries INTEGER NOT NULL DEFAULT 0,
+          max_retries INTEGER NOT NULL DEFAULT 3,
+          error TEXT,
+          retry_after TEXT,
+          created_at TEXT NOT NULL,
+          dispatched_at TEXT,
+          completed_at TEXT
+        );
+        INSERT INTO media_jobs (
           id, type, required_model, target_node, payload, status,
+          result_url, result_metadata, project_id, gallery_asset_id,
+          priority, retries, max_retries, error, retry_after,
+          created_at, dispatched_at, completed_at
+        ) SELECT
+          id, type, required_model,
+          CASE target_node WHEN 'mac-mini' THEN 'image-gen' ELSE target_node END,
+          payload, status,
+          result_url, result_metadata, project_id, gallery_asset_id,
+          priority, retries, max_retries, error, retry_after,
+          created_at, dispatched_at, completed_at
+        FROM media_jobs_old;
+        DROP TABLE media_jobs_old;
+        CREATE INDEX IF NOT EXISTS idx_media_jobs_status ON media_jobs(status);
+        CREATE INDEX IF NOT EXISTS idx_media_jobs_target ON media_jobs(target_node, status);
+        CREATE INDEX IF NOT EXISTS idx_media_jobs_project ON media_jobs(project_id);
+        COMMIT;
+      `);
+    }
+
+    // ── media_jobs target_node migration: 'mac-mini' → 'image-gen' ──
+    const needsImageGenRebuild = (() => {
+      const row = this.db
+        .prepare(
+          "SELECT sql FROM sqlite_master WHERE type='table' AND name='media_jobs'",
+        )
+        .get() as { sql: string } | undefined;
+      if (!row) return false;
+      return row.sql.includes("'mac-mini'");
+    })();
+
+    if (needsImageGenRebuild) {
+      this.db.exec(`
+        BEGIN;
+        ALTER TABLE media_jobs RENAME TO media_jobs_old;
+        CREATE TABLE media_jobs (
+          id TEXT PRIMARY KEY,
+          type TEXT NOT NULL CHECK(type IN ('txt2img','img2img','txt2video','img2video','tts','txt2music','voice2voice','remix_analyze','remix_replace','remix_master','lipsync','sadtalker')),
+          required_model TEXT NOT NULL,
+          target_node TEXT NOT NULL CHECK(target_node IN ('image-gen','m2-pro','local')),
+          payload TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'pending'
+            CHECK(status IN ('pending','dispatched','processing','complete','failed')),
+          result_url TEXT,
+          result_metadata TEXT,
+          project_id TEXT,
+          gallery_asset_id TEXT,
+          priority INTEGER NOT NULL DEFAULT 0,
+          retries INTEGER NOT NULL DEFAULT 0,
+          max_retries INTEGER NOT NULL DEFAULT 3,
+          error TEXT,
+          retry_after TEXT,
+          created_at TEXT NOT NULL,
+          dispatched_at TEXT,
+          completed_at TEXT
+        );
+        INSERT INTO media_jobs (
+          id, type, required_model, target_node, payload, status,
+          result_url, result_metadata, project_id, gallery_asset_id,
+          priority, retries, max_retries, error, retry_after,
+          created_at, dispatched_at, completed_at
+        ) SELECT
+          id, type, required_model,
+          CASE target_node WHEN 'mac-mini' THEN 'image-gen' ELSE target_node END,
+          payload, status,
           result_url, result_metadata, project_id, gallery_asset_id,
           priority, retries, max_retries, error, retry_after,
           created_at, dispatched_at, completed_at
@@ -521,6 +637,15 @@ export class MediaQueueRepository {
       .run(now, id);
   }
 
+  /** Reset a dispatched job back to pending without consuming a retry. */
+  resetToPending(id: string): void {
+    this.db
+      .prepare(
+        "UPDATE media_jobs SET status = 'pending' WHERE id = ? AND status = 'dispatched'",
+      )
+      .run(id);
+  }
+
   markProcessing(id: string): void {
     this.db
       .prepare("UPDATE media_jobs SET status = 'processing' WHERE id = ?")
@@ -608,6 +733,10 @@ export class MediaQueueRepository {
     if (opts.status) {
       sql += " AND status = ?";
       params.push(opts.status);
+      if (opts.status === "pending") {
+        sql += " AND (retry_after IS NULL OR retry_after <= ?)";
+        params.push(new Date().toISOString());
+      }
     }
     if (opts.type) {
       sql += " AND type = ?";

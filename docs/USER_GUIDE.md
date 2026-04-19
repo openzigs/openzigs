@@ -262,7 +262,7 @@ The backend API starts at **http://localhost:3000** and the Next.js UI at **http
 
 ## Windows Installation
 
-OpenZigs runs on Windows via native Node.js. The AI sidecars (Audio STT/TTS, Image Generation, Music, Video) require Apple Silicon and are not available on Windows, but all core features (chat, tools, tasks, scheduler, knowledge manager, etc.) work identically.
+OpenZigs runs on Windows via native Node.js. AI sidecars (Audio, Image, Music, Video, LipSync) run in WSL2 Ubuntu with CUDA GPU acceleration. On machines without an NVIDIA GPU, all core features (chat, tools, tasks, scheduler, knowledge manager, etc.) still work — only media generation is unavailable. See [Windows Sidecar Management](#windows-sidecar-management-wslcuda) for setup.
 
 ### Quick Install (PowerShell)
 
@@ -357,36 +357,71 @@ pnpm dev
 
 ### Windows Feature Availability
 
-The following table shows what features are available on Windows:
+The following table shows what features are available on Windows. With WSL2 + CUDA sidecars,
+all AI media features are now available on Windows machines with NVIDIA GPUs.
 
-| Feature | Windows | macOS (Apple Silicon) | Notes |
-|---------|---------|----------------------|-------|
-| **Core Chat & AI** | ✅ | ✅ | Full Copilot SDK support |
-| **MCP Tools** | ✅ | ✅ | All built-in tools work |
-| **Task Engine** | ✅ | ✅ | Background tasks, pipelines |
-| **Scheduler** | ✅ | ✅ | Cron-based job scheduling |
-| **Web UI** | ✅ | ✅ | Full Next.js UI |
-| **Telegram Channel** | ✅ | ✅ | Bot integration |
-| **Discord Channel** | ✅ | ✅ | Bot integration |
-| **Chrome DevTools** | ✅ | ✅ | Browser automation |
-| **Knowledge Manager** | ✅ | ✅ | Document ingestion, RAG |
-| **Social Brain** | ✅ | ✅ | Social inbox, CRM |
-| **Sentinel Monitor** | ✅ | ✅ | Autonomous SRE |
-| **Workbench Editor** | ✅ | ✅ | Rich Markdown editing |
-| **Prompt Library** | ✅ | ✅ | Saved templates |
-| **Web Search** | ✅ | ✅ | Brave Search API |
-| **Docker Deployment** | ⚠️ | ⚠️ | Experimental, not fully tested |
-| **Audio STT (Whisper MLX)** | ❌ | ✅ | Requires Apple Silicon |
-| **Audio TTS (Kokoro)** | ❌ | ✅ | Requires Apple Silicon |
-| **Image Generation (MFLUX)** | ❌ | ✅ | Requires Apple Silicon |
-| **Music Generation (ACE-Step)** | ❌ | ✅ | Requires Apple Silicon |
-| **Music Studio (Demucs/Seed-VC)** | ❌ | ✅ | Requires Apple Silicon |
-| **Video Generation (LTX)** | ❌ | ✅ | Requires Apple Silicon; supports audio+video joint generation |
-| **Voice Cloning (GPT-SoVITS)** | ❌ | ✅ | Requires Apple Silicon |
-| **Director Mode (Video)** | ⚠️ | ✅ | Render requires sidecars |
-| **Gallery (Media Creation)** | ⚠️ | ✅ | Generation requires sidecars |
+| Feature | Windows (native) | Windows (WSL+CUDA) | macOS (Apple Silicon) | Notes |
+|---------|:-:|:-:|:-:|-------|
+| **Core Chat & AI** | ✅ | ✅ | ✅ | Full Copilot SDK support |
+| **MCP Tools** | ✅ | ✅ | ✅ | All built-in tools work |
+| **Task Engine** | ✅ | ✅ | ✅ | Background tasks, pipelines |
+| **Scheduler** | ✅ | ✅ | ✅ | Cron-based job scheduling |
+| **Web UI** | ✅ | ✅ | ✅ | Full Next.js UI |
+| **Telegram Channel** | ✅ | ✅ | ✅ | Bot integration |
+| **Discord Channel** | ✅ | ✅ | ✅ | Bot integration |
+| **Chrome DevTools** | ✅ | ✅ | ✅ | Browser automation |
+| **Knowledge Manager** | ✅ | ✅ | ✅ | Document ingestion, RAG |
+| **Social Brain** | ✅ | ✅ | ✅ | Social inbox, CRM |
+| **Sentinel Monitor** | ✅ | ✅ | ✅ | Autonomous SRE |
+| **Workbench Editor** | ✅ | ✅ | ✅ | Rich Markdown editing |
+| **Prompt Library** | ✅ | ✅ | ✅ | Saved templates |
+| **Web Search** | ✅ | ✅ | ✅ | Brave Search API |
+| **Audio STT (Whisper)** | ❌ | ✅ | ✅ | WSL CUDA sidecar port 5006 |
+| **Audio TTS (Kokoro/F5-TTS)** | ❌ | ✅ | ✅ | WSL CUDA sidecar port 5006 |
+| **Image Generation (Flux)** | ❌ | ✅ | ✅ | WSL CUDA sidecar port 5005 |
+| **Image Processing (upscale/rembg)** | ❌ | ✅ | ✅ | WSL CUDA sidecar port 5008 |
+| **Music Generation (ACE-Step)** | ❌ | ✅ | ✅ | WSL CUDA sidecar port 5009 |
+| **Music Studio (Demucs/Seed-VC)** | ❌ | ✅ | ✅ | WSL CUDA sidecar port 5010 |
+| **Video Generation (LTX)** | ❌ | ✅ | ✅ | WSL CUDA sidecar port 5007 |
+| **Lip Sync (LatentSync)** | ❌ | ✅ | ✅ | WSL CUDA sidecar port 5010 |
+| **Voice Cloning (F5-TTS)** | ❌ | ✅ | ✅ | Part of audio sidecar |
+| **Director Mode (Video)** | ⚠️ | ✅ | ✅ | Render requires sidecars |
+| **Gallery (Media Creation)** | ⚠️ | ✅ | ✅ | Generation requires sidecars |
 
 **Legend**: ✅ Full support | ⚠️ Partial (UI works, generation unavailable) | ❌ Not available
+
+> **Note**: LipSync and Music Studio share port 5010 — only one can run at a time.
+> Use `media-ctl.ps1` to switch between them.
+
+### Windows Sidecar Management (WSL+CUDA)
+
+If you have an NVIDIA GPU and WSL2 Ubuntu, you can run all AI sidecars via the `media-ctl.ps1` script:
+
+```powershell
+# Check status of all sidecars
+.\scripts\media-ctl.ps1 status
+
+# Individual sidecar control
+.\scripts\media-ctl.ps1 flux status          # FluxQ image gen (port 5005)
+.\scripts\media-ctl.ps1 audio restart        # Kokoro/F5-TTS (port 5006)
+.\scripts\media-ctl.ps1 ltx logs             # LTX video gen (port 5007)
+.\scripts\media-ctl.ps1 imgproc health       # Image processing (port 5008)
+.\scripts\media-ctl.ps1 music restart        # ACE-Step music (port 5009)
+.\scripts\media-ctl.ps1 lipsync restart      # LatentSync (port 5010)
+.\scripts\media-ctl.ps1 studio restart       # Music Studio (port 5010, replaces lipsync)
+
+# Bulk operations
+.\scripts\media-ctl.ps1 restart-all          # Restart all sidecars
+.\scripts\media-ctl.ps1 stop-all             # Stop all sidecars
+.\scripts\media-ctl.ps1 sync-all             # Sync code from repo to WSL deploy dir
+
+# Code sync (after editing sidecar code)
+.\scripts\media-ctl.ps1 audio sync           # rsync audio sidecar to WSL
+.\scripts\media-ctl.ps1 audio restart        # restart with new code
+```
+
+Available services: `flux`, `audio`, `ltx`, `imgproc`, `music`, `lipsync`, `studio`
+Available actions: `logs`, `status`, `health`, `restart`, `stop`, `sync`, `generate`
 
 ### Windows-Specific Notes
 

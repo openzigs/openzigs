@@ -126,6 +126,59 @@ deactivate
 cp "$REPO_SIDECARS/music/server.py" "$MUS_DIR/server.py"
 echo "Music sidecar setup complete."
 
+# ── SadTalker (Talking Head) ─────────────────────────────────
+echo ""
+echo "=== Setting up SadTalker (Talking Head) on port 5011 ==="
+SAD_DIR="$SIDECARS_DIR/sadtalker"
+mkdir -p "$SAD_DIR"
+
+# Clone SadTalker repo for model code
+SADTALKER_MODEL_DIR="$HOME/.openzigs/models/SadTalker"
+if [ ! -d "$SADTALKER_MODEL_DIR" ]; then
+    echo "Cloning SadTalker repo..."
+    git clone --depth 1 https://github.com/OpenTalker/SadTalker.git "$SADTALKER_MODEL_DIR"
+else
+    echo "SadTalker repo already present at $SADTALKER_MODEL_DIR"
+fi
+
+# Download checkpoints if not present
+if [ ! -d "$SADTALKER_MODEL_DIR/checkpoints" ] || [ -z "$(ls -A "$SADTALKER_MODEL_DIR/checkpoints" 2>/dev/null)" ]; then
+    echo "Downloading SadTalker checkpoints..."
+    cd "$SADTALKER_MODEL_DIR" && bash scripts/download_models.sh && cd -
+else
+    echo "SadTalker checkpoints already present."
+fi
+
+# Download GFPGAN weights for face enhancement
+GFPGAN_DIR="$SADTALKER_MODEL_DIR/gfpgan/weights"
+if [ ! -f "$GFPGAN_DIR/GFPGANv1.4.pth" ]; then
+    echo "Downloading GFPGAN weights..."
+    mkdir -p "$GFPGAN_DIR"
+    wget -q -O "$GFPGAN_DIR/GFPGANv1.4.pth" \
+        "https://github.com/TencentARC/GFPGAN/releases/download/v1.3.0/GFPGANv1.4.pth"
+else
+    echo "GFPGAN weights already present."
+fi
+
+if [ ! -d "$SAD_DIR/venv" ]; then
+    python3 -m venv "$SAD_DIR/venv"
+fi
+source "$SAD_DIR/venv/bin/activate"
+pip install --upgrade pip -q
+pip install torch torchvision torchaudio --index-url "$TORCH_INDEX" -q
+pip install -r "$REPO_SIDECARS/sadtalker/requirements-cuda.txt" -q
+
+# Install dlib (may need cmake)
+if ! python3 -c "import dlib" 2>/dev/null; then
+    echo "Installing dlib (this may take a few minutes)..."
+    pip install cmake -q
+    pip install dlib -q
+fi
+deactivate
+
+cp "$REPO_SIDECARS/sadtalker/server_cuda.py" "$SAD_DIR/server.py"
+echo "SadTalker setup complete."
+
 # ── Summary ─────────────────────────────────────────────────
 echo ""
 echo "=== Setup Complete ==="
@@ -137,3 +190,4 @@ echo "  Audio (STT/TTS):    http://localhost:5006"
 echo "  Video Worker (LTX): http://localhost:5007"
 echo "  Music (ACE-Step):   http://localhost:5009"
 echo "  Lip Sync:           http://localhost:5010"
+echo "  SadTalker:          http://localhost:5011"

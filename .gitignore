@@ -142,3 +142,13 @@ docs/research/
 # Agent hook runtime logs (auto-generated, not versioned)
 .github/hooks/logs/*.log
 external/firecrawl/
+
+# Runtime process logs
+nohup.out
+
+# Throwaway tmp-prefixed scripts (auto-generated during debugging)
+tmp-*
+
+# Pinterest / scheduler generated output (runtime data, not source)
+pinterest-daily-summary-*.md
+pinterest-pin-snapshots-*.json

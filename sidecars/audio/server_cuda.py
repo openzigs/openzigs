@@ -112,9 +112,10 @@ _f5tts_model: Any = None
 _f5tts_loaded: bool = False
 _f5tts_loading: bool = False
 _f5tts_last_used: float = 0.0
+_f5tts_lock: asyncio.Lock = asyncio.Lock()   # serialize CUDA inference — concurrent calls crash
 F5TTS_SAMPLE_RATE = 24000
 F5TTS_MAX_REF_AUDIO_SECONDS = 15.0
-DEFAULT_F5TTS_MODEL = "F5TTS"   # downloads SWivid/F5-TTS-v2 from HuggingFace automatically
+DEFAULT_F5TTS_MODEL = "F5TTS_v1_Base"   # downloads SWivid/F5-TTS from HuggingFace automatically
 _F5TTS_MIN_WPS = 2.0            # words/sec floor (conservative narration pace)
 _F5TTS_PAD_SEC = 1.0            # padding seconds for max-duration estimate
 
@@ -126,6 +127,9 @@ def _ensure_torch():
     if torch is None:
         import torch as _torch
         torch = _torch
+        # Enable cuDNN autotuner — picks fastest convolution algorithm for fixed input sizes
+        if _torch.cuda.is_available():
+            _torch.backends.cudnn.benchmark = True
 
 
 def _load_stt() -> float:
@@ -204,7 +208,7 @@ def _load_f5tts() -> float:
         log.info(f"Loading F5-TTS model '{DEFAULT_F5TTS_MODEL}' (CUDA/PyTorch) ...")
         try:
             from f5_tts.api import F5TTS
-            _f5tts_model = F5TTS(model_type=DEFAULT_F5TTS_MODEL)
+            _f5tts_model = F5TTS(model=DEFAULT_F5TTS_MODEL, device="cuda")
         except ImportError:
             log.error("f5-tts is not installed. Run: pip install f5-tts")
             raise
@@ -282,7 +286,7 @@ class F5TTSRequest(BaseModel):
     text: str = Field(default="", max_length=5000)
     clips: list[F5TTSClip] = Field(default_factory=list)
     speed: float = Field(default=1.0, ge=0.5, le=2.0)
-    nfe_step: int = Field(default=32, ge=4, le=64)
+    nfe_step: int = Field(default=16, ge=4, le=64)
     cfg_strength: float = Field(default=2.0, ge=0.5, le=5.0)
     sway_sampling_coef: float = Field(default=-1.0)
     seed: Optional[int] = None
@@ -445,16 +449,20 @@ async def _synthesize_f5tts_clip(
 
     def _run() -> bytes:
         assert _f5tts_model is not None
-        wav, sr, _ = _f5tts_model.infer(
-            ref_file=ref_file,
-            ref_text=ref_text or "",
-            gen_text=gen_text,
-            nfe_step=nfe_step,
-            cfg_strength=cfg_strength,
-            sway_sampling_coef=sway_sampling_coef,
-            speed=speed,
-            seed=seed,
-        )
+        _ensure_torch()
+        with torch.inference_mode():
+            wav, sr, _ = _f5tts_model.infer(
+                ref_file=ref_file,
+                ref_text=ref_text or "",
+                gen_text=gen_text,
+                show_info=lambda *a, **k: None,
+                progress=None,
+                nfe_step=nfe_step,
+                cfg_strength=cfg_strength,
+                sway_sampling_coef=sway_sampling_coef,
+                speed=speed,
+                seed=seed,
+            )
         buf = io.BytesIO()
         sf.write(buf, wav, sr, format="WAV", subtype="PCM_16")
         return buf.getvalue()
@@ -483,10 +491,12 @@ async def _synthesize_kokoro(req: TTSRequest) -> Response:
     start = time.monotonic()
     audio_chunks = []
     try:
+        _ensure_torch()
         _tts_pipeline.lang_code = lang_code
-        for _, _, audio in _tts_pipeline(req.text, voice=voice, speed=req.speed):
-            if audio is not None:
-                audio_chunks.append(audio.cpu().numpy() if hasattr(audio, "cpu") else np.array(audio))
+        with torch.inference_mode():
+            for _, _, audio in _tts_pipeline(req.text, voice=voice, speed=req.speed):
+                if audio is not None:
+                    audio_chunks.append(audio.cpu().numpy() if hasattr(audio, "cpu") else np.array(audio))
     except Exception as exc:
         log.error(f"Kokoro TTS failed: {exc}")
         raise HTTPException(status_code=500, detail=f"TTS synthesis failed: {str(exc)}")
@@ -702,6 +712,19 @@ async def synthesize_f5tts(req: F5TTSRequest):
         log.info("Lazy-loading F5-TTS (Engine C, CUDA) ...")
         _load_f5tts()
 
+    # Serialize F5-TTS inference — concurrent CUDA calls with different tensor
+    # sizes cause "Sizes of tensors must match" crashes.
+    if _f5tts_lock.locked():
+        raise HTTPException(status_code=409, detail="F5-TTS is busy with another request")
+
+    async with _f5tts_lock:
+        return await _run_f5tts_inference(req)
+
+
+async def _run_f5tts_inference(req: F5TTSRequest) -> Response:
+    """Actual F5-TTS inference, always called under _f5tts_lock."""
+    global _f5tts_last_used
+
     start = time.monotonic()
     wav_chunks: list[bytes] = []
     temp_files: list[str] = []
@@ -762,7 +785,9 @@ async def synthesize_f5tts(req: F5TTSRequest):
     except HTTPException:
         raise
     except Exception as exc:
+        import traceback
         log.error(f"[Engine C] F5-TTS synthesis failed: {exc}")
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"F5-TTS synthesis failed: {str(exc)}")
     finally:
         for tmp in temp_files:

@@ -740,13 +740,13 @@ describe("ImageGenService", () => {
 
       await service.generateImage("test", {
         provider: "local",
-        localModel: "sdxl-turbo",
+        localModel: "sdxl-base",
         width: 512,
         height: 512,
       });
 
       const body = JSON.parse(mockFetch.mock.calls[0][1].body);
-      expect(body.model).toBe("sdxl-turbo");
+      expect(body.model).toBe("sdxl-base");
 
       vi.unstubAllGlobals();
     });

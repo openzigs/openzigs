@@ -212,6 +212,7 @@ export const createQueueCallbackRouter = ({
       // Save media to gallery filesystem
       let resultUrl = "";
       let galleryAssetId: string | undefined;
+      let savedFilePath: string | undefined;
 
       // Check if this is a multi-segment sub-job — if so, pass base64 directly
       // to handleJobCompletion for segment orchestration instead of saving to gallery.
@@ -244,22 +245,27 @@ export const createQueueCallbackRouter = ({
       }
 
       // File-based callback: sidecar already wrote the file to gallery dir
+      let filePathUsable = false;
       if (file_path && media_type) {
         const resolved = path.resolve(String(file_path));
         // Security: ensure file is within gallery dir
         if (!resolved.startsWith(path.resolve(GALLERY_DIR))) {
           logger.warn(
-            `[QueueAPI] /complete rejected — file_path outside gallery: ${file_path}`,
+            `[QueueAPI] /complete file_path outside gallery: ${file_path} — will fall through to base64 if available`,
           );
-          res
-            .status(400)
-            .json({ error: "file_path must be within gallery directory" });
-          return;
+          // Don't reject — fall through to base64 handler below
+        } else {
+          filePathUsable = true;
         }
+      }
+
+      if (filePathUsable && file_path && media_type) {
+        const resolved = path.resolve(String(file_path));
 
         const filename = path.basename(resolved);
         const stat = await fs.stat(resolved);
         resultUrl = `/api/queue/assets/file/${filename}`;
+        savedFilePath = resolved;
 
         const job = repo.getJob(job_id);
         const assetType = assetTypeFromMime(media_type);
@@ -294,6 +300,7 @@ export const createQueueCallbackRouter = ({
         const buffer = Buffer.from(media_base64, "base64");
         await fs.writeFile(filePath, buffer);
         resultUrl = `/api/queue/assets/file/${filename}`;
+        savedFilePath = filePath;
 
         const job = repo.getJob(job_id);
         const assetType = assetTypeFromMime(media_type);
@@ -324,12 +331,13 @@ export const createQueueCallbackRouter = ({
 
       await queueMaster.handleJobCompletion(job_id, {
         media_base64: undefined,
-        media_type: undefined,
+        media_type: media_type ?? undefined,
         metadata: {
           ...((metadata as Record<string, unknown>) ?? {}),
           ...(extraFields as Record<string, unknown>),
           result_url: resultUrl,
           gallery_asset_id: galleryAssetId,
+          file_path: savedFilePath,
         },
       });
 
@@ -461,6 +469,29 @@ export const createQueueRouter = ({
           // error if the path is invalid. Only skip if the path looks obviously empty.
           loraPaths.push(char.trainedLoraPath);
           loraScales.push(char.loraScale);
+
+          // Inject the character's class description adjacent to the trigger word so
+          // SDXL generates in the correct domain (e.g. "dog" not "person").
+          // Only inject when the description's key noun isn't already in the prompt.
+          if (char.description) {
+            const promptLower = (payload.prompt as string ?? "").toLowerCase();
+            const descWords = char.description.toLowerCase().split(/\s+/).filter(w => w.length > 2);
+            const descAlreadyPresent = descWords.some(w => promptLower.includes(w));
+            if (!descAlreadyPresent) {
+              const trigRegex = new RegExp(
+                `(\\b${char.triggerWord.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b)`,
+                "i",
+              );
+              payload.prompt = String(payload.prompt ?? "").replace(
+                trigRegex,
+                `$1 ${char.description}`,
+              );
+              logger.info(
+                `[QueueAPI] Injected class description "${char.description}" into prompt for character "${char.name}"`,
+              );
+            }
+          }
+
           logger.info(
             `[QueueAPI] Auto-injecting LoRA for character "${char.name}" (trigger: ${char.triggerWord}, scale: ${char.loraScale})`,
           );
@@ -470,6 +501,29 @@ export const createQueueRouter = ({
       if (loraPaths.length > 0) {
         payload.lora_paths = loraPaths;
         payload.lora_scales = loraScales;
+
+        // Multi-subject prompt restructuring: when the prompt mentions additional
+        // subjects (another dog, two people, etc.), restructure for SDXL to allocate
+        // cross-attention capacity to both subjects. Techniques from research:
+        // 1. Prepend "N subjects:" enumeration cue
+        // 2. Lower guidance_scale slightly to increase compositional flexibility
+        const multiSubjectCues =
+          /\b(another|other|two|three|second|both|together with|alongside|chasing|playing with|next to|beside|with a|and a)\b/i;
+        const currentPrompt = String(payload.prompt ?? "");
+        if (multiSubjectCues.test(currentPrompt)) {
+          // Prepend an enumeration cue if not already present
+          if (!/^\d+\s+(animal|subject|people|person|dog|cat|creature)/i.test(currentPrompt)) {
+            payload.prompt = `2 subjects: ${currentPrompt}`;
+          }
+          // Lower guidance_scale for multi-subject (default SDXL 7.5 -> 6.5)
+          const currentGuidance = payload.guidance_scale;
+          if (currentGuidance === undefined || currentGuidance === null) {
+            payload.guidance_scale = 6.5;
+          }
+          logger.info(
+            `[QueueAPI] Multi-subject detected — added enumeration cue and guidance_scale=${payload.guidance_scale}`,
+          );
+        }
       }
     } catch (err) {
       logger.warn(
@@ -664,6 +718,7 @@ export const createQueueRouter = ({
         text,
         voice,
         referenceAudio,
+        f5ttsProfileId,
         videoPrompt,
         referenceImage,
         videoModel,
@@ -689,10 +744,25 @@ export const createQueueRouter = ({
         return;
       }
 
-      const { pipelineId, firstJob } = createTalkingHeadPipeline({
+      // Resolve F5-TTS profile clips from DB if a profile ID was provided
+      let f5ttsClips: Array<{ emotion: string; ref_audio_path: string; ref_text: string }> | undefined;
+      if (f5ttsProfileId && typeof f5ttsProfileId === "string") {
+        const db = getDatabase();
+        const clips = db
+          .prepare(`SELECT emotion, ref_audio_path, ref_text FROM f5tts_clips WHERE profile_id = ? ORDER BY sort_order ASC`)
+          .all(f5ttsProfileId) as Array<{ emotion: string; ref_audio_path: string; ref_text: string }>;
+        if (clips.length === 0) {
+          res.status(400).json({ error: `F5-TTS profile ${f5ttsProfileId} has no clips` });
+          return;
+        }
+        f5ttsClips = clips;
+      }
+
+      const { pipelineId, stages, firstJob } = createTalkingHeadPipeline({
         text: text as string,
         voice: voice as string | undefined,
         referenceAudio: referenceAudio as string | undefined,
+        f5ttsClips,
         videoPrompt: videoPrompt as string | undefined,
         referenceImage: referenceImage as string | undefined,
         videoModel: videoModel as string | undefined,
@@ -717,7 +787,7 @@ export const createQueueRouter = ({
       res.status(201).json({
         pipeline_id: pipelineId,
         pipeline_type: "talking-head",
-        stages: ["speech", "video", "lipsync"],
+        stages,
         first_job_id: job.id,
         status: "started",
       });
@@ -1515,10 +1585,10 @@ export const createQueueRouter = ({
   router.post("/nodes/:node/unload", async (req, res) => {
     try {
       const node = req.params.node as TargetNode;
-      if (node !== "mac-mini" && node !== "m2-pro") {
+      if (node !== "image-gen" && node !== "m2-pro") {
         res
           .status(400)
-          .json({ error: "Invalid node. Must be 'mac-mini' or 'm2-pro'" });
+          .json({ error: "Invalid node. Must be 'image-gen' or 'm2-pro'" });
         return;
       }
 
@@ -1532,7 +1602,7 @@ export const createQueueRouter = ({
 
   // ── POST /nodes/switch — Switch active model domain ─────
   // Unloads the competing node and optionally preloads a model.
-  // Body: { targetNode: "mac-mini"|"m2-pro"|"local", model?: "flux-schnell" }
+  // Body: { targetNode: "image-gen"|"m2-pro"|"local", model?: "flux-schnell" }
   router.post("/nodes/switch", async (req, res) => {
     try {
       const { targetNode, model } = req.body as {
@@ -1542,12 +1612,12 @@ export const createQueueRouter = ({
 
       if (
         !targetNode ||
-        (targetNode !== "mac-mini" &&
+        (targetNode !== "image-gen" &&
           targetNode !== "m2-pro" &&
           targetNode !== "local")
       ) {
         res.status(400).json({
-          error: "targetNode must be 'mac-mini', 'm2-pro', or 'local'",
+          error: "targetNode must be 'image-gen', 'm2-pro', or 'local'",
         });
         return;
       }

@@ -897,13 +897,24 @@ export const createAudioRouter = ({ db, sidecarUrl }: AudioRouterOptions): Route
         Number((req.body as { speed?: number }).speed) || 1.0,
       ));
 
+      // The sidecar expects { ref_audio (base64), ref_text, gen_text, emotion }.
+      // Read each clip's audio file from disk and base64-encode it.
+      const resolvedClips = await Promise.all(
+        clips.map(async (c) => {
+          const audioBytes = await fs.readFile(c.ref_audio_path);
+          return {
+            emotion: c.emotion,
+            ref_audio: audioBytes.toString("base64"),
+            ref_text: c.ref_text,
+            gen_text: testText,
+            remove_silence: true,
+          };
+        }),
+      );
+
       const payload = {
         text: testText,
-        clips: clips.map((c) => ({
-          emotion: c.emotion,
-          ref_audio_path: c.ref_audio_path,
-          ref_text: c.ref_text,
-        })),
+        clips: resolvedClips,
         speed: testSpeed,
       };
 

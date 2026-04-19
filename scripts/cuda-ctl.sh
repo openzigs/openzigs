@@ -192,8 +192,8 @@ require_sidecar_dir() {
 }
 
 # ── Repo source path  ─────────────────────────────────────────────────────────
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_SIDECARS="$SCRIPT_DIR/../sidecars"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+REPO_SIDECARS="${REPO_SIDECARS:-$SCRIPT_DIR/../sidecars}"
 
 # ── FluxQ (Image Gen) Commands ────────────────────────────────────────────────
 

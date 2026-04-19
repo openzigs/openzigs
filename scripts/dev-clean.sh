@@ -207,7 +207,7 @@ SIDECAR_PID=""
 if [ "${OPENZIGS_START_SIDECAR:-1}" != "0" ]; then
   SIDECAR_DIR="$PROJECT_ROOT/sidecars/image-gen"
   SIDECAR_LOG="$PROJECT_ROOT/.openzigs-image-sidecar.log"
-  SIDECAR_MODEL="${OPENZIGS_IMAGE_MODEL:-sdxl-turbo}"
+  SIDECAR_MODEL="${OPENZIGS_IMAGE_MODEL:-flux-schnell}"
   SIDECAR_IDLE_TIMEOUT="${OPENZIGS_SIDECAR_IDLE_TIMEOUT:-300}"
 
   if [ -x "$SIDECAR_DIR/.venv/bin/python" ]; then

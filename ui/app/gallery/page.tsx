@@ -88,7 +88,7 @@ interface QueueStats {
 }
 
 interface NodeStatusInfo {
-  node: "mac-mini" | "m2-pro" | "music" | "lipsync";
+  node: "image-gen" | "m2-pro" | "music" | "lipsync";
   reachable: boolean;
   is_busy: boolean;
   loaded_model: string | null;
@@ -590,7 +590,7 @@ export default function GalleryPage() {
           <div className="grid grid-cols-3 gap-3">
             {nodes.map((node) => {
               const nodeLabel =
-                node.node === "mac-mini"
+                node.node === "image-gen"
                   ? "Image Gen (FluxQ)"
                   : node.node === "music"
                     ? "Audio Gen (ACE-Step)"
@@ -598,7 +598,7 @@ export default function GalleryPage() {
                       ? "Lip Sync (LatentSync)"
                       : "Video Gen (LTX-2)";
               const isHardwareNode =
-                node.node === "mac-mini" || node.node === "m2-pro";
+                node.node === "image-gen" || node.node === "m2-pro";
               return (
                 <div
                   key={node.node}
@@ -670,14 +670,14 @@ export default function GalleryPage() {
                               switchMutation.mutate({
                                 targetNode: node.node,
                                 model:
-                                  node.node === "mac-mini"
+                                  node.node === "image-gen"
                                     ? "flux-schnell"
                                     : undefined,
                               })
                             }
                             disabled={switchMutation.isPending}
                             className="rounded-lg border border-primary/30 bg-primary/5 px-2 py-1 text-[10px] font-semibold text-primary hover:bg-primary/10 disabled:opacity-50"
-                            title={`Switch to ${node.node === "mac-mini" ? "image" : "video"} generation`}
+                            title={`Switch to ${node.node === "image-gen" ? "image" : "video"} generation`}
                           >
                             <ArrowRightLeft className="inline h-3 w-3 mr-0.5" />
                             Activate
@@ -2149,7 +2149,7 @@ interface StudioFormState {
   initImage: File | null;
   initImagePreview: string;
   imageProvider: "local" | "cloud" | "auto";
-  imageModel: "flux-schnell" | "flux-dev" | "flux-kontext" | "sdxl-turbo";
+  imageModel: "flux-schnell" | "flux-dev" | "flux-kontext" | "sdxl-base";
   duration_seconds: number;
   lyrics: string;
   instrumental: boolean;
@@ -2159,6 +2159,7 @@ interface StudioFormState {
   negative_prompt: string;
   characterId: string;
   controlnetStrength: number;
+  loraScale: number;
   // Phase 1: Gallery Studio Feature Parity (#781)
   pipeline: string;
   audio: boolean;
@@ -2206,6 +2207,7 @@ const DEFAULT_FORM: StudioFormState = {
   negative_prompt: "",
   characterId: "",
   controlnetStrength: 0.4,
+  loraScale: 0.8,
   pipeline: "distilled",
   audio: false,
   tiling: "auto",
@@ -2318,6 +2320,19 @@ function GalleryStudio({
     staleTime: 60_000,
   });
 
+  // Fetch F5-TTS voice profiles for TalkingHead voice cloning
+  const f5ttsProfilesQuery = useQuery({
+    queryKey: ["f5tts-profiles"],
+    queryFn: () =>
+      fetchJson<{ profiles: Array<{ id: string; name: string; clips: Array<{ emotion: string }> }> }>(
+        "/api/admin/audio/f5tts/profiles",
+      ),
+    staleTime: 30_000,
+  });
+  const f5ttsProfiles = (f5ttsProfilesQuery.data?.profiles ?? []).filter(
+    (p) => p.clips.length > 0,
+  );
+
   // Fetch video presets for the preset picker (#788)
   const presetsQuery = useQuery({
     queryKey: ["video-presets"],
@@ -2392,12 +2407,13 @@ function GalleryStudio({
   }));
   const [submitting, setSubmitting] = useState(false);
   const [enhancing, setEnhancing] = useState(false);
+  const [enhancingSpeech, setEnhancingSpeech] = useState(false);
   const [llmModel, setLlmModel] = useState("");
 
   // If admin mode is network/cloud, SDXL Turbo is unavailable — auto-reset model
   const turboAvailable =
     imageGenMode === "local" && form.imageProvider === "local";
-  if (form.imageModel === "sdxl-turbo" && !turboAvailable) {
+  if (form.imageModel === "sdxl-base" && !turboAvailable) {
     setForm((prev) => ({ ...prev, imageModel: "flux-schnell" }));
   }
   // img2img always uses flux-kontext
@@ -2592,6 +2608,44 @@ function GalleryStudio({
     }
   };
 
+  const handleEnhanceSpeech = async () => {
+    if (!form.speechText.trim()) {
+      showToast("Enter speech text first", "error");
+      return;
+    }
+    setEnhancingSpeech(true);
+    try {
+      const result = await fetchJson<{
+        enhanced_text: string;
+        thinking: string;
+        estimated_duration_sec: number;
+      }>("/api/gallery/enhance-speech", {
+        method: "POST",
+        body: JSON.stringify({
+          raw_text: form.speechText.trim(),
+          ...(llmModel ? { llmModel } : {}),
+        }),
+      });
+      setForm((prev) => ({
+        ...prev,
+        speechText: result.enhanced_text,
+      }));
+      showToast(
+        result.thinking
+          ? `✨ ${result.thinking} (~${result.estimated_duration_sec}s audio)`
+          : `Speech polished! (~${result.estimated_duration_sec}s audio)`,
+        "success",
+      );
+    } catch (err) {
+      showToast(
+        `Enhance failed: ${err instanceof Error ? err.message : String(err)}`,
+        "error",
+      );
+    } finally {
+      setEnhancingSpeech(false);
+    }
+  };
+
   const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -2652,9 +2706,14 @@ function GalleryStudio({
           return;
         }
 
+        // Detect F5-TTS profile selection (voice value is "f5tts:<profileId>")
+        const isF5ttsVoice = form.voice.startsWith("f5tts:");
+        const f5ttsProfileId = isF5ttsVoice ? form.voice.slice(6) : undefined;
+
         const pipelinePayload: Record<string, unknown> = {
           text: speechText,
-          voice: form.voice,
+          voice: isF5ttsVoice ? undefined : form.voice,
+          f5ttsProfileId,
           videoPrompt: form.videoPrompt.trim() || undefined,
           lipsyncModelVersion: form.lipsyncModelVersion,
           inferenceSteps: form.lipsyncInferenceSteps,
@@ -2773,22 +2832,20 @@ function GalleryStudio({
         payload.seed = parseInt(form.seed, 10);
       }
 
-      // Character LoRA injection — LoRA trained on z-image-turbo requires that model for generation
-      let modelOverride: string | undefined;
+      // Character LoRA injection — architecture auto-detection happens server-side
       if (form.characterId) {
         const char = readyCharacters.find((c) => c.id === form.characterId);
         if (char?.trainedLoraPath) {
           payload.lora_paths = [char.trainedLoraPath];
-          payload.lora_scales = [char.loraScale];
-          modelOverride = "z-image-turbo";
+          payload.lora_scales = [form.loraScale];
         }
         if (form.controlnetStrength > 0) {
           payload.controlnet_strength = form.controlnetStrength;
         }
       }
 
-      // For local image gen, pass the selected model (or character LoRA model override)
-      const model = !isVideo ? (modelOverride ?? form.imageModel) : undefined;
+      // For local image gen, pass the selected model
+      const model = !isVideo ? form.imageModel : undefined;
 
       await fetchJson("/api/queue/jobs", {
         method: "POST",
@@ -2992,9 +3049,34 @@ function GalleryStudio({
       {isTalkingHead && (
         <>
           <div className="mb-4">
-            <label className="mb-1 block text-[11px] font-medium text-muted-foreground">
-              Speech Text
-            </label>
+            <div className="mb-1 flex items-center justify-between">
+              <label className="text-[11px] font-medium text-muted-foreground">
+                Speech Text
+              </label>
+              <div className="flex items-center gap-2">
+                {form.speechText.trim() && (
+                  <span className="text-[10px] text-muted-foreground/70">
+                    ~{Math.max(1, Math.round(form.speechText.trim().split(/\s+/).length / 2.5))}s
+                    {" "}({form.speechText.trim().split(/\s+/).length} words)
+                    {Math.round(form.speechText.trim().split(/\s+/).length / 2.5) > 30 && (
+                      <span className="ml-1 text-amber-500 font-semibold">⚠ may exceed video limit</span>
+                    )}
+                  </span>
+                )}
+                <button
+                  onClick={handleEnhanceSpeech}
+                  disabled={enhancingSpeech || !form.speechText.trim()}
+                  className="flex items-center gap-1.5 rounded-lg border border-primary/30 bg-primary/5 px-2.5 py-0.5 text-[10px] font-semibold text-primary hover:bg-primary/10 disabled:opacity-50 transition"
+                >
+                  {enhancingSpeech ? (
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                  ) : (
+                    <Sparkles className="h-3 w-3" />
+                  )}
+                  AI Polish
+                </button>
+              </div>
+            </div>
             <textarea
               value={form.speechText}
               onChange={(e) => update("speechText", e.target.value)}
@@ -3014,12 +3096,23 @@ function GalleryStudio({
                 onChange={(e) => update("voice", e.target.value)}
                 className="w-full rounded-lg border border-border bg-card px-2 py-1.5 text-sm text-foreground"
               >
-                <option value="af_heart">af_heart (default)</option>
-                {(voicesQuery.data?.voices ?? []).map((v) => (
-                  <option key={v.id} value={v.id}>
-                    {v.name || v.id}
-                  </option>
-                ))}
+                <optgroup label="Kokoro (Engine A)">
+                  <option value="af_heart">af_heart (default)</option>
+                  {(voicesQuery.data?.voices ?? []).map((v) => (
+                    <option key={v.id} value={v.id}>
+                      {v.name || v.id}
+                    </option>
+                  ))}
+                </optgroup>
+                {f5ttsProfiles.length > 0 && (
+                  <optgroup label="F5-TTS Voice Clones (Engine C)">
+                    {f5ttsProfiles.map((p) => (
+                      <option key={p.id} value={`f5tts:${p.id}`}>
+                        {p.name} ({p.clips.map((c) => c.emotion).join(", ")})
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
               </select>
             </div>
             <div>
@@ -3277,8 +3370,8 @@ function GalleryStudio({
                       Flux Dev (quality, 25 steps)
                     </option>
                     {turboAvailable && (
-                      <option value="sdxl-turbo">
-                        SDXL Turbo (local only)
+                      <option value="sdxl-base">
+                        SDXL Base (character LoRA)
                       </option>
                     )}
                   </>
@@ -3310,7 +3403,31 @@ function GalleryStudio({
             </select>
           </div>
           {form.characterId && (
-            <div>
+            <>
+              <div>
+                <label className="mb-1 flex items-center justify-between text-[11px] font-medium text-muted-foreground">
+                  <span>LoRA Strength (Likeness)</span>
+                  <span className="font-mono">
+                    {form.loraScale.toFixed(2)}
+                  </span>
+                </label>
+                <input
+                  type="range"
+                  min={0.1}
+                  max={1.0}
+                  step={0.05}
+                  value={form.loraScale}
+                  onChange={(e) =>
+                    update("loraScale", parseFloat(e.target.value))
+                  }
+                  className="w-full"
+                />
+                <div className="flex justify-between text-[10px] text-muted-foreground">
+                  <span>Multi-subject friendly</span>
+                  <span>Strong likeness</span>
+                </div>
+              </div>
+              <div>
               <label className="mb-1 flex items-center justify-between text-[11px] font-medium text-muted-foreground">
                 <span>ControlNet Strength</span>
                 <span className="font-mono">
@@ -3333,6 +3450,7 @@ function GalleryStudio({
                 <span>Strong pose control</span>
               </div>
             </div>
+            </>
           )}
         </div>
       )}

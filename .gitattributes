@@ -1,0 +1,7 @@
+# Force LF line endings on shell scripts — WSL/bash chokes on CRLF.
+*.sh text eol=lf
+sidecars/**/*.sh text eol=lf
+scripts/**/*.sh text eol=lf
+
+# Keep PowerShell scripts as CRLF (Windows-native)
+*.ps1 text eol=crlf

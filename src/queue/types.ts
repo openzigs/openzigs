@@ -16,7 +16,8 @@ export type MediaJobType =
   | "remix_analyze"
   | "remix_replace"
   | "remix_master"
-  | "lipsync";
+  | "lipsync"
+  | "sadtalker";
 
 export type MediaJobStatus =
   | "pending"
@@ -25,7 +26,7 @@ export type MediaJobStatus =
   | "complete"
   | "failed";
 
-export type TargetNode = "mac-mini" | "m2-pro" | "local";
+export type TargetNode = "image-gen" | "m2-pro" | "local";
 
 /** Valid LTX video pipeline types. */
 export const VALID_PIPELINE_TYPES = [
@@ -129,7 +130,7 @@ export function targetNodeForJobType(type: MediaJobType): TargetNode {
   switch (type) {
     case "txt2img":
     case "img2img":
-      return "mac-mini";
+      return "image-gen";
     case "txt2video":
     case "img2video":
     case "tts":
@@ -141,6 +142,8 @@ export function targetNodeForJobType(type: MediaJobType): TargetNode {
     case "remix_master":
       return "local";
     case "lipsync":
+      return "m2-pro";
+    case "sadtalker":
       return "m2-pro";
   }
 }
@@ -169,6 +172,8 @@ export function defaultModelForJobType(type: MediaJobType): string {
       return "matchering";
     case "lipsync":
       return "latentsync-v1.5";
+    case "sadtalker":
+      return "sadtalker";
   }
 }
 
@@ -209,7 +214,7 @@ export interface MediaJobPayload {
   lyrics?: string;
   /** Whether to generate instrumental-only (no vocals) */
   instrumental?: boolean;
-  /** LoRA adapter paths for character consistency (mac-mini only) */
+  /** LoRA adapter paths for character consistency (image-gen only) */
   lora_paths?: string[];
   /** Scale factor for each LoRA adapter */
   lora_scales?: number[];
@@ -302,6 +307,20 @@ export interface MediaJobPayload {
   /** Webhook callback URL for async result delivery */
   callback_url?: string;
 
+  // ── SadTalker fields ───────────────────────────────────────
+  /** SadTalker face render size: 256 or 512 */
+  sadtalker_size?: number;
+  /** SadTalker preprocess mode: crop|extcrop|resize|full|extfull */
+  sadtalker_preprocess?: string;
+  /** SadTalker face enhancer: gfpgan|RestoreFormer|empty */
+  sadtalker_enhancer?: string;
+  /** SadTalker still mode (less head motion) */
+  sadtalker_still?: boolean;
+  /** SadTalker expression scale (0.1–3.0) */
+  sadtalker_expression_scale?: number;
+  /** SadTalker pose style (0–45) */
+  sadtalker_pose_style?: number;
+
   // ── Pipeline fields ────────────────────────────────────────
   /** Pipeline ID that this job belongs to (links stages together) */
   pipeline_id?: string;
@@ -313,6 +332,8 @@ export interface MediaJobPayload {
   pipeline_voice?: string;
   /** Reference audio path/base64 for voice cloning in pipeline */
   reference_audio?: string;
+  /** F5-TTS clips for voice cloning (emotion, ref_audio_path, ref_text) */
+  f5tts_clips?: Array<{ emotion: string; ref_audio_path: string; ref_text: string }>;
   /** Video prompt for the video generation stage of a pipeline */
   video_prompt?: string;
   /** Reference image (base64) for video generation stage */
@@ -407,7 +428,7 @@ export interface WorkerNodeConfig {
 
 export interface QueueConfig {
   pollIntervalMs: number;
-  macMini: WorkerNodeConfig;
+  imageGen: WorkerNodeConfig;
   m2Pro: WorkerNodeConfig;
   callbackUrl: string;
   /** Filesystem path where completed media assets are written. */
@@ -423,6 +444,8 @@ export interface QueueConfig {
   audioSidecar?: WorkerNodeConfig;
   /** LatentSync lip-sync sidecar node config. */
   lipSync?: WorkerNodeConfig;
+  /** SadTalker talking-head sidecar node config. */
+  sadTalker?: WorkerNodeConfig;
 }
 
 // ── Constants ─────────────────────────────────────────────────
@@ -436,6 +459,6 @@ export const MAX_VIDEO_DURATION_SEC = 4;
 /** Default video FPS. */
 export const DEFAULT_VIDEO_FPS = 24;
 
-/** Valid multi-segment video durations in seconds. */
-export const VALID_VIDEO_DURATIONS = [4, 8, 12, 16] as const;
+/** Valid multi-segment video durations in seconds (up to 32s for talking-head pipeline). */
+export const VALID_VIDEO_DURATIONS = [4, 8, 12, 16, 20, 24, 28, 32] as const;
 export type VideoDuration = (typeof VALID_VIDEO_DURATIONS)[number];

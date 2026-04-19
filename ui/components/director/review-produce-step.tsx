@@ -580,7 +580,7 @@ export const ReviewProduceStep = ({
             <label className="text-xs font-medium text-muted-foreground">Image Model (Local Sidecar)</label>
             <div className="grid grid-cols-2 gap-2">
               {([
-                { id: "sdxl-turbo" as const, name: "SDXL Turbo", desc: "Fast, ~1s/image, 512×512" },
+                { id: "sdxl-base" as const, name: "SDXL Base", desc: "Character LoRA, ~6s/image, 1024×1024" },
                 { id: "flux-schnell" as const, name: "FLUX.1 Schnell", desc: "High quality, ~8s/image, 1024×1024" },
               ]).map((m) => {
                 const isActive = state.imageModel === m.id;

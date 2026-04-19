@@ -19,6 +19,7 @@ import json
 import logging
 import os
 import re
+import sys
 import tempfile
 import time
 import traceback
@@ -117,6 +118,14 @@ def _resolve_device() -> str:
 
 DEVICE = _resolve_device()
 
+# Enable cuDNN autotuner for faster convolutions when CUDA is available
+if DEVICE == "cuda":
+    try:
+        import torch as _torch_init
+        _torch_init.backends.cudnn.benchmark = True
+    except Exception:
+        pass
+
 
 # ── State ────────────────────────────────────────────────────
 
@@ -198,9 +207,11 @@ def _load_pipeline(model_version: str = "v1.5"):
 
     # Inline validation with string literals to break CodeQL taint chain.
     if model_version == "v1.5":
-        safe_version, config_name, ckpt_name = "v1.5", "latentsync_unet_v1.5.yaml", "latentsync_unet_v1.5.pt"
+        safe_version = "v1.5"
+        config_name = "configs/unet/stage2.yaml"
     elif model_version == "v1.6":
-        safe_version, config_name, ckpt_name = "v1.6", "latentsync_unet_v1.6.yaml", "latentsync_unet_v1.6.pt"
+        safe_version = "v1.6"
+        config_name = "configs/unet/stage2_512.yaml"
     else:
         raise ValueError(f"Unsupported model_version: {model_version!r}")
     latentsync_dir = os.path.realpath(
@@ -209,8 +220,8 @@ def _load_pipeline(model_version: str = "v1.5"):
             str(Path.home() / ".openzigs" / "models" / "latentsync"),
         )
     )
-    config_path = os.path.join(latentsync_dir, "configs", config_name)
-    ckpt_path = os.path.join(latentsync_dir, "checkpoints", ckpt_name)
+    config_path = os.path.join(latentsync_dir, config_name)
+    ckpt_path = os.path.join(latentsync_dir, "checkpoints", "latentsync_unet.pt")
 
     if not os.path.exists(config_path) or not os.path.exists(ckpt_path):
         logger.warning(
@@ -326,9 +337,11 @@ def _run_latentsync_subprocess(
     """Run LatentSync inference via subprocess (fallback)."""
     # Inline validation with string literals to break CodeQL taint chain.
     if model_version == "v1.5":
-        safe_version, config_name, ckpt_name = "v1.5", "latentsync_unet_v1.5.yaml", "latentsync_unet_v1.5.pt"
+        safe_version = "v1.5"
+        config_name = "configs/unet/stage2.yaml"
     elif model_version == "v1.6":
-        safe_version, config_name, ckpt_name = "v1.6", "latentsync_unet_v1.6.yaml", "latentsync_unet_v1.6.pt"
+        safe_version = "v1.6"
+        config_name = "configs/unet/stage2_512.yaml"
     else:
         raise ValueError(f"Unsupported model_version: {model_version!r}")
     safe_steps = int(inference_steps)
@@ -344,27 +357,28 @@ def _run_latentsync_subprocess(
             str(Path.home() / ".openzigs" / "models" / "latentsync"),
         )
     )
-    inference_script = os.path.join(latentsync_dir, "inference.py")
-    if not os.path.exists(inference_script):
-        raise FileNotFoundError(f"LatentSync inference.py not found at {inference_script}")
+    # LatentSync uses `python -m scripts.inference` from the repo root
+    scripts_dir = os.path.join(latentsync_dir, "scripts")
+    if not os.path.isdir(scripts_dir):
+        raise FileNotFoundError(f"LatentSync scripts/ not found at {latentsync_dir}")
 
-    config_path = os.path.join(latentsync_dir, "configs", config_name)
-    ckpt_path = os.path.join(latentsync_dir, "checkpoints", ckpt_name)
+    config_path = os.path.join(latentsync_dir, config_name)
+    ckpt_path = os.path.join(latentsync_dir, "checkpoints", "latentsync_unet.pt")
 
     # All arguments are validated and path-safe; no shell=True
     cmd = [
-        "python",
-        inference_script,
-        "--config_path", config_path,
-        "--checkpoint_path", ckpt_path,
+        sys.executable, "-m", "scripts.inference",
+        "--unet_config_path", config_path,
+        "--inference_ckpt_path", ckpt_path,
         "--video_path", video_path,
         "--audio_path", audio_path,
-        "--output_path", output_path,
+        "--video_out_path", output_path,
         "--inference_steps", str(safe_steps),
         "--guidance_scale", str(safe_scale),
+        "--enable_deepcache",
     ]
 
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)  # noqa: S603
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=600, cwd=latentsync_dir)  # noqa: S603
     if result.returncode != 0:
         raise RuntimeError(f"LatentSync inference failed: {result.stderr[-1000:]}")
 
@@ -437,14 +451,16 @@ async def process_lipsync_job(req: LipSyncRequest) -> None:
         report_progress(job_id, "inference", 0.4, "Running lip-sync inference (CUDA)")
 
         if _pipeline is not None:
-            _pipeline(
-                video_path=video_file,
-                audio_path=audio_file,
-                output_path=output_path,
-                num_inference_steps=req.inference_steps,
-                guidance_scale=req.guidance_scale,
-                enable_deepcache=req.enable_deepcache,
-            )
+            import torch
+            with torch.inference_mode():
+                _pipeline(
+                    video_path=video_file,
+                    audio_path=audio_file,
+                    output_path=output_path,
+                    num_inference_steps=req.inference_steps,
+                    guidance_scale=req.guidance_scale,
+                    enable_deepcache=req.enable_deepcache,
+                )
         else:
             _run_latentsync_subprocess(
                 video_path=video_file,

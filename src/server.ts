@@ -369,7 +369,7 @@ function getLanIp(): string {
 
 const queueMaster = new QueueMaster(mediaQueueRepo, {
   pollIntervalMs: Number(process.env.QUEUE_POLL_INTERVAL_MS ?? 3000),
-  macMini: {
+  imageGen: {
     url: imageGenNodeUrl,
     token: imageGenNodeToken,
   },

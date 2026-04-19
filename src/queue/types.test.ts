@@ -15,9 +15,9 @@ import {
 } from "./types.js";
 
 describe("targetNodeForJobType", () => {
-  it("routes image jobs to mac-mini", () => {
-    expect(targetNodeForJobType("txt2img")).toBe("mac-mini");
-    expect(targetNodeForJobType("img2img")).toBe("mac-mini");
+  it("routes image jobs to image-gen", () => {
+    expect(targetNodeForJobType("txt2img")).toBe("image-gen");
+    expect(targetNodeForJobType("img2img")).toBe("image-gen");
   });
 
   it("routes video/audio jobs to m2-pro", () => {
