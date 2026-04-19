@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - New `IMAGE_GEN_POOLING_MODE=manual-flux` env flag (default `off`). When enabled on a host with ≥ 2 same-arch CUDA GPUs, the image-gen sidecar splits FLUX components by hand — text encoders + VAE on `cuda:0`, transformer on `cuda:1` — instead of using `enable_model_cpu_offload()`. `start-cuda-sidecars.sh` exposes both GPUs to image-gen automatically when the flag is set.
   - `/gpu-info` and `/models` on the image-gen sidecar now report `pooling_mode` and `pooled_active`.
   - New `pooled` scenario in `scripts/gpu-stress-test.py` exercises the manual-pool path with a FLUX-schnell baseline + FLUX-dev pooled job.
+  - **Verified runtime behaviour on 2× RTX 3060 12 GB**: pooled code path executes correctly and reports the expected log warning before falling back. The FLUX-dev transformer (~12 GB FP16) does not fit on a 12 GB card with CUDA context overhead, so manual placement OOMs and the sidecar transparently falls back to `enable_model_cpu_offload()` (load completes successfully in ~89 s vs. ~37 s on hosts where pooled placement holds). Documented in `docs/MULTI_GPU.md`: pooled FLUX-dev requires ≥ 2× 16 GB same-arch cards. The flag is safe to leave on for undersized hardware (graceful fallback) but provides no speed benefit there.
 
 ### Changed
 

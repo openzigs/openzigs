@@ -375,7 +375,54 @@ def _load_model(model_key: str, lora_paths: Optional[list[str]] = None,
         # split the components by hand instead of using cpu_offload. The
         # transformer (~12 GB fp16) goes to cuda:1 and the text encoders + VAE
         # (~6 GB total) stay on cuda:0. FluxPipeline's __call__ already moves
-        # latents between components on each step, so cross-device dispatch is\n        # safe \u2014 the inter-GPU traffic per step is small (just the prompt embed\n        # tensor, ~tens of KB on PCIe).\n        spec_for_pool = MODEL_REGISTRY.get(model_key, {})\n        global _pooled_active\n        _pooled_active = False\n        use_pooling = (\n            _POOLING_MODE == \"manual-flux\"\n            and pipeline_type == \"flux\"\n            and spec_for_pool.get(\"pool_eligible\", False)\n            and torch.cuda.is_available()\n            and torch.cuda.device_count() >= 2\n        )\n        if _POOLING_MODE == \"manual-flux\" and not use_pooling:\n            log.warning(\n                f\"IMAGE_GEN_POOLING_MODE=manual-flux requested but conditions not met \"\n                f\"(pipeline_type={pipeline_type}, pool_eligible={spec_for_pool.get('pool_eligible', False)}, \"\n                f\"device_count={torch.cuda.device_count() if torch.cuda.is_available() else 0}); \"\n                f\"falling back to cpu_offload\"\n            )\n        if use_pooling:\n            try:\n                # Place text encoders + VAE on cuda:0, transformer on cuda:1.\n                # All forward passes will use the per-component .device for\n                # input tensors automatically inside FluxPipeline.\n                pipe.text_encoder.to(\"cuda:0\")\n                pipe.text_encoder_2.to(\"cuda:0\")\n                pipe.vae.to(\"cuda:0\")\n                pipe.transformer.to(\"cuda:1\")\n                # Tiling shaves VAE peak \u2014 keep on for safety on 12 GB cards.\n                pipe.enable_attention_slicing()\n                if hasattr(pipe, \"vae\") and hasattr(pipe.vae, \"enable_tiling\"):\n                    pipe.vae.enable_tiling()\n                _pooled_active = True\n                log.info(\n                    \"Pooled FLUX placement active: text_encoder+text_encoder_2+vae \u2192 cuda:0, \"\n                    \"transformer \u2192 cuda:1 (no cpu_offload)\"\n                )\n            except Exception as e:\n                log.warning(\n                    f\"Pooled placement failed ({e}); falling back to cpu_offload\"\n                )\n                pipe.enable_model_cpu_offload()\n                pipe.enable_attention_slicing()\n                _pooled_active = False\n        else:\n            pipe.enable_model_cpu_offload()\n            pipe.enable_attention_slicing()
+        # latents between components on each step, so cross-device dispatch is
+        # safe — the inter-GPU traffic per step is small (just the prompt embed
+        # tensor, ~tens of KB on PCIe).
+        spec_for_pool = MODEL_REGISTRY.get(model_key, {})
+        global _pooled_active
+        _pooled_active = False
+        use_pooling = (
+            _POOLING_MODE == "manual-flux"
+            and pipeline_type == "flux"
+            and spec_for_pool.get("pool_eligible", False)
+            and torch.cuda.is_available()
+            and torch.cuda.device_count() >= 2
+        )
+        if _POOLING_MODE == "manual-flux" and not use_pooling:
+            log.warning(
+                f"IMAGE_GEN_POOLING_MODE=manual-flux requested but conditions not met "
+                f"(pipeline_type={pipeline_type}, pool_eligible={spec_for_pool.get('pool_eligible', False)}, "
+                f"device_count={torch.cuda.device_count() if torch.cuda.is_available() else 0}); "
+                f"falling back to cpu_offload"
+            )
+        if use_pooling:
+            try:
+                # Place text encoders + VAE on cuda:0, transformer on cuda:1.
+                # All forward passes will use the per-component .device for
+                # input tensors automatically inside FluxPipeline.
+                pipe.text_encoder.to("cuda:0")
+                pipe.text_encoder_2.to("cuda:0")
+                pipe.vae.to("cuda:0")
+                pipe.transformer.to("cuda:1")
+                # Tiling shaves VAE peak — keep on for safety on 12 GB cards.
+                pipe.enable_attention_slicing()
+                if hasattr(pipe, "vae") and hasattr(pipe.vae, "enable_tiling"):
+                    pipe.vae.enable_tiling()
+                _pooled_active = True
+                log.info(
+                    "Pooled FLUX placement active: text_encoder+text_encoder_2+vae → cuda:0, "
+                    "transformer → cuda:1 (no cpu_offload)"
+                )
+            except Exception as e:
+                log.warning(
+                    f"Pooled placement failed ({e}); falling back to cpu_offload"
+                )
+                pipe.enable_model_cpu_offload()
+                pipe.enable_attention_slicing()
+                _pooled_active = False
+        else:
+            pipe.enable_model_cpu_offload()
+            pipe.enable_attention_slicing()
 
         elapsed = time.monotonic() - start
         _pipeline = pipe

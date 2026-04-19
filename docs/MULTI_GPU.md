@@ -93,13 +93,25 @@ Trade-offs and known limitations:
 - **Same-arch only.** Mixing a 3060 with a 4090 will load but inter-GPU
   collective ops can stall. The `same_arch: false` field on `/api/system/gpu`
   is your warning.
+- **Per-card VRAM matters more than aggregate.** The FLUX-dev transformer is
+  ~12 GB at FP16 — it must fit on a *single* card. Verified results:
+  - **2× 12 GB (e.g., 2× RTX 3060):** pooled path executes, then **OOMs on
+    transformer placement** (transformer ≈ card capacity, no room for CUDA
+    context). Fall-back to cpu_offload kicks in automatically; net effect is
+    a successful load via the slower offload path. Use the flag here only
+    for SDXL or future models with smaller transformers.
+  - **2× 16 GB (e.g., 2× RTX 4060 Ti 16 GB) or larger same-arch:** pooled
+    path holds end-to-end and removes the CPU↔GPU page-fault tax on FLUX-dev.
 - **Throughput is mostly about *fit*, not speed.** PCIe-only consumer cards
   (no NVLink) shuffle prompt embeddings between cards each step. Expect
   parity with single-card cpu_offload on FLUX-schnell and a meaningful win
   on FLUX-dev (which spills hard to system RAM under cpu_offload on 12 GB).
 - **Multi-tenant safe.** Default mode is `off`. The pooled tier is advisory
   only — the orchestrator never picks `flux-dev` for a tenant whose host is
-  not opted in.
+  not opted in. The OOM-then-fallback path means enabling the flag on
+  undersized hardware is *safe* (loads succeed via cpu_offload) but provides
+  no speed benefit — check `~/.openzigs/logs/image-gen-cuda.log` for
+  "Pooled placement failed" warnings to confirm.
 
 To revert, unset the env var (or set to `off`) and restart the sidecars.
 
