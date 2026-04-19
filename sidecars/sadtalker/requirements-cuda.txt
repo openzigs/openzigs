@@ -1,0 +1,26 @@
+# SadTalker Talking-Head Sidecar — CUDA Requirements
+# Install: pip install -r requirements-cuda.txt
+torch>=2.1.0
+torchvision>=0.16.0
+torchaudio>=2.1.0
+numpy<2
+scipy
+dlib
+face-alignment
+imageio
+imageio-ffmpeg
+librosa
+pydub
+gfpgan
+basicsr
+facexlib
+realesrgan
+kornia
+yacs
+pyyaml
+joblib
+scikit-image
+tqdm
+fastapi
+uvicorn
+pydantic

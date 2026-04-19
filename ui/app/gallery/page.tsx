@@ -36,6 +36,7 @@ import {
   Check,
   FolderPlus,
   Send,
+  Mic,
 } from "lucide-react";
 import { InlineModelPicker } from "@/components/model-picker-select";
 import { AskAiPanel, AskAiButton, PAGE_CONTEXTS } from "@/components/ask-ai";
@@ -87,7 +88,7 @@ interface QueueStats {
 }
 
 interface NodeStatusInfo {
-  node: "mac-mini" | "m2-pro" | "music";
+  node: "image-gen" | "m2-pro" | "music" | "lipsync";
   reachable: boolean;
   is_busy: boolean;
   loaded_model: string | null;
@@ -583,19 +584,21 @@ export default function GalleryPage() {
               Worker Nodes
             </h3>
             <span className="text-[10px] text-muted-foreground">
-              (shared M2 memory — only one model at a time)
+              (shared GPU memory — only one model at a time)
             </span>
           </div>
           <div className="grid grid-cols-3 gap-3">
             {nodes.map((node) => {
               const nodeLabel =
-                node.node === "mac-mini"
+                node.node === "image-gen"
                   ? "Image Gen (FluxQ)"
                   : node.node === "music"
                     ? "Audio Gen (ACE-Step)"
-                    : "Video Gen (LTX-2)";
+                    : node.node === "lipsync"
+                      ? "Lip Sync (LatentSync)"
+                      : "Video Gen (LTX-2)";
               const isHardwareNode =
-                node.node === "mac-mini" || node.node === "m2-pro";
+                node.node === "image-gen" || node.node === "m2-pro";
               return (
                 <div
                   key={node.node}
@@ -667,14 +670,14 @@ export default function GalleryPage() {
                               switchMutation.mutate({
                                 targetNode: node.node,
                                 model:
-                                  node.node === "mac-mini"
+                                  node.node === "image-gen"
                                     ? "flux-schnell"
                                     : undefined,
                               })
                             }
                             disabled={switchMutation.isPending}
                             className="rounded-lg border border-primary/30 bg-primary/5 px-2 py-1 text-[10px] font-semibold text-primary hover:bg-primary/10 disabled:opacity-50"
-                            title={`Switch to ${node.node === "mac-mini" ? "image" : "video"} generation`}
+                            title={`Switch to ${node.node === "image-gen" ? "image" : "video"} generation`}
                           >
                             <ArrowRightLeft className="inline h-3 w-3 mr-0.5" />
                             Activate
@@ -2129,7 +2132,8 @@ type StudioMode =
   | "img2img"
   | "txt2video"
   | "img2video"
-  | "txt2music";
+  | "txt2music"
+  | "talkingHead";
 
 interface StudioFormState {
   mode: StudioMode;
@@ -2145,7 +2149,7 @@ interface StudioFormState {
   initImage: File | null;
   initImagePreview: string;
   imageProvider: "local" | "cloud" | "auto";
-  imageModel: "flux-schnell" | "flux-dev" | "flux-kontext" | "sdxl-turbo";
+  imageModel: "flux-schnell" | "flux-dev" | "flux-kontext" | "sdxl-base";
   duration_seconds: number;
   lyrics: string;
   instrumental: boolean;
@@ -2155,6 +2159,7 @@ interface StudioFormState {
   negative_prompt: string;
   characterId: string;
   controlnetStrength: number;
+  loraScale: number;
   // Phase 1: Gallery Studio Feature Parity (#781)
   pipeline: string;
   audio: boolean;
@@ -2164,6 +2169,18 @@ interface StudioFormState {
   preset_id: string;
   // Phase 2: Multi-Segment Video (#782)
   video_duration: number;
+  // Phase 3: Talking Head Pipeline (#803)
+  speechText: string;
+  videoPrompt: string;
+  voice: string;
+  lipsyncModelVersion: string;
+  lipsyncInferenceSteps: number;
+  lipsyncGuidanceScale: number;
+  lipsyncDeepCache: boolean;
+  talkingHeadRefImage: File | null;
+  talkingHeadRefImagePreview: string;
+  talkingHeadRefAudio: File | null;
+  talkingHeadRefAudioName: string;
 }
 
 const DEFAULT_FORM: StudioFormState = {
@@ -2190,6 +2207,7 @@ const DEFAULT_FORM: StudioFormState = {
   negative_prompt: "",
   characterId: "",
   controlnetStrength: 0.4,
+  loraScale: 0.8,
   pipeline: "distilled",
   audio: false,
   tiling: "auto",
@@ -2197,6 +2215,17 @@ const DEFAULT_FORM: StudioFormState = {
   model_repo: "",
   preset_id: "",
   video_duration: 4,
+  speechText: "",
+  videoPrompt: "",
+  voice: "af_heart",
+  lipsyncModelVersion: "v1.6",
+  lipsyncInferenceSteps: 20,
+  lipsyncGuidanceScale: 1.5,
+  lipsyncDeepCache: true,
+  talkingHeadRefImage: null,
+  talkingHeadRefImagePreview: "",
+  talkingHeadRefAudio: null,
+  talkingHeadRefAudioName: "",
 };
 
 const MODE_INFO: Record<
@@ -2227,6 +2256,11 @@ const MODE_INFO: Record<
     label: "Text → Music",
     desc: "Generate music from a text description",
     icon: <Music className="h-4 w-4" />,
+  },
+  talkingHead: {
+    label: "Talking Head",
+    desc: "TTS → Video → Lip Sync pipeline",
+    icon: <Mic className="h-4 w-4" />,
   },
 };
 
@@ -2264,6 +2298,39 @@ function GalleryStudio({
   });
   const readyCharacters = (charactersQuery.data?.characters ?? []).filter(
     (c) => c.status === "ready",
+  );
+
+  // Lipsync sidecar health check (#803)
+  const lipsyncHealthQuery = useQuery({
+    queryKey: ["sidecar", "lipsync", "health"],
+    queryFn: () =>
+      fetchJson<{ status: string; url?: string }>("/api/queue/sidecars/lipsync/health"),
+    retry: false,
+    staleTime: 30_000,
+  });
+  const lipsyncAvailable = lipsyncHealthQuery.data?.status === "ok";
+
+  // Fetch available voices for TalkingHead mode (#803)
+  const voicesQuery = useQuery({
+    queryKey: ["voices"],
+    queryFn: () =>
+      fetchJson<{ provider: string; voices: Array<{ id: string; name: string }> }>(
+        "/api/voice/voices",
+      ),
+    staleTime: 60_000,
+  });
+
+  // Fetch F5-TTS voice profiles for TalkingHead voice cloning
+  const f5ttsProfilesQuery = useQuery({
+    queryKey: ["f5tts-profiles"],
+    queryFn: () =>
+      fetchJson<{ profiles: Array<{ id: string; name: string; clips: Array<{ emotion: string }> }> }>(
+        "/api/admin/audio/f5tts/profiles",
+      ),
+    staleTime: 30_000,
+  });
+  const f5ttsProfiles = (f5ttsProfilesQuery.data?.profiles ?? []).filter(
+    (p) => p.clips.length > 0,
   );
 
   // Fetch video presets for the preset picker (#788)
@@ -2340,12 +2407,13 @@ function GalleryStudio({
   }));
   const [submitting, setSubmitting] = useState(false);
   const [enhancing, setEnhancing] = useState(false);
+  const [enhancingSpeech, setEnhancingSpeech] = useState(false);
   const [llmModel, setLlmModel] = useState("");
 
   // If admin mode is network/cloud, SDXL Turbo is unavailable — auto-reset model
   const turboAvailable =
     imageGenMode === "local" && form.imageProvider === "local";
-  if (form.imageModel === "sdxl-turbo" && !turboAvailable) {
+  if (form.imageModel === "sdxl-base" && !turboAvailable) {
     setForm((prev) => ({ ...prev, imageModel: "flux-schnell" }));
   }
   // img2img always uses flux-kontext
@@ -2374,6 +2442,7 @@ function GalleryStudio({
 
   const isVideo = form.mode === "txt2video" || form.mode === "img2video";
   const isMusic = form.mode === "txt2music";
+  const isTalkingHead = form.mode === "talkingHead";
   const needsImage = form.mode === "img2img" || form.mode === "img2video";
 
   // Auto-disable audio when effective frame count exceeds safe limit for 32GB
@@ -2539,6 +2608,44 @@ function GalleryStudio({
     }
   };
 
+  const handleEnhanceSpeech = async () => {
+    if (!form.speechText.trim()) {
+      showToast("Enter speech text first", "error");
+      return;
+    }
+    setEnhancingSpeech(true);
+    try {
+      const result = await fetchJson<{
+        enhanced_text: string;
+        thinking: string;
+        estimated_duration_sec: number;
+      }>("/api/gallery/enhance-speech", {
+        method: "POST",
+        body: JSON.stringify({
+          raw_text: form.speechText.trim(),
+          ...(llmModel ? { llmModel } : {}),
+        }),
+      });
+      setForm((prev) => ({
+        ...prev,
+        speechText: result.enhanced_text,
+      }));
+      showToast(
+        result.thinking
+          ? `✨ ${result.thinking} (~${result.estimated_duration_sec}s audio)`
+          : `Speech polished! (~${result.estimated_duration_sec}s audio)`,
+        "success",
+      );
+    } catch (err) {
+      showToast(
+        `Enhance failed: ${err instanceof Error ? err.message : String(err)}`,
+        "error",
+      );
+    } finally {
+      setEnhancingSpeech(false);
+    }
+  };
+
   const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -2549,7 +2656,7 @@ function GalleryStudio({
   };
 
   const handleSubmit = async () => {
-    if (!form.prompt.trim()) {
+    if (!isTalkingHead && !form.prompt.trim()) {
       showToast("Prompt is required", "error");
       return;
     }
@@ -2585,6 +2692,64 @@ function GalleryStudio({
         });
 
         showToast("Music generation job submitted!", "success");
+        onCreated();
+        setForm(DEFAULT_FORM);
+        return;
+      }
+
+      // Talking Head pipeline — TTS → Video → Lip Sync (#803)
+      if (isTalkingHead) {
+        const speechText = form.speechText.trim() || form.prompt.trim();
+        if (!speechText) {
+          showToast("Speech text is required for Talking Head mode", "error");
+          setSubmitting(false);
+          return;
+        }
+
+        // Detect F5-TTS profile selection (voice value is "f5tts:<profileId>")
+        const isF5ttsVoice = form.voice.startsWith("f5tts:");
+        const f5ttsProfileId = isF5ttsVoice ? form.voice.slice(6) : undefined;
+
+        const pipelinePayload: Record<string, unknown> = {
+          text: speechText,
+          voice: isF5ttsVoice ? undefined : form.voice,
+          f5ttsProfileId,
+          videoPrompt: form.videoPrompt.trim() || undefined,
+          lipsyncModelVersion: form.lipsyncModelVersion,
+          inferenceSteps: form.lipsyncInferenceSteps,
+          guidanceScale: form.lipsyncGuidanceScale,
+          enableDeepCache: form.lipsyncDeepCache,
+          maxDurationSec: 30,
+        };
+
+        // Encode reference image as base64 if provided
+        if (form.talkingHeadRefImage) {
+          const buf = await form.talkingHeadRefImage.arrayBuffer();
+          pipelinePayload.referenceImage = btoa(
+            new Uint8Array(buf).reduce(
+              (s, b) => s + String.fromCharCode(b),
+              "",
+            ),
+          );
+        }
+
+        // Encode reference audio as base64 if provided
+        if (form.talkingHeadRefAudio) {
+          const buf = await form.talkingHeadRefAudio.arrayBuffer();
+          pipelinePayload.referenceAudio = btoa(
+            new Uint8Array(buf).reduce(
+              (s, b) => s + String.fromCharCode(b),
+              "",
+            ),
+          );
+        }
+
+        await fetchJson("/api/queue/pipelines/talking-head", {
+          method: "POST",
+          body: JSON.stringify(pipelinePayload),
+        });
+
+        showToast("Talking Head pipeline started! TTS → Video → Lip Sync", "success");
         onCreated();
         setForm(DEFAULT_FORM);
         return;
@@ -2667,22 +2832,20 @@ function GalleryStudio({
         payload.seed = parseInt(form.seed, 10);
       }
 
-      // Character LoRA injection — LoRA trained on z-image-turbo requires that model for generation
-      let modelOverride: string | undefined;
+      // Character LoRA injection — architecture auto-detection happens server-side
       if (form.characterId) {
         const char = readyCharacters.find((c) => c.id === form.characterId);
         if (char?.trainedLoraPath) {
           payload.lora_paths = [char.trainedLoraPath];
-          payload.lora_scales = [char.loraScale];
-          modelOverride = "z-image-turbo";
+          payload.lora_scales = [form.loraScale];
         }
         if (form.controlnetStrength > 0) {
           payload.controlnet_strength = form.controlnetStrength;
         }
       }
 
-      // For local image gen, pass the selected model (or character LoRA model override)
-      const model = !isVideo ? (modelOverride ?? form.imageModel) : undefined;
+      // For local image gen, pass the selected model
+      const model = !isVideo ? form.imageModel : undefined;
 
       await fetchJson("/api/queue/jobs", {
         method: "POST",
@@ -2714,7 +2877,7 @@ function GalleryStudio({
       </div>
 
       {/* Mode Selector */}
-      <div className="mb-4 grid grid-cols-5 gap-2">
+      <div className="mb-4 grid grid-cols-3 gap-2 sm:grid-cols-6">
         {(
           Object.entries(MODE_INFO) as [
             StudioMode,
@@ -2755,6 +2918,11 @@ function GalleryStudio({
                 ACE-Step 1.5
               </span>
             )}
+            {mode === "talkingHead" && (
+              <span className={`mt-1 inline-block rounded px-1.5 py-0.5 text-[9px] font-semibold ${lipsyncAvailable ? "bg-green-500/10 text-green-600 dark:text-green-400" : "bg-zinc-500/10 text-zinc-500"}`}>
+                {lipsyncAvailable ? "LatentSync ✓" : "No sidecar"}
+              </span>
+            )}
           </button>
         ))}
       </div>
@@ -2791,7 +2959,9 @@ function GalleryStudio({
               ? "Upbeat electronic dance track, 128 BPM, energetic synth leads, punchy drums..."
               : isVideo
                 ? "A cinematic aerial shot of a coastal city at golden hour..."
-                : "A photorealistic portrait of a futuristic city skyline at dusk..."
+                : isTalkingHead
+                  ? "Describe the overall scene or visual style (optional for Talking Head)..."
+                  : "A photorealistic portrait of a futuristic city skyline at dusk..."
           }
         />
       </div>
@@ -2872,6 +3042,244 @@ function GalleryStudio({
               />
             </div>
           )}
+        </>
+      )}
+
+      {/* Talking Head controls (#803) */}
+      {isTalkingHead && (
+        <>
+          <div className="mb-4">
+            <div className="mb-1 flex items-center justify-between">
+              <label className="text-[11px] font-medium text-muted-foreground">
+                Speech Text
+              </label>
+              <div className="flex items-center gap-2">
+                {form.speechText.trim() && (
+                  <span className="text-[10px] text-muted-foreground/70">
+                    ~{Math.max(1, Math.round(form.speechText.trim().split(/\s+/).length / 2.5))}s
+                    {" "}({form.speechText.trim().split(/\s+/).length} words)
+                    {Math.round(form.speechText.trim().split(/\s+/).length / 2.5) > 30 && (
+                      <span className="ml-1 text-amber-500 font-semibold">⚠ may exceed video limit</span>
+                    )}
+                  </span>
+                )}
+                <button
+                  onClick={handleEnhanceSpeech}
+                  disabled={enhancingSpeech || !form.speechText.trim()}
+                  className="flex items-center gap-1.5 rounded-lg border border-primary/30 bg-primary/5 px-2.5 py-0.5 text-[10px] font-semibold text-primary hover:bg-primary/10 disabled:opacity-50 transition"
+                >
+                  {enhancingSpeech ? (
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                  ) : (
+                    <Sparkles className="h-3 w-3" />
+                  )}
+                  AI Polish
+                </button>
+              </div>
+            </div>
+            <textarea
+              value={form.speechText}
+              onChange={(e) => update("speechText", e.target.value)}
+              className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-foreground"
+              rows={3}
+              placeholder="Type the words the character should speak..."
+            />
+          </div>
+
+          <div className="mb-4 grid grid-cols-2 gap-3">
+            <div>
+              <label className="mb-1 block text-[11px] font-medium text-muted-foreground">
+                Voice
+              </label>
+              <select
+                value={form.voice}
+                onChange={(e) => update("voice", e.target.value)}
+                className="w-full rounded-lg border border-border bg-card px-2 py-1.5 text-sm text-foreground"
+              >
+                <optgroup label="Kokoro (Engine A)">
+                  <option value="af_heart">af_heart (default)</option>
+                  {(voicesQuery.data?.voices ?? []).map((v) => (
+                    <option key={v.id} value={v.id}>
+                      {v.name || v.id}
+                    </option>
+                  ))}
+                </optgroup>
+                {f5ttsProfiles.length > 0 && (
+                  <optgroup label="F5-TTS Voice Clones (Engine C)">
+                    {f5ttsProfiles.map((p) => (
+                      <option key={p.id} value={`f5tts:${p.id}`}>
+                        {p.name} ({p.clips.map((c) => c.emotion).join(", ")})
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
+              </select>
+            </div>
+            <div>
+              <label className="mb-1 block text-[11px] font-medium text-muted-foreground">
+                Video Prompt (optional)
+              </label>
+              <input
+                type="text"
+                value={form.videoPrompt}
+                onChange={(e) => update("videoPrompt", e.target.value)}
+                className="w-full rounded-lg border border-border bg-card px-2 py-1.5 text-sm text-foreground"
+                placeholder="A person speaking in a studio..."
+              />
+            </div>
+          </div>
+
+          {/* Reference Image Upload (optional) */}
+          <div className="mb-4">
+            <label className="mb-1 block text-[11px] font-medium text-muted-foreground">
+              Reference Image{" "}
+              <span className="text-muted-foreground/60">(optional)</span>
+            </label>
+            <p className="mb-2 text-[10px] text-muted-foreground/70">
+              Upload a photo of the person to appear in the video
+            </p>
+            <div className="flex items-center gap-4">
+              <input
+                type="file"
+                accept="image/*"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (!file) return;
+                  update("talkingHeadRefImage", file);
+                  const reader = new FileReader();
+                  reader.onload = () =>
+                    update(
+                      "talkingHeadRefImagePreview",
+                      reader.result as string,
+                    );
+                  reader.readAsDataURL(file);
+                }}
+                className="text-sm text-foreground"
+              />
+              {form.talkingHeadRefImagePreview && (
+                <img
+                  src={form.talkingHeadRefImagePreview}
+                  alt="Reference preview"
+                  className="h-20 w-20 rounded-lg object-cover border border-border"
+                />
+              )}
+            </div>
+          </div>
+
+          {/* Reference Audio Upload (optional) */}
+          <div className="mb-4">
+            <label className="mb-1 block text-[11px] font-medium text-muted-foreground">
+              Reference Voice{" "}
+              <span className="text-muted-foreground/60">(optional)</span>
+            </label>
+            <p className="mb-2 text-[10px] text-muted-foreground/70">
+              Upload a short (3–10s) audio clip to clone this voice
+            </p>
+            <input
+              type="file"
+              accept="audio/*"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (!file) return;
+                update("talkingHeadRefAudio", file);
+                update("talkingHeadRefAudioName", file.name);
+              }}
+              className="text-sm text-foreground"
+            />
+            {form.talkingHeadRefAudioName && (
+              <p className="mt-1 text-[10px] text-muted-foreground">
+                Selected: {form.talkingHeadRefAudioName}
+                {" — will use F5-TTS voice cloning"}
+              </p>
+            )}
+          </div>
+
+          {/* Lip Sync Settings */}
+          <div className="mb-4 rounded-lg border border-border bg-muted/30 p-3">
+            <div className="mb-2 flex items-center justify-between">
+              <span className="text-[11px] font-semibold text-foreground">
+                Lip Sync Settings
+              </span>
+              {!lipsyncAvailable && (
+                <span className="rounded bg-red-500/10 px-2 py-0.5 text-[9px] font-semibold text-red-600 dark:text-red-400">
+                  Sidecar not detected
+                </span>
+              )}
+              {lipsyncAvailable && (
+                <span className="rounded bg-green-500/10 px-2 py-0.5 text-[9px] font-semibold text-green-600 dark:text-green-400">
+                  Connected
+                </span>
+              )}
+            </div>
+            <div className="grid grid-cols-4 gap-3">
+              <div>
+                <label className="mb-1 block text-[10px] font-medium text-muted-foreground">
+                  Model Version
+                </label>
+                <select
+                  value={form.lipsyncModelVersion}
+                  onChange={(e) => update("lipsyncModelVersion", e.target.value)}
+                  className="w-full rounded-lg border border-border bg-card px-2 py-1.5 text-xs text-foreground"
+                >
+                  <option value="v1.6">v1.6 (recommended)</option>
+                  <option value="v1.5">v1.5 (fast preview)</option>
+                </select>
+              </div>
+              <div>
+                <label className="mb-1 flex items-center justify-between text-[10px] font-medium text-muted-foreground">
+                  <span>Inference Steps</span>
+                  <span className="font-mono">{form.lipsyncInferenceSteps}</span>
+                </label>
+                <input
+                  type="range"
+                  min={10}
+                  max={50}
+                  value={form.lipsyncInferenceSteps}
+                  onChange={(e) =>
+                    update("lipsyncInferenceSteps", parseInt(e.target.value))
+                  }
+                  className="w-full"
+                />
+              </div>
+              <div>
+                <label className="mb-1 flex items-center justify-between text-[10px] font-medium text-muted-foreground">
+                  <span>Guidance Scale</span>
+                  <span className="font-mono">
+                    {form.lipsyncGuidanceScale.toFixed(1)}
+                  </span>
+                </label>
+                <input
+                  type="range"
+                  min={1.0}
+                  max={3.0}
+                  step={0.1}
+                  value={form.lipsyncGuidanceScale}
+                  onChange={(e) =>
+                    update("lipsyncGuidanceScale", parseFloat(e.target.value))
+                  }
+                  className="w-full"
+                />
+              </div>
+              <div className="flex items-end">
+                <label className="flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-1.5 text-xs cursor-pointer hover:bg-muted/50 transition">
+                  <input
+                    type="checkbox"
+                    checked={form.lipsyncDeepCache}
+                    onChange={(e) =>
+                      update("lipsyncDeepCache", e.target.checked)
+                    }
+                    className="rounded"
+                  />
+                  <span className="text-foreground">DeepCache</span>
+                </label>
+              </div>
+            </div>
+            {!lipsyncAvailable && (
+              <p className="mt-2 text-[10px] text-amber-600 dark:text-amber-400">
+                Video will be generated without lip sync. Install the LatentSync sidecar to enable.
+              </p>
+            )}
+          </div>
         </>
       )}
 
@@ -2962,8 +3370,8 @@ function GalleryStudio({
                       Flux Dev (quality, 25 steps)
                     </option>
                     {turboAvailable && (
-                      <option value="sdxl-turbo">
-                        SDXL Turbo (local only)
+                      <option value="sdxl-base">
+                        SDXL Base (character LoRA)
                       </option>
                     )}
                   </>
@@ -2995,7 +3403,31 @@ function GalleryStudio({
             </select>
           </div>
           {form.characterId && (
-            <div>
+            <>
+              <div>
+                <label className="mb-1 flex items-center justify-between text-[11px] font-medium text-muted-foreground">
+                  <span>LoRA Strength (Likeness)</span>
+                  <span className="font-mono">
+                    {form.loraScale.toFixed(2)}
+                  </span>
+                </label>
+                <input
+                  type="range"
+                  min={0.1}
+                  max={1.0}
+                  step={0.05}
+                  value={form.loraScale}
+                  onChange={(e) =>
+                    update("loraScale", parseFloat(e.target.value))
+                  }
+                  className="w-full"
+                />
+                <div className="flex justify-between text-[10px] text-muted-foreground">
+                  <span>Multi-subject friendly</span>
+                  <span>Strong likeness</span>
+                </div>
+              </div>
+              <div>
               <label className="mb-1 flex items-center justify-between text-[11px] font-medium text-muted-foreground">
                 <span>ControlNet Strength</span>
                 <span className="font-mono">
@@ -3018,6 +3450,7 @@ function GalleryStudio({
                 <span>Strong pose control</span>
               </div>
             </div>
+            </>
           )}
         </div>
       )}
@@ -3376,13 +3809,15 @@ function GalleryStudio({
         <p className="text-[11px] text-muted-foreground">
           {isMusic
             ? `ACE-Step · ${form.duration_seconds}s ${form.instrumental ? "instrumental" : "vocal"} · ${form.music_steps} steps`
-            : isVideo
-              ? `Video: ${form.video_duration}s${form.video_duration > 4 ? ` (${Math.ceil(form.video_duration / 4)} segments)` : ""} · ${form.pipeline} · ${form.video_steps} steps${form.audio ? " · audio" : ""}${form.enhance_prompt ? " · AI enhanced" : ""}`
-              : form.imageProvider === "cloud"
-                ? `Cloud (Imagen 3) · ${form.width}x${form.height}`
-                : form.imageProvider === "auto"
-                  ? `Auto (cloud→local) · ${form.width}x${form.height}`
-                  : `${form.imageModel} · ${form.width}x${form.height}, ${form.steps} steps`}
+            : isTalkingHead
+              ? `Talking Head · ${form.voice} · ${form.lipsyncModelVersion} · ${form.lipsyncInferenceSteps} steps${lipsyncAvailable ? "" : " · no lip sync"}`
+              : isVideo
+                ? `Video: ${form.video_duration}s${form.video_duration > 4 ? ` (${Math.ceil(form.video_duration / 4)} segments)` : ""} · ${form.pipeline} · ${form.video_steps} steps${form.audio ? " · audio" : ""}${form.enhance_prompt ? " · AI enhanced" : ""}`
+                : form.imageProvider === "cloud"
+                  ? `Cloud (Imagen 3) · ${form.width}x${form.height}`
+                  : form.imageProvider === "auto"
+                    ? `Auto (cloud→local) · ${form.width}x${form.height}`
+                    : `${form.imageModel} · ${form.width}x${form.height}, ${form.steps} steps`}
         </p>
         <button
           onClick={handleSubmit}

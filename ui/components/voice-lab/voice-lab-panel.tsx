@@ -188,6 +188,14 @@ function KokoroPresetGrid() {
 
 const F5TTS_REF_AUDIO_MAX_SECONDS = 15;
 
+const F5TTS_SAMPLE_SCRIPTS = [
+  "The morning light filtered through the curtains, casting a warm glow across the room.",
+  "I walked along the river path as the autumn leaves fell gently to the ground.",
+  "Technology continues to reshape our world in ways we never could have imagined before.",
+  "Good morning! The weather today looks absolutely beautiful — perfect for a long walk outside.",
+  "She carefully placed the book back on the shelf and turned off the reading lamp.",
+];
+
 function getAudioDurationSeconds(file: File): Promise<number> {
   return new Promise((resolve, reject) => {
     const url = URL.createObjectURL(file);
@@ -295,6 +303,7 @@ function F5TTSAddClipForm({
   const [uploadedPath, setUploadedPath] = useState<string | null>(null);
   const [isRecording, setIsRecording] = useState(false);
   const [recordingSeconds, setRecordingSeconds] = useState(0);
+  const [scriptIdx, setScriptIdx] = useState(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
@@ -445,6 +454,34 @@ function F5TTSAddClipForm({
           className="w-full rounded-lg border border-border bg-card px-2 py-1.5 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary"
           required
         />
+      </div>
+
+      {/* Sample script to read aloud */}
+      <div className="rounded-md border border-border bg-muted/40 p-2.5">
+        <div className="mb-1.5 flex items-center justify-between">
+          <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+            Sample Script (read aloud)
+          </span>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setScriptIdx((i) => (i + 1) % F5TTS_SAMPLE_SCRIPTS.length)}
+              className="text-[10px] text-primary hover:text-primary/80 transition-colors"
+            >
+              Different script
+            </button>
+            <button
+              type="button"
+              onClick={() => setRefText(F5TTS_SAMPLE_SCRIPTS[scriptIdx])}
+              className="rounded px-1.5 py-0.5 text-[10px] font-medium bg-primary/10 text-primary hover:bg-primary/20 transition-colors"
+            >
+              Use this ↓
+            </button>
+          </div>
+        </div>
+        <p className="text-[11px] leading-relaxed text-foreground/80">
+          &ldquo;{F5TTS_SAMPLE_SCRIPTS[scriptIdx]}&rdquo;
+        </p>
       </div>
 
       <div>

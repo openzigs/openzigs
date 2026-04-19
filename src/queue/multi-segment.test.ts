@@ -115,7 +115,7 @@ describe("multi-segment", () => {
     it("rejects invalid durations", () => {
       expect(isValidVideoDuration(5)).toBe(false);
       expect(isValidVideoDuration(0)).toBe(false);
-      expect(isValidVideoDuration(20)).toBe(false);
+      expect(isValidVideoDuration(33)).toBe(false);
       expect(isValidVideoDuration(7)).toBe(false);
     });
   });
@@ -174,23 +174,23 @@ describe("multi-segment", () => {
       expect(result!.type).toBe("img2video");
     });
 
-    it("creates a tracker", () => {
+    it("creates a tracker", async () => {
       const job = makeJob({ payload: { prompt: "test", video_duration: 16 } });
       decomposeMultiSegmentJob(job);
       expect(_trackerCount()).toBe(1);
-      expect(getSegmentTracker("parent-1")).toBeDefined();
+      expect(await getSegmentTracker("parent-1")).toBeDefined();
     });
   });
 
   // ── registerSegmentJob ──
 
   describe("registerSegmentJob", () => {
-    it("registers a segment job ID in the tracker", () => {
+    it("registers a segment job ID in the tracker", async () => {
       const job = makeJob({ payload: { prompt: "test", video_duration: 8 } });
       decomposeMultiSegmentJob(job);
 
       registerSegmentJob("parent-1", 0, "seg-job-0");
-      const tracker = getSegmentTracker("parent-1")!;
+      const tracker = (await getSegmentTracker("parent-1"))!;
       expect(tracker.segments[0].jobId).toBe("seg-job-0");
     });
 
@@ -374,7 +374,7 @@ describe("multi-segment", () => {
         payload: { prompt: "test", video_duration: 8 },
       });
       decomposeMultiSegmentJob(job8s);
-      const tracker = getSegmentTracker("stitch-1")!;
+      const tracker = (await getSegmentTracker("stitch-1"))!;
       // Override to 1 segment
       tracker.totalSegments = 1;
       tracker.segments = [

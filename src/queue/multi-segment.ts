@@ -35,6 +35,46 @@ export interface SegmentTracker {
 /** In-memory map of parent job ID → segment tracker. */
 const segmentTrackers = new Map<string, SegmentTracker>();
 
+// ── Tracker Persistence ─────────────────────────────────────
+
+function trackerDir(parentJobId: string): string {
+  return path.join(os.homedir(), ".openzigs", "gallery", "segments", parentJobId);
+}
+
+function trackerFilePath(parentJobId: string): string {
+  return path.join(trackerDir(parentJobId), "tracker.json");
+}
+
+/** Persist tracker to disk (best-effort). */
+async function persistTracker(tracker: SegmentTracker): Promise<void> {
+  try {
+    const dir = trackerDir(tracker.parentJobId);
+    await fs.mkdir(dir, { recursive: true });
+    const tmp = trackerFilePath(tracker.parentJobId) + ".tmp";
+    await fs.writeFile(tmp, JSON.stringify(tracker), "utf-8");
+    await fs.rename(tmp, trackerFilePath(tracker.parentJobId));
+  } catch (err) {
+    logger.warn(
+      `[MultiSegment] Failed to persist tracker for ${tracker.parentJobId}: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+}
+
+/** Recover tracker from disk if not in memory. */
+async function recoverTracker(parentJobId: string): Promise<SegmentTracker | undefined> {
+  const cached = segmentTrackers.get(parentJobId);
+  if (cached) return cached;
+  try {
+    const data = await fs.readFile(trackerFilePath(parentJobId), "utf-8");
+    const tracker = JSON.parse(data) as SegmentTracker;
+    segmentTrackers.set(parentJobId, tracker);
+    logger.info(`[MultiSegment] Recovered tracker from disk for parent ${parentJobId}`);
+    return tracker;
+  } catch {
+    return undefined;
+  }
+}
+
 // ── Public API ──────────────────────────────────────────────
 
 /**
@@ -82,6 +122,9 @@ export function decomposeMultiSegmentJob(parentJob: MediaJob): {
 
   segmentTrackers.set(parentJob.id, tracker);
 
+  // Persist tracker to survive hot-reloads
+  void persistTracker(tracker);
+
   // First segment: same type as parent (txt2video or img2video if source image)
   const firstSegmentPayload: MediaJobPayload = {
     ...parentJob.payload,
@@ -116,16 +159,18 @@ export function registerSegmentJob(
   if (!tracker) return;
   if (segmentIndex < tracker.segments.length) {
     tracker.segments[segmentIndex].jobId = segmentJobId;
+    void persistTracker(tracker);
   }
 }
 
 /**
  * Get the segment tracker for a parent job.
+ * Checks in-memory first, then attempts disk recovery.
  */
-export function getSegmentTracker(
+export async function getSegmentTracker(
   parentJobId: string,
-): SegmentTracker | undefined {
-  return segmentTrackers.get(parentJobId);
+): Promise<SegmentTracker | undefined> {
+  return recoverTracker(parentJobId);
 }
 
 /**
@@ -156,7 +201,7 @@ export async function handleSegmentCompletion(
 > {
   const parentJobId = completedJob.payload.parentJobId!;
   const segmentIndex = completedJob.payload.segmentIndex!;
-  const tracker = segmentTrackers.get(parentJobId);
+  const tracker = await recoverTracker(parentJobId);
 
   if (!tracker) {
     throw new Error(`No segment tracker found for parent job ${parentJobId}`);
@@ -177,6 +222,7 @@ export async function handleSegmentCompletion(
   // Update tracker
   tracker.segments[segmentIndex].status = "complete";
   tracker.segments[segmentIndex].videoPath = segmentPath;
+  void persistTracker(tracker);
 
   logger.info(
     `[MultiSegment] Segment ${segmentIndex + 1}/${tracker.totalSegments} complete for parent ${parentJobId}`,
@@ -292,7 +338,7 @@ async function extractLastFrameLocal(videoPath: string): Promise<string> {
  * @returns The final stitched video as a Buffer.
  */
 export async function stitchSegments(parentJobId: string): Promise<Buffer> {
-  const tracker = segmentTrackers.get(parentJobId);
+  const tracker = await recoverTracker(parentJobId);
   if (!tracker) {
     throw new Error(`No segment tracker found for parent job ${parentJobId}`);
   }

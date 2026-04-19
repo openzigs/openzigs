@@ -15,11 +15,13 @@ vi.mock("node:fs/promises", () => ({
     mkdir: vi.fn().mockResolvedValue(undefined),
     writeFile: vi.fn().mockResolvedValue(undefined),
     unlink: vi.fn().mockResolvedValue(undefined),
+    readFile: vi.fn().mockResolvedValue(Buffer.from("FAKE_WAV_BYTES")),
   },
   access: vi.fn().mockRejectedValue(new Error("ENOENT")),
   mkdir: vi.fn().mockResolvedValue(undefined),
   writeFile: vi.fn().mockResolvedValue(undefined),
   unlink: vi.fn().mockResolvedValue(undefined),
+  readFile: vi.fn().mockResolvedValue(Buffer.from("FAKE_WAV_BYTES")),
 }));
 
 // Mock spawn for ffprobe/install scripts — always return null duration

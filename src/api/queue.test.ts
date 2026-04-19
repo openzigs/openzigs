@@ -261,7 +261,7 @@ describe("Queue API router", () => {
 
     it("unloads valid node", async () => {
       const { app } = buildApp();
-      const res = await request(app).post("/q/nodes/mac-mini/unload");
+      const res = await request(app).post("/q/nodes/image-gen/unload");
       expect(res.status).toBe(200);
     });
   });
@@ -279,7 +279,7 @@ describe("Queue API router", () => {
       const { app } = buildApp();
       const res = await request(app)
         .post("/q/nodes/switch")
-        .send({ targetNode: "mac-mini" });
+        .send({ targetNode: "image-gen" });
       expect(res.status).toBe(200);
     });
   });
@@ -686,7 +686,7 @@ describe("Queue API router", () => {
     it("returns 500 when unloadNode throws", async () => {
       const { app, queueMaster } = buildApp();
       queueMaster.unloadNode.mockRejectedValueOnce(new Error("timeout"));
-      const res = await request(app).post("/q/nodes/mac-mini/unload");
+      const res = await request(app).post("/q/nodes/image-gen/unload");
       expect(res.status).toBe(500);
     });
   });
@@ -708,7 +708,7 @@ describe("Queue API router", () => {
       queueMaster.switchActiveNode.mockRejectedValueOnce(new Error("fail"));
       const res = await request(app)
         .post("/q/nodes/switch")
-        .send({ targetNode: "mac-mini" });
+        .send({ targetNode: "image-gen" });
       expect(res.status).toBe(500);
     });
 

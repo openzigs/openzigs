@@ -23,7 +23,7 @@ export type ImageProvider = "cloud" | "local" | "auto";
 export interface ImageGenOptions {
   /** Which provider to use (default: "auto" — try cloud, fallback to local) */
   provider?: ImageProvider;
-  /** Which local sidecar model to use (e.g. "flux", "sdxl-turbo"). Ignored for cloud provider. */
+  /** Which local sidecar model to use (e.g. "flux", "sdxl-base"). Ignored for cloud provider. */
   localModel?: string;
   /** Image width in pixels (default: 1024) */
   width?: number;

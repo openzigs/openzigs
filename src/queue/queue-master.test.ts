@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+﻿import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { QueueMaster } from "./queue-master.js";
 import type { MediaJob, QueueConfig } from "./types.js";
 
@@ -22,7 +22,7 @@ function makeJob(overrides: Partial<MediaJob> = {}): MediaJob {
     id: "job-1",
     type: "txt2img",
     requiredModel: "flux-schnell",
-    targetNode: "mac-mini",
+    targetNode: "image-gen",
     payload: { prompt: "a cat" },
     status: "pending",
     resultUrl: null,
@@ -65,7 +65,7 @@ function makeConfig(): QueueConfig {
     pollIntervalMs: 60000,
     callbackUrl: "http://localhost:3000/api/queue/callback",
     dispatchTimeoutMs: 45 * 60 * 1000,
-    macMini: { url: "http://mac-mini:5001" },
+    imageGen: { url: "http://image-gen:5001" },
     m2Pro: { url: "http://m2-pro:5002" },
   } as QueueConfig;
 }
@@ -77,6 +77,8 @@ describe("QueueMaster", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    // Reset mockFetch fully to clear persistent mockRejectedValue from previous tests
+    mockFetch.mockReset();
     vi.useFakeTimers();
     repo = makeRepo();
     config = makeConfig();
@@ -88,7 +90,7 @@ describe("QueueMaster", () => {
     vi.useRealTimers();
   });
 
-  // ── Lifecycle ──
+  // â”€â”€ Lifecycle â”€â”€
 
   describe("start/stop", () => {
     it("starts the polling loop", () => {
@@ -109,16 +111,17 @@ describe("QueueMaster", () => {
     });
   });
 
-  // ── Node Status ──
+  // â”€â”€ Node Status â”€â”€
 
   describe("getNodeStatuses", () => {
     it("returns fallback statuses when nodes are unreachable", async () => {
       mockFetch.mockRejectedValue(new Error("unreachable"));
       const statuses = await qm.getNodeStatuses();
-      expect(statuses).toHaveLength(3);
-      expect(statuses[0]).toMatchObject({ node: "mac-mini", reachable: false });
+      expect(statuses).toHaveLength(4);
+      expect(statuses[0]).toMatchObject({ node: "image-gen", reachable: false });
       expect(statuses[1]).toMatchObject({ node: "m2-pro", reachable: false });
       expect(statuses[2]).toMatchObject({ node: "music", reachable: false });
+      expect(statuses[3]).toMatchObject({ node: "lipsync", reachable: false });
     });
 
     it("reports reachable nodes when fetch succeeds", async () => {
@@ -137,7 +140,7 @@ describe("QueueMaster", () => {
     });
   });
 
-  // ── Unload Node ──
+  // â”€â”€ Unload Node â”€â”€
 
   describe("unloadNode", () => {
     it("returns ok when unload succeeds", async () => {
@@ -149,7 +152,7 @@ describe("QueueMaster", () => {
             previous_model: "flux-schnell",
           }),
       });
-      const result = await qm.unloadNode("mac-mini");
+      const result = await qm.unloadNode("image-gen");
       expect(result.ok).toBe(true);
       expect(result.previous_model).toBe("flux-schnell");
     });
@@ -166,16 +169,16 @@ describe("QueueMaster", () => {
 
     it("handles network error gracefully", async () => {
       mockFetch.mockRejectedValue(new Error("connection refused"));
-      const result = await qm.unloadNode("mac-mini");
+      const result = await qm.unloadNode("image-gen");
       expect(result.ok).toBe(false);
     });
   });
 
-  // ── Switch Active Node ──
+  // â”€â”€ Switch Active Node â”€â”€
 
   describe("switchActiveNode", () => {
     it("unloads competing node and preloads model", async () => {
-      // Set up: mac-mini has a model loaded
+      // Set up: image-gen has a model loaded
       mockFetch.mockResolvedValue({
         ok: true,
         json: () =>
@@ -185,7 +188,7 @@ describe("QueueMaster", () => {
           }),
       });
 
-      // First, give mac-mini a loaded model via pollNodeStatus
+      // First, give image-gen a loaded model via pollNodeStatus
       // We'll manipulate internal state indirectly by running getNodeStatuses
       mockFetch
         .mockResolvedValueOnce({
@@ -207,7 +210,7 @@ describe("QueueMaster", () => {
         });
       await qm.getNodeStatuses();
 
-      // Now switch to m2-pro (should unload mac-mini)
+      // Now switch to m2-pro (should unload image-gen)
       mockFetch.mockResolvedValue({
         ok: true,
         json: () =>
@@ -218,17 +221,17 @@ describe("QueueMaster", () => {
       });
       const result = await qm.switchActiveNode("m2-pro");
       expect(result.unloaded).not.toBeNull();
-      expect(result.unloaded!.node).toBe("mac-mini");
+      expect(result.unloaded!.node).toBe("image-gen");
     });
 
     it("skips unload when competing node has no model", async () => {
-      const result = await qm.switchActiveNode("mac-mini");
+      const result = await qm.switchActiveNode("image-gen");
       expect(result.unloaded).toBeNull();
       expect(result.loaded).toBeNull();
     });
   });
 
-  // ── Tick / Main Loop ──
+  // â”€â”€ Tick / Main Loop â”€â”€
 
   describe("tick", () => {
     it("runs without error when no jobs pending and nodes unreachable", async () => {
@@ -256,12 +259,12 @@ describe("QueueMaster", () => {
       expect(failedHandler).toHaveBeenCalled();
     });
 
-    it("dispatches pending image job to mac-mini", async () => {
+    it("dispatches pending image job to image-gen", async () => {
       const job = makeJob();
       repo.getPendingJobs.mockReturnValue([job]);
       repo.listJobs.mockReturnValue([]); // No stuck jobs
 
-      // Health check response for mac-mini
+      // Health check response for image-gen
       mockFetch
         .mockResolvedValueOnce({
           ok: true,
@@ -344,7 +347,7 @@ describe("QueueMaster", () => {
       repo.getPendingJobs.mockReturnValue([job]);
       repo.listJobs.mockReturnValue([]);
 
-      // 1: Mac-mini health check OK
+      // 1: Image-gen health check OK
       mockFetch
         .mockResolvedValueOnce({
           ok: true,
@@ -367,7 +370,7 @@ describe("QueueMaster", () => {
     });
   });
 
-  // ── Job Completion ──
+  // â”€â”€ Job Completion â”€â”€
 
   describe("handleJobCompletion", () => {
     it("ignores unknown jobs", async () => {
@@ -452,7 +455,7 @@ describe("QueueMaster", () => {
     });
   });
 
-  // ── Stale Result Polling ──
+  // â”€â”€ Stale Result Polling â”€â”€
 
   describe("pollForStaleResults", () => {
     it("recovers results from stale dispatched jobs", async () => {
@@ -491,7 +494,7 @@ describe("QueueMaster", () => {
     });
   });
 
-  // ── Music Job Processing ──
+  // â”€â”€ Music Job Processing â”€â”€
 
   describe("music jobs", () => {
     it("dispatches pending music job to music sidecar", async () => {
@@ -509,7 +512,7 @@ describe("QueueMaster", () => {
       );
       repo.listJobs.mockReturnValue([]);
 
-      // mac-mini health
+      // image-gen health
       mockFetch
         .mockResolvedValueOnce({
           ok: true,
@@ -541,7 +544,7 @@ describe("QueueMaster", () => {
     });
   });
 
-  // ── Remix Job Dispatch ────────────────────────────────────
+  // â”€â”€ Remix Job Dispatch â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   describe("remix dispatch", () => {
     it("dispatches remix_analyze jobs via music-studio sidecar", async () => {
@@ -560,7 +563,7 @@ describe("QueueMaster", () => {
       );
       repo.listJobs.mockReturnValue([]);
 
-      // mac-mini health
+      // image-gen health (no pending image-gen jobs, but processM2Pro fetches first)
       mockFetch
         .mockResolvedValueOnce({
           ok: true,
@@ -576,6 +579,11 @@ describe("QueueMaster", () => {
           ok: true,
           json: () => Promise.resolve({ is_busy: false, loaded_model: null }),
         })
+        // Music sidecar status
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({ is_busy: false }),
+        })
         // Music-studio sidecar health
         .mockResolvedValueOnce({
           ok: true,
@@ -585,16 +593,22 @@ describe("QueueMaster", () => {
         .mockResolvedValueOnce({
           status: 202,
           ok: true,
+        })
+        // Lipsync sidecar health
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({ is_busy: false, loaded_model: null }),
         });
 
       await qm.tick();
       expect(repo.markDispatched).toHaveBeenCalledWith("remix-a-1");
 
       // Verify correct endpoint was called
-      const lastFetchCall =
-        mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
-      expect(lastFetchCall[0]).toContain("/remix/analyze");
-      const body = JSON.parse(lastFetchCall[1]?.body as string);
+      const analyzeCall = mockFetch.mock.calls.find((c) =>
+        String(c[0]).includes("/remix/analyze"),
+      );
+      expect(analyzeCall).toBeDefined();
+      const body = JSON.parse(analyzeCall![1]?.body as string);
       expect(body.job_id).toBe("remix-a-1");
       expect(body.source_asset_id).toBe("asset-42");
     });
@@ -621,7 +635,7 @@ describe("QueueMaster", () => {
       );
       repo.listJobs.mockReturnValue([]);
 
-      // mac-mini health
+      // image-gen health (no pending image-gen jobs, but processM2Pro fetches first)
       mockFetch
         .mockResolvedValueOnce({
           ok: true,
@@ -637,6 +651,11 @@ describe("QueueMaster", () => {
           ok: true,
           json: () => Promise.resolve({ is_busy: false, loaded_model: null }),
         })
+        // Music sidecar status
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({ is_busy: false }),
+        })
         // Music-studio sidecar health
         .mockResolvedValueOnce({
           ok: true,
@@ -646,21 +665,27 @@ describe("QueueMaster", () => {
         .mockResolvedValueOnce({
           status: 202,
           ok: true,
+        })
+        // Lipsync sidecar health
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({ is_busy: false, loaded_model: null }),
         });
 
       await qm.tick();
       expect(repo.markDispatched).toHaveBeenCalledWith("remix-m-1");
 
-      const lastFetchCall =
-        mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
-      expect(lastFetchCall[0]).toContain("/remix/master");
-      const body = JSON.parse(lastFetchCall[1]?.body as string);
+      const masterCall = mockFetch.mock.calls.find((c) =>
+        String(c[0]).includes("/remix/master"),
+      );
+      expect(masterCall).toBeDefined();
+      const body = JSON.parse(masterCall![1]?.body as string);
       expect(body.vibe).toBe("warm_lofi");
       expect(body.stem_paths).toEqual({ vocals: "/v.wav", drums: "/d.wav" });
     });
   });
 
-  // ── reportProgress ──
+  // â”€â”€ reportProgress â”€â”€
 
   describe("reportProgress", () => {
     it("emits job:progress event with stage and progress", () => {
@@ -679,15 +704,15 @@ describe("QueueMaster", () => {
     });
   });
 
-  // ── ensureVramAvailable (tested via processMacMini / processM2Pro) ──
+  // â”€â”€ ensureVramAvailable (tested via processimageGen / processM2Pro) â”€â”€
 
   describe("VRAM coordination via tick", () => {
-    it("unloads m2-pro before dispatching image job to mac-mini", async () => {
-      const job = makeJob({ id: "img-vram-1", targetNode: "mac-mini" });
+    it("unloads m2-pro before dispatching image job to image-gen", async () => {
+      const job = makeJob({ id: "img-vram-1", targetNode: "image-gen" });
       repo.getPendingJobs.mockReturnValue([job]);
       repo.listJobs.mockReturnValue([]);
 
-      // 1: mac-mini health (idle)
+      // 1: image-gen health (idle)
       mockFetch.mockResolvedValueOnce({
         ok: true,
         json: () =>
@@ -697,7 +722,7 @@ describe("QueueMaster", () => {
             model_loaded: true,
           }),
       });
-      // 2: m2-pro health (has model loaded — triggers VRAM unload)
+      // 2: m2-pro health (has model loaded â€” triggers VRAM unload)
       mockFetch.mockResolvedValueOnce({
         ok: true,
         json: () => Promise.resolve({ is_busy: false, loaded_model: "ltx-2" }),
@@ -707,12 +732,17 @@ describe("QueueMaster", () => {
         ok: true,
         json: () => Promise.resolve({ is_busy: false }),
       });
+      // 4: lipsync sidecar
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ is_busy: false, loaded_model: null }),
+      });
 
       // Give m2-pro a loaded model via getNodeStatuses first
       await qm.getNodeStatuses();
       mockFetch.mockClear();
 
-      // Now during tick: mac-mini health, unload m2-pro, dispatch
+      // Now during tick: image-gen health, unload m2-pro, dispatch
       mockFetch.mockResolvedValueOnce({
         ok: true,
         json: () =>
@@ -736,6 +766,8 @@ describe("QueueMaster", () => {
       mockFetch.mockRejectedValueOnce(new Error("skip"));
       // music-studio sidecar
       mockFetch.mockRejectedValueOnce(new Error("skip"));
+      // lipsync sidecar
+      mockFetch.mockRejectedValueOnce(new Error("skip"));
 
       await qm.tick();
       // Verify unload was called
@@ -747,7 +779,7 @@ describe("QueueMaster", () => {
     });
   });
 
-  // ── Image Dispatch Endpoints ──
+  // â”€â”€ Image Dispatch Endpoints â”€â”€
 
   describe("image dispatch endpoints", () => {
     it("dispatches img2img job to /img2img-async endpoint", async () => {
@@ -764,7 +796,7 @@ describe("QueueMaster", () => {
       repo.getPendingJobs.mockReturnValue([job]);
       repo.listJobs.mockReturnValue([]);
 
-      // mac-mini health
+      // image-gen health
       mockFetch.mockResolvedValueOnce({
         ok: true,
         json: () =>
@@ -867,7 +899,7 @@ describe("QueueMaster", () => {
     });
   });
 
-  // ── Video Dispatch ──
+  // â”€â”€ Video Dispatch â”€â”€
 
   describe("video dispatch", () => {
     it("dispatches video job with full payload to m2-pro", async () => {
@@ -894,7 +926,7 @@ describe("QueueMaster", () => {
       repo.getPendingJobsForModel.mockReturnValue([]);
       repo.listJobs.mockReturnValue([]);
 
-      // mac-mini health
+      // image-gen health
       mockFetch.mockResolvedValueOnce({
         ok: true,
         json: () =>
@@ -934,7 +966,7 @@ describe("QueueMaster", () => {
     });
   });
 
-  // ── LTX v2 Video Dispatch Fields ──
+  // â”€â”€ LTX v2 Video Dispatch Fields â”€â”€
 
   describe("video dispatch with LTX v2 fields", () => {
     it("includes audio, tiling, enhance_prompt in dispatch body", async () => {
@@ -958,7 +990,7 @@ describe("QueueMaster", () => {
       repo.getPendingJobsForModel.mockReturnValue([]);
       repo.listJobs.mockReturnValue([]);
 
-      // mac-mini health
+      // image-gen health
       mockFetch.mockResolvedValueOnce({
         ok: true,
         json: () =>
@@ -1089,7 +1121,7 @@ describe("QueueMaster", () => {
     });
   });
 
-  // ── Music Studio (voice2voice) Dispatch ──
+  // â”€â”€ Music Studio (voice2voice) Dispatch â”€â”€
 
   describe("music-studio voice2voice dispatch", () => {
     it("dispatches voice2voice job through music-studio sidecar", async () => {
@@ -1113,7 +1145,7 @@ describe("QueueMaster", () => {
       repo.listJobs.mockReturnValue([]);
       repo.getAsset.mockReturnValue({ file_path: "/tmp/source.wav" });
 
-      // mac-mini health
+      // image-gen health
       mockFetch.mockResolvedValueOnce({
         ok: true,
         json: () =>
@@ -1152,7 +1184,7 @@ describe("QueueMaster", () => {
     });
   });
 
-  // ── handleJobCompletion for voice2voice / remix jobs ──
+  // â”€â”€ handleJobCompletion for voice2voice / remix jobs â”€â”€
 
   describe("handleJobCompletion clears sidecar busy flags", () => {
     it("clears musicStudioStatus for voice2voice completion", async () => {
@@ -1207,10 +1239,10 @@ describe("QueueMaster", () => {
     });
   });
 
-  // ── switchActiveNode with model preload ──
+  // â”€â”€ switchActiveNode with model preload â”€â”€
 
   describe("switchActiveNode with model preload", () => {
-    it("preloads model on mac-mini after unloading competing node", async () => {
+    it("preloads model on image-gen after unloading competing node", async () => {
       // Give m2-pro a loaded model
       mockFetch.mockResolvedValueOnce({
         ok: true,
@@ -1227,48 +1259,48 @@ describe("QueueMaster", () => {
       });
       await qm.getNodeStatuses();
 
-      // switchActiveNode → mac-mini with model preload
+      // switchActiveNode â†’ image-gen with model preload
       // 1: Unload m2-pro
       mockFetch.mockResolvedValueOnce({
         ok: true,
         json: () =>
           Promise.resolve({ status: "unloaded", previous_model: "ltx-2" }),
       });
-      // 2: Preload on mac-mini POST /model
+      // 2: Preload on image-gen POST /model
       mockFetch.mockResolvedValueOnce({
         ok: true,
         json: () => Promise.resolve({}),
       });
 
-      const result = await qm.switchActiveNode("mac-mini", "flux-schnell");
+      const result = await qm.switchActiveNode("image-gen", "flux-schnell");
       expect(result.unloaded).toMatchObject({ node: "m2-pro" });
       expect(result.loaded).toMatchObject({
-        node: "mac-mini",
+        node: "image-gen",
         model: "flux-schnell",
       });
     });
 
     it("handles preload failure gracefully", async () => {
-      // switchActiveNode with no competing model → no unload needed
+      // switchActiveNode with no competing model â†’ no unload needed
       // Preload POST fails
       mockFetch.mockRejectedValueOnce(new Error("connect refused"));
 
-      const result = await qm.switchActiveNode("mac-mini", "flux-schnell");
+      const result = await qm.switchActiveNode("image-gen", "flux-schnell");
       expect(result.unloaded).toBeNull();
       expect(result.loaded).toBeNull();
     });
   });
 
-  // ── Stale Busy Flag Recovery ──
+  // â”€â”€ Stale Busy Flag Recovery â”€â”€
 
   describe("stale busy flag recovery", () => {
-    it("clears stale mac-mini busy flag when no dispatched jobs exist", async () => {
-      const job = makeJob({ id: "after-stale", targetNode: "mac-mini" });
+    it("clears stale image-gen busy flag when no dispatched jobs exist", async () => {
+      const job = makeJob({ id: "after-stale", targetNode: "image-gen" });
       repo.getPendingJobs.mockReturnValue([job]);
-      // No dispatched jobs — the busy flag is stale
+      // No dispatched jobs â€” the busy flag is stale
       repo.listJobs.mockReturnValue([]);
 
-      // mac-mini health returns idle
+      // image-gen health returns idle
       mockFetch.mockResolvedValueOnce({
         ok: true,
         json: () =>
@@ -1295,7 +1327,7 @@ describe("QueueMaster", () => {
         status: "dispatched",
         targetNode: "local",
         type: "remix_analyze",
-        dispatchedAt: new Date(Date.now() - 20 * 60 * 1000), // 20 min ago — beyond 15 min local timeout
+        dispatchedAt: new Date(Date.now() - 20 * 60 * 1000), // 20 min ago â€” beyond 15 min local timeout
       });
       repo.listJobs.mockReturnValue([stuckLocal]);
       mockFetch.mockRejectedValue(new Error("unreachable"));
@@ -1309,6 +1341,539 @@ describe("QueueMaster", () => {
         expect.stringContaining("Dispatch timeout"),
       );
       expect(failedHandler).toHaveBeenCalled();
+    });
+  });
+
+  // â”€â”€ Memory Coordination (LTX â†” LatentSync) â”€â”€
+
+  describe("ensureSidecarMemory", () => {
+    it("unloads LTX (m2-pro) before lipsync dispatch when model is loaded", async () => {
+      // Seed m2-pro as having a loaded model via getNodeStatuses
+      mockFetch
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              is_busy: false,
+              loaded_model: "ltx-2",
+            }),
+        }) // image-gen health
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              is_busy: false,
+              loaded_model: "ltx-video-0.9.1",
+            }),
+        }) // m2-pro health (has model loaded)
+        .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({}) }) // music unreachable â€” use resolved empty
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () =>
+            Promise.resolve({ busy: false, loaded_model: null }),
+        }); // lipsync health
+
+      await qm.getNodeStatuses();
+
+      // Now mock the unload call
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            status: "unloaded",
+            previous_model: "ltx-video-0.9.1",
+          }),
+      });
+
+      await qm.ensureSidecarMemory("lipsync");
+
+      // Verify unload was called on m2-pro
+      const unloadCall = mockFetch.mock.calls.find(
+        (c) =>
+          typeof c[0] === "string" &&
+          c[0].includes("m2-pro") &&
+          c[0].endsWith("/unload"),
+      );
+      expect(unloadCall).toBeDefined();
+    });
+
+    it("unloads LatentSync before LTX dispatch when lipsync model is loaded", async () => {
+      // Seed lipsync as having a loaded model - simulate via lipsync health returning loaded model
+      mockFetch
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () =>
+            Promise.resolve({ is_busy: false, loaded_model: null }),
+        }) // image-gen
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () =>
+            Promise.resolve({ is_busy: false, loaded_model: null }),
+        }) // m2-pro
+        .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({}) }) // music
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              busy: false,
+              loaded_model: "latentsync-v1.5",
+            }),
+        }); // lipsync health â€” has model loaded
+
+      await qm.getNodeStatuses();
+
+      // Now mock the lipsync unload-model call
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ status: "unloaded" }),
+      });
+
+      await qm.ensureSidecarMemory("ltx");
+
+      // Verify unload-model was called on lipsync sidecar
+      const unloadCall = mockFetch.mock.calls.find(
+        (c) =>
+          typeof c[0] === "string" && c[0].includes("/unload-model"),
+      );
+      expect(unloadCall).toBeDefined();
+    });
+
+    it("skips unload if target sidecar is already the active one", async () => {
+      // Seed lipsync as loaded, m2-pro as empty
+      mockFetch
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () =>
+            Promise.resolve({ is_busy: false, loaded_model: null }),
+        }) // image-gen
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () =>
+            Promise.resolve({ is_busy: false, loaded_model: null }),
+        }) // m2-pro
+        .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({}) }) // music
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              busy: false,
+              loaded_model: "latentsync-v1.5",
+            }),
+        }); // lipsync - loaded
+
+      await qm.getNodeStatuses();
+
+      const callsBefore = mockFetch.mock.calls.length;
+
+      // Requesting lipsync when lipsync is already active â€” no unload needed
+      await qm.ensureSidecarMemory("lipsync");
+
+      // No additional fetch calls made (no unload needed)
+      expect(mockFetch.mock.calls.length).toBe(callsBefore);
+    });
+
+    it("throws if concurrent memory transitions are attempted", async () => {
+      // Seed m2-pro as loaded
+      mockFetch
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () =>
+            Promise.resolve({ is_busy: false, loaded_model: null }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              is_busy: false,
+              loaded_model: "ltx-video-0.9.1",
+            }),
+        })
+        .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({}) })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () =>
+            Promise.resolve({ busy: false, loaded_model: null }),
+        });
+
+      await qm.getNodeStatuses();
+
+      // Mock unload that takes a while (won't resolve immediately)
+      mockFetch.mockImplementationOnce(
+        () =>
+          new Promise((resolve) =>
+            setTimeout(
+              () =>
+                resolve({
+                  ok: true,
+                  json: () =>
+                    Promise.resolve({
+                      status: "unloaded",
+                      previous_model: "ltx-video-0.9.1",
+                    }),
+                }),
+              5000,
+            ),
+          ),
+      );
+
+      // Start first transition (won't complete immediately)
+      const first = qm.ensureSidecarMemory("lipsync");
+
+      // Second concurrent call should throw
+      await expect(qm.ensureSidecarMemory("ltx")).rejects.toThrow(
+        "Memory transition already in progress",
+      );
+
+      // Advance timer and let first complete
+      await vi.advanceTimersByTimeAsync(5000);
+      await first;
+    });
+
+    it("retries unload up to 3 times on failure then proceeds (best-effort)", async () => {
+      // Seed m2-pro as loaded
+      mockFetch
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () =>
+            Promise.resolve({ is_busy: false, loaded_model: null }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              is_busy: false,
+              loaded_model: "ltx-video-0.9.1",
+            }),
+        })
+        .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({}) })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () =>
+            Promise.resolve({ busy: false, loaded_model: null }),
+        });
+
+      await qm.getNodeStatuses();
+
+      // Fail all unload attempts
+      mockFetch
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 500,
+          text: () => Promise.resolve("Internal Server Error"),
+        })
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 500,
+          text: () => Promise.resolve("Internal Server Error"),
+        })
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 500,
+          text: () => Promise.resolve("Internal Server Error"),
+        });
+
+      const promise = qm.ensureSidecarMemory("lipsync");
+
+      // Advance through retries (2s backoff between attempts) â€” use async to flush microtasks
+      await vi.advanceTimersByTimeAsync(2000);
+      await vi.advanceTimersByTimeAsync(2000);
+
+      // ensureSidecarMemory is best-effort — catches errors and proceeds
+      await expect(promise).resolves.toBeUndefined();
+    });
+
+    it("gracefully handles unreachable lipsync sidecar during unload", async () => {
+      // Seed lipsync as having a loaded model
+      mockFetch
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () =>
+            Promise.resolve({ is_busy: false, loaded_model: null }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () =>
+            Promise.resolve({ is_busy: false, loaded_model: null }),
+        })
+        .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({}) })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              busy: false,
+              loaded_model: "latentsync-v1.5",
+            }),
+        });
+
+      await qm.getNodeStatuses();
+
+      // Lipsync sidecar unreachable during unload
+      mockFetch.mockRejectedValueOnce(new Error("Connection refused"));
+
+      // Should not throw â€” graceful skip
+      await qm.ensureSidecarMemory("ltx");
+    });
+  });
+
+  // â”€â”€ TTS Dispatch â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+  describe("TTS dispatch to audio sidecar", () => {
+    it("dispatches TTS job to audio sidecar /tts and handles sync response", async () => {
+      const ttsJob = makeJob({
+        id: "tts-1",
+        type: "tts",
+        requiredModel: "f5-tts",
+        targetNode: "m2-pro",
+        payload: { prompt: "Hello world", voice: "af_heart" },
+      });
+
+      repo.getPendingJobs.mockReturnValue([]);
+      repo.getPendingJobsForModel.mockImplementation(
+        (_node: string, model: string) =>
+          model === "f5-tts" ? [ttsJob] : [],
+      );
+      repo.listJobs.mockReturnValue([]);
+      repo.getJob.mockReturnValue(ttsJob);
+
+      // Build a fake WAV response body
+      const fakeWav = new Uint8Array([0x52, 0x49, 0x46, 0x46]);
+
+      // processimageGen: no pending image-gen jobs â†’ no health check
+      // processM2Pro: health check â†’ no pending non-audio m2-pro jobs
+      // processTtsJobs: audio sidecar health â†’ /tts call
+      // processMusicJobs: music sidecar status unreachable
+      // processMusicStudioJobs: music-studio health unreachable
+      // processLipSyncJobs: lipsync health unreachable
+      // handleJobCompletion calls void this.tick() â†’ second tick with all unreachable
+      mockFetch
+        // m2-pro health (processM2Pro)
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({ is_busy: false, loaded_model: null }),
+        })
+        // Audio sidecar health (processTtsJobs)
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({ status: "ready" }),
+        })
+        // Audio sidecar /tts response (sync â€” returns WAV directly)
+        .mockResolvedValueOnce({
+          ok: true,
+          arrayBuffer: () => Promise.resolve(fakeWav.buffer),
+        })
+        // Remaining sidecar checks + re-tick all return unreachable
+        .mockRejectedValue(new Error("unreachable"));
+
+      await qm.tick();
+
+      expect(repo.markDispatched).toHaveBeenCalledWith("tts-1");
+
+      // Verify the /tts call was made with correct payload
+      const ttsCall = mockFetch.mock.calls.find(
+        (c) => typeof c[0] === "string" && c[0].includes("/tts"),
+      );
+      expect(ttsCall).toBeDefined();
+      const body = JSON.parse(ttsCall![1]?.body as string);
+      expect(body.text).toBe("Hello world");
+      expect(body.voice).toBe("af_heart");
+
+      // handleJobCompletion saves to gallery and marks complete
+      expect(repo.markComplete).toHaveBeenCalledWith(
+        "tts-1",
+        expect.any(String),
+        undefined,
+        "asset-1",
+      );
+    });
+
+    it("skips TTS jobs when audio sidecar is unreachable", async () => {
+      const ttsJob = makeJob({
+        id: "tts-2",
+        type: "tts",
+        requiredModel: "f5-tts",
+        targetNode: "m2-pro",
+        payload: { prompt: "Test", voice: "af_heart" },
+      });
+
+      repo.getPendingJobs.mockReturnValue([]);
+      repo.getPendingJobsForModel.mockImplementation(
+        (_node: string, model: string) =>
+          model === "f5-tts" ? [ttsJob] : [],
+      );
+      repo.listJobs.mockReturnValue([]);
+
+      // processM2Pro health â†’ processTtsJobs audio sidecar health = unreachable
+      mockFetch
+        // m2-pro health (processM2Pro)
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({ is_busy: false, loaded_model: null }),
+        })
+        // Audio sidecar health â€” unreachable
+        .mockRejectedValueOnce(new Error("Connection refused"))
+        // Remaining sidecar checks
+        .mockRejectedValue(new Error("unreachable"));
+
+      await qm.tick();
+
+      // TTS job should NOT be dispatched
+      expect(repo.markDispatched).not.toHaveBeenCalledWith("tts-2");
+    });
+
+    it("TTS jobs are excluded from M2 Pro video dispatch", async () => {
+      const ttsJob = makeJob({
+        id: "tts-3",
+        type: "tts",
+        requiredModel: "f5-tts",
+        targetNode: "m2-pro",
+        payload: { prompt: "Excluded", voice: "af_heart" },
+      });
+
+      // processM2Pro filters by !AUDIO_JOB_TYPES â€” tts is now in that set
+      repo.getPendingJobs.mockReturnValue([ttsJob]);
+      repo.getPendingJobsForModel.mockImplementation(
+        (_node: string, model: string) =>
+          model === "f5-tts" ? [ttsJob] : [],
+      );
+      repo.listJobs.mockReturnValue([]);
+      repo.getJob.mockReturnValue(ttsJob);
+
+      const fakeWav = new Uint8Array([0x52, 0x49, 0x46, 0x46]);
+
+      mockFetch
+        // m2-pro health (processM2Pro)
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({ is_busy: false, loaded_model: null }),
+        })
+        // Audio sidecar health (processTtsJobs)
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({ status: "ready" }),
+        })
+        // Audio sidecar /tts
+        .mockResolvedValueOnce({
+          ok: true,
+          arrayBuffer: () => Promise.resolve(fakeWav.buffer),
+        })
+        // Remaining sidecar checks + re-tick
+        .mockRejectedValue(new Error("unreachable"));
+
+      await qm.tick();
+
+      // Verify /generate was NOT called (video dispatch), only /tts was
+      const generateCall = mockFetch.mock.calls.find(
+        (c) => typeof c[0] === "string" && c[0].endsWith("/generate"),
+      );
+      expect(generateCall).toBeUndefined();
+
+      const ttsCall = mockFetch.mock.calls.find(
+        (c) => typeof c[0] === "string" && c[0].includes("/tts"),
+      );
+      expect(ttsCall).toBeDefined();
+    });
+
+    it("marks TTS job as failed when sidecar returns error", async () => {
+      const ttsJob = makeJob({
+        id: "tts-4",
+        type: "tts",
+        requiredModel: "f5-tts",
+        targetNode: "m2-pro",
+        payload: { prompt: "Error case" },
+      });
+
+      repo.getPendingJobs.mockReturnValue([]);
+      repo.getPendingJobsForModel.mockImplementation(
+        (_node: string, model: string) =>
+          model === "f5-tts" ? [ttsJob] : [],
+      );
+      repo.listJobs.mockReturnValue([]);
+
+      mockFetch
+        // m2-pro health (processM2Pro)
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({ is_busy: false, loaded_model: null }),
+        })
+        // Audio sidecar health (processTtsJobs)
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({ status: "ready" }),
+        })
+        // Audio sidecar /tts â€” returns 500
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 500,
+          text: () => Promise.resolve("TTS synthesis failed: model not loaded"),
+        })
+        // Remaining sidecar checks
+        .mockRejectedValue(new Error("unreachable"));
+
+      await qm.tick();
+
+      expect(repo.markDispatched).toHaveBeenCalledWith("tts-4");
+      expect(repo.markFailed).toHaveBeenCalledWith(
+        "tts-4",
+        expect.stringContaining("Audio sidecar /tts returned 500"),
+      );
+    });
+
+    it("sends reference audio as ref_audio_path when provided", async () => {
+      const ttsJob = makeJob({
+        id: "tts-5",
+        type: "tts",
+        requiredModel: "f5-tts",
+        targetNode: "m2-pro",
+        payload: {
+          prompt: "Clone voice",
+          voice: "af_heart",
+          reference_audio: "AAAA", // base64 audio data
+        },
+      });
+
+      repo.getPendingJobs.mockReturnValue([]);
+      repo.getPendingJobsForModel.mockImplementation(
+        (_node: string, model: string) =>
+          model === "f5-tts" ? [ttsJob] : [],
+      );
+      repo.listJobs.mockReturnValue([]);
+      repo.getJob.mockReturnValue(ttsJob);
+
+      const fakeWav = new Uint8Array([0x52, 0x49, 0x46, 0x46]);
+
+      mockFetch
+        // m2-pro health (processM2Pro)
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({ is_busy: false, loaded_model: null }),
+        })
+        // Audio sidecar health (processTtsJobs)
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({ status: "ready" }),
+        })
+        // Audio sidecar /tts
+        .mockResolvedValueOnce({
+          ok: true,
+          arrayBuffer: () => Promise.resolve(fakeWav.buffer),
+        })
+        // Remaining sidecar checks + re-tick
+        .mockRejectedValue(new Error("unreachable"));
+
+      await qm.tick();
+
+      expect(repo.markDispatched).toHaveBeenCalledWith("tts-5");
+
+      // Verify fetch was called with /tts endpoint and the payload includes ref_audio_path
+      const ttsCall = mockFetch.mock.calls.find(
+        (c) => typeof c[0] === "string" && (c[0] as string).includes("/tts"),
+      );
+      expect(ttsCall).toBeDefined();
+      const body = JSON.parse(ttsCall![1]?.body as string);
+      expect(body.text).toBe("Clone voice");
+      expect(body.voice).toBe("af_heart");
+      // reference_audio should be decoded to a temp file path
+      expect(body.ref_audio_path).toBeDefined();
     });
   });
 });

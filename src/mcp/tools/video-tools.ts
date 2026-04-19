@@ -58,10 +58,10 @@ const produceVideoSchema = z.object({
       "Image generation provider: 'cloud' (Vertex AI), 'local' (sidecar), 'auto' (failover)",
     ),
   imageModel: z
-    .enum(["flux", "flux-schnell", "sdxl-turbo"])
+    .enum(["flux", "flux-schnell", "sdxl-base"])
     .optional()
     .describe(
-      "Local sidecar model to use: 'flux-schnell' (higher quality, slower) or 'sdxl-turbo' (faster, smaller). Only used when imageProvider is 'local' or 'auto'.",
+      "Local sidecar model to use: 'flux-schnell' (higher quality, slower) or 'sdxl-base' (character LoRA, 1024x1024). Only used when imageProvider is 'local' or 'auto'.",
     ),
 });
 
@@ -144,7 +144,7 @@ export const createVideoTools = ({
         },
         imageModel: {
           type: "string",
-          enum: ["flux", "sdxl-turbo"],
+          enum: ["flux", "sdxl-base"],
           description: "Local sidecar model (only for local/auto)",
         },
       },

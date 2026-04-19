@@ -8,12 +8,12 @@ describe("Tier 2: submit-media-job handler", () => {
       type: "txt2img",
       status: "pending",
       requiredModel: "flux-schnell",
-      targetNode: "mac-mini",
+      targetNode: "image-gen",
     }),
   };
   const mockQM = {
     getNodeStatuses: vi.fn().mockResolvedValue([
-      { node: "mac-mini", reachable: true, is_busy: false },
+      { node: "image-gen", reachable: true, is_busy: false },
     ]),
   };
 
@@ -62,7 +62,7 @@ describe("Tier 2: get-job-status handler", () => {
       type: "txt2img",
       status: "complete",
       requiredModel: "flux-schnell",
-      targetNode: "mac-mini",
+      targetNode: "image-gen",
       resultUrl: "/api/queue/assets/file/job-123.png",
       resultMetadata: null,
       error: null,
@@ -72,7 +72,7 @@ describe("Tier 2: get-job-status handler", () => {
   };
   const mockQM = {
     getNodeStatuses: vi.fn().mockResolvedValue([
-      { node: "mac-mini", reachable: true, is_busy: false, loaded_model: "flux-schnell" },
+      { node: "image-gen", reachable: true, is_busy: false, loaded_model: "flux-schnell" },
     ]),
   };
 

@@ -2,8 +2,8 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # cuda-ctl.sh — Unified CUDA Media Node Control Script (WSL)
 #
-# Manages the FluxQ image-gen, audio STT/TTS, LTX video-gen, and ACE-Step
-# music sidecars on a WSL/CUDA machine. Processes are backgrounded with setsid
+# Manages the FluxQ image-gen, audio STT/TTS, LTX video-gen, ACE-Step
+# music, and LatentSync lip-sync sidecars on a WSL/CUDA machine. Processes are backgrounded with setsid
 # and tracked via PID files so they survive parent shell exit.
 #
 # Usage:
@@ -15,6 +15,7 @@
 #   audio              Audio STT/TTS sidecar           (port 5006)
 #   ltx                LTX-2 video generation worker   (port 5007)
 #   music              ACE-Step music generation       (port 5009)
+#   lipsync            LatentSync lip sync              (port 5010)
 #
 # Per-service commands:
 #   start              Launch background process and write PID file
@@ -40,6 +41,9 @@
 # Music-only commands:
 #   music generate [prompt]  Quick ACE-Step generation test
 #
+# Lipsync-only commands:
+#   lipsync unload           Unload model from VRAM
+#
 # Unified commands:
 #   status             Show status of all services
 #   sync               Sync all server_cuda.py files from repo
@@ -60,21 +64,25 @@ IMG_DIR="$SIDECARS_DIR/image-gen"
 AUD_DIR="$SIDECARS_DIR/audio"
 VID_DIR="$SIDECARS_DIR/worker"
 MUS_DIR="$SIDECARS_DIR/music"
+LIP_DIR="$SIDECARS_DIR/lipsync"
 
 IMG_LOG="$LOG_DIR/image-gen-cuda.log"
 AUD_LOG="$LOG_DIR/audio-cuda.log"
 VID_LOG="$LOG_DIR/worker-cuda.log"
 MUS_LOG="$LOG_DIR/music-cuda.log"
+LIP_LOG="$LOG_DIR/lipsync-cuda.log"
 
 IMG_PID_FILE="$PID_DIR/image-gen.pid"
 AUD_PID_FILE="$PID_DIR/audio.pid"
 VID_PID_FILE="$PID_DIR/worker.pid"
 MUS_PID_FILE="$PID_DIR/music.pid"
+LIP_PID_FILE="$PID_DIR/lipsync.pid"
 
 FLUX_PORT="${FLUX_PORT:-5005}"
 AUDIO_PORT="${AUDIO_PORT:-5006}"
 LTX_PORT="${LTX_PORT:-5007}"
 MUSIC_PORT="${MUSIC_PORT:-5009}"
+LIPSYNC_PORT="${LIPSYNC_PORT:-5010}"
 
 # ── Colors ────────────────────────────────────────────────────────────────────
 RED='\033[0;31m'
@@ -184,8 +192,8 @@ require_sidecar_dir() {
 }
 
 # ── Repo source path  ─────────────────────────────────────────────────────────
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_SIDECARS="$SCRIPT_DIR/../sidecars"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+REPO_SIDECARS="${REPO_SIDECARS:-$SCRIPT_DIR/../sidecars}"
 
 # ── FluxQ (Image Gen) Commands ────────────────────────────────────────────────
 
@@ -662,6 +670,100 @@ music_sync() {
   ok "Music synced. Restart to apply: $0 music restart"
 }
 
+# ── Lip Sync (LatentSync) Commands ────────────────────────────────────────────
+
+lipsync_start() {
+  if [[ ! -d "$LIP_DIR" ]]; then
+    warn "Lip Sync sidecar not deployed ($LIP_DIR missing). Run setup-cuda-sidecars.sh first."
+    return
+  fi
+  if [[ ! -d "$LIP_DIR/venv" ]]; then
+    warn "Lip Sync venv missing at $LIP_DIR/venv. Run setup-cuda-sidecars.sh first."
+    return
+  fi
+  load_env
+  local callback_secret
+  callback_secret=$(read_callback_secret)
+  mkdir -p "$LOG_DIR" "$PID_DIR"
+  info "Starting Lip Sync sidecar (port $LIPSYNC_PORT)..."
+  setsid bash -c "
+    cd '$LIP_DIR'
+    source venv/bin/activate
+    CALLBACK_SECRET='${callback_secret:-}' \
+    LIPSYNC_SECRET_TOKEN='${LIPSYNC_SECRET_TOKEN:-}' \
+    exec python server.py --port $LIPSYNC_PORT \
+      >> '$LIP_LOG' 2>&1
+  " &
+  write_pid "$LIP_PID_FILE" $!
+  sleep 3
+  lipsync_status
+}
+
+lipsync_stop() {
+  stop_pid "$LIP_PID_FILE" "Lip Sync"
+}
+
+lipsync_restart() {
+  lipsync_stop
+  sleep 1
+  lipsync_start
+}
+
+lipsync_status() {
+  section "── Lip Sync (LatentSync) ── port $LIPSYNC_PORT"
+  if [[ ! -d "$LIP_DIR" ]]; then
+    warn "Lip Sync sidecar not deployed (skipping)"
+    return
+  fi
+  local pid
+  pid=$(read_pid "$LIP_PID_FILE")
+  if [[ -n "$pid" ]]; then
+    ok "Running — PID $pid"
+  else
+    warn "Not running (no PID or process dead)"
+  fi
+  if check_health "http://localhost:$LIPSYNC_PORT"; then
+    :
+  else
+    warn "Health endpoint unreachable at http://localhost:$LIPSYNC_PORT/health"
+  fi
+}
+
+lipsync_logs() {
+  info "Tailing Lip Sync logs — Ctrl+C to stop"
+  mkdir -p "$LOG_DIR"
+  touch "$LIP_LOG"
+  tail -F "$LIP_LOG"
+}
+
+lipsync_unload() {
+  load_env
+  info "Unloading LatentSync model from VRAM..."
+  local response
+  local auth_header=""
+  if [[ -n "${LIPSYNC_SECRET_TOKEN:-}" ]]; then
+    auth_header="-H \"Authorization: Bearer $LIPSYNC_SECRET_TOKEN\""
+  fi
+  response=$(eval curl -sf -X POST "http://localhost:$LIPSYNC_PORT/unload-model" \
+    $auth_header 2>/dev/null) \
+    || fail "Request failed. Is Lip Sync sidecar running?"
+  echo "$response" | python3 -m json.tool 2>/dev/null || echo "$response"
+}
+
+lipsync_sync() {
+  local src="$REPO_SIDECARS/lipsync/server_cuda.py"
+  [[ -f "$src" ]] || fail "Source not found: $src"
+  mkdir -p "$LIP_DIR"
+  info "Syncing lipsync/server_cuda.py → $LIP_DIR/server.py"
+  cp "$src" "$LIP_DIR/server.py"
+  local req="$REPO_SIDECARS/lipsync/requirements-cuda.txt"
+  if [[ -f "$req" ]]; then
+    info "Syncing lipsync/requirements-cuda.txt → $LIP_DIR/requirements.txt"
+    cp "$req" "$LIP_DIR/requirements.txt"
+  fi
+  ok "Lip Sync synced. Restart to apply: $0 lipsync restart"
+}
+
 # ── Unified Commands ──────────────────────────────────────────────────────────
 
 cmd_status_all() {
@@ -672,6 +774,8 @@ cmd_status_all() {
   ltx_status
   echo
   music_status
+  echo
+  lipsync_status
 }
 
 cmd_start_all() {
@@ -682,6 +786,8 @@ cmd_start_all() {
   ltx_start
   echo
   music_start
+  echo
+  lipsync_start
 }
 
 cmd_stop_all() {
@@ -689,6 +795,7 @@ cmd_stop_all() {
   audio_stop
   ltx_stop
   music_stop
+  lipsync_stop
 }
 
 cmd_restart_all() {
@@ -706,6 +813,8 @@ cmd_sync_all() {
   ltx_sync
   echo
   music_sync
+  echo
+  lipsync_sync
 }
 
 cmd_switch() {
@@ -783,6 +892,14 @@ cmd_help() {
   echo -e "    ${CYAN}music generate [prompt] [dur]${NC} Quick test music generation"
   echo -e "    ${CYAN}music sync${NC}                    Sync server.py from repo → $SIDECARS_DIR/music"
   echo
+  echo -e "    ${CYAN}lipsync start${NC}                 Start LatentSync lip-sync sidecar"
+  echo -e "    ${CYAN}lipsync stop${NC}                  Stop lip-sync sidecar"
+  echo -e "    ${CYAN}lipsync restart${NC}               Restart lip-sync sidecar"
+  echo -e "    ${CYAN}lipsync status${NC}                Lip-sync process state + /health"
+  echo -e "    ${CYAN}lipsync logs${NC}                  Tail lip-sync logs"
+  echo -e "    ${CYAN}lipsync unload${NC}                Unload model from VRAM"
+  echo -e "    ${CYAN}lipsync sync${NC}                  Sync server_cuda.py from repo → $SIDECARS_DIR/lipsync"
+  echo
   echo -e "  ${BOLD}Unified commands:${NC}"
   echo -e "    ${CYAN}status${NC}                        Show status of all services"
   echo -e "    ${CYAN}start${NC}                         Start all services"
@@ -800,6 +917,7 @@ cmd_help() {
   echo -e "    AUDIO_PORT     Audio port             (default: 5006)"
   echo -e "    LTX_PORT       LTX worker port        (default: 5007)"
   echo -e "    MUSIC_PORT     Music port             (default: 5009)"
+  echo -e "    LIPSYNC_PORT   Lip-sync port          (default: 5010)"
   echo
   echo -e "  ${BOLD}Per-machine overrides:${NC}"
   echo -e "    Edit ${CYAN}~/.openzigs/.env.cuda${NC} to set FLUXQ_SECRET_TOKEN, LTX_SECRET_TOKEN,"
@@ -910,6 +1028,28 @@ dispatch_music() {
   esac
 }
 
+dispatch_lipsync() {
+  local cmd="${1:-help}"
+  shift || true
+  case "$cmd" in
+    start)    lipsync_start ;;
+    stop)     lipsync_stop ;;
+    restart)  lipsync_restart ;;
+    status)   lipsync_status ;;
+    logs)     lipsync_logs ;;
+    sync)     lipsync_sync ;;
+    unload)   lipsync_unload ;;
+    help|--help|-h)
+      echo -e "Usage: $0 lipsync <start|stop|restart|status|logs|sync|unload>"
+      ;;
+    *)
+      warn "Unknown lipsync command: $cmd"
+      echo -e "Usage: $0 lipsync <start|stop|restart|status|logs|sync|unload>"
+      exit 1
+      ;;
+  esac
+}
+
 # ── Main Dispatch ─────────────────────────────────────────────────────────────
 
 ARG1="${1:-help}"
@@ -920,6 +1060,7 @@ case "$ARG1" in
   audio)   dispatch_audio "$@" ;;
   ltx)     dispatch_ltx "$@" ;;
   music)   dispatch_music "$@" ;;
+  lipsync) dispatch_lipsync "$@" ;;
   status)  cmd_status_all ;;
   start)   cmd_start_all ;;
   stop)    cmd_stop_all ;;

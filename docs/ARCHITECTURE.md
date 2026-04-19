@@ -42,6 +42,7 @@
 - [Director Mode Studio & Advanced Compositing](#director-mode-studio--advanced-compositing-epic-313)
 - [Distributed Media Queue, Worker Nodes & Asset Gallery](#distributed-media-queue-worker-nodes--asset-gallery-epic-325)
 - [Multi-Segment Video Generation Pipeline](#multi-segment-video-generation-pipeline-epic-780)
+- [LatentSync Lip Sync Sidecar](#latentsync-lip-sync-sidecar-epic-797)
 - [Music Studio — Voice2Voice Pipeline & Smart Remix Lab](#music-studio--voice2voice-pipeline--smart-remix-lab-epic-380-389-402)
 - [Creative Studio — Design & Media Tools](#creative-studio--design--media-tools-epic-766)
 - [Character Lab — LoRA Training & Identity Consistency](#character-lab--lora-training--identity-consistency-epic-374)
@@ -5691,11 +5692,30 @@ Both the FluxQ image sidecar (port 5005) and LTX video worker (port 5007) share 
 4. After job completion, worker unloads model and clears VRAM in the `finally` block
 5. Idle model reaper (5-minute timeout) unloads models that haven't been used
 
-**Management script:** `scripts/media-ctl.sh` provides unified control:
+**Management scripts:**
+
+**macOS** — `scripts/media-ctl.sh` provides unified control:
 - `media-ctl.sh switch flux` — Unload LTX, load FluxQ model
 - `media-ctl.sh switch ltx` — Unload FluxQ, LTX loads on next job
 - `media-ctl.sh ltx generate [pipeline] [prompt]` — Submit a test video generation job
 - `media-ctl.sh status` — Show status of both services
+
+**Windows (WSL+CUDA)** — `scripts/media-ctl.ps1` manages all sidecars in WSL Ubuntu:
+
+| Service | Sidecar | Port | Description |
+|---------|---------|------|-------------|
+| `flux` | image-gen | 5005 | FluxQ image generation |
+| `audio` | audio | 5006 | Kokoro/F5-TTS speech synthesis |
+| `ltx` | worker | 5007 | LTX video generation |
+| `imgproc` | image-processing | 5008 | Real-ESRGAN upscale + rembg |
+| `music` | music | 5009 | ACE-Step music generation |
+| `lipsync` | lipsync | 5010 | LatentSync lip sync |
+| `studio` | music-studio | 5010 | Music Studio voice2voice |
+
+Commands: `status`, `logs`, `restart`, `stop`, `sync`, `health`, `generate`
+Bulk: `restart-all`, `stop-all`, `sync-all`
+
+> **Port conflict**: `lipsync` and `studio` share port 5010 — only one at a time.
 
 ### VideoGenService (`src/video/generators/video-gen-service.ts`)
 
@@ -5870,6 +5890,231 @@ graph TB
 - **Audio Memory Safety**: The Gallery Studio UI auto-disables the audio toggle when effective frame count exceeds 97 (the safe limit for audio+video on M2 Pro 32GB).
 
 ### Tracking: [Epic #780](https://github.com/openzigs/openzigs/issues/780), [Epic #782](https://github.com/openzigs/openzigs/issues/782)
+
+---
+
+## LatentSync Lip Sync Sidecar (Epic #797)
+
+AI-powered lip synchronization using ByteDance's LatentSync model. Generates realistic lip movements on video by conditioning a latent diffusion model on audio input. Supports both Apple Silicon (MPS) and NVIDIA CUDA runtimes with automatic memory coordination against the LTX video generation sidecar.
+
+### Architecture
+
+```mermaid
+graph LR
+    UI[Gallery Studio<br/>Talking Head Mode] -->|POST /pipelines/talking-head| QAPI[Queue API]
+    QAPI -->|Stage 1: TTS| QM[QueueMaster]
+    QM -->|dispatch| TTS[F5-TTS Sidecar<br/>:5006]
+    TTS -->|complete| QM
+    QM -->|Stage 2: Video| LTX[LTX Video Worker<br/>:5007]
+    LTX -->|complete| QM
+    QM -->|unload LTX, load LatentSync| MEM[Memory Coordination]
+    MEM --> QM
+    QM -->|Stage 3: Lip Sync| LS[LatentSync Sidecar<br/>:5008 MPS / :5010 CUDA]
+    LS -->|complete| QM
+    QM -->|pipeline:progress| UI
+```
+
+### Sidecar Design
+
+| Property | MPS (macOS) | CUDA (Windows/WSL) |
+|---|---|---|
+| **Port** | 5008 | 5010 |
+| **Framework** | FastAPI + Uvicorn | FastAPI + Uvicorn |
+| **Precision** | FP32 (MPS requires full precision) | FP16 |
+| **Model Version** | v1.6 (18GB M2 Pro) | v1.5 (8GB VRAM) |
+| **Fork** | jadnohra/LatentSync (MPS patches) | bytedance/LatentSync (upstream) |
+| **Auth** | Bearer token (`LIPSYNC_API_TOKEN`) | Bearer token |
+
+**Endpoints**:
+
+| Method | Path | Description |
+|---|---|---|
+| GET | `/health` | Health check with model status |
+| POST | `/generate` | Generate lip-synced video |
+| POST | `/unload-model` | Free model from VRAM/MPS memory |
+| GET | `/model-status` | Current model load state |
+
+### Memory Coordination
+
+The M2 Pro (36GB) cannot hold both LTX-2 (~19GB) and LatentSync (~18GB) simultaneously. The `QueueMaster` implements sequential execution with a mutex-like `memoryTransitionActive` flag:
+
+1. **Before LTX dispatch**: `ensureSidecarMemory("ltx")` — if LatentSync was last active, call `/unload-model` on the LatentSync sidecar, then wait for LTX readiness.
+2. **Before LatentSync dispatch**: `ensureSidecarMemory("lipsync")` — if LTX was last active, the LTX sidecar auto-unloads on idle timeout; LatentSync loads its model on first request.
+3. **Retry logic**: `unloadWithRetry()` — 3 attempts with 2-second exponential backoff.
+4. **Graceful degradation**: If LatentSync is unreachable, pipeline completes with video-only output (no lip sync).
+
+### Talking Head Pipeline
+
+The pipeline chains three stages with automatic output forwarding:
+
+| Stage | Job Type | Input | Output |
+|---|---|---|---|
+| 1. Speech | `tts` | Text + voice ID → F5-TTS | `audio_base64` (WAV) |
+| 2. Video | `txt2video` | Video prompt → LTX | `video_base64` (MP4) |
+| 3. Lip Sync | `lipsync` | Audio + Video → LatentSync | `lipsync_video` (MP4) |
+
+Pipeline state is managed in-memory by `talking-head-pipeline.ts` with a `Map<string, PipelineState>` registry. Each stage completion triggers the next via `handleStageCompletion()`.
+
+### Configuration
+
+```json
+{
+  "lipSync": {
+    "enabled": true,
+    "networkNodeUrl": "http://192.168.1.123:5008",
+    "networkNodeToken": "your-token",
+    "defaultModel": "latentsync-v1.6",
+    "inferenceSteps": 20,
+    "guidanceScale": 1.5,
+    "enableDeepCache": true,
+    "maxDurationSec": 30,
+    "modelIdleTimeoutSec": 300,
+    "memoryLimitGB": 18
+  }
+}
+```
+
+### Port Map (Updated)
+
+| Port | Sidecar | Purpose |
+|---|---|---|
+| 5005 | FluxQ (Image Gen) | Flux Schnell/Dev image generation |
+| 5006 | F5-TTS Audio | Text-to-speech synthesis |
+| 5007 | LTX Video Worker | LTX-2 video generation |
+| 5008 | LatentSync (MPS) | Lip sync — Apple Silicon |
+| 5009 | ACE-Step Music Gen | Music generation |
+| 5010 | Music Studio / LatentSync (CUDA) | Voice2Voice pipeline / Lip sync — NVIDIA |
+
+### Setup
+
+**macOS (MPS)**:
+```bash
+./scripts/setup-lipsync-node.sh
+# Starts sidecar on port 5008
+```
+
+**Windows/WSL (CUDA)**:
+```bash
+./sidecars/setup-cuda-sidecars.sh
+./sidecars/start-cuda-sidecars.sh
+# Or via cuda-ctl:
+./scripts/cuda-ctl.sh lipsync setup
+./scripts/cuda-ctl.sh lipsync start
+```
+
+### Tracking: [Epic #797](https://github.com/openzigs/openzigs/issues/797)
+
+---
+
+## SadTalker Talking Head Sidecar
+
+AI-powered talking head generation using SadTalker (CVPR 2023). Generates realistic talking head video directly from a single reference photo and audio clip, using 3D Morphable Models (3DMM) for facial animation and optional GFPGAN enhancement. Replaces the three-stage (TTS → LTX Video → LatentSync) pipeline with a more efficient two-stage pipeline (TTS → SadTalker).
+
+### Architecture
+
+```mermaid
+graph LR
+    UI[Gallery Studio<br/>Talking Head Mode] -->|POST /pipelines/talking-head| QAPI[Queue API]
+    QAPI -->|Stage 1: TTS| QM[QueueMaster]
+    QM -->|dispatch| TTS[F5-TTS Sidecar<br/>:5006]
+    TTS -->|complete| QM
+    QM -->|Stage 2: SadTalker| SAD[SadTalker Sidecar<br/>:5011]
+    SAD -->|complete| QM
+    QM -->|pipeline:progress| UI
+```
+
+### Pipeline Comparison
+
+| Property | Classic Pipeline | SadTalker Pipeline |
+|---|---|---|
+| **Stages** | Speech → Video → Lip Sync | Speech → SadTalker |
+| **Identity** | AI-generated face (LTX) | User's reference photo |
+| **VRAM** | ~19GB (LTX) + ~8GB (LatentSync) | ~4-6GB |
+| **Quality** | Face drift across segments | Consistent identity |
+| **Speed** | 3 sidecar calls, memory swaps | 2 sidecar calls, no swaps |
+
+The pipeline auto-selects SadTalker when a `referenceImage` is provided and `useSadTalker` is not explicitly `false`. Falls back to the classic pipeline otherwise.
+
+### Sidecar Design
+
+| Property | Value |
+|---|---|
+| **Port** | 5011 |
+| **Framework** | FastAPI + Uvicorn |
+| **Precision** | FP32 |
+| **Model** | SadTalker (OpenTalker/SadTalker) |
+| **Enhancer** | GFPGAN v1.4 (512×512) |
+| **VRAM** | ~4–6 GB |
+| **License** | Apache 2.0 |
+
+**Endpoints**:
+
+| Method | Path | Description |
+|---|---|---|
+| GET | `/health` | Health check with model load status |
+| POST | `/generate` | Generate talking head video (async, 202) |
+| GET | `/status` | Current generation status |
+| POST | `/unload` | Free models from VRAM |
+
+### Generation Parameters
+
+| Parameter | Default | Description |
+|---|---|---|
+| `size` | 512 | Output resolution (256 or 512) |
+| `preprocess` | `crop` | Face preprocessing (`crop`, `resize`, `full`, `extcrop`, `extfull`) |
+| `enhancer` | `gfpgan` | Face enhancer (`gfpgan` or `RestoreFormer`) |
+| `still` | `true` | Reduce head motion for stability |
+| `expression_scale` | 1.0 | Expression intensity multiplier |
+| `pose_style` | 0 | Pose variation (0–45) |
+
+### Configuration
+
+```json
+{
+  "sadTalker": {
+    "enabled": true,
+    "networkNodeUrl": "",
+    "networkNodeToken": "",
+    "size": 512,
+    "preprocess": "crop",
+    "enhancer": "gfpgan",
+    "still": true,
+    "expressionScale": 1.0,
+    "poseStyle": 0,
+    "modelIdleTimeoutSec": 300
+  }
+}
+```
+
+### Setup (CUDA / WSL)
+
+```bash
+# Full setup (includes SadTalker + all other sidecars):
+./sidecars/setup-cuda-sidecars.sh
+./sidecars/start-cuda-sidecars.sh
+
+# Manual setup:
+git clone --depth 1 https://github.com/OpenTalker/SadTalker.git ~/.openzigs/models/SadTalker
+cd ~/.openzigs/models/SadTalker && bash scripts/download_models.sh
+# Download GFPGAN weights:
+mkdir -p gfpgan/weights
+wget -O gfpgan/weights/GFPGANv1.4.pth \
+    https://github.com/TencentARC/GFPGAN/releases/download/v1.3.0/GFPGANv1.4.pth
+```
+
+### Port Map (Updated)
+
+| Port | Sidecar | Purpose |
+|---|---|---|
+| 5005 | FluxQ (Image Gen) | Flux Schnell/Dev image generation |
+| 5006 | F5-TTS Audio | Text-to-speech synthesis |
+| 5007 | LTX Video Worker | LTX-2 video generation |
+| 5008 | LatentSync (MPS) | Lip sync — Apple Silicon |
+| 5009 | ACE-Step Music Gen | Music generation |
+| 5010 | Music Studio / LatentSync (CUDA) | Voice2Voice pipeline / Lip sync — NVIDIA |
+| 5011 | SadTalker | Talking head generation — NVIDIA |
+
+---
 
 ## Music Studio — Voice2Voice Pipeline & Smart Remix Lab (Epic #380, #389, #402)
 

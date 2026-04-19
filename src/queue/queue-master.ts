@@ -26,7 +26,17 @@ import {
   stitchSegments,
   registerSegmentJob,
   formatSegmentProgress,
+  decomposeMultiSegmentJob,
 } from "./multi-segment.js";
+import {
+  handleStageCompletion,
+  handleStageFailure,
+  markLipsyncSkipped,
+  getPipelineState,
+  setAudioDuration,
+  computeWavDuration,
+  estimateSpeechDuration,
+} from "./talking-head-pipeline.js";
 
 export interface QueueMasterEvents {
   "job:dispatched": [job: MediaJob, node: TargetNode];
@@ -41,7 +51,7 @@ export interface QueueMasterEvents {
 
 /** Aggregated status of all worker nodes. */
 export interface NodeStatus {
-  node: TargetNode | "music" | "music-studio";
+  node: TargetNode | "music" | "music-studio" | "lipsync";
   reachable: boolean;
   is_busy: boolean;
   loaded_model: string | null;
@@ -55,7 +65,7 @@ export class QueueMaster extends EventEmitter {
   private running = false;
 
   /** Cache of last-known worker status to reduce /status polling. */
-  private macMiniStatus: WorkerStatus = { is_busy: false, loaded_model: null };
+  private imageGenStatus: WorkerStatus = { is_busy: false, loaded_model: null };
   private m2ProStatus: WorkerStatus = { is_busy: false, loaded_model: null };
   /** Independent status tracking for the music sidecar (separate service from video). */
   private musicStatus: WorkerStatus = { is_busy: false, loaded_model: null };
@@ -64,8 +74,24 @@ export class QueueMaster extends EventEmitter {
     is_busy: false,
     loaded_model: null,
   };
+  /** Independent status tracking for the lip-sync sidecar (LatentSync). */
+  private lipSyncStatus: WorkerStatus = {
+    is_busy: false,
+    loaded_model: null,
+  };
   /** Counter to rate-limit repeated sidecar-unreachable warnings. */
   private musicStudioUnreachableCount = 0;
+  private lipSyncUnreachableCount = 0;
+  private sadTalkerUnreachableCount = 0;
+  /** Independent status tracking for the SadTalker sidecar. */
+  private sadTalkerStatus: WorkerStatus = {
+    is_busy: false,
+    loaded_model: null,
+  };
+  /** Prevents concurrent LTX ↔ LatentSync memory transitions on the shared M2 Pro. */
+  private memoryTransitionActive = false;
+  /** Prevents overlapping ticks when dispatch takes longer than pollIntervalMs. */
+  private tickRunning = false;
 
   constructor(repo: MediaQueueRepository, config: QueueConfig) {
     super();
@@ -112,21 +138,22 @@ export class QueueMaster extends EventEmitter {
    * Polls each sidecar's /status (or /health for FluxQ) endpoint.
    */
   async getNodeStatuses(): Promise<NodeStatus[]> {
-    const [macMini, m2Pro, music] = await Promise.allSettled([
-      this.pollNodeStatus("mac-mini"),
+    const [imageGen, m2Pro, music, lipsync] = await Promise.allSettled([
+      this.pollNodeStatus("image-gen"),
       this.pollNodeStatus("m2-pro"),
       this.pollMusicNodeStatus(),
+      this.pollLipSyncNodeStatus(),
     ]);
 
     return [
-      macMini.status === "fulfilled"
-        ? macMini.value
+      imageGen.status === "fulfilled"
+        ? imageGen.value
         : {
-            node: "mac-mini" as TargetNode,
+            node: "image-gen" as TargetNode,
             reachable: false,
             is_busy: false,
             loaded_model: null,
-            url: this.config.macMini.url,
+            url: this.config.imageGen.url,
           },
       m2Pro.status === "fulfilled"
         ? m2Pro.value
@@ -146,7 +173,52 @@ export class QueueMaster extends EventEmitter {
             loaded_model: null,
             url: "http://localhost:5009",
           },
+      lipsync.status === "fulfilled"
+        ? lipsync.value
+        : {
+            node: "lipsync" as const,
+            reachable: false,
+            is_busy: false,
+            loaded_model: null,
+            url: "http://localhost:5010",
+          },
     ];
+  }
+
+  /** Poll the lip-sync sidecar's /health endpoint independently. */
+  private async pollLipSyncNodeStatus(): Promise<NodeStatus> {
+    const nodeConfig = await this.getLipSyncNodeConfig();
+    try {
+      const headers: Record<string, string> = {};
+      if (nodeConfig.token)
+        headers["Authorization"] = `Bearer ${nodeConfig.token}`;
+
+      const res = await fetch(`${nodeConfig.url}/health`, {
+        headers,
+        signal: AbortSignal.timeout(5_000),
+      });
+      if (!res.ok) throw new Error(`Status check failed: ${res.status}`);
+
+      const data = (await res.json()) as Record<string, unknown>;
+      this.lipSyncStatus = {
+        is_busy: !!(data.busy as boolean),
+        loaded_model: (data.loaded_model as string) ?? null,
+      };
+      return {
+        node: "lipsync" as const,
+        reachable: true,
+        ...this.lipSyncStatus,
+        url: nodeConfig.url,
+      };
+    } catch {
+      return {
+        node: "lipsync" as const,
+        reachable: false,
+        is_busy: false,
+        loaded_model: null,
+        url: nodeConfig.url,
+      };
+    }
   }
 
   /** Poll the music sidecar's /status endpoint independently from other nodes. */
@@ -188,24 +260,24 @@ export class QueueMaster extends EventEmitter {
   private async pollNodeStatus(node: TargetNode): Promise<NodeStatus> {
     const nodeConfig = await this.getLiveNodeConfig(node);
 
-    // FluxQ (mac-mini) is single-threaded Python — it cannot respond to /health
+    // FluxQ (image-gen) is single-threaded Python — it cannot respond to /health
     // while blocking on inference. If we know it's busy AND there are dispatched
     // jobs, return the cached status rather than hammering it with health checks.
     // If there are no dispatched jobs, the flag is stale — fall through and re-poll.
-    if (node === "mac-mini" && this.macMiniStatus.is_busy) {
+    if (node === "image-gen" && this.imageGenStatus.is_busy) {
       const dispatched = this.repo.listJobs({ status: "dispatched" });
-      if (dispatched.some((j) => j.targetNode === "mac-mini")) {
+      if (dispatched.some((j) => j.targetNode === "image-gen")) {
         return {
           node,
           reachable: true,
-          ...this.macMiniStatus,
+          ...this.imageGenStatus,
           url: nodeConfig.url,
         };
       }
       logger.info(
-        "[QueueMaster] Mac-mini busy flag stale in pollNodeStatus — re-polling worker",
+        "[QueueMaster] Image-gen busy flag stale in pollNodeStatus — re-polling worker",
       );
-      this.macMiniStatus = { ...this.macMiniStatus, is_busy: false };
+      this.imageGenStatus = { ...this.imageGenStatus, is_busy: false };
     }
 
     try {
@@ -230,7 +302,7 @@ export class QueueMaster extends EventEmitter {
           status.is_busy = true;
         }
       }
-      if (node === "mac-mini") this.macMiniStatus = status;
+      if (node === "image-gen") this.imageGenStatus = status;
       else this.m2ProStatus = status;
       return { node, reachable: true, ...status, url: nodeConfig.url };
     } catch {
@@ -254,7 +326,7 @@ export class QueueMaster extends EventEmitter {
    * Before video job → unload FLUX from image worker
    */
   private async ensureVramAvailable(targetNode: TargetNode): Promise<void> {
-    if (targetNode === "mac-mini") {
+    if (targetNode === "image-gen") {
       // About to dispatch image job — ensure video worker has unloaded
       if (this.m2ProStatus.loaded_model) {
         logger.info(
@@ -264,12 +336,115 @@ export class QueueMaster extends EventEmitter {
       }
     } else {
       // About to dispatch video job — ensure image worker has unloaded
-      if (this.macMiniStatus.loaded_model) {
+      if (this.imageGenStatus.loaded_model) {
         logger.info(
-          `[QueueMaster] VRAM coordination: unloading ${this.macMiniStatus.loaded_model} from mac-mini before video dispatch`,
+          `[QueueMaster] VRAM coordination: unloading ${this.imageGenStatus.loaded_model} from image-gen before video dispatch`,
         );
-        await this.unloadNode("mac-mini");
+        await this.unloadNode("image-gen");
       }
+    }
+  }
+
+  /**
+   * Memory coordination for LTX ↔ LatentSync on shared M2 Pro (32 GB).
+   * Both models cannot coexist (~20 GB LTX + ~18 GB LatentSync > 32 GB).
+   * Unloads the competing sidecar with retries before dispatching.
+   *
+   * @param target - Which sidecar we're about to dispatch to
+   */
+  async ensureSidecarMemory(target: "ltx" | "lipsync"): Promise<void> {
+    if (this.memoryTransitionActive) {
+      throw new Error("Memory transition already in progress");
+    }
+    this.memoryTransitionActive = true;
+    try {
+      if (target === "lipsync" && this.m2ProStatus.loaded_model) {
+        // Best-effort: unload LTX before loading LatentSync (separate GPU processes)
+        logger.info(
+          `[QueueMaster] Memory coordination: unloading LTX (${this.m2ProStatus.loaded_model}) before lipsync dispatch`,
+        );
+        try {
+          await this.unloadWithRetry("m2-pro", 3, 2_000);
+        } catch (err) {
+          logger.warn(
+            `[QueueMaster] Memory coordination: LTX unload failed (${err instanceof Error ? err.message : err}) — proceeding with lipsync dispatch anyway`,
+          );
+        }
+      } else if (target === "ltx" && this.lipSyncStatus.loaded_model) {
+        // Best-effort: unload LatentSync before loading LTX
+        logger.info(
+          `[QueueMaster] Memory coordination: unloading LatentSync (${this.lipSyncStatus.loaded_model}) before video dispatch`,
+        );
+        try {
+          await this.unloadLipSyncSidecar();
+        } catch (err) {
+          logger.warn(
+            `[QueueMaster] Memory coordination: LatentSync unload failed (${err instanceof Error ? err.message : err}) — proceeding with video dispatch anyway`,
+          );
+        }
+      }
+    } finally {
+      this.memoryTransitionActive = false;
+    }
+  }
+
+  /**
+   * Unload with retries. Used for memory coordination between competing sidecars.
+   */
+  private async unloadWithRetry(
+    node: TargetNode,
+    maxAttempts: number,
+    backoffMs: number,
+  ): Promise<void> {
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      const result = await this.unloadNode(node);
+      if (result.ok) return;
+      if (attempt < maxAttempts) {
+        logger.warn(
+          `[QueueMaster] Unload ${node} attempt ${attempt}/${maxAttempts} failed — retrying in ${backoffMs}ms`,
+        );
+        await new Promise((r) => setTimeout(r, backoffMs));
+      }
+    }
+    throw new Error(
+      `Failed to unload ${node} after ${maxAttempts} attempts — memory may not be available`,
+    );
+  }
+
+  /**
+   * Unload the LatentSync lip-sync sidecar model.
+   */
+  private async unloadLipSyncSidecar(): Promise<void> {
+    try {
+      const nodeConfig = await this.getLipSyncNodeConfig();
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+      };
+      if (nodeConfig.token)
+        headers["Authorization"] = `Bearer ${nodeConfig.token}`;
+
+      const res = await fetch(`${nodeConfig.url}/unload-model`, {
+        method: "POST",
+        headers,
+        body: "{}",
+        signal: AbortSignal.timeout(10_000),
+      });
+
+      if (!res.ok) {
+        logger.warn(
+          `[QueueMaster] LatentSync unload failed: ${res.status}`,
+        );
+        return;
+      }
+
+      this.lipSyncStatus = { is_busy: false, loaded_model: null };
+      logger.info("[QueueMaster] LatentSync model unloaded for memory coordination");
+    } catch (err) {
+      // If LatentSync sidecar is unreachable, skip gracefully
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.debug(
+        `[QueueMaster] LatentSync sidecar unreachable during unload: ${msg}`,
+      );
     }
   }
 
@@ -284,7 +459,7 @@ export class QueueMaster extends EventEmitter {
       const cfgPath = path.join(os.homedir(), ".openzigs", "config.json");
       const raw = await fs.readFile(cfgPath, "utf-8");
       const cfg = JSON.parse(raw) as Record<string, unknown>;
-      if (node === "mac-mini") {
+      if (node === "image-gen") {
         const ig = cfg.imageGen as Record<string, unknown> | undefined;
         if (
           ig?.mode === "network" &&
@@ -296,7 +471,7 @@ export class QueueMaster extends EventEmitter {
             token:
               typeof ig.networkNodeToken === "string"
                 ? ig.networkNodeToken
-                : this.config.macMini.token,
+                : this.config.imageGen.token,
           };
         }
       } else {
@@ -314,7 +489,7 @@ export class QueueMaster extends EventEmitter {
     } catch {
       // config unreadable — fall through to startup config
     }
-    return node === "mac-mini" ? this.config.macMini : this.config.m2Pro;
+    return node === "image-gen" ? this.config.imageGen : this.config.m2Pro;
   }
 
   /**
@@ -355,8 +530,8 @@ export class QueueMaster extends EventEmitter {
       const previousModel = result.previous_model ?? result.model ?? null;
 
       // Update cached status
-      if (node === "mac-mini")
-        this.macMiniStatus = { is_busy: false, loaded_model: null };
+      if (node === "image-gen")
+        this.imageGenStatus = { is_busy: false, loaded_model: null };
       else this.m2ProStatus = { is_busy: false, loaded_model: null };
 
       logger.info(
@@ -374,7 +549,7 @@ export class QueueMaster extends EventEmitter {
    * Switch the active model domain. Unloads the competing node and optionally
    * preloads a model on the target node.
    *
-   * @param targetNode - Which node domain to activate ("mac-mini" for images, "m2-pro" for video)
+   * @param targetNode - Which node domain to activate ("image-gen" for images, "m2-pro" for video)
    * @param model - Optional model to preload (e.g. "flux-schnell", "ltx-2")
    */
   async switchActiveNode(
@@ -386,12 +561,12 @@ export class QueueMaster extends EventEmitter {
   }> {
     // Unload the competing node
     const competingNode: TargetNode =
-      targetNode === "mac-mini" ? "m2-pro" : "mac-mini";
+      targetNode === "image-gen" ? "m2-pro" : "image-gen";
     let unloaded: { node: TargetNode; previous_model: string | null } | null =
       null;
 
     const competingStatus =
-      competingNode === "mac-mini" ? this.macMiniStatus : this.m2ProStatus;
+      competingNode === "image-gen" ? this.imageGenStatus : this.m2ProStatus;
     if (competingStatus.loaded_model) {
       const result = await this.unloadNode(competingNode);
       if (result.ok) {
@@ -404,10 +579,10 @@ export class QueueMaster extends EventEmitter {
 
     // Preload model on target if requested
     let loaded: { node: TargetNode; model: string } | null = null;
-    if (model && targetNode === "mac-mini") {
+    if (model && targetNode === "image-gen") {
       // FluxQ: POST /model { model: "flux-schnell" }
       try {
-        const nodeConfig = await this.getLiveNodeConfig("mac-mini");
+        const nodeConfig = await this.getLiveNodeConfig("image-gen");
         const headers: Record<string, string> = {
           "Content-Type": "application/json",
         };
@@ -422,14 +597,14 @@ export class QueueMaster extends EventEmitter {
         });
 
         if (res.ok) {
-          this.macMiniStatus = { is_busy: false, loaded_model: model };
+          this.imageGenStatus = { is_busy: false, loaded_model: model };
           loaded = { node: targetNode, model };
-          logger.info(`[QueueMaster] Preloaded ${model} on mac-mini`);
+          logger.info(`[QueueMaster] Preloaded ${model} on image-gen`);
         }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         logger.warn(
-          `[QueueMaster] Failed to preload ${model} on mac-mini: ${msg}`,
+          `[QueueMaster] Failed to preload ${model} on image-gen: ${msg}`,
         );
       }
     }
@@ -441,16 +616,23 @@ export class QueueMaster extends EventEmitter {
   // ── Main Loop ─────────────────────────────────────────────
 
   async tick(): Promise<void> {
+    if (this.tickRunning) return;
+    this.tickRunning = true;
     try {
       this.recoverStuckJobs();
       await this.pollForStaleResults();
-      await this.processNode("mac-mini");
+      await this.processNode("image-gen");
       await this.processNode("m2-pro");
+      await this.processTtsJobs();
       await this.processMusicJobs();
       await this.processMusicStudioJobs();
+      await this.processLipSyncJobs();
+      await this.processSadTalkerJobs();
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       logger.warn(`[QueueMaster] Tick error: ${msg}`);
+    } finally {
+      this.tickRunning = false;
     }
   }
 
@@ -538,8 +720,8 @@ export class QueueMaster extends EventEmitter {
           `Dispatch timeout after ${ageMin}min (worker may have restarted)`,
         );
         // Clear the in-memory busy flag for the relevant node/sidecar
-        if (job.targetNode === "mac-mini") {
-          this.macMiniStatus = { ...this.macMiniStatus, is_busy: false };
+        if (job.targetNode === "image-gen") {
+          this.imageGenStatus = { ...this.imageGenStatus, is_busy: false };
         } else if (job.targetNode === "local") {
           // "local" covers remix_* and voice2voice — all handled by music-studio sidecar
           this.musicStudioStatus = {
@@ -561,43 +743,43 @@ export class QueueMaster extends EventEmitter {
     if (node === "m2-pro") {
       await this.processM2Pro();
     } else {
-      await this.processMacMini();
+      await this.processImageGen();
     }
   }
 
-  // ── Mac Mini (Image jobs) ─────────────────────────────────
+  // ── Image Gen (Image jobs) ─────────────────────────────────
 
-  private async processMacMini(): Promise<void> {
+  private async processImageGen(): Promise<void> {
     // FluxQ is synchronous — one job at a time. If we're already dispatching,
     // bail out to avoid double-dispatch and false "offline" health check failures.
-    // Guard against stale busy flag: if no dispatched jobs exist for mac-mini,
+    // Guard against stale busy flag: if no dispatched jobs exist for image-gen,
     // the flag was set by a race between health-check and callback — clear it.
-    if (this.macMiniStatus.is_busy) {
+    if (this.imageGenStatus.is_busy) {
       const dispatched = this.repo.listJobs({ status: "dispatched" });
-      const hasMacMiniDispatch = dispatched.some(
-        (j) => j.targetNode === "mac-mini",
+      const hasImageGenDispatch = dispatched.some(
+        (j) => j.targetNode === "image-gen",
       );
-      if (hasMacMiniDispatch) {
-        logger.debug("[QueueMaster] Mac-mini busy (generating), skipping tick");
+      if (hasImageGenDispatch) {
+        logger.debug("[QueueMaster] Image-gen busy (generating), skipping tick");
         return;
       }
       logger.info(
-        "[QueueMaster] Mac-mini busy flag stale (no dispatched jobs) — clearing",
+        "[QueueMaster] Image-gen busy flag stale (no dispatched jobs) — clearing",
       );
-      this.macMiniStatus = { ...this.macMiniStatus, is_busy: false };
+      this.imageGenStatus = { ...this.imageGenStatus, is_busy: false };
     }
 
     // Audio/music jobs (including remix) are handled by processMusicJobs() / processMusicStudioJobs() — exclude them here.
     const pending = this.repo
-      .getPendingJobs("mac-mini", 5)
+      .getPendingJobs("image-gen", 5)
       .filter((j) => !AUDIO_JOB_TYPES.has(j.type));
     if (pending.length === 0) return;
 
     // Poll FluxQ status to check if it's healthy (only when not already busy)
     try {
-      this.macMiniStatus = await this.getWorkerStatus(
-        await this.getLiveNodeConfig("mac-mini"),
-        "mac-mini",
+      this.imageGenStatus = await this.getWorkerStatus(
+        await this.getLiveNodeConfig("image-gen"),
+        "image-gen",
       );
     } catch {
       logger.debug("[QueueMaster] FluxQ unreachable, skipping image jobs");
@@ -605,9 +787,9 @@ export class QueueMaster extends EventEmitter {
     }
 
     // Recheck after health poll — FluxQ now reports is_busy while async generation is running
-    if (this.macMiniStatus.is_busy) {
+    if (this.imageGenStatus.is_busy) {
       logger.debug(
-        "[QueueMaster] Mac-mini busy (generating), skipping after health check",
+        "[QueueMaster] Image-gen busy (generating), skipping after health check",
       );
       return;
     }
@@ -615,26 +797,26 @@ export class QueueMaster extends EventEmitter {
     const job = pending[0];
     try {
       // VRAM coordination: ensure video worker has freed memory
-      await this.ensureVramAvailable("mac-mini");
+      await this.ensureVramAvailable("image-gen");
 
       // Mark dispatched before sending so job transitions: pending → dispatched → complete
       this.repo.markDispatched(job.id);
-      this.macMiniStatus = { ...this.macMiniStatus, is_busy: true };
-      this.emit("job:dispatched", job, "mac-mini" as TargetNode);
+      this.imageGenStatus = { ...this.imageGenStatus, is_busy: true };
+      this.emit("job:dispatched", job, "image-gen" as TargetNode);
       logger.info(
-        `[QueueMaster] Dispatching ${job.type} job ${job.id} → mac-mini (async, awaiting callback)`,
+        `[QueueMaster] Dispatching ${job.type} job ${job.id} → image-gen (async, awaiting callback)`,
       );
 
       await this.dispatchImageJob(job);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       logger.warn(
-        `[QueueMaster] Failed to dispatch ${job.id} to mac-mini: ${msg}`,
+        `[QueueMaster] Failed to dispatch ${job.id} to image-gen: ${msg}`,
       );
       this.repo.markFailed(job.id, msg);
     } finally {
       // Always clear busy flag whether the dispatch succeeded or failed
-      this.macMiniStatus = { ...this.macMiniStatus, is_busy: false };
+      this.imageGenStatus = { ...this.imageGenStatus, is_busy: false };
     }
   }
 
@@ -663,14 +845,14 @@ export class QueueMaster extends EventEmitter {
     if (this.m2ProStatus.loaded_model) {
       pending = this.repo
         .getPendingJobsForModel("m2-pro", this.m2ProStatus.loaded_model, 5)
-        .filter((j) => !AUDIO_JOB_TYPES.has(j.type));
+        .filter((j) => !AUDIO_JOB_TYPES.has(j.type) && j.type !== "lipsync" && j.type !== "sadtalker");
     }
 
     // If no jobs match loaded model, get any pending non-audio job
     if (pending.length === 0) {
       pending = this.repo
         .getPendingJobs("m2-pro", 5)
-        .filter((j) => !AUDIO_JOB_TYPES.has(j.type));
+        .filter((j) => !AUDIO_JOB_TYPES.has(j.type) && j.type !== "lipsync" && j.type !== "sadtalker");
     }
 
     if (pending.length === 0) return;
@@ -679,6 +861,8 @@ export class QueueMaster extends EventEmitter {
     try {
       // VRAM coordination: ensure image worker has freed memory
       await this.ensureVramAvailable("m2-pro");
+      // Memory coordination: ensure LatentSync has freed memory
+      await this.ensureSidecarMemory("ltx");
 
       await this.dispatchVideoJob(job);
       this.repo.markDispatched(job.id);
@@ -757,6 +941,57 @@ export class QueueMaster extends EventEmitter {
     } finally {
       // Clear in-memory flag — actual busy state is re-checked via /status poll on next tick
       this.musicStatus = { ...this.musicStatus, is_busy: false };
+    }
+  }
+
+  // ── Audio Sidecar (TTS jobs) ──────────────────────────────
+
+  private async processTtsJobs(): Promise<void> {
+    // Get pending TTS jobs (target m2-pro but dispatched to audio sidecar)
+    const pending = this.repo.getPendingJobsForModel("m2-pro", "f5-tts", 1);
+    if (pending.length === 0) return;
+
+    // Poll audio sidecar health
+    try {
+      const nodeConfig = await this.getAudioNodeConfig();
+      const headers: Record<string, string> = {};
+      if (nodeConfig.token)
+        headers["Authorization"] = `Bearer ${nodeConfig.token}`;
+
+      const res = await fetch(`${nodeConfig.url}/health`, {
+        headers,
+        signal: AbortSignal.timeout(5_000),
+      });
+      if (!res.ok) throw new Error(`Status check failed: ${res.status}`);
+    } catch {
+      logger.debug(
+        "[QueueMaster] Audio sidecar unreachable, skipping TTS jobs",
+      );
+      return;
+    }
+
+    const job = pending[0];
+    try {
+      this.repo.markDispatched(job.id);
+      this.emit("job:dispatched", job, "m2-pro" as TargetNode);
+      logger.info(
+        `[QueueMaster] Dispatching TTS job ${job.id} → audio sidecar`,
+      );
+
+      await this.dispatchTtsJob(job);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const retryable = err instanceof Error && (err as Error & { retryable?: boolean }).retryable;
+      if (retryable) {
+        // Reset to pending so the next tick can retry
+        this.repo.resetToPending(job.id);
+        logger.debug(`[QueueMaster] TTS job ${job.id} deferred (sidecar busy)`);
+      } else {
+        logger.warn(
+          `[QueueMaster] Failed to dispatch TTS job ${job.id}: ${msg}`,
+        );
+        this.repo.markFailed(job.id, msg);
+      }
     }
   }
 
@@ -859,7 +1094,7 @@ export class QueueMaster extends EventEmitter {
       headers["Authorization"] = `Bearer ${nodeConfig.token}`;
 
     // FluxQ uses /health (returns { model, model_loaded, ... }), M2 Pro uses /status
-    const endpoint = node === "mac-mini" ? "/health" : "/status";
+    const endpoint = node === "image-gen" ? "/health" : "/status";
     const res = await fetch(`${nodeConfig.url}${endpoint}`, {
       headers,
       signal: AbortSignal.timeout(5000),
@@ -868,7 +1103,7 @@ export class QueueMaster extends EventEmitter {
 
     const data = (await res.json()) as Record<string, unknown>;
 
-    if (node === "mac-mini") {
+    if (node === "image-gen") {
       // FluxQ /health returns { model, model_loaded, is_busy, ... }
       return {
         is_busy: !!(data.is_busy as boolean),
@@ -914,22 +1149,35 @@ export class QueueMaster extends EventEmitter {
   }
 
   private async dispatchImageJob(job: MediaJob): Promise<void> {
-    const { url, token } = await this.getLiveNodeConfig("mac-mini");
+    const { url, token } = await this.getLiveNodeConfig("image-gen");
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
     };
     if (token) headers["Authorization"] = `Bearer ${token}`;
 
     let endpoint: string;
-    if (job.requiredModel === "flux-kontext") {
-      endpoint = "/kontext-async";
-    } else if (job.type === "img2img") {
+    if (job.type === "img2img") {
+      // Always use /img2img-async for img2img jobs — the sidecar handles
+      // model selection internally.  /kontext-async only exists on dedicated
+      // Flux Kontext servers (e.g. server.py) but not on server_cuda.py.
       endpoint = "/img2img-async";
+    } else if (job.requiredModel === "flux-kontext") {
+      endpoint = "/kontext-async";
     } else {
       endpoint = "/generate-async";
     }
 
-    const isKontext = job.requiredModel === "flux-kontext";
+    const isKontext =
+      job.requiredModel === "flux-kontext" && job.type !== "img2img";
+
+    // img2img jobs use /img2img-async on server_cuda.py which only knows
+    // flux-schnell, flux-dev, and sdxl-base.  "flux-kontext" is the logical
+    // default for img2img in the queue but is not in the CUDA registry, so
+    // omit the model field and let the sidecar use its current/default model.
+    const effectiveModel =
+      job.type === "img2img" && job.requiredModel === "flux-kontext"
+        ? undefined
+        : job.requiredModel;
 
     // Kontext only accepts: prompt, image, seed, aspect_ratio.
     // Other models accept the full parameter set.
@@ -938,7 +1186,7 @@ export class QueueMaster extends EventEmitter {
       callback_url: this.resolveCallbackUrl(url),
       prompt: job.payload.prompt,
       seed: job.payload.seed,
-      model: job.requiredModel,
+      ...(effectiveModel ? { model: effectiveModel } : {}),
       ...(!isKontext
         ? {
             width: job.payload.width ?? 1024,
@@ -1113,6 +1361,139 @@ export class QueueMaster extends EventEmitter {
     return { url: "http://localhost:5009" };
   }
 
+  /**
+   * Dispatch a TTS job to the audio sidecar (/tts endpoint).
+   * The audio sidecar returns WAV audio synchronously — we convert the
+   * response to base64 and feed it into handleJobCompletion to advance
+   * the talking-head pipeline.
+   */
+  private async dispatchTtsJob(job: MediaJob): Promise<void> {
+    const nodeConfig = await this.getAudioNodeConfig();
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+    };
+    if (nodeConfig.token)
+      headers["Authorization"] = `Bearer ${nodeConfig.token}`;
+
+    // F5-TTS voice cloning: dispatch to /f5tts with pre-resolved clips
+    // Pipeline stores clips as { emotion, ref_audio_path, ref_text } (DB rows).
+    // The sidecar expects { ref_audio (base64), ref_text, gen_text, emotion }.
+    if (job.payload.f5tts_clips && job.payload.f5tts_clips.length > 0) {
+      const resolvedClips = await Promise.all(
+        (job.payload.f5tts_clips as Array<{ emotion?: string; ref_audio_path: string; ref_text: string; ref_audio?: string; gen_text?: string }>).map(async (clip) => {
+          let refAudioB64 = clip.ref_audio ?? "";
+          if (!refAudioB64 && clip.ref_audio_path) {
+            const audioBytes = await fs.readFile(clip.ref_audio_path);
+            refAudioB64 = audioBytes.toString("base64");
+          }
+          return {
+            ref_audio: refAudioB64,
+            ref_text: clip.ref_text,
+            gen_text: clip.gen_text ?? job.payload.prompt ?? "",
+            emotion: clip.emotion ?? "Regular",
+            remove_silence: true,
+          };
+        }),
+      );
+
+      const f5body = {
+        text: job.payload.prompt,
+        clips: resolvedClips,
+        speed: 1.0,
+      };
+
+      const res = await fetch(`${nodeConfig.url}/f5tts`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(f5body),
+        signal: AbortSignal.timeout(180_000), // F5-TTS can take ~60s on first run
+      });
+
+      if (!res.ok) {
+        const text = await res.text().catch(() => "");
+        if (res.status === 409) {
+          // Sidecar busy — don't fail the job, let it retry on next tick
+          throw Object.assign(new Error(`Audio sidecar /f5tts busy (409)`), { retryable: true });
+        }
+        throw new Error(`Audio sidecar /f5tts returned ${res.status}: ${text}`);
+      }
+
+      const audioArrayBuffer = await res.arrayBuffer();
+      const audioBase64 = Buffer.from(audioArrayBuffer).toString("base64");
+
+      await this.handleJobCompletion(job.id, {
+        media_base64: audioBase64,
+        media_type: "audio/wav",
+      });
+      return;
+    }
+
+    const body: Record<string, unknown> = {
+      text: job.payload.prompt,
+      voice: job.payload.voice ?? "af_heart",
+    };
+
+    // Handle reference audio: decode base64 to a temp file and pass the path
+    if (job.payload.reference_audio) {
+      const tmpDir = path.join(os.homedir(), ".openzigs", "tmp");
+      await fs.mkdir(tmpDir, { recursive: true });
+      const tmpFile = path.join(tmpDir, `ref-audio-${job.id}.wav`);
+      const audioBuffer = Buffer.from(job.payload.reference_audio, "base64");
+      await fs.writeFile(tmpFile, audioBuffer, { mode: 0o600 });
+      body.ref_audio_path = tmpFile;
+    }
+
+    const res = await fetch(`${nodeConfig.url}/tts`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(120_000), // TTS can take up to 2 minutes for long text
+    });
+
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      throw new Error(`Audio sidecar /tts returned ${res.status}: ${text}`);
+    }
+
+    // /tts returns audio/wav directly — convert to base64 for pipeline
+    const audioArrayBuffer = await res.arrayBuffer();
+    const audioBase64 = Buffer.from(audioArrayBuffer).toString("base64");
+
+    await this.handleJobCompletion(job.id, {
+      media_base64: audioBase64,
+      media_type: "audio/wav",
+    });
+  }
+
+  /**
+   * Returns the WorkerNodeConfig for the audio sidecar (TTS/STT)
+   * by reading audioSidecar from ~/.openzigs/config.json. Falls back to localhost:5006.
+   */
+  private async getAudioNodeConfig(): Promise<WorkerNodeConfig> {
+    if (this.config.audioSidecar?.url) {
+      return this.config.audioSidecar;
+    }
+    try {
+      const cfgPath = path.join(os.homedir(), ".openzigs", "config.json");
+      const raw = await fs.readFile(cfgPath, "utf-8");
+      const cfg = JSON.parse(raw) as Record<string, unknown>;
+      const audio = cfg.audioSidecar as Record<string, unknown> | undefined;
+      if (typeof audio?.networkNodeUrl === "string" && audio.networkNodeUrl) {
+        return {
+          url: audio.networkNodeUrl,
+          token:
+            typeof audio.networkNodeToken === "string"
+              ? audio.networkNodeToken
+              : undefined,
+        };
+      }
+    } catch {
+      // config unreadable — fall through
+    }
+    // Default: audio sidecar on localhost:5006
+    return { url: "http://localhost:5006" };
+  }
+
   private async dispatchMusicStudioJob(job: MediaJob): Promise<void> {
     const nodeConfig = await this.getMusicStudioNodeConfig();
     const headers: Record<string, string> = {
@@ -1271,6 +1652,314 @@ export class QueueMaster extends EventEmitter {
     return { url: "http://localhost:5010" };
   }
 
+  // ── Lip Sync Sidecar (LatentSync) ─────────────────────────
+
+  private async processLipSyncJobs(): Promise<void> {
+    if (this.lipSyncStatus.is_busy) {
+      logger.debug("[QueueMaster] Lip-sync sidecar busy, skipping");
+      return;
+    }
+
+    // Poll sidecar health
+    try {
+      const nodeConfig = await this.getLipSyncNodeConfig();
+      const headers: Record<string, string> = {};
+      if (nodeConfig.token)
+        headers["Authorization"] = `Bearer ${nodeConfig.token}`;
+
+      const res = await fetch(`${nodeConfig.url}/health`, {
+        headers,
+        signal: AbortSignal.timeout(5_000),
+      });
+      if (!res.ok) throw new Error(`Status check failed: ${res.status}`);
+
+      const data = (await res.json()) as Record<string, unknown>;
+      this.lipSyncStatus = {
+        is_busy: !!(data.busy as boolean),
+        loaded_model: (data.loaded_model as string) ?? null,
+      };
+      this.lipSyncUnreachableCount = 0;
+    } catch {
+      this.lipSyncUnreachableCount++;
+      if (
+        this.lipSyncUnreachableCount === 1 ||
+        this.lipSyncUnreachableCount % 10 === 0
+      ) {
+        logger.warn(
+          `[QueueMaster] Lip-sync sidecar unreachable — skipping lipsync jobs. Start with: cd sidecars/lipsync && .venv/bin/python server.py --port 5008`,
+        );
+      }
+      return;
+    }
+
+    if (this.lipSyncStatus.is_busy) {
+      logger.debug("[QueueMaster] Lip-sync sidecar busy, skipping");
+      return;
+    }
+
+    // Get pending lipsync jobs
+    const pending = this.repo.listJobs({
+      status: "pending",
+      type: "lipsync",
+      limit: 1,
+    });
+    if (pending.length === 0) return;
+
+    const job = pending[0];
+    try {
+      // Memory coordination: unload LTX if loaded before dispatching to LatentSync
+      await this.ensureSidecarMemory("lipsync");
+
+      this.repo.markDispatched(job.id);
+      this.lipSyncStatus = { ...this.lipSyncStatus, is_busy: true };
+      this.emit("job:dispatched", job, "m2-pro" as TargetNode);
+      logger.info(
+        `[QueueMaster] Dispatching lipsync job ${job.id} → lip-sync sidecar`,
+      );
+
+      await this.dispatchLipSyncJob(job);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.warn(
+        `[QueueMaster] Failed to dispatch lipsync job ${job.id}: ${msg}`,
+      );
+      this.repo.markFailed(job.id, msg);
+    } finally {
+      this.lipSyncStatus = { ...this.lipSyncStatus, is_busy: false };
+    }
+  }
+
+  private async dispatchLipSyncJob(job: MediaJob): Promise<void> {
+    const nodeConfig = await this.getLipSyncNodeConfig();
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+    };
+    if (nodeConfig.token)
+      headers["Authorization"] = `Bearer ${nodeConfig.token}`;
+
+    const callbackUrl = this.resolveCallbackUrl(nodeConfig.url);
+    const progressUrl = callbackUrl.replace(/\/complete$/, "/progress");
+
+    // Resolve video/audio data: prefer base64 payload, fall back to reading local files
+    let videoData = job.payload.video_data;
+    let audioData = job.payload.audio_data;
+
+    if (!videoData && job.payload.video_path) {
+      try {
+        const buf = await fs.readFile(job.payload.video_path);
+        videoData = buf.toString("base64");
+      } catch (err) {
+        logger.warn(`[QueueMaster] Failed to read video_path ${job.payload.video_path}: ${err}`);
+      }
+    }
+
+    if (!audioData && job.payload.audio_path) {
+      try {
+        const buf = await fs.readFile(job.payload.audio_path);
+        audioData = buf.toString("base64");
+      } catch (err) {
+        logger.warn(`[QueueMaster] Failed to read audio_path ${job.payload.audio_path}: ${err}`);
+      }
+    }
+
+    const body: Record<string, unknown> = {
+      job_id: job.id,
+      callback_url: callbackUrl,
+      progress_url: progressUrl,
+      video_path: job.payload.video_path,
+      audio_path: job.payload.audio_path,
+      video_data: videoData,
+      audio_data: audioData,
+      inference_steps: job.payload.inference_steps ?? 20,
+      guidance_scale: job.payload.guidance_scale_lipsync ?? 1.5,
+      enable_deepcache: job.payload.enable_deepcache ?? true,
+      model_version: job.payload.model_version ?? "v1.5",
+    };
+
+    const res = await fetch(`${nodeConfig.url}/generate`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(10_000),
+    });
+
+    if (res.status !== 202 && !res.ok) {
+      const text = await res.text().catch(() => "");
+      throw new Error(
+        `Lip-sync sidecar /generate returned ${res.status}: ${text}`,
+      );
+    }
+  }
+
+  private async getLipSyncNodeConfig(): Promise<WorkerNodeConfig> {
+    if (this.config.lipSync?.url) {
+      return this.config.lipSync;
+    }
+    try {
+      const cfgPath = path.join(os.homedir(), ".openzigs", "config.json");
+      const raw = await fs.readFile(cfgPath, "utf-8");
+      const cfg = JSON.parse(raw) as Record<string, unknown>;
+      const ls = cfg.lipSync as Record<string, unknown> | undefined;
+      if (typeof ls?.networkNodeUrl === "string" && ls.networkNodeUrl) {
+        return {
+          url: ls.networkNodeUrl,
+          token:
+            typeof ls.networkNodeToken === "string"
+              ? ls.networkNodeToken
+              : undefined,
+        };
+      }
+    } catch {
+      // config unreadable — fall through
+    }
+    // Default: lip-sync sidecar on localhost:5010 (CUDA) or 5008 (MPS)
+    return { url: "http://localhost:5010" };
+  }
+
+  // ── SadTalker Dispatch ────────────────────────────────────
+
+  private async processSadTalkerJobs(): Promise<void> {
+    // Poll sidecar health (always poll — local is_busy may be stale if sidecar restarted)
+    try {
+      const nodeConfig = await this.getSadTalkerNodeConfig();
+      const headers: Record<string, string> = {};
+      if (nodeConfig.token)
+        headers["Authorization"] = `Bearer ${nodeConfig.token}`;
+
+      const res = await fetch(`${nodeConfig.url}/health`, {
+        headers,
+        signal: AbortSignal.timeout(5_000),
+      });
+      if (!res.ok) throw new Error(`Status check failed: ${res.status}`);
+
+      const data = (await res.json()) as Record<string, unknown>;
+      this.sadTalkerStatus = {
+        is_busy: !!(data.is_busy as boolean),
+        loaded_model: (data.models_loaded as boolean) ? "sadtalker" : null,
+      };
+      this.sadTalkerUnreachableCount = 0;
+    } catch {
+      this.sadTalkerUnreachableCount++;
+      if (
+        this.sadTalkerUnreachableCount === 1 ||
+        this.sadTalkerUnreachableCount % 10 === 0
+      ) {
+        logger.warn(
+          `[QueueMaster] SadTalker sidecar unreachable — skipping sadtalker jobs. Start with: cd sidecars/sadtalker && python server_cuda.py --port 5011`,
+        );
+      }
+      return;
+    }
+
+    if (this.sadTalkerStatus.is_busy) {
+      logger.debug("[QueueMaster] SadTalker sidecar busy, skipping");
+      return;
+    }
+
+    const pending = this.repo.listJobs({
+      status: "pending",
+      type: "sadtalker",
+      limit: 1,
+    });
+    if (pending.length === 0) return;
+
+    const job = pending[0];
+    try {
+      this.repo.markDispatched(job.id);
+      this.sadTalkerStatus = { ...this.sadTalkerStatus, is_busy: true };
+      this.emit("job:dispatched", job, "m2-pro" as TargetNode);
+      logger.info(
+        `[QueueMaster] Dispatching sadtalker job ${job.id} → SadTalker sidecar`,
+      );
+
+      await this.dispatchSadTalkerJob(job);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.warn(
+        `[QueueMaster] Failed to dispatch sadtalker job ${job.id}: ${msg}`,
+      );
+      this.repo.markFailed(job.id, msg);
+    } finally {
+      this.sadTalkerStatus = { ...this.sadTalkerStatus, is_busy: false };
+    }
+  }
+
+  private async dispatchSadTalkerJob(job: MediaJob): Promise<void> {
+    const nodeConfig = await this.getSadTalkerNodeConfig();
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+    };
+    if (nodeConfig.token)
+      headers["Authorization"] = `Bearer ${nodeConfig.token}`;
+
+    const callbackUrl = this.resolveCallbackUrl(nodeConfig.url);
+    const progressUrl = callbackUrl.replace(/\/complete$/, "/progress");
+
+    // Resolve audio data
+    let audioData = job.payload.audio_data;
+    if (!audioData && job.payload.audio_path) {
+      try {
+        const buf = await fs.readFile(job.payload.audio_path);
+        audioData = buf.toString("base64");
+      } catch (err) {
+        logger.warn(`[QueueMaster] Failed to read audio_path ${job.payload.audio_path}: ${err}`);
+      }
+    }
+
+    const body: Record<string, unknown> = {
+      job_id: job.id,
+      callback_url: callbackUrl,
+      progress_url: progressUrl,
+      image_data: job.payload.init_image,
+      audio_data: audioData,
+      audio_path: job.payload.audio_path,
+      size: job.payload.sadtalker_size ?? 512,
+      preprocess: job.payload.sadtalker_preprocess ?? "crop",
+      enhancer: job.payload.sadtalker_enhancer ?? "gfpgan",
+      still_mode: job.payload.sadtalker_still ?? true,
+      expression_scale: job.payload.sadtalker_expression_scale ?? 1.0,
+      pose_style: job.payload.sadtalker_pose_style ?? 0,
+    };
+
+    const res = await fetch(`${nodeConfig.url}/generate`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(10_000),
+    });
+
+    if (res.status !== 202 && !res.ok) {
+      const text = await res.text().catch(() => "");
+      throw new Error(
+        `SadTalker sidecar /generate returned ${res.status}: ${text}`,
+      );
+    }
+  }
+
+  private async getSadTalkerNodeConfig(): Promise<WorkerNodeConfig> {
+    if (this.config.sadTalker?.url) {
+      return this.config.sadTalker;
+    }
+    try {
+      const cfgPath = path.join(os.homedir(), ".openzigs", "config.json");
+      const raw = await fs.readFile(cfgPath, "utf-8");
+      const cfg = JSON.parse(raw) as Record<string, unknown>;
+      const st = cfg.sadTalker as Record<string, unknown> | undefined;
+      if (typeof st?.networkNodeUrl === "string" && st.networkNodeUrl) {
+        return {
+          url: st.networkNodeUrl,
+          token:
+            typeof st.networkNodeToken === "string"
+              ? st.networkNodeToken
+              : undefined,
+        };
+      }
+    } catch {
+      // config unreadable — fall through
+    }
+    return { url: "http://localhost:5011" };
+  }
+
   // ── Progress Reporting ────────────────────────────────────
 
   reportProgress(
@@ -1301,10 +1990,10 @@ export class QueueMaster extends EventEmitter {
     }
 
     // Clear the in-memory busy flag so the tick loop can dispatch the next job.
-    // Without this, macMiniStatus.is_busy stays true forever after the health-check
-    // cache sets it, because processMacMini() early-returns without re-polling.
-    if (job.targetNode === "mac-mini") {
-      this.macMiniStatus = { ...this.macMiniStatus, is_busy: false };
+    // Without this, imageGenStatus.is_busy stays true forever after the health-check
+    // cache sets it, because processImageGen() early-returns without re-polling.
+    if (job.targetNode === "image-gen") {
+      this.imageGenStatus = { ...this.imageGenStatus, is_busy: false };
     } else if (job.targetNode === "m2-pro") {
       this.m2ProStatus = { ...this.m2ProStatus, is_busy: false };
     }
@@ -1322,8 +2011,26 @@ export class QueueMaster extends EventEmitter {
       return;
     }
 
+    // ── Talking-Head Pipeline Routing ─────────────────────────
+    // Check pipeline BEFORE multi-segment — pipeline segment sub-jobs have both
+    // segmentIndex and pipeline_id, and should be handled by the pipeline handler
+    // which manages segment ↔ stage coordination.
+    if (job.payload.pipeline_id && job.payload.pipeline_type === "talking-head") {
+      try {
+        await this.handleTalkingHeadPipelineStage(job, result);
+        return;
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        logger.warn(
+          `[QueueMaster] Talking-head pipeline failed for job ${jobId}: ${msg}`,
+        );
+        handleStageFailure(job.payload.pipeline_id, msg);
+        // Fall through to normal completion
+      }
+    }
+
     // ── Multi-Segment Routing ────────────────────────────────
-    // If this is a segment sub-job, route to multi-segment handler
+    // If this is a segment sub-job (non-pipeline), route to multi-segment handler
     if (isSegmentJob(job) && result.media_base64) {
       try {
         const videoBytes = Buffer.from(result.media_base64, "base64");
@@ -1409,7 +2116,7 @@ export class QueueMaster extends EventEmitter {
     let galleryAssetId: string | undefined = result.metadata
       ?.gallery_asset_id as string | undefined;
 
-    // When media bytes are delivered directly (image jobs from mac-mini), write to disk and
+    // When media bytes are delivered directly (image jobs from image-gen), write to disk and
     // create the gallery asset record here. Video jobs do this in the /complete webhook before
     // calling handleJobCompletion with media_base64 = undefined.
     if (result.media_base64 && result.media_type) {
@@ -1479,6 +2186,354 @@ export class QueueMaster extends EventEmitter {
 
     // Immediately try to dispatch the next pending job rather than waiting
     // for the next poll interval (which can be several seconds).
+    void this.tick();
+  }
+
+  // ── Talking-Head Pipeline ──────────────────────────────────
+
+  /**
+   * Handle a talking-head pipeline stage completion. Chains TTS → Video → LipSync
+   * with memory coordination between LTX and LatentSync.
+   *
+   * Multi-segment aware: when the video stage requires > 4s, decomposes into
+   * chained 4s segments, stitches via ffmpeg xfade, then advances to lipsync
+   * on the final stitched video.
+   */
+  private async handleTalkingHeadPipelineStage(
+    job: MediaJob,
+    result: {
+      media_base64?: string;
+      media_type?: string;
+      metadata?: Record<string, unknown>;
+      error?: string;
+    },
+  ): Promise<void> {
+    const pipelineId = job.payload.pipeline_id!;
+    const stageName = job.payload.pipeline_stage ?? "unknown";
+
+    if (result.error) {
+      handleStageFailure(pipelineId, result.error);
+      this.repo.markFailed(job.id, `Pipeline stage "${stageName}" failed: ${result.error}`);
+      this.emit("job:failed", job, result.error);
+      return;
+    }
+
+    // ── Multi-Segment Sub-Job Within Pipeline ────────────────
+    // If this is a segment sub-job chained within the pipeline video stage,
+    // handle segment tracking and chain to next segment or stitch.
+    if (isSegmentJob(job) && result.media_base64) {
+      try {
+        const videoBytes = Buffer.from(result.media_base64, "base64");
+        const segResult = await handleSegmentCompletion(job, videoBytes, () =>
+          this.getLiveNodeConfig("m2-pro"),
+        );
+
+        // Mark this segment job as complete
+        this.repo.markComplete(job.id, "", result.metadata);
+
+        if (segResult.done) {
+          // All segments done — stitch
+          logger.info(
+            `[QueueMaster] Pipeline ${pipelineId}: all video segments complete — stitching`,
+          );
+          this.reportProgress(job.id, {
+            stage: "video",
+            message: "Stitching video segments...",
+          });
+
+          const stitchedVideo = await stitchSegments(segResult.parentJobId);
+          const stitchedBase64 = stitchedVideo.toString("base64");
+
+          // Store stitched result in pipeline state as the video stage result
+          const { nextJob: lipsyncJob, done } = handleStageCompletion(
+            pipelineId,
+            segResult.parentJobId, // use the parent video job ID as the completed stage
+            {
+              media_base64: stitchedBase64,
+              media_type: "video/mp4",
+            },
+          );
+
+          if (done) {
+            logger.info(
+              `[QueueMaster] Talking-head pipeline ${pipelineId} complete after stitching`,
+            );
+            return;
+          }
+
+          if (!lipsyncJob) return;
+
+          // Advance to lipsync — memory coordination
+          if (lipsyncJob.payload.pipeline_stage === "lipsync") {
+            try {
+              await this.ensureSidecarMemory("lipsync");
+            } catch {
+              try {
+                const nodeConfig = await this.getLipSyncNodeConfig();
+                const headers: Record<string, string> = {};
+                if (nodeConfig.token)
+                  headers["Authorization"] = `Bearer ${nodeConfig.token}`;
+                await fetch(`${nodeConfig.url}/health`, {
+                  headers,
+                  signal: AbortSignal.timeout(5_000),
+                });
+              } catch {
+                markLipsyncSkipped(pipelineId);
+                logger.info(
+                  `[QueueMaster] LipSync sidecar unavailable — pipeline ${pipelineId} degrading to TTS + Video only`,
+                );
+                return;
+              }
+            }
+          }
+
+          // Enqueue the lipsync job
+          const nextMediaJob = this.repo.createJob({
+            type: lipsyncJob.type,
+            payload: lipsyncJob.payload,
+            model: lipsyncJob.model,
+            projectId: getPipelineState(pipelineId)?.config.projectId,
+            priority: job.priority,
+          });
+
+          logger.info(
+            `[QueueMaster] Pipeline ${pipelineId}: enqueued stage "${lipsyncJob.payload.pipeline_stage}" → job ${nextMediaJob.id}`,
+          );
+          this.reportProgress(nextMediaJob.id, {
+            stage: lipsyncJob.payload.pipeline_stage,
+            message: `Starting stage "${lipsyncJob.payload.pipeline_stage}"...`,
+          });
+          void this.tick();
+        } else {
+          // Create next segment job — keep pipeline metadata
+          const nextSeg = segResult.nextSegment;
+          const nextJob = this.repo.createJob({
+            type: nextSeg.type,
+            payload: {
+              ...nextSeg.payload,
+              pipeline_id: pipelineId,
+              pipeline_type: "talking-head",
+              pipeline_stage: "video",
+            },
+            model: job.requiredModel,
+            priority: job.priority,
+          });
+          registerSegmentJob(
+            segResult.parentJobId,
+            nextSeg.payload.segmentIndex!,
+            nextJob.id,
+          );
+
+          this.reportProgress(pipelineId, {
+            stage: "video",
+            message: formatSegmentProgress(
+              nextSeg.payload.segmentIndex!,
+              nextSeg.payload.totalSegments!,
+            ),
+          });
+
+          logger.info(
+            `[QueueMaster] Pipeline ${pipelineId}: segment ${nextSeg.payload.segmentIndex! + 1}/${nextSeg.payload.totalSegments} → job ${nextJob.id}`,
+          );
+        }
+        return;
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        logger.warn(
+          `[QueueMaster] Pipeline ${pipelineId} multi-segment failed: ${msg}`,
+        );
+        handleStageFailure(pipelineId, `Multi-segment stitching failed: ${msg}`);
+        this.repo.markFailed(job.id, msg);
+        this.emit("job:failed", job, msg);
+        return;
+      }
+    }
+
+    // ── Normal Stage Completion ──────────────────────────────
+
+    // Mark current job complete
+    const resultUrl = (result.metadata?.result_url as string | undefined) ?? "";
+    this.repo.markComplete(job.id, resultUrl, result.metadata);
+    this.emit("job:complete", this.repo.getJob(job.id)!);
+
+    // Report pipeline progress
+    this.reportProgress(job.id, {
+      stage: stageName,
+      message: `Pipeline stage "${stageName}" complete ✓`,
+    });
+
+    // After TTS (speech) completes, compute audio duration and store in pipeline state
+    if (stageName === "speech" && result.media_base64) {
+      const wavDuration = computeWavDuration(result.media_base64);
+      if (wavDuration !== undefined && wavDuration > 0) {
+        setAudioDuration(pipelineId, wavDuration);
+        logger.info(
+          `[QueueMaster] Pipeline ${pipelineId}: TTS audio duration = ${wavDuration.toFixed(1)}s`,
+        );
+      } else {
+        // Fallback: estimate from speech text
+        const state = getPipelineState(pipelineId);
+        if (state?.config.text) {
+          const est = estimateSpeechDuration(state.config.text);
+          setAudioDuration(pipelineId, est);
+          logger.info(
+            `[QueueMaster] Pipeline ${pipelineId}: estimated audio duration = ${est.toFixed(1)}s (WAV parse failed)`,
+          );
+        }
+      }
+    }
+
+    // Advance pipeline to next stage
+    const { nextJob, done } = handleStageCompletion(
+      pipelineId,
+      job.id,
+      {
+        media_base64: result.media_base64,
+        media_type: result.media_type,
+        file_path: result.metadata?.file_path as string | undefined,
+      },
+    );
+
+    if (done) {
+      logger.info(
+        `[QueueMaster] Talking-head pipeline ${pipelineId} complete`,
+      );
+      return;
+    }
+
+    if (!nextJob) return;
+
+    // If next stage is sadtalker, check sidecar availability
+    if (nextJob.payload.pipeline_stage === "sadtalker") {
+      try {
+        const nodeConfig = await this.getSadTalkerNodeConfig();
+        const headers: Record<string, string> = {};
+        if (nodeConfig.token)
+          headers["Authorization"] = `Bearer ${nodeConfig.token}`;
+        await fetch(`${nodeConfig.url}/health`, {
+          headers,
+          signal: AbortSignal.timeout(5_000),
+        });
+      } catch {
+        logger.warn(
+          `[QueueMaster] SadTalker sidecar unavailable — pipeline ${pipelineId} cannot proceed`,
+        );
+        return;
+      }
+    }
+
+    // If next stage is lipsync, do memory coordination first
+    if (nextJob.payload.pipeline_stage === "lipsync") {
+      try {
+        await this.ensureSidecarMemory("lipsync");
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        logger.warn(
+          `[QueueMaster] Memory coordination failed for pipeline ${pipelineId}: ${msg}`,
+        );
+        // Check if lipsync sidecar is reachable
+        try {
+          const nodeConfig = await this.getLipSyncNodeConfig();
+          const headers: Record<string, string> = {};
+          if (nodeConfig.token)
+            headers["Authorization"] = `Bearer ${nodeConfig.token}`;
+          await fetch(`${nodeConfig.url}/health`, {
+            headers,
+            signal: AbortSignal.timeout(5_000),
+          });
+        } catch {
+          // Sidecar unreachable — skip lipsync gracefully
+          markLipsyncSkipped(pipelineId);
+          logger.info(
+            `[QueueMaster] LipSync sidecar unavailable — pipeline ${pipelineId} degrading to TTS + Video only`,
+          );
+          return;
+        }
+      }
+    }
+
+    // If next stage is video (LTX), ensure lipsync is unloaded
+    if (nextJob.payload.pipeline_stage === "video") {
+      try {
+        await this.ensureSidecarMemory("ltx");
+      } catch {
+        // Non-fatal — LTX may work even if lipsync unload fails
+      }
+    }
+
+    // ── Multi-Segment Decomposition for Video Stage ──────────
+    // If the video stage requires > 4s, decompose into chained segments
+    if (
+      nextJob.payload.pipeline_stage === "video" &&
+      nextJob.payload.video_duration &&
+      nextJob.payload.video_duration > 4
+    ) {
+      logger.info(
+        `[QueueMaster] Pipeline ${pipelineId}: video stage requires ${nextJob.payload.video_duration}s — decomposing into multi-segment`,
+      );
+
+      // Create a temporary "parent" job to anchor the segment tracker
+      const parentVideoJob = this.repo.createJob({
+        type: nextJob.type,
+        payload: nextJob.payload,
+        model: nextJob.model,
+        projectId: getPipelineState(pipelineId)?.config.projectId,
+        priority: job.priority,
+      });
+
+      // Decompose into segments
+      const decomposed = decomposeMultiSegmentJob(parentVideoJob);
+      if (decomposed) {
+        // Mark parent as "dispatched" so the tick doesn't pick it up as a pending job
+        this.repo.markDispatched(parentVideoJob.id);
+        // Create first segment
+        const firstSegJob = this.repo.createJob({
+          type: decomposed.type,
+          payload: {
+            ...decomposed.payload,
+            pipeline_id: pipelineId,
+            pipeline_type: "talking-head",
+            pipeline_stage: "video",
+          },
+          model: nextJob.model,
+          projectId: getPipelineState(pipelineId)?.config.projectId,
+          priority: job.priority,
+        });
+        registerSegmentJob(parentVideoJob.id, 0, firstSegJob.id);
+
+        this.reportProgress(pipelineId, {
+          stage: "video",
+          message: formatSegmentProgress(0, decomposed.totalSegments),
+        });
+
+        logger.info(
+          `[QueueMaster] Pipeline ${pipelineId}: created ${decomposed.totalSegments} segment plan, first segment → job ${firstSegJob.id}`,
+        );
+        void this.tick();
+        return;
+      }
+    }
+
+    // Enqueue next stage job (single segment or non-video)
+    const nextMediaJob = this.repo.createJob({
+      type: nextJob.type,
+      payload: nextJob.payload,
+      model: nextJob.model,
+      projectId: getPipelineState(pipelineId)?.config.projectId,
+      priority: job.priority,
+    });
+
+    logger.info(
+      `[QueueMaster] Pipeline ${pipelineId}: enqueued stage "${nextJob.payload.pipeline_stage}" → job ${nextMediaJob.id}`,
+    );
+
+    // Report progress for the new stage
+    this.reportProgress(nextMediaJob.id, {
+      stage: nextJob.payload.pipeline_stage,
+      message: `Starting stage "${nextJob.payload.pipeline_stage}"...`,
+    });
+
+    // Trigger immediate dispatch
     void this.tick();
   }
 }

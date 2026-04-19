@@ -54,6 +54,10 @@ import { loadSkillMetadata } from "../skills/skill-loader.js";
 import { isAllowedNetworkNodeUrl } from "../security/url-validation.js";
 import type { PipelineTemplateManager } from "../productivity/pipeline-template-manager.js";
 import type { Server as SocketIOServer } from "socket.io";
+import {
+  getGpuProfile,
+  _resetGpuProfileCache,
+} from "../system/gpu-profile.js";
 import { CronExpressionParser } from "cron-parser";
 
 let _adminIo: SocketIOServer | null = null;
@@ -6826,6 +6830,98 @@ export const createAdminRouter = ({
       const message = error instanceof Error ? error.message : String(error);
       const status = message.includes("built-in") ? 403 : 500;
       return res.status(status).json({ error: message });
+    }
+  });
+
+  // ── GPU Pooling & Pinning (Epic #889) ─────────────────────────────────
+
+  router.post("/gpu/pooling", async (req, res) => {
+    try {
+      const schema = z.object({
+        mode: z.enum(["manual-flux", "off"]),
+      });
+      const parsed = schema.safeParse(req.body);
+      if (!parsed.success) {
+        return res
+          .status(400)
+          .json({ error: "Invalid pooling mode", details: parsed.error.format() });
+      }
+      const configPath = defaultConfigPath();
+      const userConfig = await readUserConfig(configPath);
+      const existingGpu =
+        userConfig.gpu && typeof userConfig.gpu === "object"
+          ? (userConfig.gpu as Record<string, unknown>)
+          : {};
+      existingGpu.poolingMode = parsed.data.mode;
+      userConfig.gpu = existingGpu;
+      await writeUserConfig(configPath, userConfig);
+
+      _resetGpuProfileCache();
+      const profile = await getGpuProfile();
+      return res.json(profile);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return res.status(500).json({ error: message });
+    }
+  });
+
+  router.post("/gpu/pinning", async (req, res) => {
+    try {
+      const schema = z.object({
+        pinning: z.record(z.string(), z.number().int().min(0)),
+      });
+      const parsed = schema.safeParse(req.body);
+      if (!parsed.success) {
+        return res
+          .status(400)
+          .json({ error: "Invalid pinning map", details: parsed.error.format() });
+      }
+      const configPath = defaultConfigPath();
+      const userConfig = await readUserConfig(configPath);
+      const existingGpu =
+        userConfig.gpu && typeof userConfig.gpu === "object"
+          ? (userConfig.gpu as Record<string, unknown>)
+          : {};
+      existingGpu.pinning = parsed.data.pinning;
+      userConfig.gpu = existingGpu;
+      await writeUserConfig(configPath, userConfig);
+
+      _resetGpuProfileCache();
+      const profile = await getGpuProfile();
+      return res.json(profile);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return res.status(500).json({ error: message });
+    }
+  });
+
+  // ── Ollama proxy (Epic #890, #898) ────────────────────────────────────
+
+  const OLLAMA_BASE = process.env.OLLAMA_BASE_URL ?? "http://localhost:11434";
+
+  router.get("/gpu/ollama/tags", async (_req, res) => {
+    try {
+      const resp = await fetch(`${OLLAMA_BASE}/api/tags`, { signal: AbortSignal.timeout(5000) });
+      if (!resp.ok) {
+        return res.status(resp.status).json({ error: `Ollama responded ${resp.status}` });
+      }
+      const data = await resp.json();
+      return res.json(data);
+    } catch {
+      return res.status(503).json({ error: "Ollama not reachable" });
+    }
+  });
+
+  router.get("/gpu/ollama/ps", async (_req, res) => {
+    try {
+      const resp = await fetch(`${OLLAMA_BASE}/api/ps`, { signal: AbortSignal.timeout(5000) });
+      if (!resp.ok) {
+        return res.status(resp.status).json({ error: `Ollama responded ${resp.status}` });
+      }
+      const data = await resp.json();
+      return res.json(data);
+    } catch {
+      return res.status(503).json({ error: "Ollama not reachable" });
     }
   });
 

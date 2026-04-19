@@ -398,6 +398,29 @@ export function createCharacterRouter({
     }
   });
 
+  /**
+   * Derive a DreamBooth class noun from a character description.
+   * This is used as the instance-prompt class token (e.g. "a photo of zigs dog").
+   */
+  function deriveClassNoun(description: string | null | undefined): string {
+    if (!description) return "subject";
+    const lower = description.toLowerCase();
+    const KNOWN: [string, string][] = [
+      ["dog", "dog"], ["cat", "cat"], ["horse", "horse"],
+      ["bird", "bird"], ["rabbit", "rabbit"], ["fox", "fox"],
+      ["wolf", "wolf"], ["bear", "bear"], ["lion", "lion"],
+      ["tiger", "tiger"], ["elephant", "elephant"],
+      ["person", "person"], ["man", "man"], ["woman", "woman"],
+      ["child", "child"], ["boy", "boy"], ["girl", "girl"],
+    ];
+    for (const [keyword, noun] of KNOWN) {
+      if (lower.includes(keyword)) return noun;
+    }
+    // Fall back to the last word of the description
+    const words = description.trim().split(/\s+/);
+    return (words[words.length - 1] ?? "subject").toLowerCase();
+  }
+
   // ── POST /:id/train — Start LoRA training ─────────────────
   router.post("/:id/train", async (req, res) => {
     try {
@@ -484,6 +507,7 @@ export function createCharacterRouter({
       const trainConfig = {
         model: "flux-dev",
         trigger_word: character.triggerWord,
+        class_noun: deriveClassNoun(character.description),
         steps,
         num_epochs: numEpochs,
         learning_rate: learningRate,
@@ -975,19 +999,34 @@ export function createCharacterRouter({
           displayName: filename,
         };
 
-        const systemMsg = `You are a vision-capable AI analyzing a reference photo for LoRA training. Describe what you actually see in the attached image to create an accurate training caption.
+        const systemMsg = `You are an expert photo captioner for DreamBooth LoRA training. Your captions must teach the model to recognize THIS SPECIFIC individual — not a generic member of the species/category.
 
 RULES:
-- Examine the attached image carefully and describe the actual visible content.
+- Examine the attached image carefully.
 - The caption MUST start with the exact trigger word "${triggerWord}".
-- Describe what you see: the subject, pose, framing, lighting, background, and notable visual details.
-- Keep the caption concise: 8-20 words.
+- Focus on UNIQUE IDENTIFYING FEATURES that distinguish this individual: specific coat/fur pattern and colors, eye color, ear shape, facial markings, body proportions, distinctive scars or spots, collar/accessories.
+- Describe the FRAMING (closeup face, full body, 3/4 view, side profile).
+- Describe the POSE (sitting, running, lying down, standing, looking at camera).
+- Include BACKGROUND and LIGHTING only briefly (e.g. "on grass, natural sunlight").
+- Be SPECIFIC, not generic. BAD: "a dog on a beach". GOOD: "brown and tan husky mix with white chest blaze, blue collar, mid-stride on wet sand, overcast daylight".
+- Caption length: 15-30 words. More detail = better training.
 - Respond with ONLY the caption text — no JSON, no markdown, no explanation.`;
+
+        const photoIndex = i + 1;
+        const totalPhotos = accessiblePhotos.length;
 
         const userMsg = `Subject description: "${desc}"
 Trigger word: "${triggerWord}"
+Photo ${photoIndex} of ${totalPhotos}: "${filename}"
 
-Please look at the attached image (${filename}) and write a single training caption that accurately describes what you see. Start with "${triggerWord}".`;
+Look at the attached image and write a detailed training caption. Focus on:
+1. Start with "${triggerWord}"
+2. Unique physical features visible (markings, colors, patterns, eye color, ear shape, etc.)
+3. What framing/angle is this? (closeup face, full body, side profile, etc.)
+4. Pose and expression
+5. Brief background/lighting context
+
+Be as specific as possible about what makes THIS individual visually distinct.`;
 
         let captionResponse = "";
         try {

@@ -10,7 +10,7 @@ export type ProductionMode =
   | "hero-reel";
 
 export type ImageProvider = "auto" | "local" | "cloud";
-export type ImageModel = "sdxl-turbo" | "flux-schnell" | "flux" | "flux-dev";
+export type ImageModel = "sdxl-base" | "flux-schnell" | "flux" | "flux-dev";
 
 export interface VisualAsset {
   name: string;

@@ -261,6 +261,19 @@ export type MusicGenAppConfig = {
   networkNodeToken?: string;
 };
 
+export type LipSyncAppConfig = {
+  enabled?: boolean;
+  networkNodeUrl?: string;
+  networkNodeToken?: string;
+  defaultModel?: string;
+  inferenceSteps?: number;
+  guidanceScale?: number;
+  enableDeepCache?: boolean;
+  maxDurationSec?: number;
+  modelIdleTimeoutSec?: number;
+  memoryLimitGB?: number;
+};
+
 export type SocialBrainPlatformConnectionConfig = {
   enabled?: boolean;
   mode?: "webhook" | "polling" | "browser";
@@ -325,6 +338,7 @@ export type AppConfig = {
   presenter?: PresenterAppConfig;
   imageGen?: ImageGenAppConfig;
   musicGen?: MusicGenAppConfig;
+  lipSync?: LipSyncAppConfig;
   socialBrain?: SocialBrainAppConfig;
   sentinel?: SentinelAppConfig;
   knowledge?: KnowledgeAppConfig;
@@ -560,6 +574,25 @@ const appConfigSchema = z.object({
       baseUrl: z.string().optional().default(""),
     })
     .optional(),
+  lipSync: z
+    .object({
+      enabled: z.boolean().optional().default(false),
+      networkNodeUrl: z.string().optional().default(""),
+      networkNodeToken: z.string().optional().default(""),
+      defaultModel: z.string().optional().default("latentsync-v1.5"),
+      inferenceSteps: z.number().int().min(1).max(100).optional().default(20),
+      guidanceScale: z.number().min(0).max(10).optional().default(1.5),
+      enableDeepCache: z.boolean().optional().default(true),
+      maxDurationSec: z.number().int().min(1).max(120).optional().default(30),
+      modelIdleTimeoutSec: z
+        .number()
+        .int()
+        .min(0)
+        .optional()
+        .default(300),
+      memoryLimitGB: z.number().min(1).max(128).optional().default(24),
+    })
+    .optional(),
   socialBrain: z
     .object({
       enabled: z.boolean().optional(),
@@ -723,7 +756,10 @@ const readJsonFile = async (
 ): Promise<Record<string, unknown> | null> => {
   try {
     const raw = await fs.readFile(filePath, "utf-8");
-    return JSON.parse(raw) as Record<string, unknown>;
+    // Strip UTF-8 BOM if present (e.g. when config was edited by Windows tools
+    // such as PowerShell 5.1's Set-Content/Out-File which prepend EF BB BF).
+    const stripped = raw.charCodeAt(0) === 0xfeff ? raw.slice(1) : raw;
+    return JSON.parse(stripped) as Record<string, unknown>;
   } catch (error) {
     if (
       error instanceof Error &&

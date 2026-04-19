@@ -7,14 +7,69 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Admin GPU Info Panel** (Epic #889):
+  - New `GPU & VRAM` section in the Admin page showing per-GPU cards with name, VRAM usage bars, recommended tier, pooling status, and same-architecture badges.
+  - Interactive pooling mode toggle (`off` / `manual-flux`) that persists to `~/.openzigs/config.json` via `POST /api/admin/gpu/pooling`.
+  - Interactive sidecar-to-GPU pinning dropdowns that persist via `POST /api/admin/gpu/pinning`.
+  - Refresh button to re-detect GPU state.
+  - Ollama health check display: shows running/available models and GPU VRAM usage when Ollama is reachable.
+- **Ollama Dual-GPU for Gemma 4** (Epic #890):
+  - `docker-compose.ollama.yml` for running Ollama with dual-GPU access (NVIDIA runtime, all GPUs exposed via `OLLAMA_NUM_GPU=99`).
+  - BYOK configuration: Ollama works as an OpenAI-compatible provider (`type: "openai"`, `baseUrl: "http://localhost:11434/v1"`).
+  - New `ollama` scenario in `scripts/gpu-stress-test.py` for measuring Ollama inference latency.
+  - Backend proxy endpoints (`GET /api/admin/gpu/ollama/tags`, `GET /api/admin/gpu/ollama/ps`) for the admin UI to query Ollama status without CORS issues.
+  - `docs/MULTI_GPU.md` updated with "Ollama Dual-GPU: Running Gemma 4 26b" section covering prerequisites, quick start, memory budget, performance expectations, BYOK config, and Ollama-vs-vLLM comparison table.
+
+- **Honest multi-GPU pooling for FLUX** (follow-up to Epic #883):
+  - `GET /api/system/gpu` now reports `pooling_supported`, `same_arch`, and an advisory `recommended_tier_pooled` so the UI can surface "you have enough aggregate VRAM if you opt in" without auto-picking heavier models for tenants who haven't.
+  - New `IMAGE_GEN_POOLING_MODE=manual-flux` env flag (default `off`). When enabled on a host with â‰¥ 2 same-arch CUDA GPUs, the image-gen sidecar splits FLUX components by hand â€” text encoders + VAE on `cuda:0`, transformer on `cuda:1` â€” instead of using `enable_model_cpu_offload()`. `start-cuda-sidecars.sh` exposes both GPUs to image-gen automatically when the flag is set.
+  - `/gpu-info` and `/models` on the image-gen sidecar now report `pooling_mode` and `pooled_active`.
+  - New `pooled` scenario in `scripts/gpu-stress-test.py` exercises the manual-pool path with a FLUX-schnell baseline + FLUX-dev pooled job.
+  - **Verified runtime behaviour on 2Ã— RTX 3060 12 GB**: pooled code path executes correctly and reports the expected log warning before falling back. The FLUX-dev transformer (~12 GB FP16) does not fit on a 12 GB card with CUDA context overhead, so manual placement OOMs and the sidecar transparently falls back to `enable_model_cpu_offload()` (load completes successfully in ~89 s vs. ~37 s on hosts where pooled placement holds). Documented in `docs/MULTI_GPU.md`: pooled FLUX-dev requires â‰¥ 2Ã— 16 GB same-arch cards. The flag is safe to leave on for undersized hardware (graceful fallback) but provides no speed benefit there.
+
+### Changed
+
+- `docs/MULTI_GPU.md`: Removed the previously-documented `LTX_DEVICE_MAP=balanced` / `FLUX_DEVICE_MAP=balanced` flags. They were never wired up in the sidecars (`device_map="balanced"` has known FLUX meta-tensor bugs in diffusers â€” see issue #9450). Replaced with the real, opt-in `IMAGE_GEN_POOLING_MODE=manual-flux` documentation including trade-offs and limitations.
+
+### Fixed
+- Strip UTF-8 BOM in `readJsonFile` so config files written by Windows PowerShell 5.1 (`Set-Content` / `Out-File` defaults) no longer crash backend startup with `JSON.parse` errors.
+
+- **CUDA worker `/unload` route restored** (`sidecars/worker/server_cuda.py`): The CUDA worker had `unload_model()` defined internally but no HTTP route exposed it, so `QueueMaster.unloadNode("worker")` was hitting `404 Not Found` and silently failing memory coordination during LTX â†” LatentSync handoffs on shared-VRAM hosts. Added `POST /unload` (token-gated, 409 if busy) matching the original `server.py` contract used by FluxQ and the M2 Pro worker.
+
+### Added (continued)
+
+- **Multi-GPU Awareness & Tiered Model Selection** (Epic #883):
+  - **GPU profile detection + sidecar pinning** (#884): New `src/system/gpu-profile.ts` parses `nvidia-smi` output at boot. `sidecars/start-cuda-sidecars.sh` now auto-pins each sidecar to a CUDA device based on GPU count: with â‰¥ 2 GPUs, image-gen + audio go to GPU 0 and worker (video) + lipsync + sadtalker go to GPU 1, so the talking-head pipeline overlaps work across both cards. Per-sidecar overrides via `*_GPU_INDEX` env vars. Each `*_cuda.py` sidecar exposes `GET /gpu-info` reporting its bound device.
+  - **Model tier registry + recommendation API** (#885): `MODEL_REGISTRY` (image-gen) and `VIDEO_MODEL_REGISTRY` (worker) gain `tier` (`low|medium|high|ultra`) and `min_vram_gb` fields. New `GET /api/system/gpu` endpoint returns the parsed GPU profile, total VRAM, recommended tier, and default sidecar pinning.
+  - **GPU stress-test harness** (#887): New `scripts/gpu-stress-test.py` (and PowerShell wrapper `scripts/gpu-stress-test.ps1`) runs concurrent jobs across image-gen, video, audio, and lipsync sidecars while sampling `nvidia-smi`. Emits markdown reports to `~/.openzigs/stress-tests/<timestamp>-<scenario>.md` with per-GPU peak VRAM, per-job wall times, and OOM counts. Scenarios: `smoke`, `full`, `oom`, `pooled`.
+  - **Multi-GPU documentation** (`docs/MULTI_GPU.md`): Hardware reality check, override reference, and tier table.
+  - **vLLM dual-GPU reference** (#888): `examples/multi-gpu/vllm-dual-gpu.py` (TP=2 launcher with NCCL/PyTorch tuning for PCIe-only consumer cards) and `examples/multi-gpu/vllm-client.ts` (async client with single-flight queue + `VllmBackpressureError` to prevent VRAMâ†’system-RAM spillover). Outlined as reference; integration tracked in #888.
+
+- **LatentSync Lip Sync Sidecar** (#797):
+  - **Lip Sync Sidecar Servers** (#798): FastAPI servers for MPS (port 5008, FP32) and CUDA (port 5010, FP16) with `/generate`, `/health`, `/unload-model`, `/model-status` endpoints
+  - **Setup Scripts** (#799): `setup-lipsync-node.sh` for macOS MPS, `setup-cuda-sidecars.sh` and `start-cuda-sidecars.sh` for Windows/WSL CUDA
+  - **Dispatch Routing** (#800): QueueMaster lip sync job dispatch with health-check polling, sidecar reconnection, and graceful degradation
+  - **Memory Coordination** (#801): Sequential LTX â†” LatentSync execution via `memoryTransitionActive` mutex, `ensureSidecarMemory()`, and `unloadWithRetry()` for M2 Pro shared-memory environments
+  - **Talking Head Pipeline** (#802): Three-stage pipeline (TTS â†’ Video â†’ Lip Sync) with in-memory state machine, automatic output forwarding, and graceful degradation when sidecar is unavailable
+  - **Gallery Studio Talking Head Mode** (#803): New "Talking Head" mode with speech text input, voice selector, video prompt, lip sync settings panel (model version, inference steps, guidance scale, DeepCache), and sidecar health indicator
+  - **Configuration** (#804): `lipSync` config section with `enabled`, `networkNodeUrl`, `networkNodeToken`, `defaultModel`, `inferenceSteps`, `guidanceScale`, `enableDeepCache`, `maxDurationSec`, `modelIdleTimeoutSec`, `memoryLimitGB`
+  - **cuda-ctl Commands** (#805): `cuda-ctl.sh lipsync {setup|start|stop|status|logs}` for managing the CUDA lip sync sidecar
+  - **Documentation** (#806): Architecture and User Guide updated with LatentSync sidecar design, Talking Head pipeline, setup instructions, troubleshooting, and security notice
+
 ### Fixed
 
-- LTX worker: garbled/snow video output caused by `LTX_USE_PREQUANT=1` in `.env` forcing broken AITRADER pre-quantized 4-bit weights instead of runtime quantization from the clean BF16 base model (`mlx-community/LTX-2-distilled-bf16`). The CharafChnioune fork auto-detects AITRADER repos and applies runtime quantization — `LTX_USE_PREQUANT` must not be set.
+- LTX worker: garbled/snow video output caused by `LTX_USE_PREQUANT=1` in `.env` forcing broken AITRADER pre-quantized 4-bit weights instead of runtime quantization from the clean BF16 base model (`mlx-community/LTX-2-distilled-bf16`). The CharafChnioune fork auto-detects AITRADER repos and applies runtime quantization â€” `LTX_USE_PREQUANT` must not be set.
 - LTX worker: added `sidecars/worker/.env.example` with documented env vars and a prominent warning against setting `LTX_USE_PREQUANT=1`.
+- F5-TTS sidecar (`sidecars/audio/server_cuda.py`): replaced direct `os.path.realpath` on user-supplied `ref_audio_path` with the same split/`os.listdir` lookup pattern used by the lip sync sidecar, breaking taint flow into shell/path operations and resolving CodeQL alerts #327 (command-line-injection, critical) and #328/#330 (path-injection, high).
+- Test suite: refreshed `VALID_VIDEO_DURATIONS`, `isValidVideoDuration`, and talking-head-pipeline `maxDurationSec` cap tests to match the extended `[4..32]` valid duration list and 32 s ceiling.
+- Audio API tests: added missing `node:fs/promises` `readFile` mock that was causing `/audio/f5tts/profiles/:id/test` tests to return 502.
+- UI lint: replaced unnecessary `\/` escapes in `ui/app/characters/page.tsx` regex character classes with `[/\\]`.
 
 ### Added
 
-- **OpusClip Feature Parity — Video Clipping, Editing & Publishing Pipeline** (#817):
+- **OpusClip Feature Parity â€” Video Clipping, Editing & Publishing Pipeline** (#817):
   - **Intelligent Video Clipping** (#821): Multi-modal AI clip extraction via scene graph analysis (transcript + visual + audio), LLM virality scoring, and FFmpeg extraction. MCP tool: `clip-video`.
   - **AI Video Reframing** (#818): Subject-tracking reframing with Bezier-interpolated crop trajectories. Supports 9:16, 1:1, 4:5 targets and auto/single-speaker/split-screen/gameplay/action layouts. MCP tool: `reframe-video`.
   - **Audio Cleaner** (#820): Filler word removal (gentle/moderate/aggressive), silence trimming, optional denoise and speech normalization via Whisper + FFmpeg. MCP tool: `clean-audio`.
@@ -29,91 +84,91 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - REST API routes: `/api/studio/pipeline/{clip,reframe,clean-audio,broll,caption-templates,export}`, `/api/admin/calendar`, `/api/admin/video-analytics/*`
   - UI panels: ClipExtractorPanel, AudioCleanerPanel, BRollPanel, NLEExportPanel in Director Studio
   - UI components: AnalyticsDashboard, BrandTemplateEditor, TimelineRuler, TimelineToolbar
-- Gallery Studio: pipeline selector dropdown — choose between Distilled, Dev, 2-Stage, and 2-Stage HQ pipelines (#783)
+- Gallery Studio: pipeline selector dropdown â€” choose between Distilled, Dev, 2-Stage, and 2-Stage HQ pipelines (#783)
 - Gallery Studio: audio generation toggle with ~30% time warning (#784)
-- Gallery Studio: VAE tiling mode selector — Auto, None, Default, Aggressive, Conservative (#785)
+- Gallery Studio: VAE tiling mode selector â€” Auto, None, Default, Aggressive, Conservative (#785)
 - Gallery Studio: AI Enhance Prompt toggle wired to `enhance_prompt` payload field (#786)
 - Gallery Studio: model selector dropdown populated from LTX model catalog with memory info (#787)
-- Gallery Studio: preset picker with load/save — Quick Draft, Standard, High Quality built-ins plus custom presets (#788)
-- Gallery Studio: duration selector (4s / 8s / 12s / 16s) replacing fixed 4s — shows segment count (#794)
+- Gallery Studio: preset picker with load/save â€” Quick Draft, Standard, High Quality built-ins plus custom presets (#788)
+- Gallery Studio: duration selector (4s / 8s / 12s / 16s) replacing fixed 4s â€” shows segment count (#794)
 - Multi-segment video generation: jobs with duration > 4s decompose into chained 4s segment sub-jobs (#790)
-- Multi-segment video: segment chaining via `/last-frame` endpoint — each segment uses previous segment's last frame as init image (#791)
+- Multi-segment video: segment chaining via `/last-frame` endpoint â€” each segment uses previous segment's last frame as init image (#791)
 - Multi-segment video: ffmpeg concat stitching with 0.5s crossfade transitions between segments (#792)
 - Multi-segment video: aggregate progress reporting with segment indicator ("Segment 2/4") (#793)
 - Multi-segment video: audio post-processing runs on final stitched video only, not per-segment (#795)
-- Worker sidecar: `POST /last-frame` endpoint — extracts last frame of a video as base64 PNG via ffmpeg (#789)
+- Worker sidecar: `POST /last-frame` endpoint â€” extracts last frame of a video as base64 PNG via ffmpeg (#789)
 - LTX Video Engine v2: audio-video joint generation toggle (`audio` param) for synchronized sound (#760)
-- LTX Video Engine v2: 2-stage pipeline support — `dev-two-stage` and `dev-two-stage-hq` pipeline types (#759)
+- LTX Video Engine v2: 2-stage pipeline support â€” `dev-two-stage` and `dev-two-stage-hq` pipeline types (#759)
 - LTX Video Engine v2: model catalog with memory requirements and `GET /models` endpoint on sidecar (#761)
 - LTX Video Engine v2: Gemma prompt enhancement via `enhance_prompt` parameter (#758)
-- LTX Video Engine v2: configurable VAE tiling — `auto`, `none`, `default`, `aggressive`, `conservative` (#763)
-- LTX Video Engine v2: image-to-video `image_strength` parameter (0.0–1.0) for conditioning control (#758)
+- LTX Video Engine v2: configurable VAE tiling â€” `auto`, `none`, `default`, `aggressive`, `conservative` (#763)
+- LTX Video Engine v2: image-to-video `image_strength` parameter (0.0â€“1.0) for conditioning control (#758)
 - LTX Video Engine v2: `model_repo` override field for selecting different LTX model checkpoints (#758)
-- **Airtable MCP Integration** — Full Airtable API client with per-base rate limiting and read/write MCP tools (#738, #743, #745, #746)
-  - `AirtableClient` with automatic exponential backoff, non-retryable error detection, and `RateLimiter` (≤5 req/sec per base)
+- **Airtable MCP Integration** â€” Full Airtable API client with per-base rate limiting and read/write MCP tools (#738, #743, #745, #746)
+  - `AirtableClient` with automatic exponential backoff, non-retryable error detection, and `RateLimiter` (â‰¤5 req/sec per base)
   - Read tools: `airtable-list-bases`, `airtable-list-tables`, `airtable-read-records`, `airtable-list-views`, `airtable-get-fields`
-  - Write tools: `airtable-create-records`, `airtable-update-records`, `airtable-delete-records` (batch ≤10, typecast support)
+  - Write tools: `airtable-create-records`, `airtable-update-records`, `airtable-delete-records` (batch â‰¤10, typecast support)
   - Formula validation utility with cheatsheet for NL query translation (#744)
-- **Google Sheets MCP Integration** — Sheets API v4 client with OAuth2 token refresh and read/write MCP tools (#738, #741, #747, #742)
-  - `SheetsClient` with `SheetsRateLimiter` (≤60 req/min sliding window), A1 notation validation, and automatic OAuth2 token refresh
+- **Google Sheets MCP Integration** â€” Sheets API v4 client with OAuth2 token refresh and read/write MCP tools (#738, #741, #747, #742)
+  - `SheetsClient` with `SheetsRateLimiter` (â‰¤60 req/min sliding window), A1 notation validation, and automatic OAuth2 token refresh
   - Read tools: `sheets-list-spreadsheets`, `sheets-read-range`, `sheets-get-metadata`
   - Write tools: `sheets-write-range`, `sheets-append-rows`, `sheets-create-spreadsheet`, `sheets-create-sheet`, `sheets-format-cells`
   - Column helper utilities (`columnToLetter`, `letterToColumn`) and formula cheatsheet (#744)
-- **Data Output Helper** — shared utility for writing structured row data to Airtable/Sheets from any tool (#748)
+- **Data Output Helper** â€” shared utility for writing structured row data to Airtable/Sheets from any tool (#748)
   - `site-to-dataset` and `lead-extract` tools now accept optional `outputTo` parameter for direct Airtable/Sheets export
   - Graceful degradation: if export fails, text results are still returned
-- **Integrations Admin Panel** — UI for configuring Airtable & Google Sheets credentials (#740)
-  - `POST /api/admin/integrations/save` — save credentials to Secret Vault
-  - `POST /api/admin/integrations/test` — test connectivity
-  - `GET /api/admin/integrations/status` — check configuration status
+- **Integrations Admin Panel** â€” UI for configuring Airtable & Google Sheets credentials (#740)
+  - `POST /api/admin/integrations/save` â€” save credentials to Secret Vault
+  - `POST /api/admin/integrations/test` â€” test connectivity
+  - `GET /api/admin/integrations/status` â€” check configuration status
   - `SecretVaultService.getByLabel()` helper for credential lookup by label
 
-- **Firecrawl Search** — `search()` method on `FirecrawlClient` calling `/v2/search` (DuckDuckGo fallback, no API key needed) with SSRF filtering on returned URLs (#753)
+- **Firecrawl Search** â€” `search()` method on `FirecrawlClient` calling `/v2/search` (DuckDuckGo fallback, no API key needed) with SSRF filtering on returned URLs (#753)
   - `firecrawl-search` standalone MCP tool for explicit Firecrawl web search
   - `web-search` tool now falls back to Firecrawl search when Brave API key is unavailable and Firecrawl sidecar is running
-- **Firecrawl Webhook Callbacks** — async crawl and batch scrape jobs now use webhook callbacks instead of polling when available (#751)
+- **Firecrawl Webhook Callbacks** â€” async crawl and batch scrape jobs now use webhook callbacks instead of polling when available (#751)
   - `POST /api/webhooks/firecrawl` endpoint with HMAC-SHA256 signature validation
   - Automatic fallback to polling when webhooks fail or are disabled
   - `firecrawl.useWebhooks` config option (default: `true`)
   - Rate limiting on webhook endpoint (100 req/min)
   - Graceful shutdown: pending webhook promises rejected on server stop
 
-- **SCORM 1.2 Export** — export any presentation as a SCORM 1.2-compliant package for upload to any LMS (Moodle, Canvas, Blackboard, SCORM Cloud) (#688)
-  - `generateManifest()` — generates valid `imsmanifest.xml` with ADL SCORM 1.2 schema, mastery score = 80 (#704)
-  - `renderScormHtml()` — self-contained SCO HTML with embedded SCORM API adapter, chapter navigation, and quiz engine (#703)
-  - `buildScormPackage()` — orchestrates manifest + HTML + ZIP bundling via `archiver`, returns `Buffer` (#702)
-  - `POST /api/presentations/:id/scorm` — streams a zip attachment; validates admin access (#705)
-  - Quiz score → SCORM mapping: `cmi.core.score.raw/min/max` and `lesson_status` (`passed` ≥80%, `failed` <80%, `completed` for no-quiz) (#705)
+- **SCORM 1.2 Export** â€” export any presentation as a SCORM 1.2-compliant package for upload to any LMS (Moodle, Canvas, Blackboard, SCORM Cloud) (#688)
+  - `generateManifest()` â€” generates valid `imsmanifest.xml` with ADL SCORM 1.2 schema, mastery score = 80 (#704)
+  - `renderScormHtml()` â€” self-contained SCO HTML with embedded SCORM API adapter, chapter navigation, and quiz engine (#703)
+  - `buildScormPackage()` â€” orchestrates manifest + HTML + ZIP bundling via `archiver`, returns `Buffer` (#702)
+  - `POST /api/presentations/:id/scorm` â€” streams a zip attachment; validates admin access (#705)
+  - Quiz score â†’ SCORM mapping: `cmi.core.score.raw/min/max` and `lesson_status` (`passed` â‰¥80%, `failed` <80%, `completed` for no-quiz) (#705)
   - "Export SCORM" button in presenter player UI with loading spinner (#701)
 
-- **VectorStore Abstraction Layer** — pluggable vector store backend for the RAG knowledge base (#691)
+- **VectorStore Abstraction Layer** â€” pluggable vector store backend for the RAG knowledge base (#691)
   - `VectorStore` interface in `src/knowledge/vector-store/types.ts` enabling LanceDB, Qdrant, Chroma, and other providers (#718)
-  - `LanceDBVectorStore` adapter in `src/knowledge/vector-store/lancedb-vector-store.ts` — thin wrapper over `LanceDBStore` satisfying the interface (#715)
-  - `createVectorStore(config)` factory in `src/knowledge/vector-store/factory.ts` — config-driven provider selection (#716)
+  - `LanceDBVectorStore` adapter in `src/knowledge/vector-store/lancedb-vector-store.ts` â€” thin wrapper over `LanceDBStore` satisfying the interface (#715)
+  - `createVectorStore(config)` factory in `src/knowledge/vector-store/factory.ts` â€” config-driven provider selection (#716)
   - `knowledge.vectorStore.provider` config key in `config/default.json` (default: `"lancedb"`) and Zod schema (#717)
   - `KnowledgeIngestionService` accepts optional `vectorStore?: VectorStore` via DI constructor (#716)
   - VectorStore interface + `LanceDBVectorStore` exported from `src/knowledge/index.ts` (#719)
   - ARCHITECTURE.md updated to document the abstraction layer (#720)
 
-- **Firecrawl Self-Hosted Integration** — on-demand Docker sidecar for deep website crawling (#723)
+- **Firecrawl Self-Hosted Integration** â€” on-demand Docker sidecar for deep website crawling (#723)
   - `docker-compose.firecrawl.yml` with API, Playwright, and Redis services (#724)
   - `FirecrawlClient` class with SSRF protection, per-domain rate limiting (1 req/sec), auto-start/stop sidecar lifecycle, and injectable fetch for testing (#724)
-  - `seo-site-audit` tool — full-site SEO audit via deep crawling: meta tags, headings, thin content, images, schema, internal linking (#725)
-  - `deepCrawl` mode for `seo-gap-analysis` — Firecrawl-powered multi-page competitor content extraction (#726)
-  - `ingest-website` tool — crawl a website and ingest all pages into the knowledge base with vector embeddings (#727)
-  - `extractAnnotationsViaFirecrawl()` — Firecrawl Strategy 0 for Pinterest SEO annotation extraction on JS-rendered pages (#728)
-  - `competitive-monitor` tool — SQLite-backed competitor tracking with add/remove/snapshot/report/list actions (#729)
-  - Firecrawl Dashboard UI — dialog with Site Audit, Ingest, and Monitor actions (#730)
-  - `web-extract` tool — LLM-powered structured data extraction from any web page with JSON schema or natural language prompt (#731)
-  - `lead-extract` tool — automated contact and company extraction via site mapping and batch scraping (#731)
-  - `price-monitor` tool — track prices with historical SQLite snapshots and change detection (#731)
-  - `site-to-dataset` tool — crawl websites and produce structured datasets in markdown, JSONL, or CSV (#731)
+  - `seo-site-audit` tool â€” full-site SEO audit via deep crawling: meta tags, headings, thin content, images, schema, internal linking (#725)
+  - `deepCrawl` mode for `seo-gap-analysis` â€” Firecrawl-powered multi-page competitor content extraction (#726)
+  - `ingest-website` tool â€” crawl a website and ingest all pages into the knowledge base with vector embeddings (#727)
+  - `extractAnnotationsViaFirecrawl()` â€” Firecrawl Strategy 0 for Pinterest SEO annotation extraction on JS-rendered pages (#728)
+  - `competitive-monitor` tool â€” SQLite-backed competitor tracking with add/remove/snapshot/report/list actions (#729)
+  - Firecrawl Dashboard UI â€” dialog with Site Audit, Ingest, and Monitor actions (#730)
+  - `web-extract` tool â€” LLM-powered structured data extraction from any web page with JSON schema or natural language prompt (#731)
+  - `lead-extract` tool â€” automated contact and company extraction via site mapping and batch scraping (#731)
+  - `price-monitor` tool â€” track prices with historical SQLite snapshots and change detection (#731)
+  - `site-to-dataset` tool â€” crawl websites and produce structured datasets in markdown, JSONL, or CSV (#731)
   - Full Firecrawl action support: scroll, write, press, executeJavascript, PDF, scrape (#731)
   - Batch scrape (`batchScrape`) and enhanced map with search filtering (#731)
   - Crawl Dashboard expanded with Extract, Leads, Prices, and Dataset action panels (#731)
   - Firecrawl config section in `config/default.json` (`firecrawl.enabled`, `firecrawl.url`, `firecrawl.idleTimeoutMs`)
 
-- **Visual Workflow Builder** (`/workflows`) — full-screen drag-and-drop canvas for composing multi-stage LLM pipelines (#687)
+- **Visual Workflow Builder** (`/workflows`) â€” full-screen drag-and-drop canvas for composing multi-stage LLM pipelines (#687)
   - React Flow canvas with custom node types: Prompt Stage, Parallel Group, Post-Action, Condition (coming soon) (#706, #708)
   - Draggable node palette sidebar and node config panel for editing node properties (#707, #710)
   - Bidirectional graph serializer (`graphToStages`/`stagesToGraph`) with cycle detection and topological sort (#709)
@@ -121,7 +176,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Workflow execution via task API with real-time Socket.IO status overlay on nodes (#712)
   - JSON import/export for workflow templates (#713)
   - "Workflows" link added to the Automation nav group (#714)
-- **Social Analytics Dashboard** — enhanced analytics tab with rich charts and export (#689)
+- **Social Analytics Dashboard** â€” enhanced analytics tab with rich charts and export (#689)
   - Bar chart (messages by platform), pie chart (platform distribution), automation rate card (#696, #697)
   - Date range picker, platform filter, and CSV export button (#698, #699)
   - Advanced analytics API router (`/api/social/analytics/v2`) with time-series aggregation and CSV export (#700)
@@ -140,7 +195,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `backend:getHealth` IPC handler returns enriched health data to the Electron renderer (#607)
 - `window.openzigs.isElectron` flag in preload for runtime Electron detection (#607)
 - `window.openzigs.backend.getHealth()` IPC method exposes backend health data to the UI (#607)
-- Tray tooltip shows uptime and memory when backend is running (e.g., "OpenZigs — running (2h 15m, 120MB)") (#607)
+- Tray tooltip shows uptime and memory when backend is running (e.g., "OpenZigs â€” running (2h 15m, 120MB)") (#607)
 
 ### Changed
 
@@ -148,11 +203,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Sentinel autonomous monitor is now **enabled by default** — new installations start with Sentinel active; set `sentinel.enabled: false` in config to disable (#217)
+- Sentinel autonomous monitor is now **enabled by default** â€” new installations start with Sentinel active; set `sentinel.enabled: false` in config to disable (#217)
 
 ### Added
 
-- RAG Knowledge Base health check integrated into Sentinel periodic checks — monitors DB accessibility, ingestion status, and queue depth (#218)
+- RAG Knowledge Base health check integrated into Sentinel periodic checks â€” monitors DB accessibility, ingestion status, and queue depth (#218)
 - New alert types: `rag-db-unreachable` (critical), `rag-ingestion-down` (warning), `rag-queue-depth` (warning) (#218)
 - `ragQueueDepthThreshold` config option (default: 100) to control when Sentinel alerts on RAG ingestion backlog (#218)
 - Knowledge Base Health section in Sentinel status markdown digest (#218)
@@ -164,7 +219,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Bumped `picomatch` override from >=2.3.2 to >=4.0.4 (ReDoS, moderate)
 - Added `brace-expansion` override >=5.0.5 (ReDoS, moderate)
 - Added scoped `express>path-to-regexp` override pinned to 0.1.13 (ReDoS in express@4, high)
-- Added scoped `router>path-to-regexp` override >=8.4.0 (ReDoS via MCP SDK express@5 → router, high)
+- Added scoped `router>path-to-regexp` override >=8.4.0 (ReDoS via MCP SDK express@5 â†’ router, high)
 - Bumped `electron` from ^34.2.0 to ^35.7.5 (multiple Chromium CVEs, high)
 
 ### Changed
@@ -174,7 +229,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Windows named pipe Docker socket detection (`//./pipe/docker_engine`) for Docker Desktop on Windows (#598)
-- Hard link → `fs.copyFileSync` fallback in Remotion media staging for cross-device/Windows compatibility (#597)
+- Hard link â†’ `fs.copyFileSync` fallback in Remotion media staging for cross-device/Windows compatibility (#597)
 - Platform capability detection service (`src/config/platform.ts`) with OS, arch, Docker, Chrome, and sidecar support detection (#600)
 - `GET /api/admin/platform` endpoint exposing platform capabilities and feature availability to the UI (#600)
 - `usePlatform()` React hook and `PlatformBadge` component for platform-aware UI rendering (#601)
@@ -186,7 +241,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Orchestration Mode (Task vs Session) for orchestration templates (#669)
   - `OrchestrationModeSchema` and `mode` field on `ExecuteTemplateSchema` for per-execution mode selection (#670)
   - `defaultMode` on `CreateOrchestrationTemplateSchema` and `OrchestrationTemplate` with SQLite migration (#670)
-  - Session mode execution path in `TemplateService` — composes all agent goals into a single `CopilotWrapper.chat()` call with `enableSubagents: true` (#672)
+  - Session mode execution path in `TemplateService` â€” composes all agent goals into a single `CopilotWrapper.chat()` call with `enableSubagents: true` (#672)
   - `enableInSessionSubagents` flag on `ChatContext` for `spawn-agent` session mode awareness (#674)
   - Orchestration Mode radio selector in `TemplateExecuteModal` (Task/Session with descriptions) (#676)
   - Orchestration Mode selector on Scheduler prompt/pipeline job form (#675)
@@ -195,7 +250,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- SEO extraction: JSON-LD `@graph` wrapper (Yoast/WordPress pattern) is now parsed — previously only root `@type` was detected (#665)
+- SEO extraction: JSON-LD `@graph` wrapper (Yoast/WordPress pattern) is now parsed â€” previously only root `@type` was detected (#665)
 - SEO extraction: nested `@type` entities (publisher, mainEntity, author, etc.) are recursively extracted from JSON-LD up to depth 5 (#666)
 - SEO extraction: image alt text now distinguishes "truly missing" vs "empty (decorative)" vs "present"; reports `aria-hidden` and lazy-loaded (`data-src`/`data-srcset`) images (#667)
 - Director Studio: image/video overlays now use `objectFit: "contain"` instead of `"fill"` to prevent stretching non-16:9 assets
@@ -217,7 +272,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Markdown report generation with comparison tables, Mermaid xychart, keyword coverage matrix, and SERP feature opportunities (#651)
 - Configurable workbench directories via `workbench.directories` config key and admin API (`GET/PUT /api/admin/workbench/directories`) (#654)
 - YouTube MCP: `yt_check_video_exists` tool to verify whether a published video still exists on YouTube
-- In-session SDK subagent orchestration mode for `orchestrate-agents` tool — `mode: "session"` delegates to Copilot SDK subagents in a single chat call (~2 API calls vs ~5 for task mode) (#657)
+- In-session SDK subagent orchestration mode for `orchestrate-agents` tool â€” `mode: "session"` delegates to Copilot SDK subagents in a single chat call (~2 API calls vs ~5 for task mode) (#657)
 - `enableSubagents` flag wired through `CopilotWrapper` session lifecycle (create, resume, cache signature) (#658)
 - Orchestration mode selector in SEO Analysis dialog: Standard (1 call), Session (~2 calls), Parallel (~5 calls) (#661)
 - Three SEO specialist agent archetypes: `seo-content-analyst`, `seo-technical-auditor`, `seo-serp-strategist` (#660)
@@ -234,15 +289,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Security
 
 - Fix prototype pollution in native MCP server admin routes (CodeQL finding, #634)
-- Fix picomatch ReDoS and method injection via `pnpm.overrides` — picomatch ≥ 2.3.2 (CVE-2026-33671, CVE-2026-33672, #635)
-- Fix `@github/copilot` shell expansion vulnerability — update override to ≥ 0.0.423 and bump `@github/copilot-sdk` to 0.1.32 (CVE-2026-29783, #636)
+- Fix picomatch ReDoS and method injection via `pnpm.overrides` â€” picomatch â‰¥ 2.3.2 (CVE-2026-33671, CVE-2026-33672, #635)
+- Fix `@github/copilot` shell expansion vulnerability â€” update override to â‰¥ 0.0.423 and bump `@github/copilot-sdk` to 0.1.32 (CVE-2026-29783, #636)
 - Patch `vscode-jsonrpc` to add ESM `exports` field (fixes test suite breakage from SDK update)
 
 ### Added
 
 - Cross-platform Windows compatibility (Phase 1) (#590)
   - Docker socket resolution now supports Windows named pipes (`//./pipe/docker_engine`) (#596)
-  - Platform capability detection module (`src/config/platform.ts`) — detects OS, arch, Docker, sidecar support, Chrome path (#599)
+  - Platform capability detection module (`src/config/platform.ts`) â€” detects OS, arch, Docker, sidecar support, Chrome path (#599)
   - `/api/admin/platform` endpoint exposes platform capabilities and feature availability to the UI (#601)
   - Admin panel shows platform-appropriate availability badges on sidecar-dependent features (Image Gen, Music Gen) (#601)
   - `usePlatform()` React hook and `PlatformBadge` component for UI feature gating (#601)
@@ -281,7 +336,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Remotion media resolver already had hard-link → copy fallback; confirmed no changes needed (#597)
+- Remotion media resolver already had hard-link â†’ copy fallback; confirmed no changes needed (#597)
 
 ### Security
 
@@ -298,16 +353,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Dynamic method calls: `typeof` function checks before invoking callbacks (#585)
   - Format string: `String()` coercion in dev-server.mjs (#586)
 - Fix 5 transitive dependency vulnerabilities (tar, @github/copilot, dompurify, @tootallnate/once) via pnpm overrides
-- Replace vulnerable xlsx@0.18.5 with exceljs — resolves 4 SheetJS prototype pollution and ReDoS alerts (Dependabot #1-4)
-- Remove stale `ui/pnpm-lock.yaml` that pinned vulnerable versions of next, flatted, socket.io-parser, and glob — resolves 8 Dependabot alerts (#29–31, #39–43)
+- Replace vulnerable xlsx@0.18.5 with exceljs â€” resolves 4 SheetJS prototype pollution and ReDoS alerts (Dependabot #1-4)
+- Remove stale `ui/pnpm-lock.yaml` that pinned vulnerable versions of next, flatted, socket.io-parser, and glob â€” resolves 8 Dependabot alerts (#29â€“31, #39â€“43)
 - Add `.gitignore` guard to prevent stale `ui/pnpm-lock.yaml` from being re-committed
 
 ### Changed
 
-- Upgrade Next.js 14.2.35 → 15.5.14 (App Router, no breaking changes for client components)
-- Upgrade React 18.3.1 → 19.2.4 and React DOM 18.3.1 → 19.2.4
-- Upgrade @types/react 18.x → 19.x and @types/react-dom 18.x → 19.x
-- Upgrade eslint-config-next 14.x → 15.x
+- Upgrade Next.js 14.2.35 â†’ 15.5.14 (App Router, no breaking changes for client components)
+- Upgrade React 18.3.1 â†’ 19.2.4 and React DOM 18.3.1 â†’ 19.2.4
+- Upgrade @types/react 18.x â†’ 19.x and @types/react-dom 18.x â†’ 19.x
+- Upgrade eslint-config-next 14.x â†’ 15.x
 
 ### Fixed
 
@@ -316,11 +371,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
-- Resolve 10 Dependabot alerts (#19, #24–28, #30–31, #40, #43) for Next.js CVEs via upgrade to 15.5.14
-- Bump jspdf 4.2.0 → 4.2.1 to fix prototype pollution vulnerability (CVE-2025-26791)
-- Add pnpm override for socket.io-parser ≥4.2.6 (CVE-2025-27108 — insufficient input validation)
-- Update pnpm override for undici ≥6.23.0 → ≥7.24.0 (CVE-2025-22150 — insufficient randomness in request boundary)
-- Add pnpm override for flatted ≥3.4.2 (CVE-2025-27490 — prototype pollution)
+- Resolve 10 Dependabot alerts (#19, #24â€“28, #30â€“31, #40, #43) for Next.js CVEs via upgrade to 15.5.14
+- Bump jspdf 4.2.0 â†’ 4.2.1 to fix prototype pollution vulnerability (CVE-2025-26791)
+- Add pnpm override for socket.io-parser â‰¥4.2.6 (CVE-2025-27108 â€” insufficient input validation)
+- Update pnpm override for undici â‰¥6.23.0 â†’ â‰¥7.24.0 (CVE-2025-22150 â€” insufficient randomness in request boundary)
+- Add pnpm override for flatted â‰¥3.4.2 (CVE-2025-27490 â€” prototype pollution)
 
 ## [0.1.0] - 2026-03-22
 
