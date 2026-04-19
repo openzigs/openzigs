@@ -97,6 +97,8 @@ MODEL_REGISTRY: dict[str, dict] = {
         "recommended_width": 1024,
         "recommended_height": 576,
         "description": "FLUX.1 schnell -- 4-step distilled (diffusers/CUDA)",
+        "tier": "medium",
+        "min_vram_gb": 12,
     },
     "flux-dev": {
         "hf_id": "black-forest-labs/FLUX.1-dev",
@@ -106,6 +108,8 @@ MODEL_REGISTRY: dict[str, dict] = {
         "recommended_width": 1024,
         "recommended_height": 576,
         "description": "FLUX.1 dev -- high-quality guidance-distilled (diffusers/CUDA)",
+        "tier": "high",
+        "min_vram_gb": 16,
     },
     "sdxl-base": {
         "hf_id": "stabilityai/stable-diffusion-xl-base-1.0",
@@ -115,6 +119,8 @@ MODEL_REGISTRY: dict[str, dict] = {
         "recommended_width": 1024,
         "recommended_height": 1024,
         "description": "Stable Diffusion XL 1.0 -- used for LoRA character inference",
+        "tier": "low",
+        "min_vram_gb": 8,
     },
 }
 
@@ -801,6 +807,25 @@ async def status():
         "device": "cuda",
         "ready": _ready,
         **vram_info,
+    }
+
+
+@app.get("/gpu-info")
+async def gpu_info_endpoint():
+    """Report which CUDA device this sidecar is bound to (Issue #884)."""
+    _ensure_torch()
+    if not torch.cuda.is_available():
+        return {"available": False, "cuda_visible": os.environ.get("CUDA_VISIBLE_DEVICES", "")}
+    idx = torch.cuda.current_device()
+    free, total = torch.cuda.mem_get_info(idx)
+    return {
+        "available": True,
+        "device_index": idx,
+        "device_name": torch.cuda.get_device_name(idx),
+        "device_count": torch.cuda.device_count(),
+        "total_mb": int(total / 1024**2),
+        "free_mb": int(free / 1024**2),
+        "cuda_visible": os.environ.get("CUDA_VISIBLE_DEVICES", ""),
     }
 
 

@@ -79,6 +79,8 @@ VIDEO_MODEL_REGISTRY: dict[str, dict] = {
         "default_guidance": 1.0,
         "description": "LTX-Video 13B distilled — fast, high quality (7 steps, no CFG)",
         "vram_gb": 12,
+        "tier": "medium",
+        "min_vram_gb": 12,
     },
     "ltxv-13b-097-dev": {
         "hf_id": "Lightricks/LTX-Video-0.9.7-dev",
@@ -87,6 +89,8 @@ VIDEO_MODEL_REGISTRY: dict[str, dict] = {
         "default_guidance": 3.0,
         "description": "LTX-Video 13B dev — highest quality (30 steps, CFG-guided)",
         "vram_gb": 16,
+        "tier": "high",
+        "min_vram_gb": 16,
     },
     "ltxv-2b-096-distilled": {
         "hf_id": "Lightricks/LTX-Video-0.9.6-distilled",
@@ -95,6 +99,8 @@ VIDEO_MODEL_REGISTRY: dict[str, dict] = {
         "default_guidance": 0.0,
         "description": "LTX-Video 2B distilled — real-time, low VRAM (4 steps)",
         "vram_gb": 8,
+        "tier": "low",
+        "min_vram_gb": 8,
     },
     "ltxv-2b-legacy": {
         "hf_id": "Lightricks/LTX-Video",
@@ -103,6 +109,8 @@ VIDEO_MODEL_REGISTRY: dict[str, dict] = {
         "default_guidance": 0.0,
         "description": "LTX-Video 2B v0.9 — legacy baseline",
         "vram_gb": 8,
+        "tier": "low",
+        "min_vram_gb": 8,
     },
 }
 
@@ -790,6 +798,25 @@ async def memory_endpoint():
         "is_busy": state.is_busy,
         "max_frames_13b": _get_max_frames_for_model("ltxv-13b-097-distilled"),
         "max_frames_2b": _get_max_frames_for_model("ltxv-2b-096-distilled"),
+    }
+
+
+@app.get("/gpu-info")
+async def gpu_info_endpoint():
+    """Report which CUDA device this sidecar is bound to (Issue #884)."""
+    _ensure_torch()
+    if not torch.cuda.is_available():
+        return {"available": False, "cuda_visible": os.environ.get("CUDA_VISIBLE_DEVICES", "")}
+    idx = torch.cuda.current_device()
+    free, total = torch.cuda.mem_get_info(idx)
+    return {
+        "available": True,
+        "device_index": idx,
+        "device_name": torch.cuda.get_device_name(idx),
+        "device_count": torch.cuda.device_count(),
+        "total_mb": int(total / 1024**2),
+        "free_mb": int(free / 1024**2),
+        "cuda_visible": os.environ.get("CUDA_VISIBLE_DEVICES", ""),
     }
 
 

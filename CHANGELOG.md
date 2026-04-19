@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Multi-GPU Awareness & Tiered Model Selection** (Epic #883):
+  - **GPU profile detection + sidecar pinning** (#884): New `src/system/gpu-profile.ts` parses `nvidia-smi` output at boot. `sidecars/start-cuda-sidecars.sh` now auto-pins each sidecar to a CUDA device based on GPU count: with ≥ 2 GPUs, image-gen + audio go to GPU 0 and worker (video) + lipsync + sadtalker go to GPU 1, so the talking-head pipeline overlaps work across both cards. Per-sidecar overrides via `*_GPU_INDEX` env vars. Each `*_cuda.py` sidecar exposes `GET /gpu-info` reporting its bound device.
+  - **Model tier registry + recommendation API** (#885): `MODEL_REGISTRY` (image-gen) and `VIDEO_MODEL_REGISTRY` (worker) gain `tier` (`low|medium|high|ultra`) and `min_vram_gb` fields. New `GET /api/system/gpu` endpoint returns the parsed GPU profile, total VRAM, recommended tier, and default sidecar pinning.
+  - **Optional model parallelism flag** (#886): Documented `LTX_DEVICE_MAP=balanced` / `FLUX_DEVICE_MAP=balanced` env vars (default OFF) for opting into accelerate's multi-GPU sharding on hosts with ≥ 2 cards. Trade-off documented in `docs/MULTI_GPU.md`.
+  - **GPU stress-test harness** (#887): New `scripts/gpu-stress-test.py` (and PowerShell wrapper `scripts/gpu-stress-test.ps1`) runs concurrent jobs across image-gen, video, audio, and lipsync sidecars while sampling `nvidia-smi`. Emits markdown reports to `~/.openzigs/stress-tests/<timestamp>-<scenario>.md` with per-GPU peak VRAM, per-job wall times, and OOM counts. Scenarios: `smoke`, `full`, `oom`.
+  - **Multi-GPU documentation** (`docs/MULTI_GPU.md`): Hardware reality check, override reference, and tier table.
+
 - **LatentSync Lip Sync Sidecar** (#797):
   - **Lip Sync Sidecar Servers** (#798): FastAPI servers for MPS (port 5008, FP32) and CUDA (port 5010, FP16) with `/generate`, `/health`, `/unload-model`, `/model-status` endpoints
   - **Setup Scripts** (#799): `setup-lipsync-node.sh` for macOS MPS, `setup-cuda-sidecars.sh` and `start-cuda-sidecars.sh` for Windows/WSL CUDA

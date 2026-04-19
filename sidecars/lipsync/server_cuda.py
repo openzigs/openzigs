@@ -592,6 +592,28 @@ async def status(job_id: str):
     return {"job_id": job_id, **info}
 
 
+@app.get("/gpu-info")
+async def gpu_info_endpoint():
+    """Report which CUDA device this sidecar is bound to (Issue #884)."""
+    try:
+        import torch
+        if not torch.cuda.is_available():
+            return {"available": False, "cuda_visible": os.environ.get("CUDA_VISIBLE_DEVICES", "")}
+        idx = torch.cuda.current_device()
+        free, total = torch.cuda.mem_get_info(idx)
+        return {
+            "available": True,
+            "device_index": idx,
+            "device_name": torch.cuda.get_device_name(idx),
+            "device_count": torch.cuda.device_count(),
+            "total_mb": int(total / 1024**2),
+            "free_mb": int(free / 1024**2),
+            "cuda_visible": os.environ.get("CUDA_VISIBLE_DEVICES", ""),
+        }
+    except Exception as e:
+        return {"available": False, "error": str(e)}
+
+
 @app.post("/unload-model", dependencies=[Depends(verify_auth)])
 async def unload_model():
     _unload_model()

@@ -679,6 +679,25 @@ async def list_voices():
     return {"voices": voices, "default": DEFAULT_VOICE, "model": _tts_model_name, "sample_rate": TTS_SAMPLE_RATE}
 
 
+@app.get("/gpu-info")
+async def gpu_info_endpoint():
+    """Report which CUDA device this sidecar is bound to (Issue #884)."""
+    _ensure_torch()
+    if not torch.cuda.is_available():
+        return {"available": False, "cuda_visible": os.environ.get("CUDA_VISIBLE_DEVICES", "")}
+    idx = torch.cuda.current_device()
+    free, total = torch.cuda.mem_get_info(idx)
+    return {
+        "available": True,
+        "device_index": idx,
+        "device_name": torch.cuda.get_device_name(idx),
+        "device_count": torch.cuda.device_count(),
+        "total_mb": int(total / 1024**2),
+        "free_mb": int(free / 1024**2),
+        "cuda_visible": os.environ.get("CUDA_VISIBLE_DEVICES", ""),
+    }
+
+
 @app.post("/switch_engine")
 async def switch_engine(req: SwitchEngineRequest):
     global _active_engine

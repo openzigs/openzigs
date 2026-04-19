@@ -50,6 +50,35 @@ fi
 
 echo "=== Starting CUDA Sidecars ==="
 
+# ── Multi-GPU device pinning (Epic #883, Issue #884) ─────────
+# Auto-detect GPU count via nvidia-smi. When ≥2 GPUs are present, split the
+# workload so the talking-head pipeline (TTS → video → lipsync) can overlap:
+#   image-gen + audio → GPU 0
+#   worker (video) + lipsync + sadtalker → GPU 1
+# Override per-sidecar via *_GPU_INDEX env vars (e.g. WORKER_GPU_INDEX=0).
+GPU_COUNT=0
+if command -v nvidia-smi &>/dev/null; then
+    GPU_COUNT=$(nvidia-smi -L 2>/dev/null | wc -l || echo 0)
+fi
+echo "Detected $GPU_COUNT NVIDIA GPU(s)"
+
+if [ "$GPU_COUNT" -ge 2 ]; then
+    IMAGE_GEN_GPU_INDEX="${IMAGE_GEN_GPU_INDEX:-0}"
+    AUDIO_GPU_INDEX="${AUDIO_GPU_INDEX:-0}"
+    WORKER_GPU_INDEX="${WORKER_GPU_INDEX:-1}"
+    LIPSYNC_GPU_INDEX="${LIPSYNC_GPU_INDEX:-1}"
+    SADTALKER_GPU_INDEX="${SADTALKER_GPU_INDEX:-1}"
+    MUSIC_GPU_INDEX="${MUSIC_GPU_INDEX:-0}"
+    echo "Multi-GPU pinning: image-gen=$IMAGE_GEN_GPU_INDEX, audio=$AUDIO_GPU_INDEX, worker=$WORKER_GPU_INDEX, lipsync=$LIPSYNC_GPU_INDEX, sadtalker=$SADTALKER_GPU_INDEX, music=$MUSIC_GPU_INDEX"
+else
+    IMAGE_GEN_GPU_INDEX="${IMAGE_GEN_GPU_INDEX:-0}"
+    AUDIO_GPU_INDEX="${AUDIO_GPU_INDEX:-0}"
+    WORKER_GPU_INDEX="${WORKER_GPU_INDEX:-0}"
+    LIPSYNC_GPU_INDEX="${LIPSYNC_GPU_INDEX:-0}"
+    SADTALKER_GPU_INDEX="${SADTALKER_GPU_INDEX:-0}"
+    MUSIC_GPU_INDEX="${MUSIC_GPU_INDEX:-0}"
+fi
+
 # Kill any existing sidecar processes
 for port in 5005 5006 5007 5009 5010 5011; do
     pid=$(lsof -ti :$port 2>/dev/null || true)
@@ -61,30 +90,30 @@ for port in 5005 5006 5007 5009 5010 5011; do
 done
 
 # ── Image Generation (port 5005) ────────────────────────────
-echo "Starting Image Gen sidecar (port 5005)..."
-setsid bash -c "cd '$SIDECARS_DIR/image-gen' && source venv/bin/activate && HF_TOKEN='${HF_TOKEN:-}' FLUXQ_CALLBACK_SECRET='${CALLBACK_SECRET:-}' FLUX_DEFAULT_MODEL='${FLUX_DEFAULT_MODEL:-flux-dev}' exec python server_cuda.py --port 5005 >> '$LOG_DIR/image-gen-cuda.log' 2>&1" &
+echo "Starting Image Gen sidecar (port 5005, GPU $IMAGE_GEN_GPU_INDEX)..."
+setsid bash -c "cd '$SIDECARS_DIR/image-gen' && source venv/bin/activate && CUDA_VISIBLE_DEVICES='$IMAGE_GEN_GPU_INDEX' HF_TOKEN='${HF_TOKEN:-}' FLUXQ_CALLBACK_SECRET='${CALLBACK_SECRET:-}' FLUX_DEFAULT_MODEL='${FLUX_DEFAULT_MODEL:-flux-dev}' exec python server_cuda.py --port 5005 >> '$LOG_DIR/image-gen-cuda.log' 2>&1" &
 IMG_PID=$!
 echo "$IMG_PID" > "$PID_DIR/image-gen.pid"
 echo "  PID: $IMG_PID"
 
 # ── Audio (port 5006) ───────────────────────────────────────
-echo "Starting Audio sidecar (port 5006)..."
-setsid bash -c "cd '$SIDECARS_DIR/audio' && source venv/bin/activate && exec python server_cuda.py --port 5006 >> '$LOG_DIR/audio-cuda.log' 2>&1" &
+echo "Starting Audio sidecar (port 5006, GPU $AUDIO_GPU_INDEX)..."
+setsid bash -c "cd '$SIDECARS_DIR/audio' && source venv/bin/activate && CUDA_VISIBLE_DEVICES='$AUDIO_GPU_INDEX' exec python server_cuda.py --port 5006 >> '$LOG_DIR/audio-cuda.log' 2>&1" &
 AUD_PID=$!
 echo "$AUD_PID" > "$PID_DIR/audio.pid"
 echo "  PID: $AUD_PID"
 
 # ── Video Worker (port 5007) ────────────────────────────────
-echo "Starting Video Worker sidecar (port 5007)..."
-setsid bash -c "cd '$SIDECARS_DIR/worker' && source venv/bin/activate && HF_TOKEN='${HF_TOKEN:-}' CALLBACK_SECRET='${CALLBACK_SECRET:-}' LTX_MODEL_KEY='${LTX_MODEL_KEY:-ltxv-13b-097-distilled}' exec python server_cuda.py --port 5007 >> '$LOG_DIR/worker-cuda.log' 2>&1" &
+echo "Starting Video Worker sidecar (port 5007, GPU $WORKER_GPU_INDEX)..."
+setsid bash -c "cd '$SIDECARS_DIR/worker' && source venv/bin/activate && CUDA_VISIBLE_DEVICES='$WORKER_GPU_INDEX' HF_TOKEN='${HF_TOKEN:-}' CALLBACK_SECRET='${CALLBACK_SECRET:-}' LTX_MODEL_KEY='${LTX_MODEL_KEY:-ltxv-13b-097-distilled}' exec python server_cuda.py --port 5007 >> '$LOG_DIR/worker-cuda.log' 2>&1" &
 VID_PID=$!
 echo "$VID_PID" > "$PID_DIR/worker.pid"
 echo "  PID: $VID_PID"
 
 # ── Music / ACE-Step (port 5009) ──────────────────────────
 if [ -d "$SIDECARS_DIR/music" ]; then
-    echo "Starting Music sidecar (port 5009)..."
-    setsid bash -c "cd '$SIDECARS_DIR/music' && source venv/bin/activate && ACESTEP_DIR='$HOME/ace-step' ACESTEP_DEVICE='cuda' exec python server.py --port 5009 >> '$LOG_DIR/music-cuda.log' 2>&1" &
+    echo "Starting Music sidecar (port 5009, GPU $MUSIC_GPU_INDEX)..."
+    setsid bash -c "cd '$SIDECARS_DIR/music' && source venv/bin/activate && CUDA_VISIBLE_DEVICES='$MUSIC_GPU_INDEX' ACESTEP_DIR='$HOME/ace-step' ACESTEP_DEVICE='cuda' exec python server.py --port 5009 >> '$LOG_DIR/music-cuda.log' 2>&1" &
     MUS_PID=$!
     echo "$MUS_PID" > "$PID_DIR/music.pid"
     echo "  PID: $MUS_PID"
@@ -106,8 +135,8 @@ fi
 
 # ── Lip Sync / LatentSync (port 5010) ───────────────────────
 if [ -d "$SIDECARS_DIR/lipsync" ]; then
-    echo "Starting Lip Sync sidecar (port 5010)..."
-    setsid bash -c "cd '$SIDECARS_DIR/lipsync' && source venv/bin/activate && CALLBACK_SECRET='${CALLBACK_SECRET:-}' CALLBACK_URL='${CALLBACK_BASE_URL}/complete' PROGRESS_URL='${CALLBACK_BASE_URL}/progress' exec python server_cuda.py --port 5010 >> '$LOG_DIR/lipsync-cuda.log' 2>&1" &
+    echo "Starting Lip Sync sidecar (port 5010, GPU $LIPSYNC_GPU_INDEX)..."
+    setsid bash -c "cd '$SIDECARS_DIR/lipsync' && source venv/bin/activate && CUDA_VISIBLE_DEVICES='$LIPSYNC_GPU_INDEX' CALLBACK_SECRET='${CALLBACK_SECRET:-}' CALLBACK_URL='${CALLBACK_BASE_URL}/complete' PROGRESS_URL='${CALLBACK_BASE_URL}/progress' exec python server_cuda.py --port 5010 >> '$LOG_DIR/lipsync-cuda.log' 2>&1" &
     LIP_PID=$!
     echo "$LIP_PID" > "$PID_DIR/lipsync.pid"
     echo "  PID: $LIP_PID"
@@ -118,8 +147,8 @@ fi
 
 # ── SadTalker / Talking Head (port 5011) ────────────────────
 if [ -d "$SIDECARS_DIR/sadtalker" ]; then
-    echo "Starting SadTalker sidecar (port 5011)..."
-    setsid bash -c "cd '$SIDECARS_DIR/sadtalker' && source venv/bin/activate && SADTALKER_DIR='$HOME/.openzigs/models/SadTalker' GALLERY_DIR='$HOME/.openzigs/gallery' CALLBACK_SECRET='${CALLBACK_SECRET:-}' CALLBACK_URL='${CALLBACK_BASE_URL}/complete' PROGRESS_URL='${CALLBACK_BASE_URL}/progress' exec python server_cuda.py --port 5011 >> '$LOG_DIR/sadtalker-cuda.log' 2>&1" &
+    echo "Starting SadTalker sidecar (port 5011, GPU $SADTALKER_GPU_INDEX)..."
+    setsid bash -c "cd '$SIDECARS_DIR/sadtalker' && source venv/bin/activate && CUDA_VISIBLE_DEVICES='$SADTALKER_GPU_INDEX' SADTALKER_DIR='$HOME/.openzigs/models/SadTalker' GALLERY_DIR='$HOME/.openzigs/gallery' CALLBACK_SECRET='${CALLBACK_SECRET:-}' CALLBACK_URL='${CALLBACK_BASE_URL}/complete' PROGRESS_URL='${CALLBACK_BASE_URL}/progress' exec python server_cuda.py --port 5011 >> '$LOG_DIR/sadtalker-cuda.log' 2>&1" &
     SAD_PID=$!
     echo "$SAD_PID" > "$PID_DIR/sadtalker.pid"
     echo "  PID: $SAD_PID"

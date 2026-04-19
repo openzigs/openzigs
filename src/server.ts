@@ -37,6 +37,7 @@ import { MessageRouter } from "./routing/index.js";
 import { SessionManager } from "./sessions/index.js";
 import { CloudflareTunnel } from "./tunnel/index.js";
 import { createModelsRouter } from "./api/models.js";
+import { createSystemRouter } from "./api/system.js";
 import {
   createAdminRouter,
   pinterestOAuthStates,
@@ -1170,6 +1171,9 @@ const webhookManager = new WebhookManager(webhookRepo);
 // Model API routes
 const modelsRouter = createModelsRouter({ copilot });
 app.use("/api/models", authMiddleware, modelsRouter);
+
+// System info routes (GPU profile, recommended model tier)
+app.use("/api/system", authMiddleware, createSystemRouter());
 
 // Setup API routes — no auth required (needed before auth is configured)
 app.use("/api/setup", setupRouter);
