@@ -59,6 +59,25 @@ describe("detectGpuProfile", () => {
     expect(profile.largest_gpu_gb).toBe(12);
     expect(profile.recommended_tier).toBe("medium");
     expect(profile.pinning.worker).toBe(1);
+    // Pooling: 2x same-arch → supported, aggregate 24GB → ultra tier (advisory).
+    expect(profile.pooling_supported).toBe(true);
+    expect(profile.same_arch).toBe(true);
+    expect(profile.recommended_tier_pooled).toBe("ultra");
+  });
+
+  it("flags mixed-arch hosts as not pool-supported", async () => {
+    const profile = await detectGpuProfile({
+      exec: async () => ({
+        stdout:
+          "0, NVIDIA GeForce RTX 3060, 12288, 11700\n1, NVIDIA GeForce RTX 4090, 24576, 24000\n",
+      }),
+    });
+    expect(profile.gpus).toHaveLength(2);
+    expect(profile.same_arch).toBe(false);
+    expect(profile.pooling_supported).toBe(false);
+    expect(profile.recommended_tier_pooled).toBeUndefined();
+    // Tier still bound by largest single card.
+    expect(profile.recommended_tier).toBe("ultra");
   });
 
   it("returns detected:false when nvidia-smi is missing", async () => {
@@ -81,6 +100,10 @@ describe("detectGpuProfile", () => {
     expect(profile.largest_gpu_gb).toBe(24);
     expect(profile.recommended_tier).toBe("ultra");
     expect(profile.pinning.worker).toBe(0);
+    // Single card → no pooling.
+    expect(profile.pooling_supported).toBe(false);
+    expect(profile.recommended_tier_pooled).toBeUndefined();
+    expect(profile.same_arch).toBe(true);
   });
 
   it("ignores malformed rows", async () => {

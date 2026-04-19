@@ -24,10 +24,24 @@ export interface GpuProfile {
   detected: boolean;
   gpus: GpuInfo[];
   total_vram_gb: number;
-  /** Largest single-GPU VRAM in GB. Caps recommended_tier — model parallelism
-   *  is opt-in (see issue #886) so tier is bound by the *biggest* card. */
+  /** Largest single-GPU VRAM in GB. Caps `recommended_tier` because model
+   *  parallelism is opt-in (see issue #886) so the safe default tier is
+   *  bound by the biggest individual card. */
   largest_gpu_gb: number;
+  /** Tier bound by the largest single GPU. The safe default — every
+   *  shipped model fits on one card. */
   recommended_tier: ModelTier;
+  /** Tier bound by the *aggregate* VRAM across all GPUs. Advisory only;
+   *  reachable only when the user explicitly opts a sidecar into pooling
+   *  mode (e.g. `IMAGE_GEN_POOLING_MODE=manual-flux`). Undefined when
+   *  pooling is not supported. */
+  recommended_tier_pooled?: ModelTier;
+  /** True when the host has ≥2 GPUs of the same model (sharding viable). */
+  pooling_supported: boolean;
+  /** True when all detected GPUs report the same `name` field. Mixed-arch
+   *  pools work in theory but are not validated and can deadlock on NCCL
+   *  collective ops, so we surface this so the UI can warn. */
+  same_arch: boolean;
   /** Default device-pin map: sidecar id → CUDA device index. */
   pinning: Record<string, number>;
   detected_at: string;
@@ -35,11 +49,12 @@ export interface GpuProfile {
 
 const NVIDIA_SMI_QUERY = "index,name,memory.total,memory.free";
 
-/** Compute the recommended tier from the largest single-GPU VRAM in GB. */
-export function tierForVram(largestGpuGb: number): ModelTier {
-  if (largestGpuGb >= 24) return "ultra";
-  if (largestGpuGb >= 16) return "high";
-  if (largestGpuGb >= 11) return "medium"; // 11 instead of 12 — RTX 3060 reports ~12.0 but free ~11.6
+/** Compute the recommended tier from a VRAM budget in GB. Used for both
+ *  single-card (`largestGpuGb`) and pooled (`total_vram_gb`) tiers. */
+export function tierForVram(vramGb: number): ModelTier {
+  if (vramGb >= 24) return "ultra";
+  if (vramGb >= 16) return "high";
+  if (vramGb >= 11) return "medium"; // 11 instead of 12 — RTX 3060 reports ~12.0 but free ~11.6
   return "low";
 }
 
@@ -127,6 +142,8 @@ export async function detectGpuProfile(
       total_vram_gb: 0,
       largest_gpu_gb: 0,
       recommended_tier: "low",
+      pooling_supported: false,
+      same_arch: false,
       pinning: defaultPinning(0),
       detected_at: new Date().toISOString(),
     };
@@ -136,13 +153,23 @@ export async function detectGpuProfile(
   const total_mb = gpus.reduce((sum, g) => sum + g.total_mb, 0);
   const largest_mb = gpus.reduce((m, g) => Math.max(m, g.total_mb), 0);
   const largest_gpu_gb = Math.round(largest_mb / 1024);
+  const total_vram_gb = Math.round(total_mb / 1024);
+  const same_arch =
+    gpus.length > 0 && gpus.every((g) => g.name === gpus[0].name);
+  // Pooling needs ≥2 GPUs and is only validated for same-arch hosts.
+  const pooling_supported = gpus.length >= 2 && same_arch;
 
   return {
     detected: gpus.length > 0,
     gpus,
-    total_vram_gb: Math.round(total_mb / 1024),
+    total_vram_gb,
     largest_gpu_gb,
     recommended_tier: tierForVram(largest_gpu_gb),
+    recommended_tier_pooled: pooling_supported
+      ? tierForVram(total_vram_gb)
+      : undefined,
+    pooling_supported,
+    same_arch,
     pinning: defaultPinning(gpus.length),
     detected_at: new Date().toISOString(),
   };

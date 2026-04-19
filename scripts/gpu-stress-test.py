@@ -182,15 +182,20 @@ def collect_sidecar_health(token: Optional[str]) -> dict[str, dict]:
 # ── Job submitters ────────────────────────────────────────────
 
 
-def submit_image_gen(token: Optional[str], oversized: bool = False) -> JobResult:
+def submit_image_gen(
+    token: Optional[str],
+    oversized: bool = False,
+    model: str = "flux-schnell",
+    steps: int = 4,
+) -> JobResult:
     job_id = uuid.uuid4().hex[:12]
     started = time.time()
     body = {
         "prompt": "a photorealistic blue parrot perched on a wooden branch, studio lighting",
         "width": 1280 if oversized else 1024,
         "height": 1280 if oversized else 576,
-        "num_inference_steps": 4,
-        "model": "flux-schnell",
+        "num_inference_steps": steps,
+        "model": model,
     }
     status, response = _http_post(
         "http://localhost:5005/generate",
@@ -199,7 +204,7 @@ def submit_image_gen(token: Optional[str], oversized: bool = False) -> JobResult
         timeout=900,
     )
     return JobResult(
-        sidecar="image-gen",
+        sidecar=f"image-gen[{model}]",
         job_id=job_id,
         started_at=started,
         finished_at=time.time(),
@@ -298,10 +303,26 @@ def scenario_oom(token: Optional[str]) -> list[concurrent.futures.Future]:
     return futures
 
 
+def scenario_pooled(token: Optional[str]) -> list[concurrent.futures.Future]:
+    """Exercises IMAGE_GEN_POOLING_MODE=manual-flux.
+
+    Submits one FLUX-schnell baseline (small, fast) + one FLUX-dev request
+    (large, the actual pooling target). Run this AFTER setting the env var
+    in ~/.openzigs/.env.cuda and restarting sidecars; then check
+    GET http://localhost:5005/gpu-info for pooled_active=true.
+    """
+    pool = concurrent.futures.ThreadPoolExecutor(max_workers=4)
+    futures: list[concurrent.futures.Future] = []
+    futures.append(pool.submit(submit_image_gen, token, False, "flux-schnell", 4))
+    futures.append(pool.submit(submit_image_gen, token, False, "flux-dev", 25))
+    return futures
+
+
 SCENARIO_RUNNERS = {
     "smoke": scenario_smoke,
     "full": scenario_full,
     "oom": scenario_oom,
+    "pooled": scenario_pooled,
 }
 
 

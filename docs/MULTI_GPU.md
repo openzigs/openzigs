@@ -61,20 +61,47 @@ The recommended tier is bound by the **largest single GPU** in the host. Two
 12 GB cards = `medium` tier — aggregating VRAM across cards requires model
 parallelism, see below.
 
-## Optional: model parallelism (`device_map="balanced"`)
+## Optional: VRAM pooling for FLUX (`IMAGE_GEN_POOLING_MODE=manual-flux`)
 
-Setting `LTX_DEVICE_MAP=balanced` or `FLUX_DEVICE_MAP=balanced` switches the
-relevant sidecar from `enable_model_cpu_offload()` to accelerate's
-`device_map="balanced"`, sharding the model across all visible GPUs.
+By default each sidecar runs on a single GPU and uses
+`enable_model_cpu_offload()` to fit larger models in 12 GB. On hosts with
+**≥ 2 same-architecture GPUs** you can opt the image-gen sidecar into
+**manual-placement pooling** to keep the entire FLUX pipeline resident in
+GPU VRAM and avoid the CPU↔GPU page-fault tax:
 
-This unlocks `medium`+ models on hosts with 2× 12 GB cards, **but**:
+```sh
+# in ~/.openzigs/.env.cuda
+IMAGE_GEN_POOLING_MODE=manual-flux
+```
 
-- RTX 30/40-series consumer cards have **no NVLink**. Shard transfers happen
-  over PCIe and benchmark at ~0.6–0.7× single-card throughput for 13B inference.
-- On hosts with one big card (e.g. 24 GB), leave this OFF — single-card
-  inference is faster.
+When the flag is set:
 
-The flag is ignored when fewer than 2 GPUs are visible after pinning.
+- `start-cuda-sidecars.sh` exposes both GPUs to image-gen (`CUDA_VISIBLE_DEVICES=0,1`)
+  instead of pinning to one card.
+- `server_cuda.py` places `text_encoder` + `text_encoder_2` + `vae` on `cuda:0`
+  and the FLUX `transformer` on `cuda:1`. CPU offload is **off** in this mode.
+- `GET /api/system/gpu` reports `pooling_supported: true` and a higher
+  `recommended_tier_pooled` value (advisory only — never auto-selected).
+- `GET http://localhost:5005/gpu-info` reports `pooled_active: true` after the
+  first FLUX load.
+
+Trade-offs and known limitations:
+
+- **Only FLUX is wired up.** SDXL stays single-GPU. Worker (LTX) and lipsync
+  ignore the flag; their components do not split cleanly without re-engineering
+  the pipeline.
+- **Same-arch only.** Mixing a 3060 with a 4090 will load but inter-GPU
+  collective ops can stall. The `same_arch: false` field on `/api/system/gpu`
+  is your warning.
+- **Throughput is mostly about *fit*, not speed.** PCIe-only consumer cards
+  (no NVLink) shuffle prompt embeddings between cards each step. Expect
+  parity with single-card cpu_offload on FLUX-schnell and a meaningful win
+  on FLUX-dev (which spills hard to system RAM under cpu_offload on 12 GB).
+- **Multi-tenant safe.** Default mode is `off`. The pooled tier is advisory
+  only — the orchestrator never picks `flux-dev` for a tenant whose host is
+  not opted in.
+
+To revert, unset the env var (or set to `off`) and restart the sidecars.
 
 ## Hardware reality check
 

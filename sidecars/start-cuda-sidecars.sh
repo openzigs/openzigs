@@ -90,8 +90,16 @@ for port in 5005 5006 5007 5009 5010 5011; do
 done
 
 # ── Image Generation (port 5005) ────────────────────────────
-echo "Starting Image Gen sidecar (port 5005, GPU $IMAGE_GEN_GPU_INDEX)..."
-setsid bash -c "cd '$SIDECARS_DIR/image-gen' && source venv/bin/activate && CUDA_VISIBLE_DEVICES='$IMAGE_GEN_GPU_INDEX' HF_TOKEN='${HF_TOKEN:-}' FLUXQ_CALLBACK_SECRET='${CALLBACK_SECRET:-}' FLUX_DEFAULT_MODEL='${FLUX_DEFAULT_MODEL:-flux-dev}' exec python server_cuda.py --port 5005 >> '$LOG_DIR/image-gen-cuda.log' 2>&1" &
+# When IMAGE_GEN_POOLING_MODE=manual-flux, expose ALL GPUs to image-gen so it
+# can split FLUX components across them. Otherwise pin to a single device.
+if [ "${IMAGE_GEN_POOLING_MODE:-off}" = "manual-flux" ] && [ "$GPU_COUNT" -ge 2 ]; then
+    IMAGE_GEN_CUDA_VISIBLE="0,1"
+    echo "  image-gen pooling=manual-flux \u2192 CUDA_VISIBLE_DEVICES=$IMAGE_GEN_CUDA_VISIBLE"
+else
+    IMAGE_GEN_CUDA_VISIBLE="$IMAGE_GEN_GPU_INDEX"
+fi
+echo "Starting Image Gen sidecar (port 5005, GPU(s) $IMAGE_GEN_CUDA_VISIBLE, pooling=${IMAGE_GEN_POOLING_MODE:-off})..."
+setsid bash -c "cd '$SIDECARS_DIR/image-gen' && source venv/bin/activate && CUDA_VISIBLE_DEVICES='$IMAGE_GEN_CUDA_VISIBLE' IMAGE_GEN_POOLING_MODE='${IMAGE_GEN_POOLING_MODE:-off}' HF_TOKEN='${HF_TOKEN:-}' FLUXQ_CALLBACK_SECRET='${CALLBACK_SECRET:-}' FLUX_DEFAULT_MODEL='${FLUX_DEFAULT_MODEL:-flux-dev}' exec python server_cuda.py --port 5005 >> '$LOG_DIR/image-gen-cuda.log' 2>&1" &
 IMG_PID=$!
 echo "$IMG_PID" > "$PID_DIR/image-gen.pid"
 echo "  PID: $IMG_PID"

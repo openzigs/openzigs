@@ -99,6 +99,7 @@ MODEL_REGISTRY: dict[str, dict] = {
         "description": "FLUX.1 schnell -- 4-step distilled (diffusers/CUDA)",
         "tier": "medium",
         "min_vram_gb": 12,
+        "pool_eligible": True,
     },
     "flux-dev": {
         "hf_id": "black-forest-labs/FLUX.1-dev",
@@ -110,6 +111,7 @@ MODEL_REGISTRY: dict[str, dict] = {
         "description": "FLUX.1 dev -- high-quality guidance-distilled (diffusers/CUDA)",
         "tier": "high",
         "min_vram_gb": 16,
+        "pool_eligible": True,
     },
     "sdxl-base": {
         "hf_id": "stabilityai/stable-diffusion-xl-base-1.0",
@@ -135,6 +137,25 @@ _idle_timeout: float = 0.0
 _default_model: str = os.getenv("FLUX_DEFAULT_MODEL", "flux-dev")
 _generating: bool = False
 _active_lora_paths: list[str] = []  # Currently loaded LoRA adapter paths
+
+# ── Multi-GPU pooling (advisory; opt-in only) ───────────────────────────
+# IMAGE_GEN_POOLING_MODE values:
+#   "off"          (default) — single CUDA device + enable_model_cpu_offload()
+#   "manual-flux"  Pool VRAM across all visible CUDA devices for FLUX models:
+#                  text encoders + VAE on cuda:0, transformer on cuda:1.
+#                  Removes the CPU↔GPU page-fault tax on hosts with ≥2 same-arch
+#                  cards; OOMs gracefully on single-card hosts (sidecar falls
+#                  back to cpu_offload and logs a warning).
+#
+# CRITICAL: when pooling is on, start-cuda-sidecars.sh sets CUDA_VISIBLE_DEVICES=0,1
+# (instead of pinning to one card) so torch sees both devices.
+_POOLING_MODE: str = os.getenv("IMAGE_GEN_POOLING_MODE", "off").strip().lower()
+if _POOLING_MODE not in ("off", "manual-flux"):
+    log.warning(
+        f"IMAGE_GEN_POOLING_MODE='{_POOLING_MODE}' is not recognised; falling back to 'off'",
+    )
+    _POOLING_MODE = "off"
+_pooled_active: bool = False  # True after a successful pooled load — for /gpu-info reporting
 
 # â”€â”€ Persistent Training & LoRA Directories â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 _TRAINING_BASE_DIR = os.path.join(os.path.expanduser("~"), ".openzigs", "training")
@@ -218,7 +239,7 @@ def _ensure_torch():
 
 
 def _unload_model() -> None:
-    global _pipeline, _model_name, _model_loaded, _active_lora_paths
+    global _pipeline, _model_name, _model_loaded, _active_lora_paths, _pooled_active
     if _pipeline is not None:
         model_name = _model_name or "unknown"
         log.info(f"Unloading model '{model_name}' to free VRAM ...")
@@ -235,6 +256,7 @@ def _unload_model() -> None:
     _model_loaded = False
     _model_name = None
     _active_lora_paths = []
+    _pooled_active = False
 
 
 def _load_model(model_key: str, lora_paths: Optional[list[str]] = None,
@@ -347,8 +369,13 @@ def _load_model(model_key: str, lora_paths: Optional[list[str]] = None,
 
         # Enable CPU offload AFTER all LoRA adapters are loaded so accelerate
         # hooks are installed on the fully-assembled model (base + LoRA layers).
-        pipe.enable_model_cpu_offload()
-        pipe.enable_attention_slicing()
+        #
+        # Multi-GPU pooling (opt-in): when IMAGE_GEN_POOLING_MODE=manual-flux
+        # AND we are loading a FLUX pipeline AND \u22652 CUDA devices are visible,
+        # split the components by hand instead of using cpu_offload. The
+        # transformer (~12 GB fp16) goes to cuda:1 and the text encoders + VAE
+        # (~6 GB total) stay on cuda:0. FluxPipeline's __call__ already moves
+        # latents between components on each step, so cross-device dispatch is\n        # safe \u2014 the inter-GPU traffic per step is small (just the prompt embed\n        # tensor, ~tens of KB on PCIe).\n        spec_for_pool = MODEL_REGISTRY.get(model_key, {})\n        global _pooled_active\n        _pooled_active = False\n        use_pooling = (\n            _POOLING_MODE == \"manual-flux\"\n            and pipeline_type == \"flux\"\n            and spec_for_pool.get(\"pool_eligible\", False)\n            and torch.cuda.is_available()\n            and torch.cuda.device_count() >= 2\n        )\n        if _POOLING_MODE == \"manual-flux\" and not use_pooling:\n            log.warning(\n                f\"IMAGE_GEN_POOLING_MODE=manual-flux requested but conditions not met \"\n                f\"(pipeline_type={pipeline_type}, pool_eligible={spec_for_pool.get('pool_eligible', False)}, \"\n                f\"device_count={torch.cuda.device_count() if torch.cuda.is_available() else 0}); \"\n                f\"falling back to cpu_offload\"\n            )\n        if use_pooling:\n            try:\n                # Place text encoders + VAE on cuda:0, transformer on cuda:1.\n                # All forward passes will use the per-component .device for\n                # input tensors automatically inside FluxPipeline.\n                pipe.text_encoder.to(\"cuda:0\")\n                pipe.text_encoder_2.to(\"cuda:0\")\n                pipe.vae.to(\"cuda:0\")\n                pipe.transformer.to(\"cuda:1\")\n                # Tiling shaves VAE peak \u2014 keep on for safety on 12 GB cards.\n                pipe.enable_attention_slicing()\n                if hasattr(pipe, \"vae\") and hasattr(pipe.vae, \"enable_tiling\"):\n                    pipe.vae.enable_tiling()\n                _pooled_active = True\n                log.info(\n                    \"Pooled FLUX placement active: text_encoder+text_encoder_2+vae \u2192 cuda:0, \"\n                    \"transformer \u2192 cuda:1 (no cpu_offload)\"\n                )\n            except Exception as e:\n                log.warning(\n                    f\"Pooled placement failed ({e}); falling back to cpu_offload\"\n                )\n                pipe.enable_model_cpu_offload()\n                pipe.enable_attention_slicing()\n                _pooled_active = False\n        else:\n            pipe.enable_model_cpu_offload()\n            pipe.enable_attention_slicing()
 
         elapsed = time.monotonic() - start
         _pipeline = pipe
@@ -812,12 +839,27 @@ async def status():
 
 @app.get("/gpu-info")
 async def gpu_info_endpoint():
-    """Report which CUDA device this sidecar is bound to (Issue #884)."""
+    """Report which CUDA device(s) this sidecar is bound to (Issue #884) plus
+    pooling state for the multi-GPU advisory in /api/system/gpu."""
     _ensure_torch()
     if not torch.cuda.is_available():
-        return {"available": False, "cuda_visible": os.environ.get("CUDA_VISIBLE_DEVICES", "")}
+        return {
+            "available": False,
+            "cuda_visible": os.environ.get("CUDA_VISIBLE_DEVICES", ""),
+            "pooling_mode": _POOLING_MODE,
+            "pooled_active": False,
+        }
     idx = torch.cuda.current_device()
     free, total = torch.cuda.mem_get_info(idx)
+    devices = []
+    for d in range(torch.cuda.device_count()):
+        d_free, d_total = torch.cuda.mem_get_info(d)
+        devices.append({
+            "index": d,
+            "name": torch.cuda.get_device_name(d),
+            "total_mb": int(d_total / 1024**2),
+            "free_mb": int(d_free / 1024**2),
+        })
     return {
         "available": True,
         "device_index": idx,
@@ -826,6 +868,9 @@ async def gpu_info_endpoint():
         "total_mb": int(total / 1024**2),
         "free_mb": int(free / 1024**2),
         "cuda_visible": os.environ.get("CUDA_VISIBLE_DEVICES", ""),
+        "pooling_mode": _POOLING_MODE,
+        "pooled_active": _pooled_active,
+        "devices": devices,
     }
 
 
@@ -839,9 +884,18 @@ async def list_models():
             "recommended_width": spec["recommended_width"],
             "recommended_height": spec["recommended_height"],
             "default_steps": spec["default_steps"],
+            "tier": spec.get("tier"),
+            "min_vram_gb": spec.get("min_vram_gb"),
+            "pool_eligible": spec.get("pool_eligible", False),
             "loaded": _model_loaded and _model_name == key,
         })
-    return {"models": models, "active": _model_name, "device": "cuda"}
+    return {
+        "models": models,
+        "active": _model_name,
+        "device": "cuda",
+        "pooling_mode": _POOLING_MODE,
+        "pooled_active": _pooled_active,
+    }
 
 
 @app.post("/model", response_model=ModelResponse, dependencies=[Depends(verify_token)])
