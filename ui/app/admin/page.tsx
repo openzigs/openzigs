@@ -33,6 +33,7 @@ import { LinkedInPanel } from "@/components/admin/linkedin-panel";
 import { TikTokPanel } from "@/components/admin/tiktok-panel";
 import { SocialBrainPanel } from "@/components/admin/social-brain-panel";
 import { OrchestrationTemplatesPanel } from "@/components/admin/orchestration-templates-panel";
+import { GpuPanel } from "@/components/admin/gpu-panel";
 import { ToastContainer, showToast } from "@/components/toast";
 import { PlatformBadge } from "@/components/platform-badge";
 import { usePlatform } from "@/lib/hooks/use-platform";
@@ -189,6 +190,10 @@ export default function AdminPage() {
           defaultOpen={false}
         >
           <MusicGenPanel />
+        </SectionCard>
+
+        <SectionCard title="GPU & VRAM" defaultOpen={false}>
+          <GpuPanel />
         </SectionCard>
 
         <SectionCard title="Pinterest SEO" defaultOpen={false}>

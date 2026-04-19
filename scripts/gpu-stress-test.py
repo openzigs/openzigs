@@ -318,11 +318,56 @@ def scenario_pooled(token: Optional[str]) -> list[concurrent.futures.Future]:
     return futures
 
 
+def submit_ollama(prompt: str = "Explain quantum computing in 50 words.") -> JobResult:
+    """Send a chat completion to Ollama and measure latency."""
+    job_id = uuid.uuid4().hex[:12]
+    started = time.time()
+    body = {
+        "model": "gemma4:26b",
+        "messages": [{"role": "user", "content": prompt}],
+        "stream": False,
+    }
+    status, response = _http_post(
+        "http://localhost:11434/v1/chat/completions",
+        body,
+        token=None,
+        timeout=120,
+    )
+    return JobResult(
+        sidecar="ollama",
+        job_id=job_id,
+        started_at=started,
+        finished_at=time.time(),
+        success=200 <= status < 300,
+        http_status=status,
+        error="" if 200 <= status < 300 else response[:200],
+    )
+
+
+def scenario_ollama(token: Optional[str]) -> list[concurrent.futures.Future]:
+    """Send sequential inference requests to Ollama and measure latency.
+
+    Sends 3 prompts of increasing complexity to exercise Gemma 4 26b
+    across dual GPUs.
+    """
+    pool = concurrent.futures.ThreadPoolExecutor(max_workers=3)
+    prompts = [
+        "What is 2 + 2?",
+        "Explain the theory of relativity in 100 words.",
+        "Write a Python function that implements binary search. Include type hints.",
+    ]
+    futures: list[concurrent.futures.Future] = []
+    for prompt in prompts:
+        futures.append(pool.submit(submit_ollama, prompt))
+    return futures
+
+
 SCENARIO_RUNNERS = {
     "smoke": scenario_smoke,
     "full": scenario_full,
     "oom": scenario_oom,
     "pooled": scenario_pooled,
+    "ollama": scenario_ollama,
 }
 
 

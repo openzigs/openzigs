@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Admin GPU Info Panel** (Epic #889):
+  - New `GPU & VRAM` section in the Admin page showing per-GPU cards with name, VRAM usage bars, recommended tier, pooling status, and same-architecture badges.
+  - Interactive pooling mode toggle (`off` / `manual-flux`) that persists to `~/.openzigs/config.json` via `POST /api/admin/gpu/pooling`.
+  - Interactive sidecar-to-GPU pinning dropdowns that persist via `POST /api/admin/gpu/pinning`.
+  - Refresh button to re-detect GPU state.
+  - Ollama health check display: shows running/available models and GPU VRAM usage when Ollama is reachable.
+- **Ollama Dual-GPU for Gemma 4** (Epic #890):
+  - `docker-compose.ollama.yml` for running Ollama with dual-GPU access (NVIDIA runtime, all GPUs exposed via `OLLAMA_NUM_GPU=99`).
+  - BYOK configuration: Ollama works as an OpenAI-compatible provider (`type: "openai"`, `baseUrl: "http://localhost:11434/v1"`).
+  - New `ollama` scenario in `scripts/gpu-stress-test.py` for measuring Ollama inference latency.
+  - Backend proxy endpoints (`GET /api/admin/gpu/ollama/tags`, `GET /api/admin/gpu/ollama/ps`) for the admin UI to query Ollama status without CORS issues.
+  - `docs/MULTI_GPU.md` updated with "Ollama Dual-GPU: Running Gemma 4 26b" section covering prerequisites, quick start, memory budget, performance expectations, BYOK config, and Ollama-vs-vLLM comparison table.
+
 - **Honest multi-GPU pooling for FLUX** (follow-up to Epic #883):
   - `GET /api/system/gpu` now reports `pooling_supported`, `same_arch`, and an advisory `recommended_tier_pooled` so the UI can surface "you have enough aggregate VRAM if you opt in" without auto-picking heavier models for tenants who haven't.
   - New `IMAGE_GEN_POOLING_MODE=manual-flux` env flag (default `off`). When enabled on a host with ≥ 2 same-arch CUDA GPUs, the image-gen sidecar splits FLUX components by hand — text encoders + VAE on `cuda:0`, transformer on `cuda:1` — instead of using `enable_model_cpu_offload()`. `start-cuda-sidecars.sh` exposes both GPUs to image-gen automatically when the flag is set.

@@ -134,8 +134,97 @@ of *contiguous* VRAM and are **not viable** on 12 GB shards even with two cards.
 python scripts/gpu-stress-test.py --scenario smoke    # 2 image-gen + 1 TTS
 python scripts/gpu-stress-test.py --scenario full     # 5 image-gen + 1 video + 1 TTS
 python scripts/gpu-stress-test.py --scenario oom      # Same as full with oversized payloads
+python scripts/gpu-stress-test.py --scenario ollama   # Ollama inference latency
 ```
 
 Reports land in `~/.openzigs/stress-tests/<timestamp>-<scenario>.md` with
 per-GPU peak VRAM and per-job wall times. PowerShell wrapper:
 `pwsh ./scripts/gpu-stress-test.ps1 -Scenario smoke`.
+
+## Ollama Dual-GPU: Running Gemma 4 26b
+
+[Ollama](https://ollama.com/) is the simplest path to running large language
+models across multiple GPUs. It automatically splits model layers across all
+visible CUDA devices, so there is no manual tensor-parallel configuration.
+
+### Prerequisites
+
+1. **NVIDIA Container Toolkit** installed and configured for Docker:
+   ```sh
+   sudo apt-get install -y nvidia-container-toolkit
+   sudo nvidia-ctk runtime configure --runtime=docker
+   sudo systemctl restart docker
+   ```
+2. **Docker / Docker Desktop** with GPU support.
+3. Two NVIDIA GPUs (e.g., 2× RTX 3060 12 GB).
+
+### Quick start
+
+```sh
+# Start Ollama container with GPU access
+docker compose -f docker-compose.ollama.yml up -d
+
+# Pull the model (~18 GB download)
+docker exec -it ollama ollama pull gemma4:26b
+
+# Interactive test
+docker exec -it ollama ollama run gemma4:26b "Hello, how are you?"
+
+# Verify GPU layer split
+docker exec -it ollama ollama ps
+```
+
+### Memory budget
+
+| Component         | Size   | Notes                                 |
+| ----------------- | ------ | ------------------------------------- |
+| Gemma 4 26B weights | ~18 GB | Quantized Q4_0; FP16 is ~52 GB       |
+| KV cache (2K ctx) | ~3 GB  | Shared across GPUs                    |
+| CUDA overhead     | ~0.5 GB | Per GPU                               |
+| **Total**         | ~21.5 GB | Fits across 2× 12 GB (~10.75 GB/card) |
+
+With `OLLAMA_NUM_GPU=99`, Ollama assigns all layers to GPU. On 2× 12 GB cards
+it splits layers roughly 50/50 across the two devices.
+
+### Performance expectations
+
+- **Throughput**: 1.0–1.3× single-card equivalent over PCIe 4.0 (no NVLink).
+  Layer-split parallelism adds inter-GPU transfer overhead per token.
+- **Latency**: First-token latency ~2–3 s; sustained generation ~8–15 tok/s
+  depending on context length and quantization.
+- **Context length**: 8K tokens is safe on 2× 12 GB; 32K requires ≥ 2× 24 GB.
+
+### BYOK configuration
+
+Point OpenZigs at local Ollama via the OpenAI-compatible API:
+
+```json
+{
+  "copilot": {
+    "provider": {
+      "type": "openai",
+      "baseUrl": "http://localhost:11434/v1"
+    }
+  }
+}
+```
+
+Save to `~/.openzigs/config.json`, then restart the server. The model is
+auto-detected from Ollama; no `model` field is required unless you want to
+pin a specific model name.
+
+### Ollama vs. vLLM comparison
+
+| Feature               | Ollama                   | vLLM TP=2                    |
+| --------------------- | ------------------------ | ---------------------------- |
+| Setup complexity       | Simple (Docker, 1 cmd)   | Medium (Python env, config)  |
+| Layer split strategy   | Auto (greedy by VRAM)    | Tensor Parallel (manual)     |
+| Throughput (2× 12 GB)  | 8–15 tok/s               | 12–20 tok/s                  |
+| GPU memory efficiency  | Good (Q4_0 default)      | Better (FP16 with PagedAttn) |
+| Quantization options   | GGUF (Q4, Q5, Q8, FP16)  | FP16, AWQ, GPTQ              |
+| Multi-model switching  | Native (`ollama run`)    | Requires restart              |
+| API compatibility      | OpenAI `/v1` + native    | OpenAI `/v1`                  |
+| Recommended for        | Quick eval, dev, BYOK    | Production, high throughput   |
+
+For most OpenZigs users with consumer hardware (2× 12 GB), Ollama is the
+recommended starting point due to simplicity and automatic layer splitting.
