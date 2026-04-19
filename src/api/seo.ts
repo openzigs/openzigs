@@ -297,11 +297,13 @@ export const createSeoRouter = ({
 
       if (dual) {
         const dualResults = [];
+        const dualErrors: Array<{ url: string; error: string }> = [];
         for (let i = 0; i < pages.length; i++) {
           try {
             dualResults.push(await fetchCoreWebVitalsDual(pages[i], apiKey));
           } catch (err) {
             const errMsg = err instanceof Error ? err.message : String(err);
+            dualErrors.push({ url: pages[i], error: errMsg });
             logger.warn("[SEO] CWV dual fetch failed", {
               url: pages[i],
               error: errMsg,
@@ -333,6 +335,8 @@ export const createSeoRouter = ({
         return res.json({
           results: dualResults,
           urlsAnalyzed: dualResults.length,
+          urlsAttempted: pages.length,
+          errors: dualErrors,
         });
       }
 
@@ -350,7 +354,16 @@ export const createSeoRouter = ({
         })),
       });
 
-      return res.json({ results, urlsAnalyzed: results.length });
+      const successCount = results.filter((r) => !r.error).length;
+      const failures = results
+        .filter((r) => r.error)
+        .map((r) => ({ url: r.url, error: r.error ?? "Unknown error" }));
+      return res.json({
+        results,
+        urlsAnalyzed: successCount,
+        urlsAttempted: pages.length,
+        errors: failures,
+      });
     } catch (err) {
       logger.error("[SEO] CWV analysis failed", {
         snapshotId,

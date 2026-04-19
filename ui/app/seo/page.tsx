@@ -13,6 +13,7 @@ import { AuditTrends } from "@/components/seo/audit-trends";
 import { ExportDialog } from "@/components/seo/export-dialog";
 import { LinkGraph } from "@/components/seo/link-graph";
 import { ActivityLog } from "@/components/seo/activity-log";
+import { DatasetResultCard } from "@/components/seo/dataset-result-card";
 import { SchemaGeneratorPanel } from "@/components/seo/schema-generator-panel";
 import { MetaGeneratorPanel } from "@/components/seo/meta-generator-panel";
 import { InlineModelPicker } from "@/components/model-picker-select";
@@ -291,6 +292,8 @@ export default function SeoPage() {
   // ── Mode state ──
   const [mode, setMode] = useState<SeoMode>("site-audit");
   const [submitting, setSubmitting] = useState(false);
+  const [runningMode, setRunningMode] = useState<SeoMode | null>(null);
+  const [runKey, setRunKey] = useState(0);
   const [error, setError] = useState<string | null>(null);
 
   // ── Results data (leads / prices / competitors) ──
@@ -484,14 +487,21 @@ export default function SeoPage() {
       const result = await fetchJson<{
         results: unknown[];
         urlsAnalyzed: number;
+        urlsAttempted?: number;
+        errors?: Array<{ url: string; error: string }>;
       }>("/api/seo/cwv", {
         method: "POST",
         body: JSON.stringify({ snapshotId: latest.id, maxUrls: 5, dual: true }),
       });
       if (result.urlsAnalyzed === 0) {
-        setCwvError("No pages analyzed. The snapshot may have no page data.");
+        const firstError = result.errors?.[0]?.error;
+        const detail = firstError ? ` First error: ${firstError}` : "";
+        setCwvError(
+          `No Core Web Vitals returned (attempted ${result.urlsAttempted ?? 0} URL(s)). Google PageSpeed Insights may be rate-limiting (set GOOGLE_PSI_API_KEY) or all probed URLs failed.${detail}`,
+        );
       } else {
         queryClient.invalidateQueries({ queryKey: ["seo-history"] });
+        queryClient.invalidateQueries({ queryKey: ["seo-snapshot"] });
       }
     } catch (err) {
       setCwvError(err instanceof Error ? err.message : "Analysis failed");
@@ -654,6 +664,8 @@ export default function SeoPage() {
 
     setError(null);
     setSubmitting(true);
+    setRunningMode(mode);
+    setRunKey((k) => k + 1);
 
     let prompt = "";
     let tools: string[] = FIRECRAWL_TOOLS;
@@ -776,7 +788,10 @@ export default function SeoPage() {
 
   const handleOperationComplete = useCallback(() => {
     setSubmitting(false);
+    setRunningMode(null);
     queryClient.invalidateQueries({ queryKey: ["seo-history"] });
+    queryClient.invalidateQueries({ queryKey: ["seo-comparison"] });
+    queryClient.invalidateQueries({ queryKey: ["seo-snapshot"] });
     // Refresh mode-specific data panels
     void refetchLeads();
     void refetchPrices();
@@ -1488,8 +1503,9 @@ export default function SeoPage() {
               <Loader2 className="h-4 w-4 animate-spin text-blue-500 shrink-0" />
               <p className="text-sm text-blue-700 dark:text-blue-400">
                 Running{" "}
-                {MODES.find((m) => m.key === mode)?.label?.toLowerCase() ??
-                  "operation"}
+                {MODES.find(
+                  (m) => m.key === (runningMode ?? mode),
+                )?.label?.toLowerCase() ?? "operation"}
                 … This may take a few minutes.
               </p>
             </div>
@@ -1499,6 +1515,14 @@ export default function SeoPage() {
 
       <CrawlProgressPanel />
       <ActivityLog active={submitting} onComplete={handleOperationComplete} />
+
+      {/* Dataset run result paths (Bug #13) */}
+      {(mode === "dataset" || runningMode === "dataset") && (
+        <DatasetResultCard
+          active={submitting && runningMode === "dataset"}
+          runKey={runKey}
+        />
+      )}
 
       {/* ── Leads results panel ─────────────────────────────────────── */}
       {mode === "leads" && (
@@ -1857,311 +1881,606 @@ export default function SeoPage() {
         </div>
       )}
 
-      <Tabs defaultValue="overview" className="mt-4">
-        <TabsList className="flex-wrap">
-          <TabsTrigger value="overview" className="gap-1.5">
-            <Search className="h-3.5 w-3.5" /> Overview
-          </TabsTrigger>
-          <TabsTrigger value="audit" className="gap-1.5">
-            <AlertTriangle className="h-3.5 w-3.5" /> Audit
-          </TabsTrigger>
-          <TabsTrigger value="links" className="gap-1.5">
-            <Link2 className="h-3.5 w-3.5" /> Links
-          </TabsTrigger>
-          <TabsTrigger value="content" className="gap-1.5">
-            <FileText className="h-3.5 w-3.5" /> Content
-          </TabsTrigger>
-          <TabsTrigger value="performance" className="gap-1.5">
-            <Gauge className="h-3.5 w-3.5" /> Performance
-          </TabsTrigger>
-          <TabsTrigger value="history" className="gap-1.5">
-            <History className="h-3.5 w-3.5" /> History
-          </TabsTrigger>
-          <TabsTrigger value="export" className="gap-1.5">
-            <Download className="h-3.5 w-3.5" /> Export
-          </TabsTrigger>
-          <TabsTrigger value="schema" className="gap-1.5">
-            <Code2 className="h-3.5 w-3.5" /> Schema
-          </TabsTrigger>
-          <TabsTrigger value="meta-gen" className="gap-1.5">
-            <Wand2 className="h-3.5 w-3.5" /> Meta Gen
-          </TabsTrigger>
-        </TabsList>
+      {mode === "site-audit" && (
+        <Tabs defaultValue="overview" className="mt-4">
+          <TabsList className="flex-wrap">
+            <TabsTrigger value="overview" className="gap-1.5">
+              <Search className="h-3.5 w-3.5" /> Overview
+            </TabsTrigger>
+            <TabsTrigger value="audit" className="gap-1.5">
+              <AlertTriangle className="h-3.5 w-3.5" /> Audit
+            </TabsTrigger>
+            <TabsTrigger value="links" className="gap-1.5">
+              <Link2 className="h-3.5 w-3.5" /> Links
+            </TabsTrigger>
+            <TabsTrigger value="content" className="gap-1.5">
+              <FileText className="h-3.5 w-3.5" /> Content
+            </TabsTrigger>
+            <TabsTrigger value="performance" className="gap-1.5">
+              <Gauge className="h-3.5 w-3.5" /> Performance
+            </TabsTrigger>
+            <TabsTrigger value="history" className="gap-1.5">
+              <History className="h-3.5 w-3.5" /> History
+            </TabsTrigger>
+            <TabsTrigger value="export" className="gap-1.5">
+              <Download className="h-3.5 w-3.5" /> Export
+            </TabsTrigger>
+            <TabsTrigger value="schema" className="gap-1.5">
+              <Code2 className="h-3.5 w-3.5" /> Schema
+            </TabsTrigger>
+            <TabsTrigger value="meta-gen" className="gap-1.5">
+              <Wand2 className="h-3.5 w-3.5" /> Meta Gen
+            </TabsTrigger>
+          </TabsList>
 
-        {/* ── Overview ─────────────────────────────────────────── */}
-        <TabsContent
-          value="overview"
-          className="mt-6 overflow-y-auto max-h-[calc(100vh-20rem)]"
-        >
-          <div className="grid gap-6 md:grid-cols-2">
-            <div className="rounded-xl border bg-card p-6">
-              <h3 className="text-sm font-semibold mb-4 flex items-center gap-2">
-                <BarChart3 className="h-4 w-4" /> Health Score
-              </h3>
-              <SiteHealthScore snapshot={latest} />
-            </div>
+          {/* ── Overview ─────────────────────────────────────────── */}
+          <TabsContent
+            value="overview"
+            className="mt-6 overflow-y-auto max-h-[calc(100vh-20rem)]"
+          >
+            <div className="grid gap-6 md:grid-cols-2">
+              <div className="rounded-xl border bg-card p-6">
+                <h3 className="text-sm font-semibold mb-4 flex items-center gap-2">
+                  <BarChart3 className="h-4 w-4" /> Health Score
+                </h3>
+                <SiteHealthScore snapshot={latest} />
+              </div>
 
-            <div className="rounded-xl border bg-card p-6">
-              <h3 className="text-sm font-semibold mb-4 flex items-center gap-2">
-                <History className="h-4 w-4" /> Recent Trends
-              </h3>
-              <AuditTrends siteUrl={latest?.siteUrl} />
-            </div>
-          </div>
-
-          {latest && (
-            <div className="mt-6 rounded-xl border bg-card p-6">
-              <h3 className="text-sm font-semibold mb-3">
-                Latest Audit Details
-              </h3>
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                <Stat label="Pages Audited" value={latest.pagesAudited} />
-                <Stat label="Total Issues" value={latest.totalIssues} />
-                <Stat
-                  label="Critical"
-                  value={latest.critical}
-                  color="text-red-500"
-                />
-                <Stat
-                  label="High"
-                  value={latest.high}
-                  color="text-orange-500"
-                />
+              <div className="rounded-xl border bg-card p-6">
+                <h3 className="text-sm font-semibold mb-4 flex items-center gap-2">
+                  <History className="h-4 w-4" /> Recent Trends
+                </h3>
+                <AuditTrends siteUrl={latest?.siteUrl} />
               </div>
             </div>
-          )}
-        </TabsContent>
 
-        {/* ── Audit (results detail) ───────────────────────────── */}
-        <TabsContent
-          value="audit"
-          className="mt-6 overflow-y-auto max-h-[calc(100vh-20rem)]"
-        >
-          {(latestData?.pages && latestData.pages.length > 0) ||
-          (latestData?.issues && latestData.issues.length > 0) ? (
-            <div className="space-y-4">
-              <h3 className="text-sm font-semibold">
-                Audit Results — {latest?.siteUrl}
-              </h3>
+            {latest && (
+              <div className="mt-6 rounded-xl border bg-card p-6">
+                <h3 className="text-sm font-semibold mb-3">
+                  Latest Audit Details
+                </h3>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                  <Stat label="Pages Audited" value={latest.pagesAudited} />
+                  <Stat label="Total Issues" value={latest.totalIssues} />
+                  <Stat
+                    label="Critical"
+                    value={latest.critical}
+                    color="text-red-500"
+                  />
+                  <Stat
+                    label="High"
+                    value={latest.high}
+                    color="text-orange-500"
+                  />
+                </div>
+              </div>
+            )}
+          </TabsContent>
 
-              {/* Category Stats */}
-              {latestData.categoryStats &&
-                latestData.categoryStats.length > 0 && (
+          {/* ── Audit (results detail) ───────────────────────────── */}
+          <TabsContent
+            value="audit"
+            className="mt-6 overflow-y-auto max-h-[calc(100vh-20rem)]"
+          >
+            {(latestData?.pages && latestData.pages.length > 0) ||
+            (latestData?.issues && latestData.issues.length > 0) ? (
+              <div className="space-y-4">
+                <h3 className="text-sm font-semibold">
+                  Audit Results — {latest?.siteUrl}
+                </h3>
+
+                {/* Category Stats */}
+                {latestData.categoryStats &&
+                  latestData.categoryStats.length > 0 && (
+                    <div className="rounded-xl border bg-card p-4">
+                      <h4 className="text-xs font-semibold uppercase tracking-wide mb-3">
+                        Issue Categories
+                      </h4>
+                      <div className="space-y-2">
+                        {latestData.categoryStats.map((cat) => (
+                          <div
+                            key={cat.category}
+                            className="flex items-center gap-3"
+                          >
+                            <span className="text-xs font-medium w-28 truncate capitalize">
+                              {cat.category}
+                            </span>
+                            <div className="flex-1 h-2 rounded-full bg-muted overflow-hidden">
+                              <div
+                                className="h-full rounded-full bg-primary"
+                                style={{
+                                  width: `${Math.min(cat.percentage, 100)}%`,
+                                }}
+                              />
+                            </div>
+                            <span className="text-xs text-muted-foreground w-24 text-right">
+                              {cat.affectedCount} pages ({cat.percentage}%)
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                {/* Site-Wide Issues */}
+                {latestData.issues && latestData.issues.length > 0 && (
                   <div className="rounded-xl border bg-card p-4">
                     <h4 className="text-xs font-semibold uppercase tracking-wide mb-3">
-                      Issue Categories
+                      Site-Wide Issues ({latestData.issues.length})
                     </h4>
-                    <div className="space-y-2">
-                      {latestData.categoryStats.map((cat) => (
-                        <div
-                          key={cat.category}
-                          className="flex items-center gap-3"
-                        >
-                          <span className="text-xs font-medium w-28 truncate capitalize">
-                            {cat.category}
-                          </span>
-                          <div className="flex-1 h-2 rounded-full bg-muted overflow-hidden">
-                            <div
-                              className="h-full rounded-full bg-primary"
-                              style={{
-                                width: `${Math.min(cat.percentage, 100)}%`,
-                              }}
-                            />
-                          </div>
-                          <span className="text-xs text-muted-foreground w-24 text-right">
-                            {cat.affectedCount} pages ({cat.percentage}%)
-                          </span>
+                    {(["error", "warning", "info"] as const).map((sev) => {
+                      const filtered = latestData.issues!.filter(
+                        (i) => i.severity === sev,
+                      );
+                      if (filtered.length === 0) return null;
+                      return (
+                        <div key={sev} className="mb-3 last:mb-0">
+                          <h5 className="text-xs font-semibold flex items-center gap-1.5 mb-1">
+                            <SeverityDot severity={sev} />
+                            {sev === "error"
+                              ? "Errors"
+                              : sev === "warning"
+                                ? "Warnings"
+                                : "Info"}{" "}
+                            ({filtered.length})
+                          </h5>
+                          <ul className="space-y-1 ml-3.5">
+                            {filtered.map((issue, idx) => (
+                              <li
+                                key={idx}
+                                className="text-xs text-muted-foreground"
+                              >
+                                <span className="font-medium capitalize">
+                                  [{issue.category}]
+                                </span>{" "}
+                                {issue.message}
+                              </li>
+                            ))}
+                          </ul>
                         </div>
-                      ))}
-                    </div>
+                      );
+                    })}
                   </div>
                 )}
 
-              {/* Site-Wide Issues */}
-              {latestData.issues && latestData.issues.length > 0 && (
-                <div className="rounded-xl border bg-card p-4">
-                  <h4 className="text-xs font-semibold uppercase tracking-wide mb-3">
-                    Site-Wide Issues ({latestData.issues.length})
-                  </h4>
-                  {(["error", "warning", "info"] as const).map((sev) => {
-                    const filtered = latestData.issues!.filter(
-                      (i) => i.severity === sev,
+                {/* Per-Page Issues */}
+                {latestData.pages &&
+                  latestData.pages.length > 0 &&
+                  (["error", "warning", "info"] as const).map((severity) => {
+                    const pagesWithIssues = latestData.pages!.filter((p) =>
+                      p.issues.some((i) => i.severity === severity),
                     );
-                    if (filtered.length === 0) return null;
+                    if (pagesWithIssues.length === 0) return null;
+                    const totalPages = latestData.pages!.length;
+                    const percentAffected =
+                      totalPages > 0
+                        ? Math.round(
+                            (pagesWithIssues.length / totalPages) * 100,
+                          )
+                        : 0;
                     return (
-                      <div key={sev} className="mb-3 last:mb-0">
-                        <h5 className="text-xs font-semibold flex items-center gap-1.5 mb-1">
-                          <SeverityDot severity={sev} />
-                          {sev === "error"
+                      <div key={severity} className="space-y-2">
+                        <h4 className="text-xs font-semibold uppercase tracking-wide flex items-center gap-1.5">
+                          <SeverityDot severity={severity} />
+                          {severity === "error"
                             ? "Errors"
-                            : sev === "warning"
+                            : severity === "warning"
                               ? "Warnings"
                               : "Info"}{" "}
-                          ({filtered.length})
-                        </h5>
-                        <ul className="space-y-1 ml-3.5">
-                          {filtered.map((issue, idx) => (
-                            <li
-                              key={idx}
-                              className="text-xs text-muted-foreground"
-                            >
-                              <span className="font-medium capitalize">
-                                [{issue.category}]
-                              </span>{" "}
-                              {issue.message}
-                            </li>
-                          ))}
-                        </ul>
+                          (
+                          {pagesWithIssues.reduce(
+                            (acc, p) =>
+                              acc +
+                              p.issues.filter((i) => i.severity === severity)
+                                .length,
+                            0,
+                          )}
+                          )
+                          <span
+                            className={cn(
+                              "ml-1.5 inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium",
+                              severity === "error"
+                                ? "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400"
+                                : severity === "warning"
+                                  ? "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400"
+                                  : "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400",
+                            )}
+                          >
+                            Affects {percentAffected}% of pages
+                          </span>
+                        </h4>
+                        {pagesWithIssues.map((page) => (
+                          <div
+                            key={page.url}
+                            className="rounded-lg border bg-card p-3"
+                          >
+                            <p className="text-sm font-medium truncate">
+                              {page.url}
+                            </p>
+                            <ul className="mt-1 space-y-0.5">
+                              {page.issues
+                                .filter((i) => i.severity === severity)
+                                .map((issue, idx) => (
+                                  <li
+                                    key={idx}
+                                    className="text-xs text-muted-foreground"
+                                  >
+                                    [{issue.category}] {issue.message}
+                                  </li>
+                                ))}
+                            </ul>
+                          </div>
+                        ))}
                       </div>
                     );
                   })}
-                </div>
-              )}
-
-              {/* Per-Page Issues */}
-              {latestData.pages &&
-                latestData.pages.length > 0 &&
-                (["error", "warning", "info"] as const).map((severity) => {
-                  const pagesWithIssues = latestData.pages!.filter((p) =>
-                    p.issues.some((i) => i.severity === severity),
-                  );
-                  if (pagesWithIssues.length === 0) return null;
-                  const totalPages = latestData.pages!.length;
-                  const percentAffected =
-                    totalPages > 0
-                      ? Math.round((pagesWithIssues.length / totalPages) * 100)
-                      : 0;
-                  return (
-                    <div key={severity} className="space-y-2">
-                      <h4 className="text-xs font-semibold uppercase tracking-wide flex items-center gap-1.5">
-                        <SeverityDot severity={severity} />
-                        {severity === "error"
-                          ? "Errors"
-                          : severity === "warning"
-                            ? "Warnings"
-                            : "Info"}{" "}
-                        (
-                        {pagesWithIssues.reduce(
-                          (acc, p) =>
-                            acc +
-                            p.issues.filter((i) => i.severity === severity)
-                              .length,
-                          0,
-                        )}
-                        )
-                        <span
-                          className={cn(
-                            "ml-1.5 inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium",
-                            severity === "error"
-                              ? "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400"
-                              : severity === "warning"
-                                ? "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400"
-                                : "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400",
-                          )}
-                        >
-                          Affects {percentAffected}% of pages
-                        </span>
-                      </h4>
-                      {pagesWithIssues.map((page) => (
-                        <div
-                          key={page.url}
-                          className="rounded-lg border bg-card p-3"
-                        >
-                          <p className="text-sm font-medium truncate">
-                            {page.url}
-                          </p>
-                          <ul className="mt-1 space-y-0.5">
-                            {page.issues
-                              .filter((i) => i.severity === severity)
-                              .map((issue, idx) => (
-                                <li
-                                  key={idx}
-                                  className="text-xs text-muted-foreground"
-                                >
-                                  [{issue.category}] {issue.message}
-                                </li>
-                              ))}
-                          </ul>
-                        </div>
-                      ))}
-                    </div>
-                  );
-                })}
-            </div>
-          ) : (
-            <EmptyState message="No audit results yet. Run an audit to see detailed findings." />
-          )}
-        </TabsContent>
-
-        {/* ── Links ────────────────────────────────────────────── */}
-        <TabsContent
-          value="links"
-          className="mt-6 overflow-y-auto max-h-[calc(100vh-20rem)]"
-        >
-          {latestData?.linkAnalysis ? (
-            <div className="space-y-6">
-              <div className="grid gap-4 md:grid-cols-5">
-                <StatCard
-                  label="Total Links"
-                  value={latestData.linkAnalysis.totalLinks}
-                />
-                <StatCard
-                  label="Internal"
-                  value={latestData.linkAnalysis.internalLinks ?? 0}
-                />
-                <StatCard
-                  label="External"
-                  value={latestData.linkAnalysis.externalLinks ?? 0}
-                />
-                <StatCard
-                  label="Broken Links"
-                  value={latestData.linkAnalysis.brokenLinks?.length ?? 0}
-                  color="text-red-500"
-                />
-                <StatCard
-                  label="Orphan Pages"
-                  value={latestData.linkAnalysis.orphanPages?.length ?? 0}
-                  color="text-orange-500"
-                />
               </div>
+            ) : (
+              <EmptyState message="No audit results yet. Run an audit to see detailed findings." />
+            )}
+          </TabsContent>
 
-              {latestData.linkAnalysis.brokenLinks &&
-                latestData.linkAnalysis.brokenLinks.length > 0 && (
+          {/* ── Links ────────────────────────────────────────────── */}
+          <TabsContent
+            value="links"
+            className="mt-6 overflow-y-auto max-h-[calc(100vh-20rem)]"
+          >
+            {latestData?.linkAnalysis ? (
+              <div className="space-y-6">
+                <div className="grid gap-4 md:grid-cols-5">
+                  <StatCard
+                    label="Total Links"
+                    value={latestData.linkAnalysis.totalLinks}
+                  />
+                  <StatCard
+                    label="Internal"
+                    value={latestData.linkAnalysis.internalLinks ?? 0}
+                  />
+                  <StatCard
+                    label="External"
+                    value={latestData.linkAnalysis.externalLinks ?? 0}
+                  />
+                  <StatCard
+                    label="Broken Links"
+                    value={latestData.linkAnalysis.brokenLinks?.length ?? 0}
+                    color="text-red-500"
+                  />
+                  <StatCard
+                    label="Orphan Pages"
+                    value={latestData.linkAnalysis.orphanPages?.length ?? 0}
+                    color="text-orange-500"
+                  />
+                </div>
+
+                {latestData.linkAnalysis.brokenLinks &&
+                  latestData.linkAnalysis.brokenLinks.length > 0 && (
+                    <div>
+                      <h4 className="text-sm font-semibold mb-2">
+                        Broken Links
+                      </h4>
+                      <div className="rounded-lg border overflow-hidden">
+                        <table className="w-full text-xs">
+                          <thead className="bg-muted/50">
+                            <tr>
+                              <th className="px-3 py-2 text-left font-medium">
+                                Source
+                              </th>
+                              <th className="px-3 py-2 text-left font-medium">
+                                Target
+                              </th>
+                              <th className="px-3 py-2 text-left font-medium">
+                                Text
+                              </th>
+                              <th className="px-3 py-2 text-left font-medium">
+                                Status
+                              </th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {latestData.linkAnalysis.brokenLinks.map(
+                              (link, idx) => (
+                                <tr key={idx} className="border-t">
+                                  <td className="px-3 py-2 truncate max-w-[200px]">
+                                    {link.sourceUrl}
+                                  </td>
+                                  <td className="px-3 py-2 truncate max-w-[200px]">
+                                    {link.targetUrl}
+                                  </td>
+                                  <td className="px-3 py-2 truncate max-w-[120px]">
+                                    {link.anchorText}
+                                  </td>
+                                  <td className="px-3 py-2 text-red-500 font-medium">
+                                    {link.statusCode}
+                                  </td>
+                                </tr>
+                              ),
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+
+                {latestData.linkAnalysis.redirectChains &&
+                  latestData.linkAnalysis.redirectChains.length > 0 && (
+                    <div>
+                      <h4 className="text-sm font-semibold mb-2">
+                        Redirect Chains
+                      </h4>
+                      <div className="space-y-1">
+                        {latestData.linkAnalysis.redirectChains.map(
+                          (chain, idx) => (
+                            <div
+                              key={idx}
+                              className="text-xs bg-card border rounded-lg px-3 py-2"
+                            >
+                              {chain.chain?.join(" → ") ??
+                                JSON.stringify(chain)}
+                            </div>
+                          ),
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                {latestData.linkAnalysis.orphanPages &&
+                  latestData.linkAnalysis.orphanPages.length > 0 && (
+                    <div>
+                      <h4 className="text-sm font-semibold mb-2">
+                        Orphan Pages
+                      </h4>
+                      <ul className="space-y-1">
+                        {latestData.linkAnalysis.orphanPages.map(
+                          (item, idx) => (
+                            <li
+                              key={idx}
+                              className="text-xs bg-card border rounded-lg px-3 py-2 truncate"
+                            >
+                              {typeof item === "string"
+                                ? item
+                                : typeof item === "object" &&
+                                    item !== null &&
+                                    "url" in item
+                                  ? String(item.url)
+                                  : JSON.stringify(item)}
+                            </li>
+                          ),
+                        )}
+                      </ul>
+                    </div>
+                  )}
+
+                {(!latestData.linkAnalysis.brokenLinks ||
+                  latestData.linkAnalysis.brokenLinks.length === 0) &&
+                  (!latestData.linkAnalysis.orphanPages ||
+                    latestData.linkAnalysis.orphanPages.length === 0) && (
+                    <div className="rounded-lg border bg-emerald-50 dark:bg-emerald-950/20 p-3 text-sm text-emerald-700 dark:text-emerald-400">
+                      ✓ No broken links or orphan pages detected.
+                    </div>
+                  )}
+
+                {/* Link Distribution Table */}
+                {latestData.linkAnalysis.linkDistribution &&
+                  latestData.linkAnalysis.linkDistribution.length > 0 && (
+                    <div>
+                      <h4 className="text-sm font-semibold mb-2">
+                        Link Distribution (Top Pages)
+                      </h4>
+                      <div className="rounded-lg border overflow-hidden">
+                        <table className="w-full text-xs">
+                          <thead className="bg-muted/50">
+                            <tr>
+                              <th className="px-3 py-2 text-left font-medium">
+                                URL
+                              </th>
+                              <th className="px-3 py-2 text-right font-medium">
+                                Incoming
+                              </th>
+                              <th className="px-3 py-2 text-right font-medium">
+                                Outgoing
+                              </th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {latestData.linkAnalysis.linkDistribution
+                              .slice(0, 20)
+                              .map((entry, idx) => (
+                                <tr key={idx} className="border-t">
+                                  <td className="px-3 py-2 truncate max-w-[300px]">
+                                    {entry.url}
+                                  </td>
+                                  <td className="px-3 py-2 text-right font-medium">
+                                    {entry.incomingCount}
+                                  </td>
+                                  <td className="px-3 py-2 text-right font-medium">
+                                    {entry.outgoingCount}
+                                  </td>
+                                </tr>
+                              ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+
+                <div>
+                  <h4 className="text-sm font-semibold mb-2">Link Graph</h4>
+                  <LinkGraph linkAnalysis={latestData.linkAnalysis} />
+                </div>
+
+                {/* Link Depth Distribution */}
+                {latestData.linkAnalysis.linkDepths &&
+                  latestData.linkAnalysis.linkDepths.length > 0 && (
+                    <div>
+                      <h4 className="text-sm font-semibold mb-2">
+                        Link Depth Distribution
+                      </h4>
+                      <LinkDepthTable
+                        depths={latestData.linkAnalysis.linkDepths}
+                      />
+                    </div>
+                  )}
+
+                {/* Internal Linking Suggestions (#881) */}
+                {latestData.linkAnalysis.linkingSuggestions &&
+                  latestData.linkAnalysis.linkingSuggestions.length > 0 && (
+                    <div>
+                      <h4 className="text-sm font-semibold mb-2">
+                        Internal Linking Suggestions
+                      </h4>
+                      <p className="text-xs text-muted-foreground mb-3">
+                        Opportunities to improve your internal link structure
+                        based on keyword overlap analysis.
+                      </p>
+                      <div className="space-y-2">
+                        {latestData.linkAnalysis.linkingSuggestions
+                          .slice(0, 20)
+                          .map(
+                            (
+                              s: {
+                                sourcePage: string;
+                                targetPage: string;
+                                suggestedAnchor: string;
+                                reason: string;
+                                priority: string;
+                              },
+                              idx: number,
+                            ) => (
+                              <div
+                                key={idx}
+                                className="rounded-lg border bg-card p-3 text-xs"
+                              >
+                                <div className="flex items-start justify-between gap-2">
+                                  <div className="flex-1 min-w-0">
+                                    <p>
+                                      <span className="font-medium">From:</span>{" "}
+                                      <span className="truncate">
+                                        {s.sourcePage}
+                                      </span>
+                                    </p>
+                                    <p>
+                                      <span className="font-medium">To:</span>{" "}
+                                      <span className="truncate">
+                                        {s.targetPage}
+                                      </span>
+                                    </p>
+                                    <p className="text-muted-foreground mt-1">
+                                      Anchor: &quot;{s.suggestedAnchor}&quot; —{" "}
+                                      {s.reason}
+                                    </p>
+                                  </div>
+                                  <span
+                                    className={`shrink-0 inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                                      s.priority === "high"
+                                        ? "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400"
+                                        : s.priority === "medium"
+                                          ? "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400"
+                                          : "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400"
+                                    }`}
+                                  >
+                                    {s.priority}
+                                  </span>
+                                </div>
+                              </div>
+                            ),
+                          )}
+                      </div>
+                    </div>
+                  )}
+              </div>
+            ) : (
+              <EmptyState message="No link analysis data. Run an audit to analyze your site's link structure." />
+            )}
+          </TabsContent>
+
+          {/* ── Content ──────────────────────────────────────────── */}
+          <TabsContent
+            value="content"
+            className="mt-6 overflow-y-auto max-h-[calc(100vh-20rem)]"
+          >
+            {latestData?.contentAnalysis ? (
+              <div className="space-y-6">
+                {latestData.contentAnalysis.duplicateGroups &&
+                latestData.contentAnalysis.duplicateGroups.length > 0 ? (
                   <div>
-                    <h4 className="text-sm font-semibold mb-2">Broken Links</h4>
+                    <h4 className="text-sm font-semibold mb-2">
+                      Duplicate Content Groups
+                    </h4>
+                    <div className="space-y-2">
+                      {latestData.contentAnalysis.duplicateGroups.map(
+                        (group, idx) => (
+                          <div
+                            key={idx}
+                            className="rounded-lg border bg-card p-3"
+                          >
+                            <div className="flex items-center gap-2 mb-1">
+                              <p className="text-xs font-medium text-orange-500">
+                                Group {idx + 1} — {group.urls?.length ?? 0}{" "}
+                                pages
+                              </p>
+                              {group.similarity != null && (
+                                <span className="text-[10px] rounded bg-orange-50 text-orange-600 px-1 py-0.5 font-medium">
+                                  {group.similarity}% similar
+                                </span>
+                              )}
+                              {group.recommendation && (
+                                <span className="text-[10px] rounded bg-blue-50 text-blue-600 px-1 py-0.5 font-medium">
+                                  {group.recommendation}
+                                </span>
+                              )}
+                            </div>
+                            <ul className="space-y-0.5">
+                              {(group.urls ?? []).map(
+                                (url: string, i: number) => (
+                                  <li
+                                    key={i}
+                                    className="text-xs text-muted-foreground truncate"
+                                  >
+                                    {url}
+                                  </li>
+                                ),
+                              )}
+                            </ul>
+                          </div>
+                        ),
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  <p className="text-sm text-muted-foreground">
+                    No duplicate content detected.
+                  </p>
+                )}
+
+                {latestData.contentAnalysis.thinContentPages &&
+                latestData.contentAnalysis.thinContentPages.length > 0 ? (
+                  <div>
+                    <h4 className="text-sm font-semibold mb-2">Thin Content</h4>
                     <div className="rounded-lg border overflow-hidden">
                       <table className="w-full text-xs">
                         <thead className="bg-muted/50">
                           <tr>
                             <th className="px-3 py-2 text-left font-medium">
-                              Source
+                              URL
                             </th>
                             <th className="px-3 py-2 text-left font-medium">
-                              Target
-                            </th>
-                            <th className="px-3 py-2 text-left font-medium">
-                              Text
-                            </th>
-                            <th className="px-3 py-2 text-left font-medium">
-                              Status
+                              Word Count
                             </th>
                           </tr>
                         </thead>
                         <tbody>
-                          {latestData.linkAnalysis.brokenLinks.map(
-                            (link, idx) => (
+                          {latestData.contentAnalysis.thinContentPages.map(
+                            (page, idx) => (
                               <tr key={idx} className="border-t">
-                                <td className="px-3 py-2 truncate max-w-[200px]">
-                                  {link.sourceUrl}
+                                <td className="px-3 py-2 truncate max-w-[300px]">
+                                  {typeof page === "string"
+                                    ? page
+                                    : (page.url ?? JSON.stringify(page))}
                                 </td>
-                                <td className="px-3 py-2 truncate max-w-[200px]">
-                                  {link.targetUrl}
-                                </td>
-                                <td className="px-3 py-2 truncate max-w-[120px]">
-                                  {link.anchorText}
-                                </td>
-                                <td className="px-3 py-2 text-red-500 font-medium">
-                                  {link.statusCode}
+                                <td className="px-3 py-2 text-orange-500">
+                                  {typeof page === "object" && page.wordCount
+                                    ? page.wordCount
+                                    : "—"}
                                 </td>
                               </tr>
                             ),
@@ -2170,67 +2489,18 @@ export default function SeoPage() {
                       </table>
                     </div>
                   </div>
+                ) : (
+                  <p className="text-sm text-muted-foreground">
+                    No thin content pages detected.
+                  </p>
                 )}
 
-              {latestData.linkAnalysis.redirectChains &&
-                latestData.linkAnalysis.redirectChains.length > 0 && (
+                {/* Keyword Density */}
+                {latestData.contentAnalysis.keywordDensity &&
+                latestData.contentAnalysis.keywordDensity.length > 0 ? (
                   <div>
                     <h4 className="text-sm font-semibold mb-2">
-                      Redirect Chains
-                    </h4>
-                    <div className="space-y-1">
-                      {latestData.linkAnalysis.redirectChains.map(
-                        (chain, idx) => (
-                          <div
-                            key={idx}
-                            className="text-xs bg-card border rounded-lg px-3 py-2"
-                          >
-                            {chain.chain?.join(" → ") ?? JSON.stringify(chain)}
-                          </div>
-                        ),
-                      )}
-                    </div>
-                  </div>
-                )}
-
-              {latestData.linkAnalysis.orphanPages &&
-                latestData.linkAnalysis.orphanPages.length > 0 && (
-                  <div>
-                    <h4 className="text-sm font-semibold mb-2">Orphan Pages</h4>
-                    <ul className="space-y-1">
-                      {latestData.linkAnalysis.orphanPages.map((item, idx) => (
-                        <li
-                          key={idx}
-                          className="text-xs bg-card border rounded-lg px-3 py-2 truncate"
-                        >
-                          {typeof item === "string"
-                            ? item
-                            : typeof item === "object" &&
-                                item !== null &&
-                                "url" in item
-                              ? String(item.url)
-                              : JSON.stringify(item)}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-
-              {(!latestData.linkAnalysis.brokenLinks ||
-                latestData.linkAnalysis.brokenLinks.length === 0) &&
-                (!latestData.linkAnalysis.orphanPages ||
-                  latestData.linkAnalysis.orphanPages.length === 0) && (
-                  <div className="rounded-lg border bg-emerald-50 dark:bg-emerald-950/20 p-3 text-sm text-emerald-700 dark:text-emerald-400">
-                    ✓ No broken links or orphan pages detected.
-                  </div>
-                )}
-
-              {/* Link Distribution Table */}
-              {latestData.linkAnalysis.linkDistribution &&
-                latestData.linkAnalysis.linkDistribution.length > 0 && (
-                  <div>
-                    <h4 className="text-sm font-semibold mb-2">
-                      Link Distribution (Top Pages)
+                      Keyword Density
                     </h4>
                     <div className="rounded-lg border overflow-hidden">
                       <table className="w-full text-xs">
@@ -2239,27 +2509,38 @@ export default function SeoPage() {
                             <th className="px-3 py-2 text-left font-medium">
                               URL
                             </th>
-                            <th className="px-3 py-2 text-right font-medium">
-                              Incoming
+                            <th className="px-3 py-2 text-left font-medium">
+                              Keyword
                             </th>
-                            <th className="px-3 py-2 text-right font-medium">
-                              Outgoing
+                            <th className="px-3 py-2 text-left font-medium">
+                              Count
+                            </th>
+                            <th className="px-3 py-2 text-left font-medium">
+                              Density
                             </th>
                           </tr>
                         </thead>
                         <tbody>
-                          {latestData.linkAnalysis.linkDistribution
-                            .slice(0, 20)
-                            .map((entry, idx) => (
+                          {latestData.contentAnalysis.keywordDensity
+                            .slice(0, 50)
+                            .map((kd, idx) => (
                               <tr key={idx} className="border-t">
-                                <td className="px-3 py-2 truncate max-w-[300px]">
-                                  {entry.url}
+                                <td className="px-3 py-2 truncate max-w-[200px]">
+                                  {kd.url}
                                 </td>
-                                <td className="px-3 py-2 text-right font-medium">
-                                  {entry.incomingCount}
+                                <td className="px-3 py-2 font-medium">
+                                  {kd.keyword}
                                 </td>
-                                <td className="px-3 py-2 text-right font-medium">
-                                  {entry.outgoingCount}
+                                <td className="px-3 py-2">{kd.count}</td>
+                                <td
+                                  className={`px-3 py-2 font-medium ${kd.density > 3 ? "text-red-500" : ""}`}
+                                >
+                                  {kd.density}%
+                                  {kd.density > 3 && (
+                                    <span className="ml-1 text-[10px] text-red-500">
+                                      over-optimized
+                                    </span>
+                                  )}
                                 </td>
                               </tr>
                             ))}
@@ -2267,647 +2548,404 @@ export default function SeoPage() {
                       </table>
                     </div>
                   </div>
+                ) : (
+                  <p className="text-sm text-muted-foreground">
+                    No keyword density data available.
+                  </p>
                 )}
 
-              <div>
-                <h4 className="text-sm font-semibold mb-2">Link Graph</h4>
-                <LinkGraph linkAnalysis={latestData.linkAnalysis} />
-              </div>
-
-              {/* Link Depth Distribution */}
-              {latestData.linkAnalysis.linkDepths &&
-                latestData.linkAnalysis.linkDepths.length > 0 && (
-                  <div>
-                    <h4 className="text-sm font-semibold mb-2">
-                      Link Depth Distribution
-                    </h4>
-                    <LinkDepthTable
-                      depths={latestData.linkAnalysis.linkDepths}
-                    />
-                  </div>
-                )}
-
-              {/* Internal Linking Suggestions (#881) */}
-              {latestData.linkAnalysis.linkingSuggestions &&
-                latestData.linkAnalysis.linkingSuggestions.length > 0 && (
-                  <div>
-                    <h4 className="text-sm font-semibold mb-2">
-                      Internal Linking Suggestions
-                    </h4>
-                    <p className="text-xs text-muted-foreground mb-3">
-                      Opportunities to improve your internal link structure
-                      based on keyword overlap analysis.
-                    </p>
-                    <div className="space-y-2">
-                      {latestData.linkAnalysis.linkingSuggestions
-                        .slice(0, 20)
-                        .map(
-                          (
-                            s: {
-                              sourcePage: string;
-                              targetPage: string;
-                              suggestedAnchor: string;
-                              reason: string;
-                              priority: string;
-                            },
-                            idx: number,
-                          ) => (
-                            <div
-                              key={idx}
-                              className="rounded-lg border bg-card p-3 text-xs"
-                            >
-                              <div className="flex items-start justify-between gap-2">
-                                <div className="flex-1 min-w-0">
-                                  <p>
-                                    <span className="font-medium">From:</span>{" "}
-                                    <span className="truncate">
-                                      {s.sourcePage}
+                {/* Content Freshness (#877) */}
+                {latestData.contentAnalysis.freshness &&
+                  latestData.contentAnalysis.freshness.length > 0 && (
+                    <div>
+                      <h4 className="text-sm font-semibold mb-2">
+                        Content Freshness
+                      </h4>
+                      <div className="rounded-lg border overflow-hidden">
+                        <table className="w-full text-xs">
+                          <thead className="bg-muted/50">
+                            <tr>
+                              <th className="px-3 py-2 text-left font-medium">
+                                URL
+                              </th>
+                              <th className="px-3 py-2 text-left font-medium">
+                                Status
+                              </th>
+                              <th className="px-3 py-2 text-left font-medium">
+                                Age
+                              </th>
+                              <th className="px-3 py-2 text-left font-medium">
+                                Last Modified
+                              </th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {latestData.contentAnalysis.freshness.map(
+                              (
+                                f: {
+                                  url: string;
+                                  freshnessRating: string;
+                                  ageInDays: number | null;
+                                  dateModified?: string;
+                                  datePublished?: string;
+                                },
+                                idx: number,
+                              ) => (
+                                <tr key={idx} className="border-t">
+                                  <td className="px-3 py-2 truncate max-w-[200px]">
+                                    {f.url}
+                                  </td>
+                                  <td className="px-3 py-2">
+                                    <span
+                                      className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                                        f.freshnessRating === "Fresh"
+                                          ? "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400"
+                                          : f.freshnessRating === "Aging"
+                                            ? "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400"
+                                            : f.freshnessRating === "Stale"
+                                              ? "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400"
+                                              : "bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-400"
+                                      }`}
+                                    >
+                                      {f.freshnessRating}
                                     </span>
-                                  </p>
-                                  <p>
-                                    <span className="font-medium">To:</span>{" "}
-                                    <span className="truncate">
-                                      {s.targetPage}
-                                    </span>
-                                  </p>
-                                  <p className="text-muted-foreground mt-1">
-                                    Anchor: &quot;{s.suggestedAnchor}&quot; —{" "}
-                                    {s.reason}
-                                  </p>
-                                </div>
-                                <span
-                                  className={`shrink-0 inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold ${
-                                    s.priority === "high"
-                                      ? "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400"
-                                      : s.priority === "medium"
-                                        ? "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400"
-                                        : "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400"
-                                  }`}
-                                >
-                                  {s.priority}
-                                </span>
-                              </div>
-                            </div>
-                          ),
-                        )}
-                    </div>
-                  </div>
-                )}
-            </div>
-          ) : (
-            <EmptyState message="No link analysis data. Run an audit to analyze your site's link structure." />
-          )}
-        </TabsContent>
-
-        {/* ── Content ──────────────────────────────────────────── */}
-        <TabsContent
-          value="content"
-          className="mt-6 overflow-y-auto max-h-[calc(100vh-20rem)]"
-        >
-          {latestData?.contentAnalysis ? (
-            <div className="space-y-6">
-              {latestData.contentAnalysis.duplicateGroups &&
-              latestData.contentAnalysis.duplicateGroups.length > 0 ? (
-                <div>
-                  <h4 className="text-sm font-semibold mb-2">
-                    Duplicate Content Groups
-                  </h4>
-                  <div className="space-y-2">
-                    {latestData.contentAnalysis.duplicateGroups.map(
-                      (group, idx) => (
-                        <div
-                          key={idx}
-                          className="rounded-lg border bg-card p-3"
-                        >
-                          <div className="flex items-center gap-2 mb-1">
-                            <p className="text-xs font-medium text-orange-500">
-                              Group {idx + 1} — {group.urls?.length ?? 0} pages
-                            </p>
-                            {group.similarity != null && (
-                              <span className="text-[10px] rounded bg-orange-50 text-orange-600 px-1 py-0.5 font-medium">
-                                {group.similarity}% similar
-                              </span>
-                            )}
-                            {group.recommendation && (
-                              <span className="text-[10px] rounded bg-blue-50 text-blue-600 px-1 py-0.5 font-medium">
-                                {group.recommendation}
-                              </span>
-                            )}
-                          </div>
-                          <ul className="space-y-0.5">
-                            {(group.urls ?? []).map(
-                              (url: string, i: number) => (
-                                <li
-                                  key={i}
-                                  className="text-xs text-muted-foreground truncate"
-                                >
-                                  {url}
-                                </li>
+                                  </td>
+                                  <td className="px-3 py-2 text-muted-foreground">
+                                    {f.ageInDays != null
+                                      ? `${f.ageInDays}d`
+                                      : "—"}
+                                  </td>
+                                  <td className="px-3 py-2 text-muted-foreground">
+                                    {f.dateModified ?? f.datePublished ?? "—"}
+                                  </td>
+                                </tr>
                               ),
                             )}
-                          </ul>
-                        </div>
-                      ),
-                    )}
-                  </div>
-                </div>
-              ) : (
-                <p className="text-sm text-muted-foreground">
-                  No duplicate content detected.
-                </p>
-              )}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
 
-              {latestData.contentAnalysis.thinContentPages &&
-              latestData.contentAnalysis.thinContentPages.length > 0 ? (
-                <div>
-                  <h4 className="text-sm font-semibold mb-2">Thin Content</h4>
-                  <div className="rounded-lg border overflow-hidden">
-                    <table className="w-full text-xs">
-                      <thead className="bg-muted/50">
-                        <tr>
-                          <th className="px-3 py-2 text-left font-medium">
-                            URL
-                          </th>
-                          <th className="px-3 py-2 text-left font-medium">
-                            Word Count
-                          </th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {latestData.contentAnalysis.thinContentPages.map(
-                          (page, idx) => (
-                            <tr key={idx} className="border-t">
-                              <td className="px-3 py-2 truncate max-w-[300px]">
-                                {typeof page === "string"
-                                  ? page
-                                  : (page.url ?? JSON.stringify(page))}
-                              </td>
-                              <td className="px-3 py-2 text-orange-500">
-                                {typeof page === "object" && page.wordCount
-                                  ? page.wordCount
-                                  : "—"}
-                              </td>
-                            </tr>
+                {/* Content Ideas / PAA (#880) */}
+                {latestData.contentAnalysis.paaQuestions &&
+                  latestData.contentAnalysis.paaQuestions.length > 0 && (
+                    <div>
+                      <h4 className="text-sm font-semibold mb-2">
+                        Content Ideas (People Also Ask)
+                      </h4>
+                      <p className="text-xs text-muted-foreground mb-3">
+                        Questions from Google&apos;s &quot;People Also Ask&quot;
+                        section — use these as content topics or FAQ entries.
+                      </p>
+                      <div className="grid gap-1.5">
+                        {latestData.contentAnalysis.paaQuestions.map(
+                          (q: string, idx: number) => (
+                            <div
+                              key={idx}
+                              className="flex items-center gap-2 rounded-lg border bg-card px-3 py-2 text-xs"
+                            >
+                              <span className="text-muted-foreground shrink-0">
+                                Q:
+                              </span>
+                              <span>{q}</span>
+                            </div>
                           ),
                         )}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              ) : (
-                <p className="text-sm text-muted-foreground">
-                  No thin content pages detected.
-                </p>
-              )}
-
-              {/* Keyword Density */}
-              {latestData.contentAnalysis.keywordDensity &&
-              latestData.contentAnalysis.keywordDensity.length > 0 ? (
-                <div>
-                  <h4 className="text-sm font-semibold mb-2">
-                    Keyword Density
-                  </h4>
-                  <div className="rounded-lg border overflow-hidden">
-                    <table className="w-full text-xs">
-                      <thead className="bg-muted/50">
-                        <tr>
-                          <th className="px-3 py-2 text-left font-medium">
-                            URL
-                          </th>
-                          <th className="px-3 py-2 text-left font-medium">
-                            Keyword
-                          </th>
-                          <th className="px-3 py-2 text-left font-medium">
-                            Count
-                          </th>
-                          <th className="px-3 py-2 text-left font-medium">
-                            Density
-                          </th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {latestData.contentAnalysis.keywordDensity
-                          .slice(0, 50)
-                          .map((kd, idx) => (
-                            <tr key={idx} className="border-t">
-                              <td className="px-3 py-2 truncate max-w-[200px]">
-                                {kd.url}
-                              </td>
-                              <td className="px-3 py-2 font-medium">
-                                {kd.keyword}
-                              </td>
-                              <td className="px-3 py-2">{kd.count}</td>
-                              <td
-                                className={`px-3 py-2 font-medium ${kd.density > 3 ? "text-red-500" : ""}`}
-                              >
-                                {kd.density}%
-                                {kd.density > 3 && (
-                                  <span className="ml-1 text-[10px] text-red-500">
-                                    over-optimized
-                                  </span>
-                                )}
-                              </td>
-                            </tr>
-                          ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              ) : (
-                <p className="text-sm text-muted-foreground">
-                  No keyword density data available.
-                </p>
-              )}
-
-              {/* Content Freshness (#877) */}
-              {latestData.contentAnalysis.freshness &&
-                latestData.contentAnalysis.freshness.length > 0 && (
-                  <div>
-                    <h4 className="text-sm font-semibold mb-2">
-                      Content Freshness
-                    </h4>
-                    <div className="rounded-lg border overflow-hidden">
-                      <table className="w-full text-xs">
-                        <thead className="bg-muted/50">
-                          <tr>
-                            <th className="px-3 py-2 text-left font-medium">
-                              URL
-                            </th>
-                            <th className="px-3 py-2 text-left font-medium">
-                              Status
-                            </th>
-                            <th className="px-3 py-2 text-left font-medium">
-                              Age
-                            </th>
-                            <th className="px-3 py-2 text-left font-medium">
-                              Last Modified
-                            </th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {latestData.contentAnalysis.freshness.map(
-                            (
-                              f: {
-                                url: string;
-                                freshnessRating: string;
-                                ageInDays: number | null;
-                                dateModified?: string;
-                                datePublished?: string;
-                              },
-                              idx: number,
-                            ) => (
-                              <tr key={idx} className="border-t">
-                                <td className="px-3 py-2 truncate max-w-[200px]">
-                                  {f.url}
-                                </td>
-                                <td className="px-3 py-2">
-                                  <span
-                                    className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold ${
-                                      f.freshnessRating === "Fresh"
-                                        ? "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400"
-                                        : f.freshnessRating === "Aging"
-                                          ? "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400"
-                                          : f.freshnessRating === "Stale"
-                                            ? "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400"
-                                            : "bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-400"
-                                    }`}
-                                  >
-                                    {f.freshnessRating}
-                                  </span>
-                                </td>
-                                <td className="px-3 py-2 text-muted-foreground">
-                                  {f.ageInDays != null
-                                    ? `${f.ageInDays}d`
-                                    : "—"}
-                                </td>
-                                <td className="px-3 py-2 text-muted-foreground">
-                                  {f.dateModified ?? f.datePublished ?? "—"}
-                                </td>
-                              </tr>
-                            ),
-                          )}
-                        </tbody>
-                      </table>
+                      </div>
                     </div>
-                  </div>
-                )}
-
-              {/* Content Ideas / PAA (#880) */}
-              {latestData.contentAnalysis.paaQuestions &&
-                latestData.contentAnalysis.paaQuestions.length > 0 && (
-                  <div>
-                    <h4 className="text-sm font-semibold mb-2">
-                      Content Ideas (People Also Ask)
-                    </h4>
-                    <p className="text-xs text-muted-foreground mb-3">
-                      Questions from Google&apos;s &quot;People Also Ask&quot;
-                      section — use these as content topics or FAQ entries.
-                    </p>
-                    <div className="grid gap-1.5">
-                      {latestData.contentAnalysis.paaQuestions.map(
-                        (q: string, idx: number) => (
-                          <div
-                            key={idx}
-                            className="flex items-center gap-2 rounded-lg border bg-card px-3 py-2 text-xs"
-                          >
-                            <span className="text-muted-foreground shrink-0">
-                              Q:
-                            </span>
-                            <span>{q}</span>
-                          </div>
-                        ),
-                      )}
-                    </div>
-                  </div>
-                )}
-            </div>
-          ) : (
-            <EmptyState message="No content analysis data. Run an audit to check for duplicate and thin content." />
-          )}
-        </TabsContent>
-
-        {/* ── Performance (CWV) ────────────────────────────────── */}
-        <TabsContent
-          value="performance"
-          className="mt-6 overflow-y-auto max-h-[calc(100vh-20rem)]"
-        >
-          {latestData?.coreWebVitals && latestData.coreWebVitals.length > 0 ? (
-            <div className="space-y-4">
-              <div className="flex items-center justify-between">
-                <h3 className="text-sm font-semibold">Core Web Vitals</h3>
-                <button
-                  onClick={runCwvAnalysis}
-                  disabled={cwvAnalyzing || !latest?.id}
-                  className="text-xs px-3 py-1.5 rounded-md border bg-background hover:bg-muted disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {cwvAnalyzing ? "Analyzing…" : "Re-analyze"}
-                </button>
+                  )}
               </div>
+            ) : (
+              <EmptyState message="No content analysis data. Run an audit to check for duplicate and thin content." />
+            )}
+          </TabsContent>
 
-              {/* Aggregate CWV Summary */}
-              <CwvAggregateSummary results={latestData.coreWebVitals} />
-
-              {/* Per-page results */}
-              {latestData.coreWebVitals.map((cwv, idx) => {
-                const metricMap = new Map(
-                  (cwv.metrics ?? []).map((m) => [m.name, m]),
-                );
-                const hasFailed =
-                  !!cwv.error || (cwv.metrics ?? []).length === 0;
-                const psiUrl = `https://pagespeed.web.dev/analysis/${encodeURIComponent(cwv.url)}`;
-                return (
-                  <div key={idx} className="rounded-lg border bg-card p-4">
-                    {/* Card header */}
-                    <div className="flex items-start justify-between gap-2 mb-3">
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2">
-                          <p className="text-sm font-medium truncate">
-                            {cwv.url}
-                          </p>
-                          {cwv.strategy && (
-                            <span
-                              className={cn(
-                                "inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide shrink-0",
-                                cwv.strategy === "mobile"
-                                  ? "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400"
-                                  : "bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400",
-                              )}
-                            >
-                              {cwv.strategy === "mobile"
-                                ? "📱 Mobile"
-                                : "🖥️ Desktop"}
-                            </span>
-                          )}
-                        </div>
-                        {cwv.fetchedAt && (
-                          <p className="text-[10px] text-muted-foreground mt-0.5">
-                            Analyzed {new Date(cwv.fetchedAt).toLocaleString()}
-                          </p>
-                        )}
-                      </div>
-                      <div className="flex items-center gap-2 flex-shrink-0">
-                        <a
-                          href={psiUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-[10px] text-muted-foreground hover:text-foreground flex items-center gap-0.5"
-                          title="Open in PageSpeed Insights"
-                        >
-                          <ExternalLink className="h-3 w-3" /> PSI
-                        </a>
-                        <PerfScoreBadge score={cwv.performanceScore} />
-                      </div>
-                    </div>
-
-                    {/* Error / no-data state */}
-                    {hasFailed && (
-                      <div className="mb-3 rounded bg-destructive/10 border border-destructive/20 px-3 py-2 text-xs text-destructive">
-                        {cwv.error?.includes("429") ||
-                        cwv.error?.includes("quota")
-                          ? "Rate limited by PageSpeed Insights API. Add a GOOGLE_PSI_API_KEY for higher limits."
-                          : cwv.error
-                            ? `PSI fetch failed: ${cwv.error}`
-                            : "PSI returned no lighthouse metrics — the page may have timed out or blocked the crawler."}
-                      </div>
-                    )}
-
-                    {/* Metric grid — always show all 6 slots */}
-                    <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
-                      {CWV_METRIC_DEFS.map((def) => {
-                        const m = metricMap.get(def.name);
-                        const ratingColor = !m
-                          ? "text-muted-foreground"
-                          : m.rating === "good"
-                            ? "text-green-600"
-                            : m.rating === "poor"
-                              ? "text-red-600"
-                              : "text-yellow-600";
-                        return (
-                          <div
-                            key={def.name}
-                            className="rounded border bg-muted/20 px-2.5 py-2"
-                          >
-                            <div className="text-[10px] text-muted-foreground font-medium uppercase tracking-wide mb-0.5">
-                              {def.name}
-                            </div>
-                            <div
-                              className={`text-lg font-bold leading-tight ${ratingColor}`}
-                            >
-                              {m ? def.format(m.value) : "—"}
-                            </div>
-                            <div className="flex items-center justify-between mt-0.5">
-                              <span className="text-[10px] text-muted-foreground">
-                                {def.hint}
-                              </span>
-                              {m && <CwvRatingBadge rating={m.rating} />}
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-
-                    {/* Lighthouse Optimizations (#875) */}
-                    {cwv.optimizations && cwv.optimizations.length > 0 && (
-                      <div className="mt-3">
-                        <h5 className="text-xs font-semibold mb-1.5">
-                          Optimization Opportunities
-                        </h5>
-                        <div className="space-y-1">
-                          {cwv.optimizations.slice(0, 5).map((opt) => (
-                            <div
-                              key={opt.auditId}
-                              className="flex items-start gap-2 rounded border bg-muted/20 px-2.5 py-1.5"
-                            >
-                              <span
-                                className={`shrink-0 mt-0.5 w-1.5 h-1.5 rounded-full ${
-                                  opt.category === "opportunity"
-                                    ? "bg-orange-500"
-                                    : "bg-blue-500"
-                                }`}
-                              />
-                              <div className="flex-1 min-w-0">
-                                <p className="text-xs font-medium">
-                                  {opt.title}
-                                </p>
-                                {(opt.savingsMs || opt.savingsBytes) && (
-                                  <p className="text-[10px] text-muted-foreground">
-                                    {opt.savingsMs
-                                      ? `Save ~${(opt.savingsMs / 1000).toFixed(1)}s`
-                                      : ""}
-                                    {opt.savingsMs && opt.savingsBytes
-                                      ? " · "
-                                      : ""}
-                                    {opt.savingsBytes
-                                      ? `${(opt.savingsBytes / 1024).toFixed(0)} KB`
-                                      : ""}
-                                  </p>
-                                )}
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          ) : (
-            <div className="flex flex-col items-center justify-center gap-4 py-12">
-              <div className="flex flex-col items-center gap-2 text-center">
-                <Gauge className="h-10 w-10 text-muted-foreground/40" />
-                <p className="text-sm font-medium">
-                  No Core Web Vitals data yet
-                </p>
-                <p className="text-xs text-muted-foreground max-w-sm">
-                  Fetch performance metrics from Google PageSpeed Insights for
-                  the pages in your latest audit.
-                  {!latest?.id && " Run a site audit first."}
-                </p>
-              </div>
-              {latest?.id && (
-                <div className="flex flex-col items-center gap-2">
+          {/* ── Performance (CWV) ────────────────────────────────── */}
+          <TabsContent
+            value="performance"
+            className="mt-6 overflow-y-auto max-h-[calc(100vh-20rem)]"
+          >
+            {latestData?.coreWebVitals &&
+            latestData.coreWebVitals.length > 0 ? (
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-sm font-semibold">Core Web Vitals</h3>
                   <button
                     onClick={runCwvAnalysis}
-                    disabled={cwvAnalyzing}
-                    className="px-4 py-2 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed"
+                    disabled={cwvAnalyzing || !latest?.id}
+                    className="text-xs px-3 py-1.5 rounded-md border bg-background hover:bg-muted disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    {cwvAnalyzing
-                      ? "Analyzing performance…"
-                      : "Analyze Performance"}
+                    {cwvAnalyzing ? "Analyzing…" : "Re-analyze"}
                   </button>
-                  {cwvAnalyzing && (
+                </div>
+
+                {/* Aggregate CWV Summary */}
+                <CwvAggregateSummary results={latestData.coreWebVitals} />
+
+                {/* Per-page results */}
+                {latestData.coreWebVitals.map((cwv, idx) => {
+                  const metricMap = new Map(
+                    (cwv.metrics ?? []).map((m) => [m.name, m]),
+                  );
+                  const hasFailed =
+                    !!cwv.error || (cwv.metrics ?? []).length === 0;
+                  const psiUrl = `https://pagespeed.web.dev/analysis/${encodeURIComponent(cwv.url)}`;
+                  return (
+                    <div key={idx} className="rounded-lg border bg-card p-4">
+                      {/* Card header */}
+                      <div className="flex items-start justify-between gap-2 mb-3">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <p className="text-sm font-medium truncate">
+                              {cwv.url}
+                            </p>
+                            {cwv.strategy && (
+                              <span
+                                className={cn(
+                                  "inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide shrink-0",
+                                  cwv.strategy === "mobile"
+                                    ? "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400"
+                                    : "bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400",
+                                )}
+                              >
+                                {cwv.strategy === "mobile"
+                                  ? "📱 Mobile"
+                                  : "🖥️ Desktop"}
+                              </span>
+                            )}
+                          </div>
+                          {cwv.fetchedAt && (
+                            <p className="text-[10px] text-muted-foreground mt-0.5">
+                              Analyzed{" "}
+                              {new Date(cwv.fetchedAt).toLocaleString()}
+                            </p>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-2 flex-shrink-0">
+                          <a
+                            href={psiUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-[10px] text-muted-foreground hover:text-foreground flex items-center gap-0.5"
+                            title="Open in PageSpeed Insights"
+                          >
+                            <ExternalLink className="h-3 w-3" /> PSI
+                          </a>
+                          <PerfScoreBadge score={cwv.performanceScore} />
+                        </div>
+                      </div>
+
+                      {/* Error / no-data state */}
+                      {hasFailed && (
+                        <div className="mb-3 rounded bg-destructive/10 border border-destructive/20 px-3 py-2 text-xs text-destructive">
+                          {cwv.error?.includes("429") ||
+                          cwv.error?.includes("quota")
+                            ? "Rate limited by PageSpeed Insights API. Add a GOOGLE_PSI_API_KEY for higher limits."
+                            : cwv.error
+                              ? `PSI fetch failed: ${cwv.error}`
+                              : "PSI returned no lighthouse metrics — the page may have timed out or blocked the crawler."}
+                        </div>
+                      )}
+
+                      {/* Metric grid — always show all 6 slots */}
+                      <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+                        {CWV_METRIC_DEFS.map((def) => {
+                          const m = metricMap.get(def.name);
+                          const ratingColor = !m
+                            ? "text-muted-foreground"
+                            : m.rating === "good"
+                              ? "text-green-600"
+                              : m.rating === "poor"
+                                ? "text-red-600"
+                                : "text-yellow-600";
+                          return (
+                            <div
+                              key={def.name}
+                              className="rounded border bg-muted/20 px-2.5 py-2"
+                            >
+                              <div className="text-[10px] text-muted-foreground font-medium uppercase tracking-wide mb-0.5">
+                                {def.name}
+                              </div>
+                              <div
+                                className={`text-lg font-bold leading-tight ${ratingColor}`}
+                              >
+                                {m ? def.format(m.value) : "—"}
+                              </div>
+                              <div className="flex items-center justify-between mt-0.5">
+                                <span className="text-[10px] text-muted-foreground">
+                                  {def.hint}
+                                </span>
+                                {m && <CwvRatingBadge rating={m.rating} />}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+
+                      {/* Lighthouse Optimizations (#875) */}
+                      {cwv.optimizations && cwv.optimizations.length > 0 && (
+                        <div className="mt-3">
+                          <h5 className="text-xs font-semibold mb-1.5">
+                            Optimization Opportunities
+                          </h5>
+                          <div className="space-y-1">
+                            {cwv.optimizations.slice(0, 5).map((opt) => (
+                              <div
+                                key={opt.auditId}
+                                className="flex items-start gap-2 rounded border bg-muted/20 px-2.5 py-1.5"
+                              >
+                                <span
+                                  className={`shrink-0 mt-0.5 w-1.5 h-1.5 rounded-full ${
+                                    opt.category === "opportunity"
+                                      ? "bg-orange-500"
+                                      : "bg-blue-500"
+                                  }`}
+                                />
+                                <div className="flex-1 min-w-0">
+                                  <p className="text-xs font-medium">
+                                    {opt.title}
+                                  </p>
+                                  {(opt.savingsMs || opt.savingsBytes) && (
+                                    <p className="text-[10px] text-muted-foreground">
+                                      {opt.savingsMs
+                                        ? `Save ~${(opt.savingsMs / 1000).toFixed(1)}s`
+                                        : ""}
+                                      {opt.savingsMs && opt.savingsBytes
+                                        ? " · "
+                                        : ""}
+                                      {opt.savingsBytes
+                                        ? `${(opt.savingsBytes / 1024).toFixed(0)} KB`
+                                        : ""}
+                                    </p>
+                                  )}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="flex flex-col items-center justify-center gap-4 py-12">
+                <div className="flex flex-col items-center gap-2 text-center">
+                  <Gauge className="h-10 w-10 text-muted-foreground/40" />
+                  <p className="text-sm font-medium">
+                    No Core Web Vitals data yet
+                  </p>
+                  <p className="text-xs text-muted-foreground max-w-sm">
+                    Fetch performance metrics from Google PageSpeed Insights for
+                    the pages in your latest audit.
+                    {!latest?.id && " Run a site audit first."}
+                  </p>
+                </div>
+                {latest?.id && (
+                  <div className="flex flex-col items-center gap-2">
+                    <button
+                      onClick={runCwvAnalysis}
+                      disabled={cwvAnalyzing}
+                      className="px-4 py-2 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {cwvAnalyzing
+                        ? "Analyzing performance…"
+                        : "Analyze Performance"}
+                    </button>
+                    {cwvAnalyzing && (
+                      <p className="text-xs text-muted-foreground">
+                        Fetching metrics from PageSpeed Insights (may take 30–60
+                        s)…
+                      </p>
+                    )}
+                    {cwvError && (
+                      <p className="text-xs text-destructive">{cwvError}</p>
+                    )}
                     <p className="text-xs text-muted-foreground">
-                      Fetching metrics from PageSpeed Insights (may take 30–60
-                      s)…
+                      Analyzes up to 5 pages · Uses Google PSI free tier ·
+                      Results cached 24 h
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
+          </TabsContent>
+
+          {/* ── History ──────────────────────────────────────────── */}
+          <TabsContent value="history" className="mt-6 space-y-6">
+            <AuditTrends siteUrl={latest?.siteUrl} />
+            <ScheduledAudits />
+          </TabsContent>
+
+          {/* ── Export ───────────────────────────────────────────── */}
+          <TabsContent value="export" className="mt-6">
+            <div className="rounded-xl border bg-card p-6 space-y-4">
+              {history && history.length > 0 ? (
+                <>
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">Select Audit</label>
+                    <select
+                      value={selectedId ?? ""}
+                      onChange={(e) =>
+                        setSelectedId(
+                          e.target.value ? Number(e.target.value) : null,
+                        )
+                      }
+                      className="w-full rounded-md border bg-background px-3 py-2 text-sm"
+                    >
+                      <option value="">Choose an audit…</option>
+                      {history.map((s) => (
+                        <option key={s.id} value={s.id}>
+                          {s.siteUrl} — Score {s.healthScore} —{" "}
+                          {new Date(s.createdAt).toLocaleDateString()}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  {!selectedId && (
+                    <p className="text-xs text-muted-foreground">
+                      Select an audit from the dropdown above to export.
                     </p>
                   )}
-                  {cwvError && (
-                    <p className="text-xs text-destructive">{cwvError}</p>
-                  )}
-                  <p className="text-xs text-muted-foreground">
-                    Analyzes up to 5 pages · Uses Google PSI free tier · Results
-                    cached 24 h
-                  </p>
-                </div>
+                  <ExportDialog snapshotId={selectedId} />
+                </>
+              ) : (
+                <EmptyState message="No audits available yet. Run an audit first to enable export." />
               )}
             </div>
-          )}
-        </TabsContent>
+          </TabsContent>
 
-        {/* ── History ──────────────────────────────────────────── */}
-        <TabsContent value="history" className="mt-6 space-y-6">
-          <AuditTrends siteUrl={latest?.siteUrl} />
-          <ScheduledAudits />
-        </TabsContent>
+          {/* ── Schema Generator (#879) ─────────────────────────── */}
+          <TabsContent value="schema" className="mt-6">
+            <div className="rounded-xl border bg-card p-6">
+              <h3 className="text-sm font-semibold mb-4">
+                Schema Markup Generator
+              </h3>
+              <p className="text-xs text-muted-foreground mb-4">
+                Generate JSON-LD structured data for your pages. Choose a
+                Schema.org type, fill in the fields, and copy the output.
+              </p>
+              <SchemaGeneratorPanel />
+            </div>
+          </TabsContent>
 
-        {/* ── Export ───────────────────────────────────────────── */}
-        <TabsContent value="export" className="mt-6">
-          <div className="rounded-xl border bg-card p-6 space-y-4">
-            {history && history.length > 0 ? (
-              <>
-                <div className="space-y-2">
-                  <label className="text-sm font-medium">Select Audit</label>
-                  <select
-                    value={selectedId ?? ""}
-                    onChange={(e) =>
-                      setSelectedId(
-                        e.target.value ? Number(e.target.value) : null,
-                      )
-                    }
-                    className="w-full rounded-md border bg-background px-3 py-2 text-sm"
-                  >
-                    <option value="">Choose an audit…</option>
-                    {history.map((s) => (
-                      <option key={s.id} value={s.id}>
-                        {s.siteUrl} — Score {s.healthScore} —{" "}
-                        {new Date(s.createdAt).toLocaleDateString()}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                {!selectedId && (
-                  <p className="text-xs text-muted-foreground">
-                    Select an audit from the dropdown above to export.
-                  </p>
-                )}
-                <ExportDialog snapshotId={selectedId} />
-              </>
-            ) : (
-              <EmptyState message="No audits available yet. Run an audit first to enable export." />
-            )}
-          </div>
-        </TabsContent>
-
-        {/* ── Schema Generator (#879) ─────────────────────────── */}
-        <TabsContent value="schema" className="mt-6">
-          <div className="rounded-xl border bg-card p-6">
-            <h3 className="text-sm font-semibold mb-4">
-              Schema Markup Generator
-            </h3>
-            <p className="text-xs text-muted-foreground mb-4">
-              Generate JSON-LD structured data for your pages. Choose a
-              Schema.org type, fill in the fields, and copy the output.
-            </p>
-            <SchemaGeneratorPanel />
-          </div>
-        </TabsContent>
-
-        {/* ── Meta Generator (#878) ───────────────────────────── */}
-        <TabsContent value="meta-gen" className="mt-6">
-          <div className="rounded-xl border bg-card p-6">
-            <h3 className="text-sm font-semibold mb-4">
-              AI Meta Tag Generator
-            </h3>
-            <p className="text-xs text-muted-foreground mb-4">
-              Generate SEO-optimized title and meta description variants using
-              AI. Produces 3 options each with character counts and SERP
-              previews.
-            </p>
-            <MetaGeneratorPanel />
-          </div>
-        </TabsContent>
-      </Tabs>
+          {/* ── Meta Generator (#878) ───────────────────────────── */}
+          <TabsContent value="meta-gen" className="mt-6">
+            <div className="rounded-xl border bg-card p-6">
+              <h3 className="text-sm font-semibold mb-4">
+                AI Meta Tag Generator
+              </h3>
+              <p className="text-xs text-muted-foreground mb-4">
+                Generate SEO-optimized title and meta description variants using
+                AI. Produces 3 options each with character counts and SERP
+                previews.
+              </p>
+              <MetaGeneratorPanel />
+            </div>
+          </TabsContent>
+        </Tabs>
+      )}
     </main>
   );
 }

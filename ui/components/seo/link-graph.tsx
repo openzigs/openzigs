@@ -69,7 +69,20 @@ export function LinkGraph({
   useEffect(() => {
     updateDimensions();
     window.addEventListener("resize", updateDimensions);
-    return () => window.removeEventListener("resize", updateDimensions);
+    // Also observe parent container — handles tab switches and sidebar toggles
+    // that resize the container without firing window resize.
+    let observer: ResizeObserver | undefined;
+    if (
+      typeof ResizeObserver !== "undefined" &&
+      svgRef.current?.parentElement
+    ) {
+      observer = new ResizeObserver(() => updateDimensions());
+      observer.observe(svgRef.current.parentElement);
+    }
+    return () => {
+      window.removeEventListener("resize", updateDimensions);
+      observer?.disconnect();
+    };
   }, [updateDimensions]);
 
   useEffect(() => {

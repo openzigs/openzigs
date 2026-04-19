@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { fetchJson } from "@/lib/api";
 
 /** Supported schema types from the backend. */
@@ -55,6 +55,13 @@ export function SchemaGeneratorPanel() {
       setFields([]);
     }
   };
+
+  // Load fields for the default selected type on mount so the form
+  // is populated immediately rather than waiting for an explicit click.
+  useEffect(() => {
+    void loadFields(selectedType);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const generateSchema = async () => {
     setLoading(true);

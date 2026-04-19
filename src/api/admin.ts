@@ -1571,6 +1571,44 @@ export const createAdminRouter = ({
   });
 
   /**
+   * Direct tool invocation endpoint (used by SEO admin panels that need to
+   * call a specific MCP tool without going through chat). Validates input
+   * against the tool's Zod schema and runs the handler.
+   */
+  router.post("/tools/:name/invoke", async (req, res) => {
+    const { name } = req.params;
+    const tool = toolRegistry.getToolDefinition(name);
+    if (!tool) {
+      return res.status(404).json({ error: `Unknown tool: ${name}` });
+    }
+    if (!toolRegistry.isEnabled(name)) {
+      return res.status(403).json({ error: `Tool '${name}' is disabled` });
+    }
+    const args = (req.body ?? {}) as Record<string, unknown>;
+    const parsed = tool.zodSchema.safeParse(args);
+    if (!parsed.success) {
+      return res.status(400).json({
+        error: "Invalid arguments",
+        details: parsed.error.issues,
+      });
+    }
+    try {
+      const result = await tool.handler(parsed.data as Record<string, unknown>);
+      if (result.isError) {
+        return res.status(502).json({ error: result.text, isError: true });
+      }
+      return res.json({ ok: true, tool: name, text: result.text });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      logger.error("[admin] Tool invocation failed", {
+        tool: name,
+        error: message,
+      });
+      return res.status(500).json({ error: message });
+    }
+  });
+
+  /**
    * @deprecated Redirects to local-server tools endpoint.
    * Kept for backward compatibility with older UI builds.
    */

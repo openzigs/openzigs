@@ -39,6 +39,7 @@ import {
 } from "./link-analyzer.js";
 import {
   analyzeContent,
+  analyzeContentFreshness,
   type ContentPage,
   type ContentAnalysisResult,
 } from "./content-analyzer.js";
@@ -560,7 +561,7 @@ function buildLinkAnalysis(
 function buildContentAnalysis(
   pages: PageAuditResult[],
   crawledContents: Map<string, ExtractedContent>,
-): ContentAnalysisResult {
+): ContentAnalysisResult & { freshness: ReturnType<typeof analyzeContentFreshness> } {
   const contentPages: ContentPage[] = pages.map((p) => {
     const content = crawledContents.get(p.url);
     return {
@@ -571,7 +572,19 @@ function buildContentAnalysis(
     };
   });
 
-  return analyzeContent(contentPages);
+  const freshnessInput = pages
+    .map((p) => {
+      const content = crawledContents.get(p.url);
+      return content
+        ? { url: p.url, jsonLdBlocks: content.jsonLdBlocks }
+        : null;
+    })
+    .filter((entry): entry is { url: string; jsonLdBlocks: ExtractedContent["jsonLdBlocks"] } => entry !== null);
+
+  return {
+    ...analyzeContent(contentPages),
+    freshness: analyzeContentFreshness(freshnessInput),
+  };
 }
 
 /** Detect site-wide issues by analyzing patterns across all pages. */

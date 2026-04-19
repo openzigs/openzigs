@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **SEO Suite: Tool invocation route** (PR #849 walkthrough bug #6 — BLOCKER): Added `POST /api/admin/tools/:name/invoke` endpoint so the admin UI can actually run registered tools (validates args via the tool's Zod schema, returns 404/403/400/502/500 with structured errors). Previously the UI called a route that did not exist.
+- **SEO Suite: Stale "Latest vs Previous" delta** (PR #849 walkthrough bug #1): `handleOperationComplete` and the CWV-analysis success path now invalidate `seo-comparison` and `seo-snapshot` queries in addition to `seo-history`, so the comparison panel and snapshot data refresh after a new run.
+- **SEO Suite: Misleading CWV "no pages" error** (PR #849 walkthrough bug #4): `/api/seo/cwv` now returns `urlsAttempted` plus a per-URL `errors[]` collected from PSI failures; the UI surfaces the first error and prompts users to set `GOOGLE_PSI_API_KEY` instead of claiming the snapshot has no page data.
+- **SEO Suite: Content freshness panel always empty** (PR #849 walkthrough bug #3): `buildContentAnalysis()` in the site-audit tool now also runs `analyzeContentFreshness()` over the JSON-LD blocks of each crawled page and includes the result in the snapshot.
+- **SEO Suite: Schema generator default fields not loaded** (PR #849 walkthrough bug #5): Schema Generator panel now fetches the field set for the default schema type (`Article`) on mount instead of waiting for an explicit type change.
+- **SEO Suite: Workbench "SEO Suite" link navigated away** (PR #849 walkthrough bug #14): Workbench top bar now opens the in-place `SeoAnalysisDialog` (gap-analysis chat) instead of a `next/link` to the SEO page.
+- **SEO Suite: Loading text reflected wrong mode after switch** (PR #849 walkthrough bug #9): Added `runningMode` state so the persistent "Running …" indicator shows the mode that actually started the run, even if the user switches the mode dropdown mid-run.
+- **SEO Suite: Dashboard tabs leaked across modes** (PR #849 walkthrough bug #12): The Overview/Audit/Links/Content/Performance/History/Export/Schema/Meta-Gen tab strip is now gated behind `mode === "site-audit"`.
+- **SEO Suite: Dataset run had no result UI** (PR #849 walkthrough bug #13): Added `DatasetResultCard` that subscribes to the `chat:stream` socket while a dataset run is active, parses the manifest path / output directory / file list out of the streamed output, and renders them with copy-to-clipboard buttons.
+- **SEO Suite: Link graph not resizing on container changes** (PR #849 walkthrough bug #2): `LinkGraph` now uses a `ResizeObserver` on its parent in addition to the `window` resize listener, so the SVG re-measures when its container changes size (tab switches, sidebar collapse, etc.).
 - LTX worker: garbled/snow video output caused by `LTX_USE_PREQUANT=1` in `.env` forcing broken AITRADER pre-quantized 4-bit weights instead of runtime quantization from the clean BF16 base model (`mlx-community/LTX-2-distilled-bf16`). The CharafChnioune fork auto-detects AITRADER repos and applies runtime quantization — `LTX_USE_PREQUANT` must not be set.
 - LTX worker: added `sidecars/worker/.env.example` with documented env vars and a prominent warning against setting `LTX_USE_PREQUANT=1`.
 
