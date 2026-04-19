@@ -26,6 +26,7 @@ const fakeProfile = {
   recommended_tier: "medium",
   recommended_tier_pooled: "ultra",
   pooling_supported: true,
+  pooling_mode: "off",
   same_arch: true,
   pinning: { "image-gen": 0, audio: 0, worker: 1, lipsync: 1, sadtalker: 1 },
   detected_at: "2026-04-19T00:00:00.000Z",
@@ -183,5 +184,38 @@ describe("GpuPanel", () => {
     await waitFor(() => {
       expect(screen.getByText("No GPU detected")).toBeInTheDocument();
     });
+  });
+
+  it("initializes pooling mode from profile.pooling_mode", async () => {
+    const activePoolingProfile = {
+      ...fakeProfile,
+      pooling_mode: "manual-flux",
+    };
+    mockFetchJson.mockImplementation((url: string) => {
+      if (url === "/api/system/gpu") return Promise.resolve(activePoolingProfile);
+      return Promise.reject(new Error("not available"));
+    });
+
+    render(<GpuPanel />, { wrapper });
+
+    await waitFor(() => {
+      expect(screen.getByText("VRAM Pooling Mode")).toBeInTheDocument();
+    });
+
+    const select = screen.getByDisplayValue(
+      "Manual FLUX (split across GPUs)",
+    );
+    expect(select).toBeInTheDocument();
+  });
+
+  it("renders VRAM bar with correct used percentage", async () => {
+    render(<GpuPanel />, { wrapper });
+
+    await waitFor(() => {
+      expect(screen.getByText("GPU 0")).toBeInTheDocument();
+    });
+
+    // GPU 0: total=12288, free=11500 → used = 788 MB = 0.8 GB
+    expect(screen.getByText("0.8 GB used")).toBeInTheDocument();
   });
 });

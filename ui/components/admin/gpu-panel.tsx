@@ -21,6 +21,7 @@ type GpuProfile = {
   recommended_tier: string;
   recommended_tier_pooled?: string;
   pooling_supported: boolean;
+  pooling_mode?: string;
   same_arch: boolean;
   pinning: Record<string, number>;
   detected_at: string;
@@ -71,14 +72,13 @@ const BoolBadge = ({ value, label }: { value: boolean; label: string }) => (
   </span>
 );
 
-const VramBar = ({ used_mb, total_mb }: { used_mb: number; total_mb: number }) => {
-  const pct = total_mb > 0 ? Math.round(((total_mb - used_mb) / total_mb) * 100) : 0;
-  const usedPct = 100 - pct;
+const VramBar = ({ free_mb, total_mb }: { free_mb: number; total_mb: number }) => {
+  const usedPct = total_mb > 0 ? Math.round(((total_mb - free_mb) / total_mb) * 100) : 0;
   return (
     <div className="space-y-1">
       <div className="flex justify-between text-xs text-muted-foreground">
         <span>
-          {((total_mb - used_mb) / 1024).toFixed(1)} GB used
+          {((total_mb - free_mb) / 1024).toFixed(1)} GB used
         </span>
         <span>{(total_mb / 1024).toFixed(1)} GB total</span>
       </div>
@@ -128,8 +128,7 @@ export const GpuPanel = () => {
 
   // Sync pooling mode from profile data
   if (profile && !poolingInitialized) {
-    // Infer current pooling from profile — if pooling is supported and pooled tier is set, it may be active
-    setPoolingMode("off");
+    setPoolingMode(profile.pooling_mode ?? "off");
     setPoolingInitialized(true);
   }
 
@@ -247,7 +246,7 @@ export const GpuPanel = () => {
                 </h3>
                 <span className="text-xs text-muted-foreground">{gpu.name}</span>
               </div>
-              <VramBar used_mb={gpu.free_mb} total_mb={gpu.total_mb} />
+              <VramBar free_mb={gpu.free_mb} total_mb={gpu.total_mb} />
             </div>
           ))}
         </div>

@@ -17,6 +17,7 @@ const fakeProfile: GpuProfile = {
   recommended_tier_pooled: "ultra",
   pooling_supported: true,
   same_arch: true,
+  pooling_mode: "off",
   pinning: { "image-gen": 0, audio: 0, worker: 1, lipsync: 1, sadtalker: 1 },
   detected_at: "2026-04-19T00:00:00.000Z",
 };

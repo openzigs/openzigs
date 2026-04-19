@@ -174,6 +174,13 @@ docker exec -it ollama ollama run gemma4:26b "Hello, how are you?"
 docker exec -it ollama ollama ps
 ```
 
+### Environment variables
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `OLLAMA_BASE_URL` | `http://localhost:11434` | Base URL the GPU panel and admin API use to reach Ollama (e.g. for listing models and running-model status). Change this if Ollama is on a different host or port. |
+| `OLLAMA_NUM_GPU` | (Ollama default) | Number of GPU layers to offload. Set to `99` to place all layers on GPU. |
+
 ### Memory budget
 
 | Component         | Size   | Notes                                 |

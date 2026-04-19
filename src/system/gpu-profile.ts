@@ -7,6 +7,9 @@
  * macOS / non-NVIDIA box).
  */
 import { execFile } from "node:child_process";
+import { readFile } from "node:fs/promises";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
@@ -42,6 +45,8 @@ export interface GpuProfile {
    *  pools work in theory but are not validated and can deadlock on NCCL
    *  collective ops, so we surface this so the UI can warn. */
   same_arch: boolean;
+  /** Current pooling mode from user config (e.g. `"manual-flux"` or `"off"`). */
+  pooling_mode?: string;
   /** Default device-pin map: sidecar id → CUDA device index. */
   pinning: Record<string, number>;
   detected_at: string;
@@ -177,11 +182,33 @@ export async function detectGpuProfile(
 
 let cachedProfile: GpuProfile | null = null;
 
+/** Read `gpu.poolingMode` from the user config file.  Returns `undefined`
+ *  when the config file is missing or doesn't contain the key. */
+async function readPoolingModeFromConfig(): Promise<string | undefined> {
+  try {
+    const configPath =
+      process.env.OPENZIGS_CONFIG_PATH ??
+      join(homedir(), ".openzigs", "config.json");
+    const raw = await readFile(configPath, "utf-8");
+    const config = JSON.parse(raw) as Record<string, unknown>;
+    const gpu = config?.gpu;
+    if (gpu && typeof gpu === "object" && "poolingMode" in gpu) {
+      const mode = (gpu as Record<string, unknown>).poolingMode;
+      if (typeof mode === "string") return mode;
+    }
+  } catch {
+    // Config file may not exist — not an error.
+  }
+  return undefined;
+}
+
 export async function getGpuProfile(
   opts?: DetectGpuProfileOptions,
 ): Promise<GpuProfile> {
   if (cachedProfile) return cachedProfile;
-  cachedProfile = await detectGpuProfile(opts);
+  const profile = await detectGpuProfile(opts);
+  profile.pooling_mode = await readPoolingModeFromConfig();
+  cachedProfile = profile;
   return cachedProfile;
 }
 
