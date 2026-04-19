@@ -1,0 +1,41 @@
+# docker-compose.ollama.yml
+# Ollama with dual-GPU access for running Gemma 4 26b (Epic #890, Issue #897).
+#
+# Usage:
+#   docker compose -f docker-compose.ollama.yml up -d
+#   docker exec -it ollama ollama pull gemma4:26b
+#   docker exec -it ollama ollama run gemma4:26b
+#
+# BYOK config: add to ~/.openzigs/config.json under copilot.provider:
+#   {
+#     "type": "openai",
+#     "baseUrl": "http://localhost:11434/v1",
+#     "model": "gemma4:26b"
+#   }
+#
+# See docs/MULTI_GPU.md for detailed setup and benchmarks.
+
+services:
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    environment:
+      # Use all available GPUs for layer splitting
+      - OLLAMA_NUM_GPU=99
+      # Allow connections from the host (for BYOK provider)
+      - OLLAMA_HOST=0.0.0.0
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+volumes:
+  ollama_data:

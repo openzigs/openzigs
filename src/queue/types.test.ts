@@ -15,9 +15,9 @@ import {
 } from "./types.js";
 
 describe("targetNodeForJobType", () => {
-  it("routes image jobs to mac-mini", () => {
-    expect(targetNodeForJobType("txt2img")).toBe("mac-mini");
-    expect(targetNodeForJobType("img2img")).toBe("mac-mini");
+  it("routes image jobs to image-gen", () => {
+    expect(targetNodeForJobType("txt2img")).toBe("image-gen");
+    expect(targetNodeForJobType("img2img")).toBe("image-gen");
   });
 
   it("routes video/audio jobs to m2-pro", () => {
@@ -130,15 +130,15 @@ describe("LTX_MODEL_CATALOG", () => {
 });
 
 describe("VALID_VIDEO_DURATIONS", () => {
-  it("contains the four valid durations", () => {
-    expect(VALID_VIDEO_DURATIONS).toEqual([4, 8, 12, 16]);
+  it("contains the eight valid durations", () => {
+    expect(VALID_VIDEO_DURATIONS).toEqual([4, 8, 12, 16, 20, 24, 28, 32]);
   });
 
   it("includes 4s (single segment)", () => {
     expect(VALID_VIDEO_DURATIONS).toContain(4);
   });
 
-  it("includes 16s (maximum multi-segment)", () => {
-    expect(VALID_VIDEO_DURATIONS).toContain(16);
+  it("includes 32s (maximum multi-segment)", () => {
+    expect(VALID_VIDEO_DURATIONS).toContain(32);
   });
 });

@@ -170,6 +170,26 @@ describe("config/index", () => {
       expect(mockWriteFile).not.toHaveBeenCalled();
     });
 
+    it("strips UTF-8 BOM from config files (Windows PowerShell compatibility)", async () => {
+      // PowerShell 5.1's Set-Content/Out-File default encoding prepends EF BB BF.
+      // Without BOM stripping, JSON.parse throws and the backend fails to start.
+      const bom = "\uFEFF";
+      mockReadFile.mockImplementation((filePath: string) => {
+        if (filePath.includes("default.json")) {
+          return Promise.resolve(bom + JSON.stringify(validDefaultConfig));
+        }
+        return Promise.resolve(bom + JSON.stringify({
+          copilot: { provider: { type: "ollama", baseUrl: "http://localhost:11434" } },
+        }));
+      });
+
+      const config = await mod.loadConfig({ configPath: "/tmp/test-config.json" });
+      expect(config.copilot?.provider).toEqual({
+        type: "ollama",
+        baseUrl: "http://localhost:11434",
+      });
+    });
+
     it("handles optional sections (sentinel, knowledge, voice)", async () => {
       const configWithOptional = {
         ...validDefaultConfig,

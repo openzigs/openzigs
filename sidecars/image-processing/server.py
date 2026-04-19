@@ -93,8 +93,15 @@ def get_upscaler(scale: int = 2):
         from basicsr.archs.rrdbnet_arch import RRDBNet
         import torch
 
+        # Enable cuDNN autotuner on first load
+        if torch.cuda.is_available():
+            torch.backends.cudnn.benchmark = True
+
+        # Use half=True (fp16) on CUDA for 2x throughput and half VRAM
+        use_half = torch.cuda.is_available()
+
         if _upscaler is None or _upscaler._scale != scale:
-            logger.info(f"Loading Real-ESRGAN model (scale={scale})...")
+            logger.info(f"Loading Real-ESRGAN model (scale={scale}, half={use_half})...")
             if scale == 4:
                 model = RRDBNet(num_in_ch=3, num_out_ch=3, num_feat=64, num_block=23, num_grow_ch=32, scale=4)
                 model_path = "RealESRGAN_x4plus.pth"
@@ -106,7 +113,7 @@ def get_upscaler(scale: int = 2):
                 scale=scale,
                 model_path=model_path,
                 model=model,
-                half=False,
+                half=use_half,
             )
             _upscaler._scale = scale
             logger.info("Real-ESRGAN model loaded.")

@@ -153,6 +153,30 @@
     "networkNodeUrl": "",
     "networkNodeToken": ""
   },
+  "lipSync": {
+    "enabled": false,
+    "networkNodeUrl": "",
+    "networkNodeToken": "",
+    "defaultModel": "latentsync-v1.5",
+    "inferenceSteps": 20,
+    "guidanceScale": 1.5,
+    "enableDeepCache": true,
+    "maxDurationSec": 30,
+    "modelIdleTimeoutSec": 300,
+    "memoryLimitGB": 24
+  },
+  "sadTalker": {
+    "enabled": true,
+    "networkNodeUrl": "",
+    "networkNodeToken": "",
+    "size": 512,
+    "preprocess": "crop",
+    "enhancer": "gfpgan",
+    "still": true,
+    "expressionScale": 1.0,
+    "poseStyle": 0,
+    "modelIdleTimeoutSec": 300
+  },
   "socialBrain": {
     "enabled": true,
     "confidenceThreshold": "medium",

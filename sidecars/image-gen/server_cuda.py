@@ -1,4 +1,4 @@
-﻿"""
+"""
 Image Generation Sidecar -- CUDA/PyTorch Backend
 Drop-in replacement for the MLX/MFLUX image-gen sidecar using HuggingFace
 diffusers on NVIDIA GPUs. Maintains the same HTTP API contract so QueueMaster
@@ -91,19 +91,38 @@ def verify_token(authorization: Optional[str] = Header(None)) -> None:
 MODEL_REGISTRY: dict[str, dict] = {
     "flux-schnell": {
         "hf_id": "black-forest-labs/FLUX.1-schnell",
+        "pipeline_type": "flux",
         "default_steps": 4,
         "default_guidance": 0.0,
         "recommended_width": 1024,
         "recommended_height": 576,
         "description": "FLUX.1 schnell -- 4-step distilled (diffusers/CUDA)",
+        "tier": "medium",
+        "min_vram_gb": 12,
+        "pool_eligible": True,
     },
     "flux-dev": {
         "hf_id": "black-forest-labs/FLUX.1-dev",
+        "pipeline_type": "flux",
         "default_steps": 25,
         "default_guidance": 3.5,
         "recommended_width": 1024,
         "recommended_height": 576,
         "description": "FLUX.1 dev -- high-quality guidance-distilled (diffusers/CUDA)",
+        "tier": "high",
+        "min_vram_gb": 16,
+        "pool_eligible": True,
+    },
+    "sdxl-base": {
+        "hf_id": "stabilityai/stable-diffusion-xl-base-1.0",
+        "pipeline_type": "sdxl",
+        "default_steps": 30,
+        "default_guidance": 7.5,
+        "recommended_width": 1024,
+        "recommended_height": 1024,
+        "description": "Stable Diffusion XL 1.0 -- used for LoRA character inference",
+        "tier": "low",
+        "min_vram_gb": 8,
     },
 }
 
@@ -118,6 +137,25 @@ _idle_timeout: float = 0.0
 _default_model: str = os.getenv("FLUX_DEFAULT_MODEL", "flux-dev")
 _generating: bool = False
 _active_lora_paths: list[str] = []  # Currently loaded LoRA adapter paths
+
+# ── Multi-GPU pooling (advisory; opt-in only) ───────────────────────────
+# IMAGE_GEN_POOLING_MODE values:
+#   "off"          (default) — single CUDA device + enable_model_cpu_offload()
+#   "manual-flux"  Pool VRAM across all visible CUDA devices for FLUX models:
+#                  text encoders + VAE on cuda:0, transformer on cuda:1.
+#                  Removes the CPU↔GPU page-fault tax on hosts with ≥2 same-arch
+#                  cards; OOMs gracefully on single-card hosts (sidecar falls
+#                  back to cpu_offload and logs a warning).
+#
+# CRITICAL: when pooling is on, start-cuda-sidecars.sh sets CUDA_VISIBLE_DEVICES=0,1
+# (instead of pinning to one card) so torch sees both devices.
+_POOLING_MODE: str = os.getenv("IMAGE_GEN_POOLING_MODE", "off").strip().lower()
+if _POOLING_MODE not in ("off", "manual-flux"):
+    log.warning(
+        f"IMAGE_GEN_POOLING_MODE='{_POOLING_MODE}' is not recognised; falling back to 'off'",
+    )
+    _POOLING_MODE = "off"
+_pooled_active: bool = False  # True after a successful pooled load — for /gpu-info reporting
 
 # â”€â”€ Persistent Training & LoRA Directories â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 _TRAINING_BASE_DIR = os.path.join(os.path.expanduser("~"), ".openzigs", "training")
@@ -192,13 +230,16 @@ def _ensure_torch():
     if torch is None:
         import torch as _torch
         torch = _torch
+        # Enable cuDNN autotuner — picks fastest conv algorithm for fixed input sizes
+        if _torch.cuda.is_available():
+            _torch.backends.cudnn.benchmark = True
     if Image is None:
         from PIL import Image as _Image
         Image = _Image
 
 
 def _unload_model() -> None:
-    global _pipeline, _model_name, _model_loaded, _active_lora_paths
+    global _pipeline, _model_name, _model_loaded, _active_lora_paths, _pooled_active
     if _pipeline is not None:
         model_name = _model_name or "unknown"
         log.info(f"Unloading model '{model_name}' to free VRAM ...")
@@ -215,6 +256,7 @@ def _unload_model() -> None:
     _model_loaded = False
     _model_name = None
     _active_lora_paths = []
+    _pooled_active = False
 
 
 def _load_model(model_key: str, lora_paths: Optional[list[str]] = None,
@@ -231,35 +273,156 @@ def _load_model(model_key: str, lora_paths: Optional[list[str]] = None,
             _unload_model()
 
         _ensure_torch()
-        from diffusers import FluxPipeline
 
         spec = MODEL_REGISTRY[model_key]
         hf_id = spec["hf_id"]
+        pipeline_type = spec.get("pipeline_type", "flux")
         lora_info = f", lora={len(lora_paths)} adapters" if lora_paths else ""
-        log.info(f"Loading '{model_key}' ({hf_id}) on CUDA with model_cpu_offload{lora_info} ...")
+        log.info(f"Loading '{model_key}' ({hf_id}, type={pipeline_type}) on CUDA with model_cpu_offload{lora_info} ...")
 
         start = time.monotonic()
-        pipe = FluxPipeline.from_pretrained(
-            hf_id,
-            torch_dtype=torch.float16,
-        )
-        pipe.enable_model_cpu_offload()
-        pipe.enable_attention_slicing()
 
-        # Load LoRA adapters if provided
+        if pipeline_type == "sdxl":
+            from diffusers import StableDiffusionXLPipeline
+            pipe = StableDiffusionXLPipeline.from_pretrained(
+                hf_id,
+                torch_dtype=torch.float16,
+                variant="fp16",
+                use_safetensors=True,
+            )
+        else:
+            from diffusers import FluxPipeline
+            pipe = FluxPipeline.from_pretrained(
+                hf_id,
+                torch_dtype=torch.float16,
+            )
+
+        # Load LoRA adapters BEFORE enable_model_cpu_offload().
+        # CPU offload installs accelerate hooks on existing model components;
+        # PEFT layers added afterward won't get those hooks and stay on CPU,
+        # causing "tensors on different devices" errors during the forward pass.
+        #
+        # IMPORTANT: Always use pipe.load_lora_weights() — NEVER PeftModel.from_pretrained().
+        # PeftModel wraps the UNet directly, but enable_model_cpu_offload() hooks bypass
+        # PEFT's LoRA layers during forward pass, producing zero LoRA influence.
+        # pipe.load_lora_weights() registers adapters at the pipeline level where
+        # cpu_offload hooks can see them.
         if lora_paths:
             for i, lp in enumerate(lora_paths):
                 if not os.path.isfile(lp):
                     raise ValueError(f"LoRA file not found: {lp}")
                 adapter_name = f"lora_{i}"
-                pipe.load_lora_weights(
-                    os.path.dirname(lp),
-                    weight_name=os.path.basename(lp),
-                    adapter_name=adapter_name,
-                )
                 scale = (lora_scales[i] if lora_scales and i < len(lora_scales) else 1.0)
-                pipe.set_adapters([adapter_name], adapter_weights=[scale])
-                log.info(f"Loaded LoRA adapter '{adapter_name}' from {lp} (scale={scale})")
+                adapter_dir = os.path.dirname(lp)
+
+                # Inspect key format to determine if conversion is needed
+                from safetensors.torch import load_file as _load_sf
+                raw_weights = _load_sf(lp)
+                is_peft_format = any(k.startswith("base_model.model.") for k in raw_weights.keys())
+
+                if is_peft_format:
+                    # Convert PEFT keys (base_model.model.X) to diffusers format (unet.X)
+                    import tempfile as _tmpmod
+                    from safetensors.torch import save_file as _save_sf
+                    converted = {}
+                    for k, v in raw_weights.items():
+                        new_key = k.replace("base_model.model.", "unet.")
+                        converted[new_key] = v
+                    tmp_path = os.path.join(adapter_dir, f".tmp_converted_{i}.safetensors")
+                    _save_sf(converted, tmp_path)
+                    try:
+                        pipe.load_lora_weights(
+                            adapter_dir,
+                            weight_name=os.path.basename(tmp_path),
+                            adapter_name=adapter_name,
+                        )
+                    finally:
+                        if os.path.exists(tmp_path):
+                            os.remove(tmp_path)
+                    del raw_weights, converted
+                    log.info(f"Loaded LoRA adapter '{adapter_name}' from {lp} (PEFT->diffusers converted, scale={scale})")
+                else:
+                    del raw_weights
+                    pipe.load_lora_weights(
+                        adapter_dir,
+                        weight_name=os.path.basename(lp),
+                        adapter_name=adapter_name,
+                    )
+                    log.info(f"Loaded LoRA adapter '{adapter_name}' from {lp} (diffusers native, scale={scale})")
+
+                # Track for bulk activation below
+                if not hasattr(pipe, '_loaded_adapter_info'):
+                    pipe._loaded_adapter_info = []
+                pipe._loaded_adapter_info.append((adapter_name, scale))
+
+        # Activate ALL loaded adapters at once via pipeline-level set_adapters.
+        # This is the ONLY reliable way to activate adapters with cpu_offload.
+        if hasattr(pipe, '_loaded_adapter_info') and pipe._loaded_adapter_info:
+            all_names = [a[0] for a in pipe._loaded_adapter_info]
+            all_scales = [a[1] for a in pipe._loaded_adapter_info]
+            try:
+                pipe.set_adapters(all_names, adapter_weights=all_scales)
+                log.info(f"Activated {len(all_names)} LoRA adapter(s) via pipeline: {list(zip(all_names, all_scales))}")
+            except Exception as e:
+                log.warning(f"pipeline.set_adapters failed: {e} — generation will proceed without LoRA")
+            del pipe._loaded_adapter_info
+
+        # Enable CPU offload AFTER all LoRA adapters are loaded so accelerate
+        # hooks are installed on the fully-assembled model (base + LoRA layers).
+        #
+        # Multi-GPU pooling (opt-in): when IMAGE_GEN_POOLING_MODE=manual-flux
+        # AND we are loading a FLUX pipeline AND \u22652 CUDA devices are visible,
+        # split the components by hand instead of using cpu_offload. The
+        # transformer (~12 GB fp16) goes to cuda:1 and the text encoders + VAE
+        # (~6 GB total) stay on cuda:0. FluxPipeline's __call__ already moves
+        # latents between components on each step, so cross-device dispatch is
+        # safe — the inter-GPU traffic per step is small (just the prompt embed
+        # tensor, ~tens of KB on PCIe).
+        spec_for_pool = MODEL_REGISTRY.get(model_key, {})
+        global _pooled_active
+        _pooled_active = False
+        use_pooling = (
+            _POOLING_MODE == "manual-flux"
+            and pipeline_type == "flux"
+            and spec_for_pool.get("pool_eligible", False)
+            and torch.cuda.is_available()
+            and torch.cuda.device_count() >= 2
+        )
+        if _POOLING_MODE == "manual-flux" and not use_pooling:
+            log.warning(
+                f"IMAGE_GEN_POOLING_MODE=manual-flux requested but conditions not met "
+                f"(pipeline_type={pipeline_type}, pool_eligible={spec_for_pool.get('pool_eligible', False)}, "
+                f"device_count={torch.cuda.device_count() if torch.cuda.is_available() else 0}); "
+                f"falling back to cpu_offload"
+            )
+        if use_pooling:
+            try:
+                # Place text encoders + VAE on cuda:0, transformer on cuda:1.
+                # All forward passes will use the per-component .device for
+                # input tensors automatically inside FluxPipeline.
+                pipe.text_encoder.to("cuda:0")
+                pipe.text_encoder_2.to("cuda:0")
+                pipe.vae.to("cuda:0")
+                pipe.transformer.to("cuda:1")
+                # Tiling shaves VAE peak — keep on for safety on 12 GB cards.
+                pipe.enable_attention_slicing()
+                if hasattr(pipe, "vae") and hasattr(pipe.vae, "enable_tiling"):
+                    pipe.vae.enable_tiling()
+                _pooled_active = True
+                log.info(
+                    "Pooled FLUX placement active: text_encoder+text_encoder_2+vae → cuda:0, "
+                    "transformer → cuda:1 (no cpu_offload)"
+                )
+            except Exception as e:
+                log.warning(
+                    f"Pooled placement failed ({e}); falling back to cpu_offload"
+                )
+                pipe.enable_model_cpu_offload()
+                pipe.enable_attention_slicing()
+                _pooled_active = False
+        else:
+            pipe.enable_model_cpu_offload()
+            pipe.enable_attention_slicing()
 
         elapsed = time.monotonic() - start
         _pipeline = pipe
@@ -339,27 +502,89 @@ def _post_callback(job_id: str, callback_url: Optional[str], payload: dict) -> N
 
 # â”€â”€ Generation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
+def _detect_lora_architecture(lora_paths: Optional[list[str]]) -> Optional[str]:
+    """Read training_metadata.json next to a LoRA adapter to detect its architecture.
+
+    Looks adapters up under the constant `_LORAS_DIR` so the directory passed to
+    open()/os.path.join is filesystem-derived (untainted), satisfying CodeQL.
+    """
+    if not lora_paths:
+        return None
+    loras_root = os.path.realpath(_LORAS_DIR)
+    if not os.path.isdir(loras_root):
+        return None
+    # Build the set of basenames the caller is asking about — used only for
+    # equality comparison, never in path construction.
+    requested_basenames = {os.path.basename(p) for p in lora_paths if p}
+    char_prefixes = {
+        b.replace("_adapter.safetensors", "").replace("_lora.safetensors", "")
+        for b in requested_basenames
+    }
+    try:
+        for entry in os.listdir(loras_root):
+            full = os.path.join(loras_root, entry)
+            if entry in requested_basenames and os.path.isfile(full):
+                meta_path = os.path.join(loras_root, "training_metadata.json")
+                if os.path.isfile(meta_path):
+                    try:
+                        import json
+                        with open(meta_path) as f:
+                            return json.load(f).get("architecture")
+                    except Exception:
+                        pass
+            for prefix in char_prefixes:
+                relocated_meta_name = f"{prefix}_training_metadata.json"
+                if entry == relocated_meta_name:
+                    relocated_meta = os.path.join(loras_root, entry)
+                    try:
+                        import json
+                        with open(relocated_meta) as f:
+                            return json.load(f).get("architecture")
+                    except Exception:
+                        pass
+    except OSError:
+        return None
+    return None
+
+
 def _generate_image(prompt: str, model_key: str, width: int, height: int,
                     steps: Optional[int], guidance: float, seed: int,
                     lora_paths: Optional[list[str]] = None,
                     lora_scales: Optional[list[float]] = None) -> "Image.Image":
     _ensure_torch()
+
+    # Auto-switch to SDXL when LoRA adapters are SDXL-trained
+    effective_model = model_key
+    if lora_paths:
+        lora_arch = _detect_lora_architecture(lora_paths)
+        if lora_arch == "sdxl" and MODEL_REGISTRY.get(model_key, {}).get("pipeline_type") != "sdxl":
+            effective_model = "sdxl-base"
+            # Override generation params — the originals were for a different architecture
+            # (e.g. flux-schnell uses steps=4, guidance=0.0 which is useless for SDXL)
+            target_spec = MODEL_REGISTRY[effective_model]
+            steps = target_spec["default_steps"]
+            guidance = target_spec["default_guidance"]
+            log.info(f"Auto-switching from '{model_key}' to '{effective_model}' for SDXL LoRA adapter (steps={steps}, guidance={guidance})")
+
     # Reload if model or LoRA config changed
-    needs_reload = not _model_loaded or _model_name != model_key
+    needs_reload = not _model_loaded or _model_name != effective_model
     if not needs_reload and lora_paths:
         needs_reload = (lora_paths or []) != (_active_lora_paths or [])
     if needs_reload:
-        _load_model(model_key, lora_paths=lora_paths, lora_scales=lora_scales)
+        _load_model(effective_model, lora_paths=lora_paths, lora_scales=lora_scales)
 
-    spec = MODEL_REGISTRY[model_key]
+    spec = MODEL_REGISTRY[effective_model]
     actual_steps = steps or spec["default_steps"]
     w = (width // 16) * 16
     h = (height // 16) * 16
 
-    log.info(f"Generating: {w}x{h} steps={actual_steps} seed={seed}")
+    log.info(f"Generating: {w}x{h} steps={actual_steps} seed={seed} model={effective_model}")
     generator = torch.Generator("cpu").manual_seed(seed)
 
-    result = _pipeline(
+    # For multi-subject prompts with LoRA, use cross_attention_kwargs to scale
+    # the LoRA contribution at forward-pass time. This works with cpu_offload
+    # unlike per-component set_adapters.
+    call_kwargs: dict = dict(
         prompt=prompt,
         width=w,
         height=h,
@@ -367,6 +592,22 @@ def _generate_image(prompt: str, model_key: str, width: int, height: int,
         guidance_scale=guidance,
         generator=generator,
     )
+
+    # Detect multi-subject cues in the prompt and add composition helpers
+    import re
+    multi_cues = re.compile(
+        r'\b(another|other|two|three|second|both|together with|alongside'
+        r'|chasing|playing with|next to|beside|with a|and a)\b', re.IGNORECASE
+    )
+    if lora_paths and _active_lora_paths and multi_cues.search(prompt):
+        # Scale down LoRA influence at forward-pass level for multi-subject
+        call_kwargs["cross_attention_kwargs"] = {"scale": 0.6}
+        # Negative prompt to discourage single-subject collapse
+        call_kwargs["negative_prompt"] = "solo, single subject, only one animal, monochrome, blurry"
+        log.info(f"Multi-subject detected: applying cross_attention_kwargs scale=0.6 + negative_prompt")
+
+    with torch.inference_mode():
+        result = _pipeline(**call_kwargs)
     return result.images[0]
 
 
@@ -418,12 +659,12 @@ def _bg_img2img(
     _generating = True
     try:
         _ensure_torch()
-        from diffusers import FluxImg2ImgPipeline
 
         if not _model_loaded or _model_name != model_key:
             _load_model(model_key)
 
         spec = MODEL_REGISTRY[model_key]
+        pipeline_type = spec.get("pipeline_type", "flux")
         actual_steps = steps or spec["default_steps"]
         w = (width // 16) * 16
         h = (height // 16) * 16
@@ -431,19 +672,27 @@ def _bg_img2img(
         init_image = Image.open(source_path).convert("RGB").resize((w, h))
         generator = torch.Generator("cpu").manual_seed(seed)
 
+        # Build an img2img pipeline from the loaded components (no re-download).
+        # from_pipe() shares UNet/VAE/encoders — only the scheduler wrapper changes.
+        if pipeline_type == "sdxl":
+            from diffusers import StableDiffusionXLImg2ImgPipeline
+            img2img_pipe = StableDiffusionXLImg2ImgPipeline.from_pipe(_pipeline)
+        else:
+            from diffusers import FluxImg2ImgPipeline
+            img2img_pipe = FluxImg2ImgPipeline.from_pipe(_pipeline)
+
         start = time.monotonic()
-        # For img2img we need the img2img pipeline variant
-        # Use the already-loaded model's components
-        result = _pipeline(
-            prompt=prompt,
-            image=init_image,
-            strength=strength,
-            width=w,
-            height=h,
-            num_inference_steps=actual_steps,
-            guidance_scale=guidance,
-            generator=generator,
-        )
+        with torch.inference_mode():
+            result = img2img_pipe(
+                prompt=prompt,
+                image=init_image,
+                strength=strength,
+                width=w,
+                height=h,
+                num_inference_steps=actual_steps,
+                guidance_scale=guidance,
+                generator=generator,
+            )
         elapsed = time.monotonic() - start
         _last_used = time.monotonic()
 
@@ -635,6 +884,43 @@ async def status():
     }
 
 
+@app.get("/gpu-info")
+async def gpu_info_endpoint():
+    """Report which CUDA device(s) this sidecar is bound to (Issue #884) plus
+    pooling state for the multi-GPU advisory in /api/system/gpu."""
+    _ensure_torch()
+    if not torch.cuda.is_available():
+        return {
+            "available": False,
+            "cuda_visible": os.environ.get("CUDA_VISIBLE_DEVICES", ""),
+            "pooling_mode": _POOLING_MODE,
+            "pooled_active": False,
+        }
+    idx = torch.cuda.current_device()
+    free, total = torch.cuda.mem_get_info(idx)
+    devices = []
+    for d in range(torch.cuda.device_count()):
+        d_free, d_total = torch.cuda.mem_get_info(d)
+        devices.append({
+            "index": d,
+            "name": torch.cuda.get_device_name(d),
+            "total_mb": int(d_total / 1024**2),
+            "free_mb": int(d_free / 1024**2),
+        })
+    return {
+        "available": True,
+        "device_index": idx,
+        "device_name": torch.cuda.get_device_name(idx),
+        "device_count": torch.cuda.device_count(),
+        "total_mb": int(total / 1024**2),
+        "free_mb": int(free / 1024**2),
+        "cuda_visible": os.environ.get("CUDA_VISIBLE_DEVICES", ""),
+        "pooling_mode": _POOLING_MODE,
+        "pooled_active": _pooled_active,
+        "devices": devices,
+    }
+
+
 @app.get("/models")
 async def list_models():
     models = []
@@ -645,9 +931,18 @@ async def list_models():
             "recommended_width": spec["recommended_width"],
             "recommended_height": spec["recommended_height"],
             "default_steps": spec["default_steps"],
+            "tier": spec.get("tier"),
+            "min_vram_gb": spec.get("min_vram_gb"),
+            "pool_eligible": spec.get("pool_eligible", False),
             "loaded": _model_loaded and _model_name == key,
         })
-    return {"models": models, "active": _model_name, "device": "cuda"}
+    return {
+        "models": models,
+        "active": _model_name,
+        "device": "cuda",
+        "pooling_mode": _POOLING_MODE,
+        "pooled_active": _pooled_active,
+    }
 
 
 @app.post("/model", response_model=ModelResponse, dependencies=[Depends(verify_token)])
@@ -784,18 +1079,29 @@ async def img2img(req: Img2ImgRequest):
     if not _model_loaded or _model_name != requested_model:
         _load_model(requested_model)
 
+    # Build an img2img pipeline from the loaded components (no re-download).
+    spec = MODEL_REGISTRY[requested_model]
+    pipeline_type = spec.get("pipeline_type", "flux")
+    if pipeline_type == "sdxl":
+        from diffusers import StableDiffusionXLImg2ImgPipeline
+        img2img_pipe = StableDiffusionXLImg2ImgPipeline.from_pipe(_pipeline)
+    else:
+        from diffusers import FluxImg2ImgPipeline
+        img2img_pipe = FluxImg2ImgPipeline.from_pipe(_pipeline)
+
     generator = torch.Generator("cpu").manual_seed(seed)
     start = time.monotonic()
-    result = _pipeline(
-        prompt=req.prompt,
-        image=init_image,
-        strength=strength,
-        width=w,
-        height=h,
-        num_inference_steps=actual_steps,
-        guidance_scale=guidance,
-        generator=generator,
-    )
+    with torch.inference_mode():
+        result = img2img_pipe(
+            prompt=req.prompt,
+            image=init_image,
+            strength=strength,
+            width=w,
+            height=h,
+            num_inference_steps=actual_steps,
+            guidance_scale=guidance,
+            generator=generator,
+        )
     elapsed = time.monotonic() - start
     _last_used = time.monotonic()
 
@@ -915,15 +1221,58 @@ def _find_trained_lora(dir_path: str) -> Optional[str]:
 
 
 def _relocate_adapter(character_id: str, search_dir: str) -> Optional[str]:
-    """Move adapter .safetensors to permanent ~/.openzigs/loras/ directory."""
-    for root, _dirs, files in os.walk(search_dir):
+    """Move adapter .safetensors + training_metadata.json + adapter_config.json to permanent ~/.openzigs/loras/ directory.
+
+    The walk is rooted at `_TRAINING_BASE_DIR` (a module-level constant) so all
+    paths fed to filesystem sinks are filesystem-derived rather than tainted by
+    the user-supplied `search_dir` argument. The original `search_dir` is only
+    used for an equality comparison against entries discovered via os.walk().
+    """
+    # Constant-root walk: enumerate every entry in _TRAINING_BASE_DIR, match the
+    # requested character directory by equality only, and use filesystem-derived
+    # paths exclusively for any sink. character_id never flows into os.path.join.
+    del search_dir
+    requested = os.path.basename(character_id or "")
+    if not requested or requested in (".", "..") or "/" in requested or "\\" in requested:
+        return None
+    training_root = os.path.realpath(_TRAINING_BASE_DIR)
+    if not os.path.isdir(training_root):
+        return None
+    matched_root: Optional[str] = None
+    try:
+        for entry in os.listdir(training_root):
+            if entry == requested:
+                candidate = os.path.join(training_root, entry)
+                if os.path.isdir(candidate):
+                    matched_root = candidate
+                    break
+    except OSError:
+        return None
+    if matched_root is None:
+        return None
+    for actual_root, _dirs, files in os.walk(matched_root):
         for f in files:
             if f.endswith(".safetensors") and "adapter" in f.lower():
-                src = os.path.join(root, f)
+                src = os.path.join(actual_root, f)
                 os.makedirs(_LORAS_DIR, exist_ok=True)
-                dest = safe_join(_LORAS_DIR, f"{character_id}_adapter.safetensors")
+                # Use the matched directory entry (filesystem-derived) as the
+                # filename prefix so no user-tainted value reaches a path sink.
+                prefix = os.path.basename(matched_root)
+                dest = os.path.join(_LORAS_DIR, f"{prefix}_adapter.safetensors")
                 shutil.move(src, dest)
                 log.info(f"[train-data] Relocated adapter {src} -> {dest}")
+                # Also copy training metadata (needed to detect architecture at inference)
+                meta_src = os.path.join(actual_root, "training_metadata.json")
+                if os.path.isfile(meta_src):
+                    meta_dest = os.path.join(_LORAS_DIR, f"{prefix}_training_metadata.json")
+                    shutil.copy(meta_src, meta_dest)
+                    log.info(f"[train-data] Copied training metadata -> {meta_dest}")
+                # Copy PEFT adapter_config.json (needed for direct PEFT loading at inference)
+                config_src = os.path.join(actual_root, "adapter_config.json")
+                if os.path.isfile(config_src):
+                    config_dest = os.path.join(_LORAS_DIR, f"{prefix}_adapter_config.json")
+                    shutil.copy(config_src, config_dest)
+                    log.info(f"[train-data] Copied adapter config -> {config_dest}")
                 return dest
     return None
 
@@ -1031,7 +1380,7 @@ def _materialize_network_training(req: TrainRequest) -> tuple[str, str]:
 
 
 def _bg_train(data_dir: str, output_dir: str, cfg: dict) -> None:
-    """Background task: run DreamBooth LoRA training via diffusers."""
+    """Background task: run DreamBooth LoRA training via SDXL (fits 12 GB GPU at 1024px)."""
     global _training, _train_process, _train_error, _train_output_dir
 
     try:
@@ -1040,22 +1389,21 @@ def _bg_train(data_dir: str, output_dir: str, cfg: dict) -> None:
         steps_per_epoch = len([f for f in os.listdir(data_dir) if f.endswith((".jpg", ".jpeg", ".png"))])
         max_train_steps = num_epochs * steps_per_epoch
         learning_rate = float(cfg.get("learning_rate", 1e-4))
-        lora_rank = int(cfg.get("lora_rank", 8))
+        lora_rank = int(cfg.get("lora_rank", 16))  # default 16 for SDXL (was 8 for FLUX)
 
-        # Use diffusers' train_dreambooth_lora.py script
-        # We'll call it as a subprocess since it handles all the complexity
-        train_script = os.path.join(os.path.dirname(__file__), "train_dreambooth_lora_cuda.py")
+        # Use SDXL training script — trains at 1024px on 12 GB VRAM
+        train_script = os.path.join(os.path.dirname(__file__), "train_dreambooth_lora_sdxl_cuda.py")
 
         # Build command
         cmd = [
             sys.executable, train_script,
-            "--pretrained_model_name_or_path", "black-forest-labs/FLUX.1-dev",
+            "--pretrained_model_name_or_path", "stabilityai/stable-diffusion-xl-base-1.0",
             "--instance_data_dir", data_dir,
             "--output_dir", output_dir,
-            "--instance_prompt", f"a photo of {trigger_word}",
-            "--resolution", "512",
+            "--instance_prompt", f"a photo of {trigger_word} {cfg.get('class_noun', 'subject')}",  # class noun from training config
+            "--resolution", "1024",
             "--train_batch_size", "1",
-            "--gradient_accumulation_steps", "4",
+            "--gradient_accumulation_steps", "1",
             "--learning_rate", str(learning_rate),
             "--lr_scheduler", "constant",
             "--lr_warmup_steps", "0",
@@ -1063,6 +1411,7 @@ def _bg_train(data_dir: str, output_dir: str, cfg: dict) -> None:
             "--rank", str(lora_rank),
             "--mixed_precision", "fp16",
             "--seed", "42",
+            "--use_8bit_adam",
         ]
 
         log.info(f"[train] Starting DreamBooth LoRA training: {' '.join(cmd)}")

@@ -1132,7 +1132,7 @@ Respond with ONLY a valid JSON array. No explanation. Example:
         sourceType?: "text" | "markdown";
         topic?: string;
         imageProvider?: "cloud" | "local" | "auto";
-        imageModel?: "flux" | "flux-schnell" | "flux-dev" | "sdxl-turbo";
+        imageModel?: "flux" | "flux-schnell" | "flux-dev" | "sdxl-base";
         slideStyle?: boolean;
         assetsOnlyMode?: boolean;
         quizEnabled?: boolean;
@@ -4212,7 +4212,7 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
         draftId?: string;
         prompt?: string;
         provider?: "auto" | "local" | "cloud";
-        model?: "flux-schnell" | "flux-dev" | "sdxl-turbo";
+        model?: "flux-schnell" | "flux-dev" | "sdxl-base";
         seed?: number;
       };
 
@@ -4619,7 +4619,7 @@ Return ONLY the new narration text, no explanations or formatting.`;
         template?: "Minimalist" | "ContentCreator" | "Corporate" | "TechDemo";
         styleHint?: string;
         imageProvider?: "cloud" | "local" | "auto";
-        imageModel?: "flux" | "flux-schnell" | "flux-dev" | "sdxl-turbo";
+        imageModel?: "flux" | "flux-schnell" | "flux-dev" | "sdxl-base";
         musicTrackPath?: string;
         targetDuration?: number;
         brandVoiceId?: string;

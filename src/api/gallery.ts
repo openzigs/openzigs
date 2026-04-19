@@ -134,6 +134,100 @@ export const createGalleryRouter = ({
     }
   });
 
+  // ── POST /enhance-speech — AI-enhance speech text for talking head ──
+  router.post("/enhance-speech", async (req, res) => {
+    try {
+      const { raw_text, llmModel } = req.body as { raw_text?: string; llmModel?: string };
+
+      if (!raw_text?.trim()) {
+        res.status(400).json({ error: "raw_text is required" });
+        return;
+      }
+
+      const text = raw_text.trim();
+      const wordCount = text.split(/\s+/).length;
+
+      const systemContent = `You are an expert speech writer and dialogue coach for AI talking-head video generation.
+
+Your job: take rough speech text and polish it for natural spoken delivery by a TTS engine.
+
+## Guidelines
+1. **Natural cadence**: Break long sentences into shorter, conversational phrases. Add commas and dashes for natural pauses.
+2. **Speakable**: Avoid abbreviations, acronyms, or symbols the TTS might mispronounce. Spell out numbers under 100.
+3. **Engaging**: Make the speech sound like a real person talking — warm, clear, and confident.
+4. **Preserve intent**: Keep the user's core message and meaning intact. Don't change the topic or add new information.
+5. **Duration-aware**: Keep the enhanced text roughly the same length as the original. Don't pad with filler.
+6. **Punctuation for prosody**: Use ellipses for dramatic pauses, em-dashes for asides, and exclamation points sparingly for emphasis.
+
+## Estimated Speaking Rate
+- ~150 words per minute at normal TTS speed
+- ~14 characters per second
+
+## Rules
+- Respond ONLY with a bare JSON object — no markdown, no code fences:
+{"thinking": "One sentence explaining your changes", "enhanced_text": "The polished speech text", "estimated_duration_sec": 10}
+- estimated_duration_sec should be computed as: word_count / 2.5 (150 wpm = 2.5 words/sec)`;
+
+      const userMessage = `Polish this speech text for TTS delivery in a talking-head video:
+
+"${text}"
+
+Word count: ${wordCount}
+Respond with JSON only.`;
+
+      const webSearchTool = toolRegistry.getToolDefinition("web-search");
+      const tools = webSearchTool ? [webSearchTool] : [];
+
+      const conversationId = `enhance-speech-${Date.now()}`;
+      let fullResponse = "";
+      const selectedModel = llmModel || (await getUserSelectedModel());
+
+      for await (const chunk of copilot.chat(userMessage, {
+        conversationId,
+        systemMessage: { mode: "replace", content: systemContent },
+        tools,
+        availableTools: ["web-search"],
+        ...(selectedModel ? { model: selectedModel } : {}),
+      })) {
+        fullResponse += chunk;
+      }
+
+      await copilot.destroySession(conversationId);
+
+      // Parse JSON response
+      const jsonStr = extractJsonString(fullResponse);
+      if (jsonStr) {
+        const parsed = JSON.parse(jsonStr) as {
+          thinking?: string;
+          enhanced_text?: string;
+          estimated_duration_sec?: number;
+        };
+        if (parsed.enhanced_text) {
+          logger.info(
+            `[GalleryAPI] Speech enhanced: "${text.slice(0, 50)}..." → "${parsed.enhanced_text.slice(0, 50)}..."`,
+          );
+          res.json({
+            enhanced_text: parsed.enhanced_text,
+            thinking: parsed.thinking ?? "",
+            estimated_duration_sec: parsed.estimated_duration_sec ?? Math.round(wordCount / 2.5),
+          });
+          return;
+        }
+      }
+
+      // Fallback: return original with estimate
+      res.json({
+        enhanced_text: text,
+        thinking: "Could not enhance — returning original text",
+        estimated_duration_sec: Math.round(wordCount / 2.5),
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.warn(`[GalleryAPI] Enhance speech failed: ${msg}`);
+      res.status(500).json({ error: msg });
+    }
+  });
+
   return router;
 };
 
@@ -297,13 +391,13 @@ function getModelGuidance(
 - Strength parameter controls how much the output deviates from the source.
 - 20 steps default, guidance 2.5. Higher strength = more dramatic changes.`;
 
-    case "sdxl-turbo":
-      return `## SDXL Turbo Prompting Guide
-- Extremely fast, 1-4 steps. Use concise, keyword-style prompts.
-- Comma-separated descriptors work well: "subject, style, lighting, quality".
+    case "sdxl-base":
+      return `## SDXL Base Prompting Guide
+- Designed for character LoRA inference and fine-tuned models.
+- Use detailed, descriptive prompts: "portrait of [character], [setting], [lighting], [style]".
 - Add quality boosters: "masterpiece, best quality, highly detailed, 8k".
-- Negative prompt support — avoid including negative keywords in the main prompt.
-- Fixed at 512×512 for best results.`;
+- Negative prompt support — use negative_prompt to suppress unwanted elements.
+- 1024×1024 recommended for best LoRA results. Typical steps: 20–30, guidance 7.0.`;
 
     default:
       return `## General Prompting Guide

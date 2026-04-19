@@ -36,7 +36,7 @@ describe("MediaQueueRepository", () => {
       expect(job.id).toBeTruthy();
       expect(job.type).toBe("txt2img");
       expect(job.requiredModel).toBe("flux-schnell");
-      expect(job.targetNode).toBe("mac-mini");
+      expect(job.targetNode).toBe("image-gen");
       expect(job.status).toBe("pending");
       expect(job.payload.prompt).toBe("a red fox");
       expect(job.priority).toBe(0);
@@ -83,7 +83,7 @@ describe("MediaQueueRepository", () => {
       repo.createJob({ type: "txt2video", payload: { prompt: "vid1" } });
       repo.createJob({ type: "txt2img", payload: { prompt: "img2" } });
 
-      const macMiniPending = repo.getPendingJobs("mac-mini");
+      const macMiniPending = repo.getPendingJobs("image-gen");
       expect(macMiniPending).toHaveLength(2);
 
       const m2ProPending = repo.getPendingJobs("m2-pro");

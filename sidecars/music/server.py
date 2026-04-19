@@ -82,6 +82,14 @@ DEFAULT_LM = os.environ.get("ACESTEP_LM", "acestep-5Hz-lm-0.6B")
 DEFAULT_BACKEND = os.environ.get("ACESTEP_BACKEND", "pt")
 DEFAULT_DEVICE = os.environ.get("ACESTEP_DEVICE", "auto")
 
+# Enable cuDNN autotuner for faster convolutions on CUDA
+try:
+    import torch as _torch_init
+    if _torch_init.cuda.is_available():
+        _torch_init.backends.cudnn.benchmark = True
+except ImportError:
+    pass
+
 # Ensure the cloned ACE-Step repo is first on sys.path so that imports of
 # `acestep` use the source files where _get_project_root() resolves
 # correctly to ACESTEP_DIR (and finds checkpoints/ there).
@@ -126,8 +134,8 @@ def _ensure_model_loaded() -> None:
                 project_root=ACESTEP_DIR,
                 config_path=DEFAULT_MODEL,
                 device=DEFAULT_DEVICE,
-                use_flash_attention=False,
-                compile_model=False,
+                use_flash_attention=True,
+                compile_model=True,
                 offload_to_cpu=False,
             )
             if not ok:

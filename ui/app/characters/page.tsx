@@ -79,7 +79,7 @@ function statusBadge(status: CharacterProfile["status"]) {
 }
 
 function photoUrl(characterId: string, photoPath: string): string {
-  const filename = photoPath.split("/").pop() ?? "";
+  const filename = photoPath.split(/[/\\]/).pop() ?? "";
   return buildMediaUrl(
     `/api/characters/${characterId}/photos/${encodeURIComponent(filename)}`,
   );
@@ -107,8 +107,8 @@ export default function CharactersPage() {
   // Training config
   const [trainSteps, setTrainSteps] = useState(25);
   const [trainLR, setTrainLR] = useState(0.0001);
-  const [trainRank, setTrainRank] = useState(8);
-  const [trainEpochs, setTrainEpochs] = useState(50);
+  const [trainRank, setTrainRank] = useState(16);
+  const [trainEpochs, setTrainEpochs] = useState(200);
   const [trainNotifyViaTelegram, setTrainNotifyViaTelegram] = useState(false);
 
   // AI Enhance model selection dialog
@@ -464,6 +464,12 @@ export default function CharactersPage() {
               <label className="text-sm font-medium">
                 LoRA Scale: {createScale}
               </label>
+              <p className="mb-1 text-[10px] text-muted-foreground">
+                How strongly the character identity overrides the base model.
+                0.6–0.7 = good balance (works with other subjects in scene).
+                0.8+ = strong likeness but may prevent other characters from
+                appearing.
+              </p>
               <input
                 type="range"
                 min={0.1}
@@ -655,7 +661,7 @@ export default function CharactersPage() {
                   {selected.referencePhotos.length > 0 && (
                     <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4">
                       {selected.referencePhotos.map((photo, i) => {
-                        const filename = photo.split("/").pop() ?? "";
+                        const filename = photo.split(/[/\\]/).pop() ?? "";
                         const caption =
                           selected.photoCaptions?.[filename] ?? "";
                         return (
@@ -784,8 +790,8 @@ export default function CharactersPage() {
                           <span className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-1 w-56 -translate-x-1/2 rounded-md bg-popover px-3 py-2 text-[10px] leading-snug text-popover-foreground shadow-md border border-border opacity-0 transition-opacity group-hover:opacity-100">
                             Number of full passes over all reference photos.
                             Total training steps = epochs × photo count.
-                            Recommended: 10–20 for most subjects, more for
-                            complex characters.
+                            Recommended: 150–200 with 5+ photos (≈1000
+                            steps). More photos = fewer epochs needed.
                           </span>
                         </span>
                       </label>
@@ -859,9 +865,10 @@ export default function CharactersPage() {
                           <Info className="h-3 w-3 opacity-50" />
                           <span className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-1 w-56 -translate-x-1/2 rounded-md bg-popover px-3 py-2 text-[10px] leading-snug text-popover-foreground shadow-md border border-border opacity-0 transition-opacity group-hover:opacity-100">
                             Dimensionality of LoRA adapter. Higher → more
-                            expressive but uses more memory. 8 is recommended
-                            for subjects (faces/animals) on 32GB Macs using
-                            Flux Dev. Use 4 for simple styles.
+                            expressive but uses more memory. 16 is good for
+                            most subjects. 32 gives highest fidelity for
+                            complex patterns (unique markings, multi-color
+                            coats). Use 8 for simple styles or limited VRAM.
                           </span>
                         </span>
                       </label>
@@ -871,8 +878,9 @@ export default function CharactersPage() {
                         className="mt-1 w-full rounded-md border border-border bg-background px-3 py-1.5 text-sm"
                       >
                         <option value={4}>4</option>
-                        <option value={8}>8 (default)</option>
-                        <option value={16}>16</option>
+                        <option value={8}>8</option>
+                        <option value={16}>16 (default)</option>
+                        <option value={32}>32 (high fidelity)</option>
                       </select>
                     </div>
                   </div>

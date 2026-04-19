@@ -71,6 +71,7 @@
 - [TikTok Content Publishing](#tiktok-content-publishing)
 - [Research & Content Synthesis Engine](#research--content-synthesis-engine)
 - [Media Queue & Asset Gallery](#media-queue--asset-gallery)
+- [Lip Sync (Talking Head Pipeline)](#lip-sync-talking-head-pipeline)
 
 ---
 
@@ -261,7 +262,7 @@ The backend API starts at **http://localhost:3000** and the Next.js UI at **http
 
 ## Windows Installation
 
-OpenZigs runs on Windows via native Node.js. The AI sidecars (Audio STT/TTS, Image Generation, Music, Video) require Apple Silicon and are not available on Windows, but all core features (chat, tools, tasks, scheduler, knowledge manager, etc.) work identically.
+OpenZigs runs on Windows via native Node.js. AI sidecars (Audio, Image, Music, Video, LipSync) run in WSL2 Ubuntu with CUDA GPU acceleration. On machines without an NVIDIA GPU, all core features (chat, tools, tasks, scheduler, knowledge manager, etc.) still work — only media generation is unavailable. See [Windows Sidecar Management](#windows-sidecar-management-wslcuda) for setup.
 
 ### Quick Install (PowerShell)
 
@@ -356,36 +357,71 @@ pnpm dev
 
 ### Windows Feature Availability
 
-The following table shows what features are available on Windows:
+The following table shows what features are available on Windows. With WSL2 + CUDA sidecars,
+all AI media features are now available on Windows machines with NVIDIA GPUs.
 
-| Feature | Windows | macOS (Apple Silicon) | Notes |
-|---------|---------|----------------------|-------|
-| **Core Chat & AI** | ✅ | ✅ | Full Copilot SDK support |
-| **MCP Tools** | ✅ | ✅ | All built-in tools work |
-| **Task Engine** | ✅ | ✅ | Background tasks, pipelines |
-| **Scheduler** | ✅ | ✅ | Cron-based job scheduling |
-| **Web UI** | ✅ | ✅ | Full Next.js UI |
-| **Telegram Channel** | ✅ | ✅ | Bot integration |
-| **Discord Channel** | ✅ | ✅ | Bot integration |
-| **Chrome DevTools** | ✅ | ✅ | Browser automation |
-| **Knowledge Manager** | ✅ | ✅ | Document ingestion, RAG |
-| **Social Brain** | ✅ | ✅ | Social inbox, CRM |
-| **Sentinel Monitor** | ✅ | ✅ | Autonomous SRE |
-| **Workbench Editor** | ✅ | ✅ | Rich Markdown editing |
-| **Prompt Library** | ✅ | ✅ | Saved templates |
-| **Web Search** | ✅ | ✅ | Brave Search API |
-| **Docker Deployment** | ⚠️ | ⚠️ | Experimental, not fully tested |
-| **Audio STT (Whisper MLX)** | ❌ | ✅ | Requires Apple Silicon |
-| **Audio TTS (Kokoro)** | ❌ | ✅ | Requires Apple Silicon |
-| **Image Generation (MFLUX)** | ❌ | ✅ | Requires Apple Silicon |
-| **Music Generation (ACE-Step)** | ❌ | ✅ | Requires Apple Silicon |
-| **Music Studio (Demucs/Seed-VC)** | ❌ | ✅ | Requires Apple Silicon |
-| **Video Generation (LTX)** | ❌ | ✅ | Requires Apple Silicon; supports audio+video joint generation |
-| **Voice Cloning (GPT-SoVITS)** | ❌ | ✅ | Requires Apple Silicon |
-| **Director Mode (Video)** | ⚠️ | ✅ | Render requires sidecars |
-| **Gallery (Media Creation)** | ⚠️ | ✅ | Generation requires sidecars |
+| Feature | Windows (native) | Windows (WSL+CUDA) | macOS (Apple Silicon) | Notes |
+|---------|:-:|:-:|:-:|-------|
+| **Core Chat & AI** | ✅ | ✅ | ✅ | Full Copilot SDK support |
+| **MCP Tools** | ✅ | ✅ | ✅ | All built-in tools work |
+| **Task Engine** | ✅ | ✅ | ✅ | Background tasks, pipelines |
+| **Scheduler** | ✅ | ✅ | ✅ | Cron-based job scheduling |
+| **Web UI** | ✅ | ✅ | ✅ | Full Next.js UI |
+| **Telegram Channel** | ✅ | ✅ | ✅ | Bot integration |
+| **Discord Channel** | ✅ | ✅ | ✅ | Bot integration |
+| **Chrome DevTools** | ✅ | ✅ | ✅ | Browser automation |
+| **Knowledge Manager** | ✅ | ✅ | ✅ | Document ingestion, RAG |
+| **Social Brain** | ✅ | ✅ | ✅ | Social inbox, CRM |
+| **Sentinel Monitor** | ✅ | ✅ | ✅ | Autonomous SRE |
+| **Workbench Editor** | ✅ | ✅ | ✅ | Rich Markdown editing |
+| **Prompt Library** | ✅ | ✅ | ✅ | Saved templates |
+| **Web Search** | ✅ | ✅ | ✅ | Brave Search API |
+| **Audio STT (Whisper)** | ❌ | ✅ | ✅ | WSL CUDA sidecar port 5006 |
+| **Audio TTS (Kokoro/F5-TTS)** | ❌ | ✅ | ✅ | WSL CUDA sidecar port 5006 |
+| **Image Generation (Flux)** | ❌ | ✅ | ✅ | WSL CUDA sidecar port 5005 |
+| **Image Processing (upscale/rembg)** | ❌ | ✅ | ✅ | WSL CUDA sidecar port 5008 |
+| **Music Generation (ACE-Step)** | ❌ | ✅ | ✅ | WSL CUDA sidecar port 5009 |
+| **Music Studio (Demucs/Seed-VC)** | ❌ | ✅ | ✅ | WSL CUDA sidecar port 5010 |
+| **Video Generation (LTX)** | ❌ | ✅ | ✅ | WSL CUDA sidecar port 5007 |
+| **Lip Sync (LatentSync)** | ❌ | ✅ | ✅ | WSL CUDA sidecar port 5010 |
+| **Voice Cloning (F5-TTS)** | ❌ | ✅ | ✅ | Part of audio sidecar |
+| **Director Mode (Video)** | ⚠️ | ✅ | ✅ | Render requires sidecars |
+| **Gallery (Media Creation)** | ⚠️ | ✅ | ✅ | Generation requires sidecars |
 
 **Legend**: ✅ Full support | ⚠️ Partial (UI works, generation unavailable) | ❌ Not available
+
+> **Note**: LipSync and Music Studio share port 5010 — only one can run at a time.
+> Use `media-ctl.ps1` to switch between them.
+
+### Windows Sidecar Management (WSL+CUDA)
+
+If you have an NVIDIA GPU and WSL2 Ubuntu, you can run all AI sidecars via the `media-ctl.ps1` script:
+
+```powershell
+# Check status of all sidecars
+.\scripts\media-ctl.ps1 status
+
+# Individual sidecar control
+.\scripts\media-ctl.ps1 flux status          # FluxQ image gen (port 5005)
+.\scripts\media-ctl.ps1 audio restart        # Kokoro/F5-TTS (port 5006)
+.\scripts\media-ctl.ps1 ltx logs             # LTX video gen (port 5007)
+.\scripts\media-ctl.ps1 imgproc health       # Image processing (port 5008)
+.\scripts\media-ctl.ps1 music restart        # ACE-Step music (port 5009)
+.\scripts\media-ctl.ps1 lipsync restart      # LatentSync (port 5010)
+.\scripts\media-ctl.ps1 studio restart       # Music Studio (port 5010, replaces lipsync)
+
+# Bulk operations
+.\scripts\media-ctl.ps1 restart-all          # Restart all sidecars
+.\scripts\media-ctl.ps1 stop-all             # Stop all sidecars
+.\scripts\media-ctl.ps1 sync-all             # Sync code from repo to WSL deploy dir
+
+# Code sync (after editing sidecar code)
+.\scripts\media-ctl.ps1 audio sync           # rsync audio sidecar to WSL
+.\scripts\media-ctl.ps1 audio restart        # restart with new code
+```
+
+Available services: `flux`, `audio`, `ltx`, `imgproc`, `music`, `lipsync`, `studio`
+Available actions: `logs`, `status`, `health`, `restart`, `stop`, `sync`, `generate`
 
 ### Windows-Specific Notes
 
@@ -8846,6 +8882,142 @@ When a duration longer than 4s is selected:
 3. After all segments complete, they are stitched together with 0.5-second crossfade transitions
 4. If audio is enabled, it is generated once on the final stitched video (not per-segment)
 5. Progress is reported as "Segment N/M" with an aggregate percentage
+
+---
+
+## Lip Sync (Talking Head Pipeline)
+
+The Lip Sync feature uses ByteDance's [LatentSync](https://github.com/bytedance/LatentSync) model to generate realistic lip movements on AI-generated videos. Combined with TTS and video generation, this powers an end-to-end **Talking Head** pipeline: type text, get a lip-synced video.
+
+### How It Works
+
+The Talking Head pipeline chains three stages:
+
+1. **Speech** — F5-TTS converts your text to speech using a selected voice
+2. **Video** — LTX-2 generates a video from your prompt (e.g., "a person speaking to camera")
+3. **Lip Sync** — LatentSync conditions on the audio to animate the lips in the generated video
+
+### Setup (macOS — Apple Silicon)
+
+The LatentSync sidecar runs on port 5008 using the MPS backend (FP32):
+
+```bash
+# Install and start the lip sync sidecar (M2 Pro or better recommended)
+./scripts/setup-lipsync-node.sh
+
+# Verify it's running
+curl http://localhost:5008/health
+```
+
+**Requirements**: macOS with Apple Silicon, ~18GB free RAM, Python 3.10+, ffmpeg.
+
+### Setup (Windows/WSL — NVIDIA CUDA)
+
+The CUDA variant runs on port 5010 using FP16:
+
+```bash
+# Install all CUDA sidecars (including lip sync)
+./sidecars/setup-cuda-sidecars.sh
+
+# Start CUDA sidecars
+./sidecars/start-cuda-sidecars.sh
+
+# Or manage individually with cuda-ctl:
+./scripts/cuda-ctl.sh lipsync setup
+./scripts/cuda-ctl.sh lipsync start
+./scripts/cuda-ctl.sh lipsync stop
+./scripts/cuda-ctl.sh lipsync status
+```
+
+**Requirements**: NVIDIA GPU with 8GB+ VRAM, CUDA 11.8+, Python 3.10+, ffmpeg.
+
+### Using Talking Head Mode in Gallery Studio
+
+1. Navigate to **Gallery → Create Asset**
+2. Select the **Talking Head** mode (Mic icon with "LatentSync" badge)
+3. Fill in:
+   - **Speech Text** — The dialogue your character will speak
+   - **Voice** — Select a TTS voice from the dropdown
+   - **Video Prompt** — Describe the video (e.g., "a woman speaking to camera in a modern office")
+4. Optionally expand **Lip Sync Settings** to adjust:
+   - **Model Version** — v1.5 (faster) or v1.6 (higher quality)
+   - **Inference Steps** — 10–50 (default 20; more = better quality, slower)
+   - **Guidance Scale** — 1.0–3.0 (default 1.5; controls fidelity to audio)
+   - **DeepCache** — Enable for ~30% speed boost with minimal quality loss
+5. Click **Submit** — progress shows "Speech → Video → Lip Sync" stage progression
+
+### Applying Lip Sync to Existing Videos
+
+You can also submit a standalone lip sync job via the Queue API:
+
+```bash
+curl -X POST http://localhost:3000/api/queue/jobs \
+  -H "Content-Type: application/json" \
+  -d '{
+    "type": "lipsync",
+    "payload": {
+      "prompt": "lip sync",
+      "video_base64": "<base64-encoded-mp4>",
+      "audio_base64": "<base64-encoded-wav>",
+      "model": "latentsync-v1.6",
+      "inference_steps": 20,
+      "guidance_scale": 1.5,
+      "enable_deep_cache": true
+    }
+  }'
+```
+
+### `media-ctl.sh` Lip Sync Commands
+
+```bash
+# Check lipsync sidecar status
+./scripts/cuda-ctl.sh lipsync status
+
+# Start lipsync sidecar
+./scripts/cuda-ctl.sh lipsync start
+
+# Stop lipsync sidecar
+./scripts/cuda-ctl.sh lipsync stop
+
+# Full setup (install dependencies + model)
+./scripts/cuda-ctl.sh lipsync setup
+```
+
+### Performance
+
+| Device | Speed | Notes |
+|---|---|---|
+| M2 Pro (36GB) | ~8–15 sec per second of video | FP32. Sequential with LTX (shared memory). |
+| RTX 3080 (10GB) | ~3–8 sec per second of video | FP16. Can run alongside other sidecars. |
+
+### Limitations
+
+- **30-second max duration** — LatentSync quality degrades on longer clips
+- **FP32 required on MPS** — MPS does not support FP16 for this model; requires full precision
+- **Sequential execution on M2 Pro** — LTX and LatentSync cannot coexist in memory; automatic unload/reload adds ~5–10 seconds
+- **Face required** — Input video must show a clear face; "no face detected" errors mean the face isn't visible or is too small
+
+### Troubleshooting
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| Black frames in output | FP16 being used on MPS | Ensure the MPS fork is installed (uses FP32) |
+| "No face detected" error | Face not visible in video | Use a video with a clear, forward-facing face |
+| OOM crash | Both models loaded | Memory coordination should handle this; restart sidecars |
+| Sidecar unreachable | Not installed/running | Run `setup-lipsync-node.sh` or `cuda-ctl.sh lipsync start` |
+| Pipeline completes without lip sync | Sidecar down during pipeline | Pipeline degrades gracefully; check sidecar health |
+
+### Security & Ethics Notice
+
+Lip-synced video generation is **deepfake-adjacent technology**. Use responsibly:
+
+- **Do not** use to impersonate real people without consent
+- **Do not** create misleading content presented as genuine
+- Generated content should be clearly labeled as AI-generated
+- Consider adding visible watermarks to lip-synced output
+- Review your organization's acceptable use policy before deploying
+
+---
 
 ### Character Lab (LoRA Training & Identity Consistency)
 

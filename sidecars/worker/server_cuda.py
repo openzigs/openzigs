@@ -79,6 +79,8 @@ VIDEO_MODEL_REGISTRY: dict[str, dict] = {
         "default_guidance": 1.0,
         "description": "LTX-Video 13B distilled — fast, high quality (7 steps, no CFG)",
         "vram_gb": 12,
+        "tier": "medium",
+        "min_vram_gb": 12,
     },
     "ltxv-13b-097-dev": {
         "hf_id": "Lightricks/LTX-Video-0.9.7-dev",
@@ -87,6 +89,8 @@ VIDEO_MODEL_REGISTRY: dict[str, dict] = {
         "default_guidance": 3.0,
         "description": "LTX-Video 13B dev — highest quality (30 steps, CFG-guided)",
         "vram_gb": 16,
+        "tier": "high",
+        "min_vram_gb": 16,
     },
     "ltxv-2b-096-distilled": {
         "hf_id": "Lightricks/LTX-Video-0.9.6-distilled",
@@ -95,6 +99,8 @@ VIDEO_MODEL_REGISTRY: dict[str, dict] = {
         "default_guidance": 0.0,
         "description": "LTX-Video 2B distilled — real-time, low VRAM (4 steps)",
         "vram_gb": 8,
+        "tier": "low",
+        "min_vram_gb": 8,
     },
     "ltxv-2b-legacy": {
         "hf_id": "Lightricks/LTX-Video",
@@ -103,6 +109,8 @@ VIDEO_MODEL_REGISTRY: dict[str, dict] = {
         "default_guidance": 0.0,
         "description": "LTX-Video 2B v0.9 — legacy baseline",
         "vram_gb": 8,
+        "tier": "low",
+        "min_vram_gb": 8,
     },
 }
 
@@ -291,6 +299,9 @@ def _ensure_torch():
     if torch is None:
         import torch as _torch
         torch = _torch
+        # Enable cuDNN autotuner — picks fastest conv algorithm for fixed input sizes
+        if _torch.cuda.is_available():
+            _torch.backends.cudnn.benchmark = True
 
 
 def clear_vram():
@@ -426,16 +437,31 @@ def generate_video_ltx2(request: "GenerateRequest") -> bytes:
     hf_id = spec["hf_id"]
     pipeline_class_name = spec["pipeline_class"]
 
+    # Determine whether we need the img2video variant for legacy 2B models
+    need_i2v = (
+        pipeline_class_name == "LTXPipeline"
+        and request.type == "img2video"
+        and request.init_image
+    )
+    # Cache key includes the i2v variant so we reload when switching modes
+    effective_key = f"{model_key}:i2v" if need_i2v else model_key
+
     # Load model if needed
-    if state._pipeline is None or state._model_name != model_key:
+    if state._pipeline is None or state._model_name != effective_key:
         unload_model()
-        logger.info(f"Loading video model '{model_key}' ({hf_id}) on CUDA with model_cpu_offload...")
+        logger.info(f"Loading video model '{effective_key}' ({hf_id}) on CUDA with model_cpu_offload...")
 
         if pipeline_class_name == "LTXConditionPipeline":
             from diffusers import LTXConditionPipeline
             pipe = LTXConditionPipeline.from_pretrained(
                 hf_id,
                 torch_dtype=torch.bfloat16,
+            )
+        elif need_i2v:
+            from diffusers import LTXImageToVideoPipeline
+            pipe = LTXImageToVideoPipeline.from_pretrained(
+                hf_id,
+                torch_dtype=torch.float16,
             )
         else:
             from diffusers import LTXPipeline
@@ -450,9 +476,9 @@ def generate_video_ltx2(request: "GenerateRequest") -> bytes:
         if hasattr(pipe, "vae") and hasattr(pipe.vae, "enable_tiling"):
             pipe.vae.enable_tiling()
         state._pipeline = pipe
-        state._model_name = model_key
+        state._model_name = effective_key
         state.loaded_model = hf_id
-        logger.info(f"Model '{model_key}' ready (CUDA model-level offload + VAE tiling)")
+        logger.info(f"Model '{effective_key}' ready (CUDA model-level offload + VAE tiling)")
 
     generator = torch.Generator("cpu").manual_seed(
         request.seed if request.seed is not None else int(time.time()) % (2**32)
@@ -495,19 +521,38 @@ def generate_video_ltx2(request: "GenerateRequest") -> bytes:
             condition = LTXVideoCondition(video=video_cond, frame_index=0)
             kwargs["conditions"] = [condition]
 
-        result = state._pipeline(**kwargs)
+        with torch.inference_mode():
+            result = state._pipeline(**kwargs)
         frames = result.frames[0]
     else:
-        # Legacy LTXPipeline: simpler API
-        result = state._pipeline(
-            prompt=request.prompt,
-            negative_prompt=request.negative_prompt or "worst quality, inconsistent motion, blurry, jittery, distorted",
-            width=width,
-            height=height,
-            num_frames=num_frames,
-            num_inference_steps=steps,
-            generator=generator,
-        )
+        # Legacy 2B LTXPipeline / LTXImageToVideoPipeline
+        if need_i2v:
+            # img2video: decode init_image and pass as 'image' kwarg
+            img_bytes = base64.b64decode(request.init_image)
+            from PIL import Image as PILImage
+            img = PILImage.open(io.BytesIO(img_bytes)).convert("RGB")
+            with torch.inference_mode():
+                result = state._pipeline(
+                    image=img,
+                    prompt=request.prompt,
+                    negative_prompt=request.negative_prompt or "worst quality, inconsistent motion, blurry, jittery, distorted",
+                    width=width,
+                    height=height,
+                    num_frames=num_frames,
+                    num_inference_steps=steps,
+                    generator=generator,
+                )
+        else:
+            with torch.inference_mode():
+                result = state._pipeline(
+                    prompt=request.prompt,
+                    negative_prompt=request.negative_prompt or "worst quality, inconsistent motion, blurry, jittery, distorted",
+                    width=width,
+                    height=height,
+                    num_frames=num_frames,
+                    num_inference_steps=steps,
+                    generator=generator,
+                )
         frames = result.frames[0]
 
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -756,6 +801,25 @@ async def memory_endpoint():
     }
 
 
+@app.get("/gpu-info")
+async def gpu_info_endpoint():
+    """Report which CUDA device this sidecar is bound to (Issue #884)."""
+    _ensure_torch()
+    if not torch.cuda.is_available():
+        return {"available": False, "cuda_visible": os.environ.get("CUDA_VISIBLE_DEVICES", "")}
+    idx = torch.cuda.current_device()
+    free, total = torch.cuda.mem_get_info(idx)
+    return {
+        "available": True,
+        "device_index": idx,
+        "device_name": torch.cuda.get_device_name(idx),
+        "device_count": torch.cuda.device_count(),
+        "total_mb": int(total / 1024**2),
+        "free_mb": int(free / 1024**2),
+        "cuda_visible": os.environ.get("CUDA_VISIBLE_DEVICES", ""),
+    }
+
+
 @app.get("/limits")
 async def limits_endpoint():
     """Return VRAM-based generation limits for this GPU."""
@@ -850,6 +914,20 @@ async def list_models():
         "default_repo": DEFAULT_MODEL_REPO,
         "audio_supported": False,
     }
+
+
+@app.post("/unload", dependencies=[Depends(verify_token)])
+async def unload():
+    """Unload the current model and free VRAM.
+    Used by QueueMaster for cross-sidecar VRAM coordination
+    (e.g., LTX worker ↔ LatentSync lipsync handoff).
+    """
+    if state.is_busy:
+        raise HTTPException(status_code=409, detail="Worker is busy, cannot unload")
+    prev = state.loaded_model
+    unload_model()
+    state.loaded_model = None
+    return {"status": "unloaded", "previous_model": prev}
 
 
 @app.post("/generate", status_code=202, dependencies=[Depends(verify_token)])
