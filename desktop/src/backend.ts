@@ -13,11 +13,18 @@ export interface BackendManagerOptions {
   startupTimeoutMs?: number;
 }
 
+export interface HealthData {
+  status: string;
+  uptime: number;
+  memoryMB: number;
+}
+
 export class BackendManager extends EventEmitter {
   private child: ChildProcess | null = null;
   private port: number | null = null;
   private status: BackendStatus = "stopped";
   private healthInterval: ReturnType<typeof setInterval> | null = null;
+  private healthData: HealthData | null = null;
   private readonly isDev: boolean;
   private readonly backendPath: string;
   private readonly healthCheckIntervalMs: number;
@@ -120,6 +127,10 @@ export class BackendManager extends EventEmitter {
     return this.status;
   }
 
+  getHealthData(): HealthData | null {
+    return this.healthData;
+  }
+
   private setStatus(status: BackendStatus): void {
     this.status = status;
     this.emit("status", status);
@@ -133,7 +144,9 @@ export class BackendManager extends EventEmitter {
       }
       await new Promise((resolve) => setTimeout(resolve, 500));
     }
-    throw new Error(`Backend did not become ready within ${this.startupTimeoutMs}ms`);
+    throw new Error(
+      `Backend did not become ready within ${this.startupTimeoutMs}ms`,
+    );
   }
 
   async checkHealth(port: number): Promise<boolean> {
@@ -148,13 +161,18 @@ export class BackendManager extends EventEmitter {
           });
           res.on("end", () => {
             try {
-              const json = JSON.parse(body) as { status?: string };
-              resolve(json.status === "ok");
+              const json = JSON.parse(body) as HealthData;
+              if (json.status === "ok") {
+                this.healthData = json;
+                resolve(true);
+              } else {
+                resolve(false);
+              }
             } catch {
               resolve(false);
             }
           });
-        }
+        },
       );
       req.on("error", () => resolve(false));
       req.on("timeout", () => {
@@ -193,7 +211,9 @@ export class BackendManager extends EventEmitter {
           const port = addr.port;
           server.close(() => resolve(port));
         } else {
-          server.close(() => reject(new Error("Could not determine free port")));
+          server.close(() =>
+            reject(new Error("Could not determine free port")),
+          );
         }
       });
       server.on("error", reject);

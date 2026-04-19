@@ -3,8 +3,14 @@ import path from "node:path";
 import os from "node:os";
 import fs from "node:fs/promises";
 import { execFile } from "node:child_process";
-import { isPathAllowed } from "../mcp/tools/path-utils.js";
 import { sanitizePath } from "../security/path-validator.js";
+
+class PathValidationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "PathValidationError";
+  }
+}
 
 /**
  * Promise wrapper for execFile that returns { stdout, stderr }.
@@ -112,41 +118,58 @@ export const createFilesRouter = ({
 }: FilesRouterOptions): Router => {
   const router = Router();
 
-  /** Resolve and validate a raw path against the sandbox. */
+  /**
+   * Resolve and validate a raw path against the sandbox.
+   * Returns the validated absolute path or throws.
+   */
+  const resolveAndValidatePath = (rawPath: string | undefined): string => {
+    if (!rawPath || typeof rawPath !== "string") {
+      throw new PathValidationError("path query parameter is required");
+    }
+    // Expand leading tilde to home directory (only ~/... or bare ~)
+    let effectivePath = rawPath;
+    if (effectivePath.startsWith("~/") || effectivePath === "~") {
+      effectivePath = path.join(os.homedir(), effectivePath.slice(1));
+    }
+    if (effectivePath.includes("\0")) {
+      throw new PathValidationError("Access denied");
+    }
+    let resolved: string;
+    // Tilde-expanded or absolute paths: resolve directly and validate
+    if (
+      rawPath.startsWith("~/") ||
+      rawPath === "~" ||
+      path.isAbsolute(rawPath)
+    ) {
+      resolved = path.resolve(effectivePath);
+    } else {
+      // Relative paths: use centralized path validation — checks null bytes + traversal
+      resolved = sanitizePath(rawPath, allowedDirs[0]);
+    }
+    // Final containment check — this is the security gate CodeQL traces
+    for (const dir of allowedDirs) {
+      const normalizedResolved = path.normalize(resolved);
+      const normalizedDir = path.normalize(dir);
+      if (
+        normalizedResolved === normalizedDir ||
+        normalizedResolved.startsWith(normalizedDir + path.sep)
+      ) {
+        return normalizedResolved;
+      }
+    }
+    throw new PathValidationError("Access denied");
+  };
+
+  /** Legacy wrapper that returns discriminated union for backward compat. */
   const guardPath = (
     rawPath: string | undefined,
   ): { resolved: string } | { error: string } => {
-    if (!rawPath || typeof rawPath !== "string") {
-      return { error: "path query parameter is required" };
-    }
     try {
-      // Expand leading tilde to home directory (only ~/... or bare ~)
-      let effectivePath = rawPath;
-      if (effectivePath.startsWith("~/") || effectivePath === "~") {
-        effectivePath = path.join(os.homedir(), effectivePath.slice(1));
+      return { resolved: resolveAndValidatePath(rawPath) };
+    } catch (err) {
+      if (err instanceof PathValidationError) {
+        return { error: err.message };
       }
-      if (effectivePath.includes("\0")) {
-        return { error: "Access denied" };
-      }
-      // Tilde-expanded or absolute paths: resolve directly and validate
-      if (
-        rawPath.startsWith("~/") ||
-        rawPath === "~" ||
-        path.isAbsolute(rawPath)
-      ) {
-        const resolved = path.resolve(effectivePath);
-        if (!isPathAllowed(resolved, allowedDirs)) {
-          return { error: "Access denied" };
-        }
-        return { resolved };
-      }
-      // Relative paths: use centralized path validation — checks null bytes + traversal
-      const resolved = sanitizePath(rawPath, allowedDirs[0]);
-      if (!isPathAllowed(resolved, allowedDirs)) {
-        return { error: "Access denied" };
-      }
-      return { resolved };
-    } catch {
       return { error: "Access denied" };
     }
   };
