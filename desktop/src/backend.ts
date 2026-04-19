@@ -5,12 +5,6 @@ import http from "node:http";
 
 export type BackendStatus = "starting" | "running" | "stopped" | "error";
 
-export interface HealthData {
-  status: string;
-  uptime: number;
-  memoryMB: number;
-}
-
 export interface BackendManagerOptions {
   isDev: boolean;
   backendPath: string;
@@ -24,7 +18,6 @@ export class BackendManager extends EventEmitter {
   private port: number | null = null;
   private status: BackendStatus = "stopped";
   private healthInterval: ReturnType<typeof setInterval> | null = null;
-  private lastHealthData: HealthData | null = null;
   private readonly isDev: boolean;
   private readonly backendPath: string;
   private readonly healthCheckIntervalMs: number;
@@ -116,7 +109,6 @@ export class BackendManager extends EventEmitter {
       this.child.on("exit", () => clearTimeout(forceKillTimer));
       this.child = null;
     }
-    this.lastHealthData = null;
     this.setStatus("stopped");
   }
 
@@ -126,10 +118,6 @@ export class BackendManager extends EventEmitter {
 
   getStatus(): BackendStatus {
     return this.status;
-  }
-
-  getHealthData(): HealthData | null {
-    return this.lastHealthData;
   }
 
   private setStatus(status: BackendStatus): void {
@@ -160,17 +148,8 @@ export class BackendManager extends EventEmitter {
           });
           res.on("end", () => {
             try {
-              const json = JSON.parse(body) as Record<string, unknown>;
-              if (json.status === "ok") {
-                this.lastHealthData = {
-                  status: String(json.status),
-                  uptime: typeof json.uptime === "number" ? json.uptime : 0,
-                  memoryMB: typeof json.memoryMB === "number" ? json.memoryMB : 0,
-                };
-                resolve(true);
-              } else {
-                resolve(false);
-              }
+              const json = JSON.parse(body) as { status?: string };
+              resolve(json.status === "ok");
             } catch {
               resolve(false);
             }

@@ -86,16 +86,7 @@ Execute with the **Code Review** agent (`code-review.agent.md`), which has the s
 
 **Goal:** Collect all findings from automated security scanners so they can be cross-referenced during the security review and tracked in the final verdict.
 
-#### Auto-detect CodeQL PR Status
-
-Before fetching scanner comments, determine whether CodeQL actually runs on pull requests in this repository:
-
-```bash
-grep -E '^\s*pull_request' .github/workflows/codeql.yml 2>/dev/null
-```
-
-- **Output found** (active `pull_request:` trigger exists): CodeQL runs on PRs. Continue with the full procedure below — scanner comments may exist and unresolved High/Critical findings are blocking.
-- **No output** (file missing or `pull_request:` trigger is commented out): CodeQL does **not** run on PRs. `github-advanced-security` bot comments will not exist. **Skip to Step 1c** and rely on manual OWASP review in Step 4 as the security gate. Do NOT wait for or block on CodeQL results.
+> **Note:** In this repository, the CodeQL workflow (`codeql.yml`) only triggers on pushes to `main` and a weekly cron schedule — it does **not** run on pull requests. This means `github-advanced-security` bot comments will typically **not** exist on PRs. If no scanner comments are found, skip to Step 1c. Do NOT wait for or block on CodeQL results that will never arrive. Your manual OWASP review in Step 4 serves as the primary security gate for PRs.
 
 GitHub Advanced Security (GHAS) runs CodeQL analysis on PRs and posts review comments from the `github-advanced-security` bot. These comments identify real vulnerabilities (injection, path traversal, missing rate limiting, XSS, etc.) that the human/agent reviewer must acknowledge.
 
@@ -217,7 +208,7 @@ Other people or automated reviewers (e.g., GitHub Copilot code review) may have 
    | ui | ✅ Passed | — | — |
    ```
 
-   > **Note:** CodeQL IS a PR check in this repository. The `codeql.yml` workflow runs on `pull_request` targeting `main`, on pushes to `main`/`feature/**`/`fix/**`, and on daily cron. CodeQL results (javascript-typescript, python) will appear in `gh pr checks` output. Wait for them before finalizing the verdict — any unresolved High/Critical finding is blocking.
+   > **Note:** CodeQL is NOT a PR check in this repository. The `codeql.yml` workflow only runs on pushes to `main` and weekly cron. Do not expect or wait for CodeQL entries in `gh pr checks` output. Only CI jobs (`api`, `ui`) will appear.
 
 3. **For each failing job:**
    - Fetch the failure logs: `gh run view {RUN_ID} --log-failed` or check the Actions tab URL
@@ -276,7 +267,7 @@ Scan all changed files for these OWASP Top 10 categories:
 | **A03: Injection** | SQL injection, NoSQL injection, OS command injection, LDAP injection, XSS |
 | **A04: Insecure Design** | Missing rate limiting, no input validation at trust boundaries, business logic flaws |
 | **A05: Security Misconfiguration** | Debug mode enabled, default credentials, unnecessary features exposed, verbose errors |
-| **A06: Vulnerable Components** | Known CVE in dependencies — run `pnpm audit` + `osv-scanner` to verify, look up IDs via OSV.dev API |
+| **A06: Vulnerable Components** | Known CVE in dependencies — use `cve-search-mcp` tools to verify |
 | **A07: Auth Failures** | Weak passwords allowed, missing MFA, session fixation, token leakage in logs/URLs |
 | **A08: Data Integrity Failures** | Insecure deserialization, unsigned updates, CI/CD pipeline manipulation |
 | **A09: Logging Failures** | Missing audit logs for sensitive ops, PII in logs, no alerting |
@@ -429,7 +420,7 @@ gh pr review {PR_NUMBER} --request-changes --body "$(cat review-body.md)"
 
 ### Security Scanners: {CLEAN|FINDINGS|N/A}
 
-> CodeQL **does** run on PRs in this repo (javascript-typescript and python). Wait for `CodeQL/Analyze` checks to complete before submitting the review. Unresolved High/Critical findings are blocking.
+> If CodeQL does not run on PRs (as in this repo), write "N/A — CodeQL runs on push-to-main only; manual OWASP review performed in Step 4" and skip the scanner table.
 
 | Scanner | Finding | File | Severity | Status |
 |---------|---------|------|----------|--------|
@@ -468,33 +459,6 @@ After publishing the review, offer the user:
 > **Review published. Would you like me to switch to the Code Issue agent to fix the flagged issues?**
 
 If yes, invoke the `resolve-pr-comments` skill with the same PR number to address the review comments just created.
-
-### Step 11: Re-Review Acknowledgment (Re-reviews only)
-
-When this is a **re-review** (i.e., a previous review with REQUEST_CHANGES exists on the same PR), do the following after publishing the new review:
-
-1. **Fetch all threads from the prior review** (`mcp_github_pull_request_read` with `get_review_comments`).
-2. **For each thread that was `REQUEST_CHANGES` in the prior review:**
-   - If the issue is now **fixed** → reply on the thread: `✅ Fixed in {short_sha} — {one-line description}` then resolve the thread using the GraphQL mutation:
-     ```bash
-     gh api graphql -f query='
-       mutation { resolveReviewThread(input: {threadId: "THREAD_NODE_ID"}) { thread { isResolved } } }'
-     ```
-   - If the issue is **still present** → reply: `⚠️ Still open — {what remains to be fixed}` (do not resolve)
-   - If the issue was **partially addressed** → reply: `🔶 Partially fixed in {short_sha} — {what was fixed, what remains}`
-3. **Leave a top-level PR comment** summarizing which prior findings are resolved vs. still open:
-   ```bash
-   gh pr comment {PR_NUMBER} --body "## Re-Review Summary
-   
-   **Prior findings now resolved:** {N}
-   {list each with ✅ and short description}
-   
-   **Still open:** {N}
-   {list each with ⚠️ and what remains}
-   
-   Full review: #{REVIEW_ID}"
-   ```
-4. **Only after posting replies** update the verdict. If all prior blocking issues are resolved and no new blockers were found → `APPROVE`.
 
 ## Review Comment Style Guide
 
