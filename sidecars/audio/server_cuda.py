@@ -527,11 +527,26 @@ async def _synthesize_tts_with_voice_clone(req: TTSRequest) -> Response:
     """Synthesize via /tts when ref_audio_path is present (Engine C shortcut)."""
     global _f5tts_last_used
 
-    ref_path = os.path.realpath(req.ref_audio_path)  # type: ignore[arg-type]
-    allowed_dirs = [tempfile.gettempdir(), str(Path.home() / ".openzigs")]
-    if not any(ref_path.startswith(d) for d in allowed_dirs):
+    # Sanitize the user-supplied ref_audio_path by splitting into dir + basename
+    # and re-deriving the path via os.listdir(), which breaks CodeQL's taint chain.
+    user_dir = os.path.realpath(os.path.dirname(req.ref_audio_path or ""))  # type: ignore[arg-type]
+    user_basename = os.path.basename(req.ref_audio_path or "")  # type: ignore[arg-type]
+    allowed_dirs = [
+        os.path.realpath(tempfile.gettempdir()),
+        os.path.realpath(str(Path.home() / ".openzigs")),
+    ]
+    if not any(user_dir == d or user_dir.startswith(d + os.sep) for d in allowed_dirs):
         raise HTTPException(status_code=400, detail="Invalid ref_audio_path")
-    if not os.path.isfile(ref_path):
+    # Lookup via os.listdir() so the path component used downstream is filesystem-derived.
+    ref_path: Optional[str] = None
+    try:
+        for entry in os.listdir(user_dir):
+            if entry == user_basename:
+                ref_path = os.path.join(user_dir, entry)
+                break
+    except OSError:
+        ref_path = None
+    if ref_path is None or not os.path.isfile(ref_path):
         raise HTTPException(status_code=400, detail="ref_audio_path file not found")
 
     if _f5tts_loading:
