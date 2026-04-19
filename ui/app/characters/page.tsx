@@ -79,7 +79,7 @@ function statusBadge(status: CharacterProfile["status"]) {
 }
 
 function photoUrl(characterId: string, photoPath: string): string {
-  const filename = photoPath.split(/[\/\\]/).pop() ?? "";
+  const filename = photoPath.split(/[/\\]/).pop() ?? "";
   return buildMediaUrl(
     `/api/characters/${characterId}/photos/${encodeURIComponent(filename)}`,
   );
@@ -661,7 +661,7 @@ export default function CharactersPage() {
                   {selected.referencePhotos.length > 0 && (
                     <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4">
                       {selected.referencePhotos.map((photo, i) => {
-                        const filename = photo.split(/[\/\\]/).pop() ?? "";
+                        const filename = photo.split(/[/\\]/).pop() ?? "";
                         const caption =
                           selected.photoCaptions?.[filename] ?? "";
                         return (

@@ -115,7 +115,7 @@ describe("multi-segment", () => {
     it("rejects invalid durations", () => {
       expect(isValidVideoDuration(5)).toBe(false);
       expect(isValidVideoDuration(0)).toBe(false);
-      expect(isValidVideoDuration(20)).toBe(false);
+      expect(isValidVideoDuration(33)).toBe(false);
       expect(isValidVideoDuration(7)).toBe(false);
     });
   });

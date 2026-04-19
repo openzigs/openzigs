@@ -285,7 +285,8 @@ describe("talking-head-pipeline", () => {
         media_type: "audio/wav",
       });
 
-      expect(nextJob!.payload.video_duration).toBe(30); // capped at 30
+      // Cap at 30s, then round up to nearest valid 4s multiple = 32
+      expect(nextJob!.payload.video_duration).toBe(32);
     });
 
     it("passes lipsync config through", () => {

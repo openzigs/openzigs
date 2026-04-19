@@ -24,6 +24,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - LTX worker: garbled/snow video output caused by `LTX_USE_PREQUANT=1` in `.env` forcing broken AITRADER pre-quantized 4-bit weights instead of runtime quantization from the clean BF16 base model (`mlx-community/LTX-2-distilled-bf16`). The CharafChnioune fork auto-detects AITRADER repos and applies runtime quantization — `LTX_USE_PREQUANT` must not be set.
 - LTX worker: added `sidecars/worker/.env.example` with documented env vars and a prominent warning against setting `LTX_USE_PREQUANT=1`.
+- F5-TTS sidecar (`sidecars/audio/server_cuda.py`): replaced direct `os.path.realpath` on user-supplied `ref_audio_path` with the same split/`os.listdir` lookup pattern used by the lip sync sidecar, breaking taint flow into shell/path operations and resolving CodeQL alerts #327 (command-line-injection, critical) and #328/#330 (path-injection, high).
+- Test suite: refreshed `VALID_VIDEO_DURATIONS`, `isValidVideoDuration`, and talking-head-pipeline `maxDurationSec` cap tests to match the extended `[4..32]` valid duration list and 32 s ceiling.
+- Audio API tests: added missing `node:fs/promises` `readFile` mock that was causing `/audio/f5tts/profiles/:id/test` tests to return 502.
+- UI lint: replaced unnecessary `\/` escapes in `ui/app/characters/page.tsx` regex character classes with `[/\\]`.
 
 ### Added
 

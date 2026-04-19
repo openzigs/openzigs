@@ -130,15 +130,15 @@ describe("LTX_MODEL_CATALOG", () => {
 });
 
 describe("VALID_VIDEO_DURATIONS", () => {
-  it("contains the four valid durations", () => {
-    expect(VALID_VIDEO_DURATIONS).toEqual([4, 8, 12, 16]);
+  it("contains the eight valid durations", () => {
+    expect(VALID_VIDEO_DURATIONS).toEqual([4, 8, 12, 16, 20, 24, 28, 32]);
   });
 
   it("includes 4s (single segment)", () => {
     expect(VALID_VIDEO_DURATIONS).toContain(4);
   });
 
-  it("includes 16s (maximum multi-segment)", () => {
-    expect(VALID_VIDEO_DURATIONS).toContain(16);
+  it("includes 32s (maximum multi-segment)", () => {
+    expect(VALID_VIDEO_DURATIONS).toContain(32);
   });
 });
