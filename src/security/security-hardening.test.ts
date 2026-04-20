@@ -8,10 +8,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import express from "express";
 import request from "supertest";
 import { createAuthMiddleware } from "../auth/auth.js";
-import {
-  capAndTrimTrailingSlashes,
-  MAX_BASE_URL_LENGTH,
-} from "./url-trim.js";
+import { capAndTrimTrailingSlashes, MAX_BASE_URL_LENGTH } from "./url-trim.js";
 
 describe("security: ReDoS guard on baseUrl trim (sub-issue #900)", () => {
   // Exercises the exact helper imported by `src/api/admin.ts` so a regression
@@ -119,6 +116,73 @@ describe("security: query-token fallback is opt-in (sub-issue #908)", () => {
   });
 });
 
+describe("security: query-token accepted for asset file serving paths (PR #913 fix)", () => {
+  const buildAssetApp = (envValue: string | undefined) => {
+    const previous = process.env.OPENZIGS_ALLOW_QUERY_TOKEN;
+    if (envValue === undefined) {
+      delete process.env.OPENZIGS_ALLOW_QUERY_TOKEN;
+    } else {
+      process.env.OPENZIGS_ALLOW_QUERY_TOKEN = envValue;
+    }
+    const app = express();
+    app.use(
+      createAuthMiddleware({
+        mode: "local",
+        token: "supersecret",
+        role: "admin",
+        rateLimit: { windowMs: 60_000, max: 1000 },
+      }),
+    );
+    // Simulate the queue router's asset file serving routes
+    app.get("/assets/:id/file", (_req, res) => res.json({ ok: true }));
+    app.get("/assets/file/:filename", (_req, res) => res.json({ ok: true }));
+    return {
+      app,
+      restore: () => {
+        if (previous === undefined) {
+          delete process.env.OPENZIGS_ALLOW_QUERY_TOKEN;
+        } else {
+          process.env.OPENZIGS_ALLOW_QUERY_TOKEN = previous;
+        }
+      },
+    };
+  };
+
+  it("accepts ?token= on /assets/:id/file even without OPENZIGS_ALLOW_QUERY_TOKEN", async () => {
+    const { app, restore } = buildAssetApp(undefined);
+    try {
+      const res = await request(app).get(
+        "/assets/abc123/file?token=supersecret",
+      );
+      expect(res.status).toBe(200);
+    } finally {
+      restore();
+    }
+  });
+
+  it("accepts ?token= on /assets/file/:filename even without OPENZIGS_ALLOW_QUERY_TOKEN", async () => {
+    const { app, restore } = buildAssetApp(undefined);
+    try {
+      const res = await request(app).get(
+        "/assets/file/image.png?token=supersecret",
+      );
+      expect(res.status).toBe(200);
+    } finally {
+      restore();
+    }
+  });
+
+  it("still rejects ?token= on non-asset paths by default", async () => {
+    const { app, restore } = buildAssetApp(undefined);
+    try {
+      const res = await request(app).get("/anything-else?token=supersecret");
+      expect(res.status).toBe(401);
+    } finally {
+      restore();
+    }
+  });
+});
+
 describe("security: secrets scrubbed from version control (sub-issue #909)", () => {
   it("test-chat.mjs reads the token from the environment, not a literal", async () => {
     const fs = await import("node:fs");
@@ -126,7 +190,10 @@ describe("security: secrets scrubbed from version control (sub-issue #909)", () 
     const url = await import("node:url");
     const dir = path.dirname(url.fileURLToPath(import.meta.url));
     const repoRoot = path.resolve(dir, "..", "..");
-    const contents = fs.readFileSync(path.join(repoRoot, "test-chat.mjs"), "utf-8");
+    const contents = fs.readFileSync(
+      path.join(repoRoot, "test-chat.mjs"),
+      "utf-8",
+    );
     expect(contents).toContain("process.env.OPENZIGS_TOKEN");
     // 64-char lowercase hex string is the OpenZigs local-auth token shape.
     expect(contents).not.toMatch(/[a-f0-9]{64}/);

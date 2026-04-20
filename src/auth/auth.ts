@@ -55,17 +55,29 @@ class FailedAuthLimiter {
   }
 }
 
+/**
+ * Paths served as raw media files (used in <img>/<video>/<audio> src attributes).
+ * Browsers cannot send Authorization headers for these elements, so the auth
+ * token must be accepted via the ?token= query param on these specific routes.
+ * The scope is deliberately narrow: only asset-file-serve endpoints, not the
+ * entire API surface (sub-issue #908 trade-off).
+ */
+const ASSET_FILE_PATH_RE = /^\/assets\/(?:[^/]+\/file|file\/.+)$/;
+
 const extractToken = (req: Request) => {
   const header = req.headers.authorization ?? "";
   if (header.startsWith("Bearer ")) {
     return header.slice("Bearer ".length).trim();
   }
-  // Fallback: accept token as query param for media elements (img/video/audio)
-  // that cannot send Authorization headers. Disabled by default because query
-  // tokens leak via reverse-proxy logs, browser history, and `Referer` headers
-  // (sub-issue #908). Set OPENZIGS_ALLOW_QUERY_TOKEN=1 to opt back in for one
-  // release while a signed-URL replacement is rolled out.
-  if (process.env.OPENZIGS_ALLOW_QUERY_TOKEN === "1") {
+  // Accept ?token= for known media-serving endpoints or when the global opt-in
+  // is set. Media file paths (/assets/:id/file, /assets/file/:filename) use
+  // this because <img>/<video>/<audio> elements cannot send Authorization
+  // headers. For all other paths this remains disabled to avoid token leakage
+  // via proxy logs, browser history, and Referer headers (sub-issue #908).
+  const allowQueryToken =
+    ASSET_FILE_PATH_RE.test(req.path) ||
+    process.env.OPENZIGS_ALLOW_QUERY_TOKEN === "1";
+  if (allowQueryToken) {
     const qToken = req.query?.token;
     if (typeof qToken === "string" && qToken) {
       return qToken;

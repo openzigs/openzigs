@@ -183,10 +183,7 @@ export function VideoSourcePanel({
         "/api/studio/import-youtube",
         { method: "POST", body: JSON.stringify({ url }) },
       );
-      showToast(
-        `Downloaded: ${res.asset?.filename ?? "video"}`,
-        "success",
-      );
+      showToast(`Downloaded: ${res.asset?.filename ?? "video"}`, "success");
       setYtUrl("");
       setShowYtInput(false);
       if (res.asset) {
@@ -214,7 +211,9 @@ export function VideoSourcePanel({
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Youtube className="h-4 w-4 text-red-500" />
-            <span className="text-sm font-semibold text-zinc-200">Import from YouTube</span>
+            <span className="text-sm font-semibold text-zinc-200">
+              Import from YouTube
+            </span>
           </div>
           <button
             onClick={() => setShowYtInput((v) => !v)}
@@ -345,6 +344,12 @@ export function VideoSourcePanel({
                     className="w-full h-full object-cover"
                     preload="metadata"
                     muted
+                    onError={(e) => {
+                      // Prevent 401 cascades: hide the broken element on first
+                      // load failure so the browser doesn't retry and exhaust
+                      // the failed-auth rate limiter.
+                      (e.currentTarget as HTMLVideoElement).style.display = "none";
+                    }}
                   />
                   <div className="absolute inset-0 flex items-center justify-center bg-black/30 opacity-0 group-hover:opacity-100 transition">
                     <Play className="h-6 w-6 text-white/80" />
@@ -388,6 +393,9 @@ export function VideoSourcePanel({
                     className="w-full h-full object-cover"
                     preload="metadata"
                     muted
+                    onError={(e) => {
+                      (e.currentTarget as HTMLVideoElement).style.display = "none";
+                    }}
                   />
                 </div>
                 <div className="flex-1 min-w-0">

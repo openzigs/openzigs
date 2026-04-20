@@ -1701,13 +1701,12 @@ export function SceneInspector({
               ) : (
                 <div className="grid grid-cols-3 gap-3">
                   {galleryImages.map((img) => {
-                    const base =
-                      process.env.NEXT_PUBLIC_OPENZIGS_API_BASE ?? "";
-                    const token = process.env.NEXT_PUBLIC_OPENZIGS_TOKEN ?? "";
                     const imgUrl =
                       img.source === "director"
-                        ? `${base}/api/queue/assets/${img.id}/file${token ? `?token=${encodeURIComponent(token)}` : ""}`
-                        : `${base}/api/queue/assets/file/${encodeURIComponent(img.filename)}${token ? `?token=${encodeURIComponent(token)}` : ""}`;
+                        ? buildMediaUrl(`/api/queue/assets/${img.id}/file`)
+                        : buildMediaUrl(
+                            `/api/queue/assets/file/${encodeURIComponent(img.filename)}`,
+                          );
                     return (
                       <button
                         key={img.id}
@@ -1719,6 +1718,13 @@ export function SceneInspector({
                           alt={img.prompt ?? img.filename}
                           className="aspect-square w-full object-cover"
                           loading="lazy"
+                          onError={(e) => {
+                            const target = e.currentTarget;
+                            if (!target.dataset.failed) {
+                              target.dataset.failed = "1";
+                              target.style.display = "none";
+                            }
+                          }}
                         />
                         {img.prompt && (
                           <p className="truncate px-2 py-1 text-[10px] text-muted-foreground">
@@ -1763,32 +1769,21 @@ export function SceneInspector({
             sourceVideoUrl={
               typeof entry.source === "string"
                 ? buildMediaUrl(entry.source)
-                : typeof (entry as unknown as { src?: unknown }).src ===
-                    "string"
-                  ? buildMediaUrl((entry as unknown as { src: string }).src)
+                : typeof entry.src === "string"
+                  ? buildMediaUrl(entry.src)
                   : undefined
             }
             reframedVideoUrl={
-              typeof (entry as unknown as { reframedVideoUrl?: unknown })
-                .reframedVideoUrl === "string"
-                ? buildMediaUrl(
-                    (entry as unknown as { reframedVideoUrl: string })
-                      .reframedVideoUrl,
-                  )
+              typeof entry.reframedVideoUrl === "string"
+                ? buildMediaUrl(entry.reframedVideoUrl)
                 : undefined
             }
             trackingBoxes={
-              Array.isArray(
-                (entry as unknown as { trackingBoxes?: unknown }).trackingBoxes,
-              )
-                ? ((entry as unknown as { trackingBoxes: unknown[] })
-                    .trackingBoxes as Array<{
-                    x: number;
-                    y: number;
-                    width: number;
-                    height: number;
-                    timestamp: number;
-                  }>)
+              Array.isArray(entry.trackingBoxes)
+                ? entry.trackingBoxes.map((b) => ({
+                    ...b,
+                    timestamp: b.timestamp ?? 0,
+                  }))
                 : undefined
             }
           />

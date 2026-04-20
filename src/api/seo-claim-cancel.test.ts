@@ -28,6 +28,7 @@ vi.mock("../logging/logger.js", () => ({
 interface MockHandler {
   claimCrawlForClient: ReturnType<typeof vi.fn>;
   cancelCrawl: ReturnType<typeof vi.fn>;
+  getCrawlStats: ReturnType<typeof vi.fn>;
 }
 
 function createAppWithHandler(handler?: MockHandler) {
@@ -51,6 +52,7 @@ describe("POST /api/seo/audit/claim (#841)", () => {
     handler = {
       claimCrawlForClient: vi.fn(),
       cancelCrawl: vi.fn(),
+      getCrawlStats: vi.fn().mockReturnValue(null),
     };
   });
 
@@ -123,6 +125,8 @@ describe("POST /api/seo/audit/:jobId/cancel (#842)", () => {
     handler = {
       claimCrawlForClient: vi.fn(),
       cancelCrawl: vi.fn().mockReturnValue(true),
+      // No clientId on stats → ownership check passes (any caller may cancel).
+      getCrawlStats: vi.fn().mockReturnValue(null),
     };
   });
 
@@ -151,5 +155,24 @@ describe("POST /api/seo/audit/:jobId/cancel (#842)", () => {
     const app = createAppWithHandler(undefined);
     const res = await request(app).post("/api/seo/audit/abc/cancel");
     expect(res.status).toBe(503);
+  });
+
+  it("returns 403 when clientId does not match crawl owner", async () => {
+    handler.getCrawlStats = vi.fn().mockReturnValue({ clientId: "owner-123" });
+    const app = createAppWithHandler(handler);
+    const res = await request(app)
+      .post("/api/seo/audit/abc123def456/cancel")
+      .send({ clientId: "intruder-999" });
+    expect(res.status).toBe(403);
+    expect(handler.cancelCrawl).not.toHaveBeenCalled();
+  });
+
+  it("allows cancel when clientId matches crawl owner", async () => {
+    handler.getCrawlStats = vi.fn().mockReturnValue({ clientId: "owner-123" });
+    const app = createAppWithHandler(handler);
+    const res = await request(app)
+      .post("/api/seo/audit/abc123def456/cancel")
+      .send({ clientId: "owner-123" });
+    expect(res.status).toBe(200);
   });
 });
