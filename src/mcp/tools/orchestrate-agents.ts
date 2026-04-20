@@ -12,10 +12,21 @@ const orchestrateAgentsSchema = z.object({
     .array(
       z.object({
         goal: z.string().describe("What this agent should accomplish"),
-        context: z.string().optional().describe("Additional context or instructions"),
-        model: z.string().optional().describe("Model override for this specific agent (e.g., 'gpt-4.1', 'claude-sonnet-4')"),
-        auto_approve_tools: z.array(z.string()).optional().describe("Tools that bypass approval gating for this agent"),
-      })
+        context: z
+          .string()
+          .optional()
+          .describe("Additional context or instructions"),
+        model: z
+          .string()
+          .optional()
+          .describe(
+            "Model override for this specific agent (e.g., 'gpt-4.1', 'claude-sonnet-4')",
+          ),
+        auto_approve_tools: z
+          .array(z.string())
+          .optional()
+          .describe("Tools that bypass approval gating for this agent"),
+      }),
     )
     .min(1)
     .max(10)
@@ -24,7 +35,7 @@ const orchestrateAgentsSchema = z.object({
     .string()
     .optional()
     .describe(
-      "Instructions for how to combine results. If provided, a final Copilot call synthesizes the agent outputs into a single deliverable."
+      "Instructions for how to combine results. If provided, a final Copilot call synthesizes the agent outputs into a single deliverable.",
     ),
   timeout_seconds: z
     .number()
@@ -36,7 +47,9 @@ const orchestrateAgentsSchema = z.object({
   mode: z
     .enum(["task", "session"])
     .optional()
-    .describe("Orchestration mode: 'task' dispatches background tasks (default), 'session' runs all agents in a single SDK session with subagent delegation"),
+    .describe(
+      "Orchestration mode: 'task' dispatches background tasks (default), 'session' runs all agents in a single SDK session with subagent delegation",
+    ),
   // Internal fields injected by TaskWorker — not set by the LLM.
   parentTaskId: z.string().optional(),
   sessionId: z.string().optional(),
@@ -106,13 +119,23 @@ export const createOrchestrateAgentsTools = ({
             items: {
               type: "object",
               properties: {
-                goal: { type: "string", description: "What this agent should accomplish" },
-                context: { type: "string", description: "Additional context or instructions" },
-                model: { type: "string", description: "Model override for this specific agent" },
+                goal: {
+                  type: "string",
+                  description: "What this agent should accomplish",
+                },
+                context: {
+                  type: "string",
+                  description: "Additional context or instructions",
+                },
+                model: {
+                  type: "string",
+                  description: "Model override for this specific agent",
+                },
                 auto_approve_tools: {
                   type: "array",
                   items: { type: "string" },
-                  description: "Tools that bypass approval gating for this agent",
+                  description:
+                    "Tools that bypass approval gating for this agent",
                 },
               },
               required: ["goal"],
@@ -121,7 +144,8 @@ export const createOrchestrateAgentsTools = ({
           },
           aggregation_prompt: {
             type: "string",
-            description: "Instructions for combining results into a final deliverable",
+            description:
+              "Instructions for combining results into a final deliverable",
           },
           timeout_seconds: {
             type: "number",
@@ -130,7 +154,8 @@ export const createOrchestrateAgentsTools = ({
           mode: {
             type: "string",
             enum: ["task", "session"],
-            description: "Orchestration mode: 'task' (parallel background tasks) or 'session' (single SDK session with subagent delegation)",
+            description:
+              "Orchestration mode: 'task' (parallel background tasks) or 'session' (single SDK session with subagent delegation)",
           },
         },
         required: ["agents"],
@@ -158,7 +183,7 @@ export const createOrchestrateAgentsTools = ({
 
 /**
  * Session mode: compose a single prompt from all agent goals and run via
- * copilot.chat() with enableSubagents: true. Lower API cost, sequential execution.
+ * copilot.chat(). Lower API cost, sequential execution.
  */
 async function handleSessionMode(
   input: OrchestrateAgentsInput,
@@ -166,15 +191,19 @@ async function handleSessionMode(
   taskEngine: TaskEngine,
   startTime: number,
 ): Promise<{ text: string; isError?: boolean }> {
+  const timeoutMs = (input.timeout_seconds ?? 300) * 1_000;
+
   try {
     const sessionId = input.sessionId ?? activeOrchestrateContext.sessionId;
     const channelType =
-      (input.channelType as ChannelType | undefined) ?? activeOrchestrateContext.channelType;
+      (input.channelType as ChannelType | undefined) ??
+      activeOrchestrateContext.channelType;
     const chatId = input.chatId ?? activeOrchestrateContext.chatId;
-    const contextParentTaskId = input.parentTaskId ?? activeOrchestrateContext.parentTaskId;
+    const contextParentTaskId =
+      input.parentTaskId ?? activeOrchestrateContext.parentTaskId;
 
     logger.info(
-      `orchestrate-agents [session mode]: composing prompt for ${input.agents.length} agents`
+      `orchestrate-agents [session mode]: composing prompt for ${input.agents.length} agents (timeout=${Math.round(timeoutMs / 1000)}s)`,
     );
 
     // Build composed prompt
@@ -193,20 +222,35 @@ async function handleSessionMode(
       ...(input.aggregation_prompt ? [input.aggregation_prompt] : []),
     ].join("\n");
 
-    // Get custom agents from the wrapper for SDK subagent delegation
-    const customAgents = copilot.getCustomAgents();
-
-    // Call copilot.chat() once with enableSubagents
+    // Call copilot.chat() once — no tools needed, this is pure text synthesis.
+    // Do NOT pass enableSubagents: with zero tools there is nothing to delegate,
+    // and the SDK subagent handshake can cause the session to hang indefinitely.
     const aggModel = activeOrchestrateContext.model;
-    let fullResponse = "";
-    for await (const chunk of copilot.chat(composedPrompt, {
-      enableSubagents: true,
-      tools: [],
-      ...(customAgents.length > 0 ? { customAgents } : {}),
-      ...(aggModel ? { model: aggModel } : {}),
-    })) {
-      fullResponse += chunk;
-    }
+
+    const chatPromise = (async () => {
+      let fullResponse = "";
+      for await (const chunk of copilot.chat(composedPrompt, {
+        tools: [],
+        ...(aggModel ? { model: aggModel } : {}),
+      })) {
+        fullResponse += chunk;
+      }
+      return fullResponse;
+    })();
+
+    const timeoutPromise = new Promise<never>((_, reject) =>
+      setTimeout(
+        () =>
+          reject(
+            new Error(
+              `Session orchestration timed out after ${Math.round(timeoutMs / 1000)}s`,
+            ),
+          ),
+        timeoutMs,
+      ),
+    );
+
+    const fullResponse = await Promise.race([chatPromise, timeoutPromise]);
 
     const elapsedMs = Date.now() - startTime;
 
@@ -222,7 +266,7 @@ async function handleSessionMode(
         channelType,
         chatId,
       },
-      { mode: "immediate" }
+      { mode: "immediate" },
     );
 
     const summary = `Session orchestration complete: ${input.agents.length} tasks in ${Math.round(elapsedMs / 1000)}s`;
@@ -252,7 +296,7 @@ async function handleSessionMode(
           },
         },
         null,
-        2
+        2,
       ),
     };
   } catch (error) {
@@ -279,12 +323,14 @@ async function handleTaskMode(
     // Resolve context
     const sessionId = input.sessionId ?? activeOrchestrateContext.sessionId;
     const channelType =
-      (input.channelType as ChannelType | undefined) ?? activeOrchestrateContext.channelType;
+      (input.channelType as ChannelType | undefined) ??
+      activeOrchestrateContext.channelType;
     const chatId = input.chatId ?? activeOrchestrateContext.chatId;
-    const contextParentTaskId = input.parentTaskId ?? activeOrchestrateContext.parentTaskId;
+    const contextParentTaskId =
+      input.parentTaskId ?? activeOrchestrateContext.parentTaskId;
 
     logger.info(
-      `orchestrate-agents [task mode]: dispatching ${input.agents.length} agents (timeout=${input.timeout_seconds ?? 300}s)`
+      `orchestrate-agents [task mode]: dispatching ${input.agents.length} agents (timeout=${input.timeout_seconds ?? 300}s)`,
     );
 
     // ── Create orchestration parent task ──
@@ -299,7 +345,7 @@ async function handleTaskMode(
         channelType,
         chatId,
       },
-      { mode: "immediate" }
+      { mode: "immediate" },
     );
 
     // ── Fan-Out: submit all tasks as children of the orchestration parent ──
@@ -317,13 +363,13 @@ async function handleTaskMode(
           channelType,
           chatId,
         },
-        { mode: "background" }
-      )
+        { mode: "background" },
+      ),
     );
 
     // ── Fan-In: wait for all completions ──
     const completions = await Promise.allSettled(
-      tasks.map((task) => waitForTask(taskEngine, task.id, controller.signal))
+      tasks.map((task) => waitForTask(taskEngine, task.id, controller.signal)),
     );
 
     const elapsedMs = Date.now() - startTime;
@@ -345,20 +391,25 @@ async function handleTaskMode(
         goal: input.agents[i].goal,
         status: "failed" as const,
         result: undefined,
-        error: settlement.reason instanceof Error ? settlement.reason.message : String(settlement.reason),
+        error:
+          settlement.reason instanceof Error
+            ? settlement.reason.message
+            : String(settlement.reason),
       };
     });
 
-    const completed = agentResults.filter((r) => r.status === "completed").length;
+    const completed = agentResults.filter(
+      (r) => r.status === "completed",
+    ).length;
     const failed = agentResults.filter((r) => r.status === "failed").length;
     const cancelled = agentResults.filter(
-      (r) => r.status === "cancelled"
+      (r) => r.status === "cancelled",
     ).length;
 
     const summary = `Orchestration complete: ${completed}/${input.agents.length} agents succeeded in ${Math.round(elapsedMs / 1000)}s`;
 
     logger.info(
-      `orchestrate-agents [task mode]: done in ${elapsedMs}ms — ${completed} completed, ${failed} failed, ${cancelled} cancelled`
+      `orchestrate-agents [task mode]: done in ${elapsedMs}ms — ${completed} completed, ${failed} failed, ${cancelled} cancelled`,
     );
 
     const metadata = {
@@ -372,10 +423,7 @@ async function handleTaskMode(
 
     // ── Optional Aggregation via Copilot ──
     let finalText: string;
-    if (
-      input.aggregation_prompt &&
-      agentResults.some((r) => r.result)
-    ) {
+    if (input.aggregation_prompt && agentResults.some((r) => r.result)) {
       const aggregationInput = agentResults
         .filter((r) => r.result)
         .map((r, i) => `### Agent ${i + 1}: ${r.goal}\n${r.result}`)
@@ -391,7 +439,10 @@ async function handleTaskMode(
 
       const aggModel = activeOrchestrateContext.model;
       let aggregated = "";
-      for await (const chunk of copilot.chat(prompt, { tools: [], ...(aggModel ? { model: aggModel } : {}) })) {
+      for await (const chunk of copilot.chat(prompt, {
+        tools: [],
+        ...(aggModel ? { model: aggModel } : {}),
+      })) {
         aggregated += chunk;
       }
 
@@ -401,7 +452,7 @@ async function handleTaskMode(
           metadata,
         },
         null,
-        2
+        2,
       );
     } else {
       // No aggregation — return raw results
@@ -416,7 +467,7 @@ async function handleTaskMode(
           metadata,
         },
         null,
-        2
+        2,
       );
     }
 

@@ -49,6 +49,7 @@
 - [Autonomous Agent Testing Architecture](#autonomous-agent-testing-architecture)
 - [Studio Mode: Screen Capture, Trim & AI Auto-Cut](#studio-mode-screen-capture-trim--ai-auto-cut)
 - [OpusClip Feature Parity — Video Pipeline](#opusclip-feature-parity--video-pipeline-epic-817)
+- [SEO Suite — Site Audit, Link Analysis & Health Scoring](#seo-suite--site-audit-link-analysis--health-scoring-epic-838)
 
 ---
 
@@ -805,6 +806,30 @@ Four native MCP tools for Pinterest SEO powered by the Pinterest API v5. Registe
 - `src/queue/pinterest-digest-service.ts` — Weekly Telegram digest (impressions, clicks, saves, engagement)
 - `ui/components/admin/pinterest-panel.tsx` — Admin panel showing connection status, account stats, trending keywords
 - Admin API routes: `GET /api/admin/pinterest/status`, `/trends`, `/stats`
+
+#### SEO Suite (#838)
+
+**Source:** `src/mcp/tools/seo/` (built-in, no sidecar)
+
+Comprehensive SEO analysis toolkit for full-site auditing, content quality, link analysis, and Core Web Vitals monitoring. The suite is powered by Firecrawl crawling and the Google PageSpeed Insights API.
+
+| Tool | Risk | Description |
+|---|---|---|
+| `seo-site-audit` | 🟡 medium | Full-site SEO audit via Firecrawl deep crawl, generates Markdown + PDF reports |
+| `core-web-vitals` | 🟢 low | Fetches Core Web Vitals (LCP, CLS, TBT, FCP, SI, TTI) from Google PageSpeed Insights |
+
+**Backend Modules:**
+- `health-score.ts` — 0–100 health score with 4-level severity classification (critical/high/medium/low)
+- `link-analyzer.ts` — Broken links, redirect chains/loops, BFS link depth, orphan page detection
+- `content-analyzer.ts` — SimHash duplicate detection (>85% similarity), thin content, keyword density
+- `report-export.ts` — CSV, JSON, and PDF export of audit data
+- `audit-history.ts` — SQLite-backed snapshot storage with comparison and regression detection
+
+**Real-time Crawl Progress:** Webhook handler emits `crawl:started`, `crawl:progress`, `crawl:completed` events via Socket.IO for live progress tracking in the UI.
+
+**API Routes:** `GET /api/seo/history`, `GET /api/seo/history/:id`, `GET /api/seo/history/compare/:siteUrl`, `POST /api/seo/export/:id`
+
+**UI:** `/seo` dashboard page with tabbed layout (Overview | Audit | Links | Content | Performance | History | Export), health score ring, trends comparison, real-time crawl progress panel.
 
 #### Research & Content Synthesis Tools
 
@@ -6752,3 +6777,132 @@ All tools registered via `createVideoPipelineTools()` in `src/mcp/tools/video-pi
 - **Calendar events** — `calendar_events` SQLite table for scheduled social posts
 
 ### Tracking: [Epic #817](https://github.com/openzigs/openzigs/issues/817)
+
+---
+
+## SEO Suite — Site Audit, Link Analysis & Health Scoring (Epic #838)
+
+Comprehensive website SEO auditing platform with real-time crawl progress, health scoring, link graph visualization, content quality analysis, Core Web Vitals integration, audit history trends, and multi-format report exports.
+
+### Architecture Overview
+
+The SEO Suite follows a **three-layer architecture**:
+
+1. **Firecrawl** (self-hosted Docker sidecar) — Pure web crawling with JavaScript rendering, anti-bot bypass, and webhook-based progress streaming
+2. **MCP Tools** (TypeScript handlers) — Deterministic SEO analysis logic (audits, scoring, issue detection)
+3. **UI Dashboard** — Real-time visualization with Socket.IO streaming, D3 link graphs, and export capabilities
+
+### Backend Modules
+
+| Module | File | Description |
+|--------|------|-------------|
+| **Health Score Calculator** | `src/mcp/tools/seo/health-score.ts` | Weighted issue severity scoring: `100 - sum(issues × weight)`. Critical=10, High=3, Medium=1, Low=0.25 |
+| **Core Web Vitals** | `src/mcp/tools/seo/core-web-vitals.ts` | PageSpeed Insights API integration for LCP, CLS, TBT, FCP, SI, TTI. LRU cache (24hr TTL, max 1000 entries) |
+| **Link Analyzer** | `src/mcp/tools/seo/link-analyzer.ts` | Broken links (4xx/5xx), redirect chains (3+ hops), BFS link depth, orphan page detection |
+| **Content Analyzer** | `src/mcp/tools/seo/content-analyzer.ts` | SimHash-based duplicate detection (>85% similarity), thin content (<300 words), keyword density |
+| **Report Export** | `src/mcp/tools/seo/report-export.ts` | CSV/JSON/PDF export with column mapping (`URL,Severity,Category,Message`) |
+| **Audit History** | `src/mcp/tools/seo/audit-history.ts` | SQLite `seo_audit_snapshots` table for audit persistence and trend comparison |
+| **Firecrawl Webhooks** | `src/browser/firecrawl-webhooks.ts` | Webhook handler for `crawl.started`, `crawl.page`, `crawl.completed` events |
+| **Crawl Events Types** | `src/types/crawl-events.ts` | Shared TypeScript interfaces for crawl progress events |
+
+### API Router
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/seo/health` | GET | Check Firecrawl sidecar availability |
+| `/api/seo/audit` | POST | Trigger SEO audit with URL validation (http/https whitelist) |
+| `/api/seo/history` | GET | List all audit snapshots (clamped to max 100) |
+| `/api/seo/history/:id` | GET | Get single audit snapshot by ID |
+| `/api/seo/history/compare/:siteUrl` | GET | Compare latest two snapshots for regression detection |
+| `/api/seo/export/:id` | POST | Export audit as CSV, JSON, or PDF |
+
+All endpoints have error sanitization (OWASP A05) — internal errors return generic messages, full details logged server-side.
+
+### Real-Time Progress (Socket.IO)
+
+Crawl progress streams to clients via Socket.IO rooms:
+
+```typescript
+// Server-side (firecrawl-webhooks.ts)
+io.to(`crawl:${jobId}`).emit("crawl:page", {
+  url: pageUrl,
+  pagesCompleted,
+  totalPages,
+  errors,
+});
+
+// Client-side (useCrawlProgress.ts hook)
+socket.on("crawl:page", (event: CrawlProgressEvent) => {
+  setProgress(event);
+});
+```
+
+Events: `crawl:started`, `crawl:page`, `crawl:completed`
+
+### UI Components
+
+| Component | File | Description |
+|-----------|------|-------------|
+| **SEO Suite** | `ui/app/seo/page.tsx` | Consolidated SEO page with 8 modes (Site Audit, Gap Analysis, Competitors, Extract, Leads, Prices, Dataset, Ingest) + 7 result tabs |
+| **Prompt Builders** | `ui/lib/seo-prompts.ts` | Shared module with all prompt builders, tool arrays, and types for all SEO modes |
+| **CrawlProgressPanel** | `ui/components/seo/crawl-progress-panel.tsx` | Real-time progress bar, current URL, errors, cancel button |
+| **SiteHealthScore** | `ui/components/seo/site-health-score.tsx` | Circular SVG gauge (0-100) with color coding: green (75+), yellow (50-74), red (<50) |
+| **LinkGraph** | `ui/components/seo/link-graph.tsx` | D3 force-directed graph with zoom/pan, color-coded nodes by issue count |
+| **ExportDialog** | `ui/components/seo/export-dialog.tsx` | PDF/CSV/JSON format selection, disabled when no data |
+| **AuditTrends** | `ui/components/seo/audit-trends.tsx` | History trends with TrendingUp/TrendingDown icons |
+
+All SEO features are consolidated into the `/seo` page. The former Firecrawl Dashboard modal and SEO Gap Analysis dialog on Workbench have been replaced with a link to the SEO Suite.
+
+### Link Graph Visualization
+
+The link graph uses D3's force simulation for interactive visualization:
+
+```typescript
+const simulation = d3
+  .forceSimulation(nodes)
+  .force("link", d3.forceLink(links).id((d) => d.id).distance(80))
+  .force("charge", d3.forceManyBody().strength(-200))
+  .force("center", d3.forceCenter(width / 2, height / 2));
+```
+
+Nodes are color-coded: green (no issues), yellow (some issues), red (many issues), gray (orphan pages).
+
+### Data Model
+
+**`seo_audit_snapshots`** SQLite table:
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | INTEGER PRIMARY KEY | Auto-incremented ID |
+| `siteUrl` | TEXT NOT NULL | Audited site URL |
+| `healthScore` | INTEGER | Computed health score (0-100) |
+| `pagesAudited` | INTEGER | Number of pages crawled |
+| `totalIssues` | INTEGER | Sum of all issues |
+| `critical` | INTEGER | Critical severity count |
+| `high` | INTEGER | High severity count |
+| `medium` | INTEGER | Medium severity count |
+| `low` | INTEGER | Low severity count |
+| `dataJson` | TEXT | Full audit data (pages, links, content, CWV) |
+| `createdAt` | TEXT | ISO timestamp |
+
+### Security Considerations
+
+- **URL validation**: Protocol whitelist (http/https only), `new URL()` parsing
+- **Error sanitization**: Generic error messages to clients, full errors logged server-side
+- **Bounded queries**: `clampLimit()` helper enforces max 100 results
+- **Cache eviction**: LRU eviction at 1000 entries prevents unbounded memory growth
+- **XSS prevention**: D3 uses `.text()` for URL rendering (escapes HTML), no `innerHTML` or `dangerouslySetInnerHTML`
+
+### Test Coverage
+
+97 tests covering all modules:
+- `health-score.test.ts` — 18 tests (severity classification, weighted scoring)
+- `core-web-vitals.test.ts` — 13 tests (PSI API, caching, LRU eviction)
+- `link-analyzer.test.ts` — 10 tests (broken links, redirect chains, BFS depth)
+- `content-analyzer.test.ts` — 13 tests (SimHash duplicates, thin content)
+- `report-export.test.ts` — 12 tests (CSV/JSON/PDF export, column ordering)
+- `audit-history.test.ts` — 12 tests (SQLite persistence, trend comparison)
+- `seo.test.ts` — 9 tests (API endpoints, error handling)
+- E2E: `seo-dashboard.spec.ts` — 18 Playwright tests
+
+### Tracking: [Epic #838](https://github.com/openzigs/openzigs/issues/838)

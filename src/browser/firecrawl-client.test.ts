@@ -1,5 +1,4 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { createHmac } from "node:crypto";
 import {
   isBlockedUrl,
   FirecrawlClient,
@@ -581,7 +580,7 @@ describe("FirecrawlClient", () => {
   });
 
   describe("webhook integration", () => {
-    it("passes webhook URL to crawl when handler is set", async () => {
+    it("crawl uses polling instead of webhook for real-time progress", async () => {
       const secret = "test-secret";
       const handler = new FirecrawlWebhookHandler({
         secret,
@@ -603,12 +602,12 @@ describe("FirecrawlClient", () => {
               : url.url;
         if (urlStr.includes("/v1/crawl") && init?.method === "POST") {
           capturedBody = JSON.parse(init.body as string);
-          return new Response(JSON.stringify({ id: "job-webhook" }), {
+          return new Response(JSON.stringify({ id: "job-poll" }), {
             status: 200,
             headers: { "Content-Type": "application/json" },
           });
         }
-        if (urlStr.includes("/v1/crawl/job-webhook")) {
+        if (urlStr.includes("/v1/crawl/job-poll")) {
           return new Response(
             JSON.stringify({
               status: "completed",
@@ -623,7 +622,10 @@ describe("FirecrawlClient", () => {
             { status: 200, headers: { "Content-Type": "application/json" } },
           );
         }
-        return new Response("OK", { status: 200 });
+        return new Response(JSON.stringify({}), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
       }) as typeof fetch;
 
       const c = new FirecrawlClient(
@@ -634,14 +636,15 @@ describe("FirecrawlClient", () => {
       c.setWebhookHandler(handler);
 
       const result = await c.crawl("https://example.com");
-      expect(capturedBody?.webhook).toContain("/api/webhooks/firecrawl?jobId=");
+      // Crawl should NOT include a webhook URL — it uses polling for progress
+      expect(capturedBody?.webhook).toBeUndefined();
       expect(result.pages).toHaveLength(1);
 
       c._setRunning(false);
       handler.shutdown();
     });
 
-    it("resolves crawl via webhook callback", async () => {
+    it("crawl emits progress and completion events via polling", async () => {
       const secret = "test-secret";
       const handler = new FirecrawlWebhookHandler({
         secret,
@@ -650,7 +653,7 @@ describe("FirecrawlClient", () => {
         jobTimeoutMs: 5000,
       });
 
-      let webhookUrl: string | undefined;
+      let pollCount = 0;
       const mockFetch = (async (
         url: string | URL | Request,
         init?: RequestInit,
@@ -662,14 +665,41 @@ describe("FirecrawlClient", () => {
               ? url.href
               : url.url;
         if (urlStr.includes("/v1/crawl") && init?.method === "POST") {
-          const body = JSON.parse(init.body as string);
-          webhookUrl = body.webhook;
-          return new Response(JSON.stringify({ id: "job-wh" }), {
+          return new Response(JSON.stringify({ id: "job-progress" }), {
             status: 200,
             headers: { "Content-Type": "application/json" },
           });
         }
-        return new Response("OK", { status: 200 });
+        if (urlStr.includes("/v1/crawl/job-progress")) {
+          pollCount++;
+          if (pollCount < 3) {
+            return new Response(
+              JSON.stringify({
+                status: "scraping",
+                completed: pollCount,
+                total: 5,
+              }),
+              { status: 200, headers: { "Content-Type": "application/json" } },
+            );
+          }
+          return new Response(
+            JSON.stringify({
+              status: "completed",
+              data: [
+                {
+                  markdown: "# Polled",
+                  metadata: { sourceURL: "https://example.com" },
+                  statusCode: 200,
+                },
+              ],
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          );
+        }
+        return new Response(JSON.stringify({}), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
       }) as typeof fetch;
 
       const c = new FirecrawlClient(
@@ -679,32 +709,16 @@ describe("FirecrawlClient", () => {
       c._setRunning(true);
       c.setWebhookHandler(handler);
 
-      // Start crawl in background
-      const crawlPromise = c.crawl("https://example.com");
+      // Track emitted events
+      const progressEvents: unknown[] = [];
+      handler.on("crawl:started", () => {});
+      handler.on("crawl:progress", (e) => progressEvents.push(e));
 
-      // Wait a tick for the request to be made
-      await new Promise((resolve) => setTimeout(resolve, 10));
-
-      // Simulate webhook callback
-      const jobId = new URL(webhookUrl!).searchParams.get("jobId")!;
-      const payload = JSON.stringify({
-        success: true,
-        status: "completed",
-        data: [
-          {
-            markdown: "# Webhook Page",
-            metadata: { sourceURL: "https://example.com" },
-            statusCode: 200,
-          },
-        ],
-      });
-      const sig = createHmac("sha256", secret).update(payload).digest("hex");
-      handler.handleWebhook(jobId, payload, sig);
-
-      const result = await crawlPromise;
+      const result = await c.crawl("https://example.com");
       expect(result.pages).toHaveLength(1);
-      expect(result.pages[0].markdown).toBe("# Webhook Page");
-      expect(result.jobId).toBe("job-wh");
+      expect(result.pages[0].markdown).toBe("# Polled");
+      // Should have emitted progress events during polling
+      expect(progressEvents.length).toBeGreaterThan(0);
 
       c._setRunning(false);
       handler.shutdown();

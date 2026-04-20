@@ -5,10 +5,19 @@ import os from "node:os";
 import type { ToolDefinition } from "../tool-registry.js";
 import { extractContent, type ExtractedContent } from "./seo/html-extractor.js";
 import { discoverCompetitors } from "./seo/competitor-discovery.js";
-import { buildAnalysisPrompt, generateMetricsReport, buildReportFilename, buildReportSubdir, type AnalysisInput } from "./seo/report-generator.js";
+import {
+  buildAnalysisPrompt,
+  generateMetricsReport,
+  buildReportFilename,
+  buildReportSubdir,
+  type AnalysisInput,
+} from "./seo/report-generator.js";
 import { discoverKeyword } from "./seo/keyword-discovery.js";
 import { saveReportPdf } from "./shared/pdf-export.js";
-import { getFirecrawlClient, isBlockedUrl as isBlockedFirecrawlUrl } from "../../browser/firecrawl-client.js";
+import {
+  getFirecrawlClient,
+  isBlockedUrl as isBlockedFirecrawlUrl,
+} from "../../browser/firecrawl-client.js";
 
 // ── Constants ────────────────────────────────────────────────────────────
 
@@ -18,15 +27,50 @@ const SEO_REPORTS_DIR = path.join(os.homedir(), ".openzigs", "seo-reports");
 
 const seoGapAnalysisSchema = z.object({
   targetUrl: z.string().url().describe("URL of the page to analyze"),
-  targetKeyword: z.string().min(1).optional().describe("Primary keyword / search query to analyze for. Leave blank to auto-detect from page content."),
+  targetKeyword: z
+    .string()
+    .min(1)
+    .optional()
+    .describe(
+      "Primary keyword / search query to analyze for. Leave blank to auto-detect from page content.",
+    ),
   searchProvider: z
     .enum(["serper", "brave"])
     .optional()
-    .describe("Search provider for competitor discovery (default: auto-detect from available API keys)"),
-  model: z.string().optional().describe("LLM model to use for analysis (passed through — the orchestrator handles model routing)"),
-  deepCrawl: z.boolean().optional().default(false).describe("When true, use Firecrawl to deep-crawl competitor sites for richer content extraction (requires firecrawl.enabled=true)"),
-  crawlDepth: z.number().int().min(1).max(5).optional().default(2).describe("Max crawl depth when deepCrawl is enabled (default: 2)"),
-  crawlLimit: z.number().int().min(1).max(50).optional().default(10).describe("Max pages per competitor when deepCrawl is enabled (default: 10)"),
+    .describe(
+      "Search provider for competitor discovery (default: auto-detect from available API keys)",
+    ),
+  model: z
+    .string()
+    .optional()
+    .describe(
+      "LLM model to use for analysis (passed through — the orchestrator handles model routing)",
+    ),
+  deepCrawl: z
+    .boolean()
+    .optional()
+    .default(false)
+    .describe(
+      "When true, use Firecrawl to deep-crawl competitor sites for richer content extraction (requires firecrawl.enabled=true)",
+    ),
+  crawlDepth: z
+    .number()
+    .int()
+    .min(1)
+    .max(5)
+    .optional()
+    .default(2)
+    .describe("Max crawl depth when deepCrawl is enabled (default: 2)"),
+  crawlLimit: z
+    .number()
+    .int()
+    .min(1)
+    .max(50)
+    .optional()
+    .default(10)
+    .describe(
+      "Max pages per competitor when deepCrawl is enabled (default: 10)",
+    ),
 });
 
 const seoExtractContentSchema = z.object({
@@ -34,7 +78,10 @@ const seoExtractContentSchema = z.object({
 });
 
 const exportPdfSchema = z.object({
-  markdownPath: z.string().min(1).describe("Absolute path to the markdown file to convert to PDF"),
+  markdownPath: z
+    .string()
+    .min(1)
+    .describe("Absolute path to the markdown file to convert to PDF"),
 });
 
 // ── Helpers ──────────────────────────────────────────────────────────────
@@ -48,7 +95,9 @@ async function fetchHtml(url: string): Promise<string> {
     signal: AbortSignal.timeout(15_000),
   });
   if (!resp.ok) {
-    throw new Error(`Failed to fetch ${url}: ${resp.status} ${resp.statusText}`);
+    throw new Error(
+      `Failed to fetch ${url}: ${resp.status} ${resp.statusText}`,
+    );
   }
   return resp.text();
 }
@@ -71,20 +120,39 @@ function mergeExtractedContents(pages: ExtractedContent[]): ExtractedContent {
     headingCount: pages.reduce((s, p) => s + p.headingCount, 0),
     paragraphCount: pages.reduce((s, p) => s + p.paragraphCount, 0),
     readingTime: pages.reduce((s, p) => s + p.readingTime, 0),
-    readabilityScore: Math.round(pages.reduce((s, p) => s + p.readabilityScore, 0) / pages.length * 10) / 10,
-    metaTags: deduplicateBy(pages.flatMap((p) => p.metaTags), (t) => `${t.name}:${t.content}`),
+    readabilityScore:
+      Math.round(
+        (pages.reduce((s, p) => s + p.readabilityScore, 0) / pages.length) * 10,
+      ) / 10,
+    metaTags: deduplicateBy(
+      pages.flatMap((p) => p.metaTags),
+      (t) => `${t.name}:${t.content}`,
+    ),
     images: pages.flatMap((p) => p.images),
     imagesWithoutAlt: pages.reduce((s, p) => s + p.imagesWithoutAlt, 0),
     imagesMissingAlt: pages.reduce((s, p) => s + p.imagesMissingAlt, 0),
     imagesEmptyAlt: pages.reduce((s, p) => s + p.imagesEmptyAlt, 0),
     imagesAriaHidden: pages.reduce((s, p) => s + p.imagesAriaHidden, 0),
     imagesLazyLoaded: pages.reduce((s, p) => s + p.imagesLazyLoaded, 0),
-    schemaMarkup: deduplicateBy(pages.flatMap((p) => p.schemaMarkup), (s) => s.type),
-    internalLinks: deduplicateBy(pages.flatMap((p) => p.internalLinks), (l) => l.href),
-    externalLinks: deduplicateBy(pages.flatMap((p) => p.externalLinks), (l) => l.href),
+    schemaMarkup: deduplicateBy(
+      pages.flatMap((p) => p.schemaMarkup),
+      (s) => s.type,
+    ),
+    internalLinks: deduplicateBy(
+      pages.flatMap((p) => p.internalLinks),
+      (l) => l.href,
+    ),
+    externalLinks: deduplicateBy(
+      pages.flatMap((p) => p.externalLinks),
+      (l) => l.href,
+    ),
     internalLinkCount: 0,
     externalLinkCount: 0,
     keywords: mergeKeywords(pages.flatMap((p) => p.keywords)),
+    canonical: first.canonical ?? null,
+    hreflangTags: pages.flatMap((p) => p.hreflangTags),
+    metaRobots: first.metaRobots ?? null,
+    jsonLdBlocks: pages.flatMap((p) => p.jsonLdBlocks),
   };
   merged.internalLinkCount = merged.internalLinks.length;
   merged.externalLinkCount = merged.externalLinks.length;
@@ -101,7 +169,9 @@ function deduplicateBy<T>(items: T[], key: (item: T) => string): T[] {
   });
 }
 
-function mergeKeywords(keywords: { term: string; tfidf: number }[]): { term: string; tfidf: number }[] {
+function mergeKeywords(
+  keywords: { term: string; tfidf: number }[],
+): { term: string; tfidf: number }[] {
   const byTerm = new Map<string, number>();
   for (const kw of keywords) {
     byTerm.set(kw.term, Math.max(byTerm.get(kw.term) ?? 0, kw.tfidf));
@@ -122,7 +192,9 @@ export type SeoGapToolsOptions = {
   braveApiKey?: string;
 };
 
-export const createSeoGapTools = (opts: SeoGapToolsOptions = {}): ToolDefinition[] => {
+export const createSeoGapTools = (
+  opts: SeoGapToolsOptions = {},
+): ToolDefinition[] => {
   const tools: ToolDefinition[] = [];
 
   // ── seo-gap-analysis ──────────────────────────────────────────────────
@@ -133,13 +205,37 @@ export const createSeoGapTools = (opts: SeoGapToolsOptions = {}): ToolDefinition
     inputSchema: {
       type: "object",
       properties: {
-        targetUrl: { type: "string", description: "URL of the page to analyze" },
-        targetKeyword: { type: "string", description: "Primary keyword / search query (leave blank to auto-detect)" },
-        searchProvider: { type: "string", enum: ["serper", "brave"], description: "Search provider (default: auto)" },
-        model: { type: "string", description: "LLM model for enhanced analysis" },
-        deepCrawl: { type: "boolean", description: "Use Firecrawl to deep-crawl competitors (requires firecrawl.enabled)" },
-        crawlDepth: { type: "number", description: "Max crawl depth for deep crawl (default: 2)" },
-        crawlLimit: { type: "number", description: "Max pages per competitor for deep crawl (default: 10)" },
+        targetUrl: {
+          type: "string",
+          description: "URL of the page to analyze",
+        },
+        targetKeyword: {
+          type: "string",
+          description:
+            "Primary keyword / search query (leave blank to auto-detect)",
+        },
+        searchProvider: {
+          type: "string",
+          enum: ["serper", "brave"],
+          description: "Search provider (default: auto)",
+        },
+        model: {
+          type: "string",
+          description: "LLM model for enhanced analysis",
+        },
+        deepCrawl: {
+          type: "boolean",
+          description:
+            "Use Firecrawl to deep-crawl competitors (requires firecrawl.enabled)",
+        },
+        crawlDepth: {
+          type: "number",
+          description: "Max crawl depth for deep crawl (default: 2)",
+        },
+        crawlLimit: {
+          type: "number",
+          description: "Max pages per competitor for deep crawl (default: 10)",
+        },
       },
       required: ["targetUrl"],
     },
@@ -147,7 +243,14 @@ export const createSeoGapTools = (opts: SeoGapToolsOptions = {}): ToolDefinition
     category: "search",
     riskLevel: "medium",
     handler: async (args) => {
-      const { targetUrl, targetKeyword: providedKeyword, searchProvider, deepCrawl, crawlDepth, crawlLimit } = seoGapAnalysisSchema.parse(args);
+      const {
+        targetUrl,
+        targetKeyword: providedKeyword,
+        searchProvider,
+        deepCrawl,
+        crawlDepth,
+        crawlLimit,
+      } = seoGapAnalysisSchema.parse(args);
 
       try {
         await ensureReportsDir();
@@ -158,7 +261,9 @@ export const createSeoGapTools = (opts: SeoGapToolsOptions = {}): ToolDefinition
 
         // 1b. Auto-detect keyword if not provided
         let targetKeyword = providedKeyword ?? "";
-        let detectedKeyword: { keyword: string; alternatives: string[]; intent: string } | undefined;
+        let detectedKeyword:
+          | { keyword: string; alternatives: string[]; intent: string }
+          | undefined;
 
         if (!targetKeyword) {
           const discovery = discoverKeyword(targetContent, targetUrl);
@@ -176,14 +281,26 @@ export const createSeoGapTools = (opts: SeoGapToolsOptions = {}): ToolDefinition
         let targetDomain: string | undefined;
         try {
           targetDomain = new URL(targetUrl).hostname.replace(/^www\./, "");
-        } catch { /* ignore */ }
+        } catch {
+          /* ignore */
+        }
 
-        const apiKeys: { serperApiKey?: string; braveApiKey?: string; targetDomain?: string } = {};
+        const apiKeys: {
+          serperApiKey?: string;
+          braveApiKey?: string;
+          targetDomain?: string;
+        } = {};
         if (targetDomain) apiKeys.targetDomain = targetDomain;
-        if (searchProvider === "serper" || (!searchProvider && opts.serperApiKey)) {
+        if (
+          searchProvider === "serper" ||
+          (!searchProvider && opts.serperApiKey)
+        ) {
           apiKeys.serperApiKey = opts.serperApiKey;
         }
-        if (searchProvider === "brave" || (!searchProvider && !opts.serperApiKey)) {
+        if (
+          searchProvider === "brave" ||
+          (!searchProvider && !opts.serperApiKey)
+        ) {
           apiKeys.braveApiKey = opts.braveApiKey;
         }
         // Ensure at least one key is present
@@ -195,11 +312,18 @@ export const createSeoGapTools = (opts: SeoGapToolsOptions = {}): ToolDefinition
         const discovery = await discoverCompetitors(targetKeyword, apiKeys);
 
         // 3. Fetch & extract competitor content (parallel, with error tolerance)
-        type CompetitorResult = ReturnType<typeof extractContent> & { url: string; crawledPages?: number };
+        type CompetitorResult = ReturnType<typeof extractContent> & {
+          url: string;
+          crawledPages?: number;
+        };
         let competitors: CompetitorResult[];
 
         const firecrawlClient = (() => {
-          try { return getFirecrawlClient(); } catch { return null; }
+          try {
+            return getFirecrawlClient();
+          } catch {
+            return null;
+          }
         })();
         const useFirecrawl = deepCrawl && firecrawlClient?.getConfig().enabled;
 
@@ -219,14 +343,22 @@ export const createSeoGapTools = (opts: SeoGapToolsOptions = {}): ToolDefinition
               const pageContents = crawlResult.pages
                 .filter((p) => p.html)
                 .map((p) => extractContent(p.html!, p.url || result.url));
-              const content = pageContents.length > 0
-                ? mergeExtractedContents(pageContents)
-                : extractContent("<html></html>", result.url);
-              return { ...content, url: result.url, crawledPages: crawlResult.totalPages };
+              const content =
+                pageContents.length > 0
+                  ? mergeExtractedContents(pageContents)
+                  : extractContent("<html></html>", result.url);
+              return {
+                ...content,
+                url: result.url,
+                crawledPages: crawlResult.totalPages,
+              };
             }),
           );
           competitors = crawlResults
-            .filter((r): r is PromiseFulfilledResult<CompetitorResult> => r.status === "fulfilled")
+            .filter(
+              (r): r is PromiseFulfilledResult<CompetitorResult> =>
+                r.status === "fulfilled",
+            )
             .map((r) => r.value);
         } else {
           // Standard mode: fetch single pages
@@ -238,7 +370,10 @@ export const createSeoGapTools = (opts: SeoGapToolsOptions = {}): ToolDefinition
             }),
           );
           competitors = competitorResults
-            .filter((r): r is PromiseFulfilledResult<CompetitorResult> => r.status === "fulfilled")
+            .filter(
+              (r): r is PromiseFulfilledResult<CompetitorResult> =>
+                r.status === "fulfilled",
+            )
             .map((r) => r.value);
         }
 
@@ -267,40 +402,49 @@ export const createSeoGapTools = (opts: SeoGapToolsOptions = {}): ToolDefinition
         const pdfPath = await saveReportPdf(pdfBasename, report, reportDir);
 
         return {
-          text: `REPORT SAVED: ${reportPath}\n${pdfPath ? `PDF SAVED: ${pdfPath}` : "PDF: Not generated (Chrome not found)"}\nCompetitors analyzed: ${competitors.length}\n${detectedKeyword ? `Auto-detected keyword: "${targetKeyword}" (${detectedKeyword.intent})` : ""}\nUse the analysisPrompt field for enhanced LLM analysis. Write enhanced results to the SAME reportPath.\n\n` + JSON.stringify({
-            reportPath,
-            pdfPath: pdfPath ?? null,
-            filename,
-            ...(detectedKeyword ? { detectedKeyword } : {}),
-            targetKeyword,
-            targetMetrics: {
-              wordCount: targetContent.wordCount,
-              headingCount: targetContent.headingCount,
-              readingTime: targetContent.readingTime,
-              readabilityScore: targetContent.readabilityScore,
-              topKeywords: targetContent.keywords.slice(0, 5).map((k) => k.term),
-              metaTitleLength: targetContent.metaTitle.length,
-              metaDescriptionLength: targetContent.metaDescription.length,
-              schemaTypes: targetContent.schemaMarkup.map((s) => s.type),
-              imagesTotal: targetContent.images.length,
-              imagesWithoutAlt: targetContent.imagesWithoutAlt,
-              imagesMissingAlt: targetContent.imagesMissingAlt,
-              imagesEmptyAlt: targetContent.imagesEmptyAlt,
-              imagesAriaHidden: targetContent.imagesAriaHidden,
-              imagesLazyLoaded: targetContent.imagesLazyLoaded,
-              internalLinks: targetContent.internalLinkCount,
-              externalLinks: targetContent.externalLinkCount,
-            },
-            competitorsAnalyzed: competitors.length,
-            deepCrawlEnabled: !!useFirecrawl,
-            serpFeatures: {
-              paaCount: discovery.serpFeatures.paa.length,
-              relatedSearchCount: discovery.serpFeatures.relatedSearches.length,
-              hasFeaturedSnippet: !!discovery.serpFeatures.featuredSnippet,
-            },
-            searchProvider: discovery.provider,
-            analysisPrompt,
-          }, null, 2),
+          text:
+            `REPORT SAVED: ${reportPath}\n${pdfPath ? `PDF SAVED: ${pdfPath}` : "PDF: Not generated (Chrome not found)"}\nCompetitors analyzed: ${competitors.length}\n${detectedKeyword ? `Auto-detected keyword: "${targetKeyword}" (${detectedKeyword.intent})` : ""}\nUse the analysisPrompt field for enhanced LLM analysis. Write enhanced results to the SAME reportPath.\n\n` +
+            JSON.stringify(
+              {
+                reportPath,
+                pdfPath: pdfPath ?? null,
+                filename,
+                ...(detectedKeyword ? { detectedKeyword } : {}),
+                targetKeyword,
+                targetMetrics: {
+                  wordCount: targetContent.wordCount,
+                  headingCount: targetContent.headingCount,
+                  readingTime: targetContent.readingTime,
+                  readabilityScore: targetContent.readabilityScore,
+                  topKeywords: targetContent.keywords
+                    .slice(0, 5)
+                    .map((k) => k.term),
+                  metaTitleLength: targetContent.metaTitle.length,
+                  metaDescriptionLength: targetContent.metaDescription.length,
+                  schemaTypes: targetContent.schemaMarkup.map((s) => s.type),
+                  imagesTotal: targetContent.images.length,
+                  imagesWithoutAlt: targetContent.imagesWithoutAlt,
+                  imagesMissingAlt: targetContent.imagesMissingAlt,
+                  imagesEmptyAlt: targetContent.imagesEmptyAlt,
+                  imagesAriaHidden: targetContent.imagesAriaHidden,
+                  imagesLazyLoaded: targetContent.imagesLazyLoaded,
+                  internalLinks: targetContent.internalLinkCount,
+                  externalLinks: targetContent.externalLinkCount,
+                },
+                competitorsAnalyzed: competitors.length,
+                deepCrawlEnabled: !!useFirecrawl,
+                serpFeatures: {
+                  paaCount: discovery.serpFeatures.paa.length,
+                  relatedSearchCount:
+                    discovery.serpFeatures.relatedSearches.length,
+                  hasFeaturedSnippet: !!discovery.serpFeatures.featuredSnippet,
+                },
+                searchProvider: discovery.provider,
+                analysisPrompt,
+              },
+              null,
+              2,
+            ),
         };
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);
@@ -332,29 +476,35 @@ export const createSeoGapTools = (opts: SeoGapToolsOptions = {}): ToolDefinition
         const content = extractContent(html, url);
 
         return {
-          text: JSON.stringify({
-            url,
-            title: content.title,
-            headings: content.headings,
-            wordCount: content.wordCount,
-            headingCount: content.headingCount,
-            paragraphCount: content.paragraphCount,
-            readingTime: content.readingTime,
-            readabilityScore: content.readabilityScore,
-            keywords: content.keywords,
-            metaTitle: content.metaTitle,
-            metaDescription: content.metaDescription,
-            schemaTypes: content.schemaMarkup.map((s) => s.type),
-            imagesTotal: content.images.length,
-            imagesWithoutAlt: content.imagesWithoutAlt,
-            imagesMissingAlt: content.imagesMissingAlt,
-            imagesEmptyAlt: content.imagesEmptyAlt,
-            imagesAriaHidden: content.imagesAriaHidden,
-            imagesLazyLoaded: content.imagesLazyLoaded,
-            internalLinks: content.internalLinkCount,
-            externalLinks: content.externalLinkCount,
-            bodyTextPreview: content.bodyText.slice(0, 500) + (content.bodyText.length > 500 ? "…" : ""),
-          }, null, 2),
+          text: JSON.stringify(
+            {
+              url,
+              title: content.title,
+              headings: content.headings,
+              wordCount: content.wordCount,
+              headingCount: content.headingCount,
+              paragraphCount: content.paragraphCount,
+              readingTime: content.readingTime,
+              readabilityScore: content.readabilityScore,
+              keywords: content.keywords,
+              metaTitle: content.metaTitle,
+              metaDescription: content.metaDescription,
+              schemaTypes: content.schemaMarkup.map((s) => s.type),
+              imagesTotal: content.images.length,
+              imagesWithoutAlt: content.imagesWithoutAlt,
+              imagesMissingAlt: content.imagesMissingAlt,
+              imagesEmptyAlt: content.imagesEmptyAlt,
+              imagesAriaHidden: content.imagesAriaHidden,
+              imagesLazyLoaded: content.imagesLazyLoaded,
+              internalLinks: content.internalLinkCount,
+              externalLinks: content.externalLinkCount,
+              bodyTextPreview:
+                content.bodyText.slice(0, 500) +
+                (content.bodyText.length > 500 ? "…" : ""),
+            },
+            null,
+            2,
+          ),
         };
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);
@@ -371,7 +521,10 @@ export const createSeoGapTools = (opts: SeoGapToolsOptions = {}): ToolDefinition
     inputSchema: {
       type: "object",
       properties: {
-        markdownPath: { type: "string", description: "Absolute path to the markdown file" },
+        markdownPath: {
+          type: "string",
+          description: "Absolute path to the markdown file",
+        },
       },
       required: ["markdownPath"],
     },
@@ -382,14 +535,19 @@ export const createSeoGapTools = (opts: SeoGapToolsOptions = {}): ToolDefinition
       const { markdownPath } = exportPdfSchema.parse(args);
 
       try {
-        const resolved = path.resolve(markdownPath.replace(/^~\//, `${os.homedir()}/`));
+        const resolved = path.resolve(
+          markdownPath.replace(/^~\//, `${os.homedir()}/`),
+        );
         const content = await fs.readFile(resolved, "utf-8");
         const outputDir = path.dirname(resolved);
         const basename = path.basename(resolved, ".md");
         const pdfPath = await saveReportPdf(basename, content, outputDir);
 
         if (!pdfPath) {
-          return { text: "PDF not generated — Chrome binary not found on this system.", isError: true };
+          return {
+            text: "PDF not generated — Chrome binary not found on this system.",
+            isError: true,
+          };
         }
 
         return { text: `PDF exported: ${pdfPath}` };

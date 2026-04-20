@@ -11,7 +11,10 @@ import Database from "better-sqlite3";
 import path from "node:path";
 import os from "node:os";
 import type { ToolDefinition } from "../tool-registry.js";
-import { getFirecrawlClient, isBlockedUrl } from "../../browser/firecrawl-client.js";
+import {
+  getFirecrawlClient,
+  isBlockedUrl,
+} from "../../browser/firecrawl-client.js";
 import { extractContent, type ExtractedContent } from "./seo/html-extractor.js";
 
 // ── Types ────────────────────────────────────────────────────────────────
@@ -58,14 +61,34 @@ const removeCompetitorSchema = z.object({
 
 const snapshotCompetitorSchema = z.object({
   action: z.literal("snapshot"),
-  url: z.string().url().optional().describe("Specific competitor URL, or omit for all"),
-  maxPages: z.number().int().min(1).max(100).optional().default(20).describe("Max pages to crawl per competitor"),
-  extractSchema: z.record(z.unknown()).optional().describe("JSON schema for structured data extraction from key pages (e.g., pricing, features)"),
+  url: z
+    .string()
+    .url()
+    .optional()
+    .describe("Specific competitor URL, or omit for all"),
+  maxPages: z
+    .number()
+    .int()
+    .min(1)
+    .max(100)
+    .optional()
+    .default(20)
+    .describe("Max pages to crawl per competitor"),
+  extractSchema: z
+    .record(z.unknown())
+    .optional()
+    .describe(
+      "JSON schema for structured data extraction from key pages (e.g., pricing, features)",
+    ),
 });
 
 const reportSchema = z.object({
   action: z.literal("report"),
-  url: z.string().url().optional().describe("Specific competitor URL, or omit for all"),
+  url: z
+    .string()
+    .url()
+    .optional()
+    .describe("Specific competitor URL, or omit for all"),
 });
 
 const listSchema = z.object({
@@ -119,52 +142,82 @@ export class CompetitorRepository {
     `);
     // Migration: add extracted_data column if missing (for databases created before this feature)
     try {
-      this.db.prepare("SELECT extracted_data FROM competitive_snapshots LIMIT 0").run();
+      this.db
+        .prepare("SELECT extracted_data FROM competitive_snapshots LIMIT 0")
+        .run();
     } catch {
-      this.db.exec("ALTER TABLE competitive_snapshots ADD COLUMN extracted_data TEXT");
+      this.db.exec(
+        "ALTER TABLE competitive_snapshots ADD COLUMN extracted_data TEXT",
+      );
     }
   }
 
   addCompetitor(url: string, name?: string): void {
-    this.db.prepare(
-      "INSERT OR IGNORE INTO competitive_monitors (url, name) VALUES (?, ?)",
-    ).run(url, name ?? null);
+    this.db
+      .prepare(
+        "INSERT OR IGNORE INTO competitive_monitors (url, name) VALUES (?, ?)",
+      )
+      .run(url, name ?? null);
   }
 
   removeCompetitor(url: string): boolean {
-    const result = this.db.prepare(
-      "DELETE FROM competitive_monitors WHERE url = ?",
-    ).run(url);
+    const result = this.db
+      .prepare("DELETE FROM competitive_monitors WHERE url = ?")
+      .run(url);
     return result.changes > 0;
   }
 
-  listCompetitors(): { url: string; name: string | null; addedAt: string; lastSnapshotAt: string | null }[] {
-    return this.db.prepare(
-      "SELECT url, name, added_at as addedAt, last_snapshot_at as lastSnapshotAt FROM competitive_monitors ORDER BY added_at",
-    ).all() as { url: string; name: string | null; addedAt: string; lastSnapshotAt: string | null }[];
+  listCompetitors(): {
+    url: string;
+    name: string | null;
+    addedAt: string;
+    lastSnapshotAt: string | null;
+  }[] {
+    return this.db
+      .prepare(
+        "SELECT url, name, added_at as addedAt, last_snapshot_at as lastSnapshotAt FROM competitive_monitors ORDER BY added_at",
+      )
+      .all() as {
+      url: string;
+      name: string | null;
+      addedAt: string;
+      lastSnapshotAt: string | null;
+    }[];
   }
 
-  saveSnapshot(competitorUrl: string, snapshot: Omit<CompetitorSnapshot, "id" | "competitorUrl" | "capturedAt">, extractedData?: Record<string, unknown>): void {
-    this.db.prepare(`
+  saveSnapshot(
+    competitorUrl: string,
+    snapshot: Omit<CompetitorSnapshot, "id" | "competitorUrl" | "capturedAt">,
+    extractedData?: Record<string, unknown>,
+  ): void {
+    this.db
+      .prepare(
+        `
       INSERT INTO competitive_snapshots (competitor_url, page_count, total_word_count, avg_readability, schema_types, top_keywords, meta_titles, extracted_data)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      competitorUrl,
-      snapshot.pageCount,
-      snapshot.totalWordCount,
-      snapshot.avgReadability,
-      snapshot.schemaTypes,
-      snapshot.topKeywords,
-      snapshot.metaTitles,
-      extractedData ? JSON.stringify(extractedData) : null,
-    );
-    this.db.prepare(
-      "UPDATE competitive_monitors SET last_snapshot_at = datetime('now') WHERE url = ?",
-    ).run(competitorUrl);
+    `,
+      )
+      .run(
+        competitorUrl,
+        snapshot.pageCount,
+        snapshot.totalWordCount,
+        snapshot.avgReadability,
+        snapshot.schemaTypes,
+        snapshot.topKeywords,
+        snapshot.metaTitles,
+        extractedData ? JSON.stringify(extractedData) : null,
+      );
+    this.db
+      .prepare(
+        "UPDATE competitive_monitors SET last_snapshot_at = datetime('now') WHERE url = ?",
+      )
+      .run(competitorUrl);
   }
 
   getLatestSnapshots(competitorUrl: string, limit = 2): CompetitorSnapshot[] {
-    return this.db.prepare(`
+    return this.db
+      .prepare(
+        `
       SELECT id, competitor_url as competitorUrl, captured_at as capturedAt,
              page_count as pageCount, total_word_count as totalWordCount,
              avg_readability as avgReadability, schema_types as schemaTypes,
@@ -174,7 +227,9 @@ export class CompetitorRepository {
       WHERE competitor_url = ?
       ORDER BY id DESC
       LIMIT ?
-    `).all(competitorUrl, limit) as CompetitorSnapshot[];
+    `,
+      )
+      .all(competitorUrl, limit) as CompetitorSnapshot[];
   }
 
   /** Expose the database for testing. */
@@ -185,7 +240,10 @@ export class CompetitorRepository {
 
 // ── Diff Logic ───────────────────────────────────────────────────────────
 
-export function computeDiff(current: CompetitorSnapshot, previous: CompetitorSnapshot): DiffChange[] {
+export function computeDiff(
+  current: CompetitorSnapshot,
+  previous: CompetitorSnapshot,
+): DiffChange[] {
   const changes: DiffChange[] = [];
 
   if (current.pageCount !== previous.pageCount) {
@@ -193,7 +251,8 @@ export function computeDiff(current: CompetitorSnapshot, previous: CompetitorSna
       field: "pageCount",
       previous: previous.pageCount,
       current: current.pageCount,
-      direction: current.pageCount > previous.pageCount ? "increased" : "decreased",
+      direction:
+        current.pageCount > previous.pageCount ? "increased" : "decreased",
     });
   }
 
@@ -202,7 +261,10 @@ export function computeDiff(current: CompetitorSnapshot, previous: CompetitorSna
       field: "totalWordCount",
       previous: previous.totalWordCount,
       current: current.totalWordCount,
-      direction: current.totalWordCount > previous.totalWordCount ? "increased" : "decreased",
+      direction:
+        current.totalWordCount > previous.totalWordCount
+          ? "increased"
+          : "decreased",
     });
   }
 
@@ -211,7 +273,10 @@ export function computeDiff(current: CompetitorSnapshot, previous: CompetitorSna
       field: "avgReadability",
       previous: Number(previous.avgReadability.toFixed(1)),
       current: Number(current.avgReadability.toFixed(1)),
-      direction: current.avgReadability > previous.avgReadability ? "increased" : "decreased",
+      direction:
+        current.avgReadability > previous.avgReadability
+          ? "increased"
+          : "decreased",
     });
   }
 
@@ -238,7 +303,10 @@ export function computeContentDiff(
   if (!currentData || !previousData) return [];
 
   const changes: DiffChange[] = [];
-  const allKeys = new Set([...Object.keys(currentData), ...Object.keys(previousData)]);
+  const allKeys = new Set([
+    ...Object.keys(currentData),
+    ...Object.keys(previousData),
+  ]);
 
   for (const key of allKeys) {
     const prev = previousData[key];
@@ -248,13 +316,33 @@ export function computeContentDiff(
 
     if (prevStr !== currStr) {
       if (prev === undefined) {
-        changes.push({ field: `extracted.${key}`, previous: "(not present)", current: currStr, direction: "changed" });
+        changes.push({
+          field: `extracted.${key}`,
+          previous: "(not present)",
+          current: currStr,
+          direction: "changed",
+        });
       } else if (curr === undefined) {
-        changes.push({ field: `extracted.${key}`, previous: prevStr, current: "(removed)", direction: "changed" });
+        changes.push({
+          field: `extracted.${key}`,
+          previous: prevStr,
+          current: "(removed)",
+          direction: "changed",
+        });
       } else if (typeof prev === "number" && typeof curr === "number") {
-        changes.push({ field: `extracted.${key}`, previous: prev, current: curr, direction: curr > prev ? "increased" : "decreased" });
+        changes.push({
+          field: `extracted.${key}`,
+          previous: prev,
+          current: curr,
+          direction: curr > prev ? "increased" : "decreased",
+        });
       } else {
-        changes.push({ field: `extracted.${key}`, previous: prevStr, current: currStr, direction: "changed" });
+        changes.push({
+          field: `extracted.${key}`,
+          previous: prevStr,
+          current: currStr,
+          direction: "changed",
+        });
       }
     }
   }
@@ -263,13 +351,18 @@ export function computeContentDiff(
 }
 
 /** Aggregate extracted content from multiple pages into snapshot metrics. */
-export function aggregatePages(pages: ExtractedContent[]): Omit<CompetitorSnapshot, "id" | "competitorUrl" | "capturedAt"> {
+export function aggregatePages(
+  pages: ExtractedContent[],
+): Omit<CompetitorSnapshot, "id" | "competitorUrl" | "capturedAt"> {
   const totalWordCount = pages.reduce((a, p) => a + p.wordCount, 0);
-  const avgReadability = pages.length > 0
-    ? pages.reduce((a, p) => a + p.readabilityScore, 0) / pages.length
-    : 0;
+  const avgReadability =
+    pages.length > 0
+      ? pages.reduce((a, p) => a + p.readabilityScore, 0) / pages.length
+      : 0;
 
-  const allSchemaTypes = [...new Set(pages.flatMap((p) => p.schemaMarkup.map((s) => s.type)))];
+  const allSchemaTypes = [
+    ...new Set(pages.flatMap((p) => p.schemaMarkup.map((s) => s.type))),
+  ];
   const allKeywords = pages.flatMap((p) => p.keywords);
   const keywordMap = new Map<string, number>();
   for (const kw of allKeywords) {
@@ -297,7 +390,9 @@ export function aggregatePages(pages: ExtractedContent[]): Omit<CompetitorSnapsh
 
 // ── Tool Factory ─────────────────────────────────────────────────────────
 
-export function createCompetitorMonitorTool(repo?: CompetitorRepository): ToolDefinition {
+export function createCompetitorMonitorTool(
+  repo?: CompetitorRepository,
+): ToolDefinition {
   const repository = repo ?? new CompetitorRepository();
 
   return {
@@ -310,11 +405,22 @@ export function createCompetitorMonitorTool(repo?: CompetitorRepository): ToolDe
     inputSchema: {
       type: "object",
       properties: {
-        action: { type: "string", enum: ["add", "remove", "snapshot", "report", "list"], description: "Action to perform" },
+        action: {
+          type: "string",
+          enum: ["add", "remove", "snapshot", "report", "list"],
+          description: "Action to perform",
+        },
         url: { type: "string", description: "Competitor URL" },
         name: { type: "string", description: "Friendly name (add only)" },
-        maxPages: { type: "number", description: "Max pages to crawl (snapshot only, default: 20)" },
-        extractSchema: { type: "object", description: "JSON schema for structured data extraction during snapshot" },
+        maxPages: {
+          type: "number",
+          description: "Max pages to crawl (snapshot only, default: 20)",
+        },
+        extractSchema: {
+          type: "object",
+          description:
+            "JSON schema for structured data extraction during snapshot",
+        },
       },
       required: ["action"],
     },
@@ -327,24 +433,36 @@ export function createCompetitorMonitorTool(repo?: CompetitorRepository): ToolDe
       switch (parsed.action) {
         case "add": {
           if (isBlockedUrl(parsed.url)) {
-            return { text: `SSRF blocked: "${parsed.url}" targets an internal network`, isError: true };
+            return {
+              text: `SSRF blocked: "${parsed.url}" targets an internal network`,
+              isError: true,
+            };
           }
           repository.addCompetitor(parsed.url, parsed.name);
-          return { text: `Added competitor: ${parsed.url}${parsed.name ? ` (${parsed.name})` : ""}` };
+          return {
+            text: `Added competitor: ${parsed.url}${parsed.name ? ` (${parsed.name})` : ""}`,
+          };
         }
 
         case "remove": {
           const removed = repository.removeCompetitor(parsed.url);
-          return { text: removed ? `Removed competitor: ${parsed.url}` : `Competitor not found: ${parsed.url}` };
+          return {
+            text: removed
+              ? `Removed competitor: ${parsed.url}`
+              : `Competitor not found: ${parsed.url}`,
+          };
         }
 
         case "list": {
           const competitors = repository.listCompetitors();
           if (competitors.length === 0) {
-            return { text: "No competitors being monitored. Use action='add' to add one." };
+            return {
+              text: "No competitors being monitored. Use action='add' to add one.",
+            };
           }
           return {
-            text: `Monitored competitors (${competitors.length}):\n\n` +
+            text:
+              `Monitored competitors (${competitors.length}):\n\n` +
               JSON.stringify(competitors, null, 2),
           };
         }
@@ -352,7 +470,10 @@ export function createCompetitorMonitorTool(repo?: CompetitorRepository): ToolDe
         case "snapshot": {
           const client = getFirecrawlClient();
           if (!client.getConfig().enabled) {
-            return { text: "Firecrawl is not enabled. Set firecrawl.enabled=true.", isError: true };
+            return {
+              text: "Firecrawl is not enabled. Set firecrawl.enabled=true.",
+              isError: true,
+            };
           }
 
           const competitors = parsed.url
@@ -360,7 +481,10 @@ export function createCompetitorMonitorTool(repo?: CompetitorRepository): ToolDe
             : repository.listCompetitors();
 
           if (competitors.length === 0) {
-            return { text: "No competitors to snapshot. Add some first.", isError: true };
+            return {
+              text: "No competitors to snapshot. Add some first.",
+              isError: true,
+            };
           }
 
           const results: string[] = [];
@@ -397,15 +521,20 @@ export function createCompetitorMonitorTool(repo?: CompetitorRepository): ToolDe
               }
 
               repository.saveSnapshot(comp.url, metrics, extractedData);
-              results.push(`✅ ${comp.url}: ${metrics.pageCount} pages, ${metrics.totalWordCount} words${extractedData ? " (with extraction data)" : ""}`);
+              results.push(
+                `✅ ${comp.url}: ${metrics.pageCount} pages, ${metrics.totalWordCount} words${extractedData ? " (with extraction data)" : ""}`,
+              );
             } catch (err) {
-              results.push(`❌ ${comp.url}: ${err instanceof Error ? err.message : String(err)}`);
+              results.push(
+                `❌ ${comp.url}: ${err instanceof Error ? err.message : String(err)}`,
+              );
             }
           }
 
           let responseText = `Snapshot complete:\n${results.join("\n")}`;
           if (parsed.extractSchema) {
-            responseText += "\n\nExtraction schema was provided. Use the 'report' action to see extracted data comparisons over time.";
+            responseText +=
+              "\n\nExtraction schema was provided. Use the 'report' action to see extracted data comparisons over time.";
           }
           return { text: responseText };
         }
@@ -423,11 +552,15 @@ export function createCompetitorMonitorTool(repo?: CompetitorRepository): ToolDe
           for (const comp of competitors) {
             const snapshots = repository.getLatestSnapshots(comp.url, 2);
             if (snapshots.length === 0) {
-              reports.push(`⚠️ ${comp.url}: No snapshots yet. Run 'snapshot' first.`);
+              reports.push(
+                `⚠️ ${comp.url}: No snapshots yet. Run 'snapshot' first.`,
+              );
               continue;
             }
             if (snapshots.length === 1) {
-              reports.push(`📊 ${comp.url}: Only 1 snapshot (baseline). Run 'snapshot' again later for comparison.\n  Pages: ${snapshots[0].pageCount}, Words: ${snapshots[0].totalWordCount}`);
+              reports.push(
+                `📊 ${comp.url}: Only 1 snapshot (baseline). Run 'snapshot' again later for comparison.\n  Pages: ${snapshots[0].pageCount}, Words: ${snapshots[0].totalWordCount}`,
+              );
               continue;
             }
 
@@ -438,23 +571,33 @@ export function createCompetitorMonitorTool(repo?: CompetitorRepository): ToolDe
             let currentExtracted: Record<string, unknown> | null = null;
             let previousExtracted: Record<string, unknown> | null = null;
             try {
-              if (current.extractedData) currentExtracted = JSON.parse(current.extractedData);
-              if (previous.extractedData) previousExtracted = JSON.parse(previous.extractedData);
-            } catch { /* ignore parse errors */ }
-            const contentChanges = computeContentDiff(currentExtracted, previousExtracted);
+              if (current.extractedData)
+                currentExtracted = JSON.parse(current.extractedData);
+              if (previous.extractedData)
+                previousExtracted = JSON.parse(previous.extractedData);
+            } catch {
+              /* ignore parse errors */
+            }
+            const contentChanges = computeContentDiff(
+              currentExtracted,
+              previousExtracted,
+            );
             const allChanges = [...changes, ...contentChanges];
 
             if (allChanges.length === 0) {
               reports.push(`📊 ${comp.url}: No significant changes detected.`);
             } else {
-              const changeLines = allChanges.map((c) =>
-                `  - ${c.field}: ${c.previous} → ${c.current} (${c.direction})`,
+              const changeLines = allChanges.map(
+                (c) =>
+                  `  - ${c.field}: ${c.previous} → ${c.current} (${c.direction})`,
               );
               reports.push(`📊 ${comp.url}:\n${changeLines.join("\n")}`);
             }
           }
 
-          return { text: `Competitive Intelligence Report:\n\n${reports.join("\n\n")}` };
+          return {
+            text: `Competitive Intelligence Report:\n\n${reports.join("\n\n")}`,
+          };
         }
 
         default:

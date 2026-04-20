@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { auditPage, detectSiteWideIssues, generateAuditReport, type PageAuditResult, type SiteAuditResult } from "./site-audit.js";
+import {
+  auditPage,
+  detectSiteWideIssues,
+  generateAuditReport,
+  type PageAuditResult,
+  type SiteAuditResult,
+} from "./site-audit.js";
 import type { CrawlPage } from "../../../browser/firecrawl-client.js";
 import type { ExtractedContent } from "./html-extractor.js";
 
@@ -14,7 +20,9 @@ function makePage(overrides: Partial<CrawlPage> = {}): CrawlPage {
   };
 }
 
-function makeContent(overrides: Partial<ExtractedContent> = {}): ExtractedContent {
+function makeContent(
+  overrides: Partial<ExtractedContent> = {},
+): ExtractedContent {
   return {
     title: "Test Page",
     headings: [{ level: 1, text: "Test" }],
@@ -26,7 +34,8 @@ function makeContent(overrides: Partial<ExtractedContent> = {}): ExtractedConten
     keywords: [],
     readabilityScore: 65,
     metaTitle: "Test Page — Example",
-    metaDescription: "A test page for SEO audit with sufficient description length to pass checks.",
+    metaDescription:
+      "A test page for SEO audit with sufficient description length to pass checks.",
     metaTags: [],
     images: [],
     imagesWithoutAlt: 0,
@@ -39,6 +48,10 @@ function makeContent(overrides: Partial<ExtractedContent> = {}): ExtractedConten
     externalLinks: [],
     internalLinkCount: 1,
     externalLinkCount: 0,
+    canonical: null,
+    hreflangTags: [],
+    metaRobots: null,
+    jsonLdBlocks: [],
     ...overrides,
   };
 }
@@ -50,6 +63,14 @@ describe("auditPage", () => {
     const page = makePage();
     const content = makeContent({
       schemaMarkup: [{ type: "WebPage", properties: ["name"] }],
+      metaTags: [
+        { name: "og:title", content: "Test Page" },
+        { name: "og:description", content: "A well-optimized test page." },
+        { name: "og:image", content: "https://example.com/image.jpg" },
+        { name: "og:url", content: "https://example.com/" },
+        { name: "og:type", content: "website" },
+        { name: "twitter:card", content: "summary_large_image" },
+      ],
     });
     const result = auditPage(page, content);
     expect(result.url).toBe("https://example.com/");
@@ -63,7 +84,9 @@ describe("auditPage", () => {
       makePage(),
       makeContent({ title: "", metaTitle: "" }),
     );
-    expect(result.issues.some((i) => i.message === "Missing page title")).toBe(true);
+    expect(result.issues.some((i) => i.message === "Missing page title")).toBe(
+      true,
+    );
   });
 
   it("detects meta title too long", () => {
@@ -71,23 +94,27 @@ describe("auditPage", () => {
       makePage(),
       makeContent({ metaTitle: "A".repeat(65) }),
     );
-    expect(result.issues.some((i) => i.category === "meta" && i.message.includes("too long"))).toBe(true);
+    expect(
+      result.issues.some(
+        (i) => i.category === "meta" && i.message.includes("too long"),
+      ),
+    ).toBe(true);
   });
 
   it("detects meta title too short", () => {
-    const result = auditPage(
-      makePage(),
-      makeContent({ metaTitle: "Hi" }),
-    );
-    expect(result.issues.some((i) => i.category === "meta" && i.message.includes("too short"))).toBe(true);
+    const result = auditPage(makePage(), makeContent({ metaTitle: "Hi" }));
+    expect(
+      result.issues.some(
+        (i) => i.category === "meta" && i.message.includes("too short"),
+      ),
+    ).toBe(true);
   });
 
   it("detects missing meta description", () => {
-    const result = auditPage(
-      makePage(),
-      makeContent({ metaDescription: "" }),
-    );
-    expect(result.issues.some((i) => i.message === "Missing meta description")).toBe(true);
+    const result = auditPage(makePage(), makeContent({ metaDescription: "" }));
+    expect(
+      result.issues.some((i) => i.message === "Missing meta description"),
+    ).toBe(true);
   });
 
   it("detects meta description too long", () => {
@@ -95,7 +122,9 @@ describe("auditPage", () => {
       makePage(),
       makeContent({ metaDescription: "X".repeat(165) }),
     );
-    expect(result.issues.some((i) => i.message.includes("description too long"))).toBe(true);
+    expect(
+      result.issues.some((i) => i.message.includes("description too long")),
+    ).toBe(true);
   });
 
   it("detects missing H1", () => {
@@ -103,15 +132,24 @@ describe("auditPage", () => {
       makePage(),
       makeContent({ headings: [{ level: 2, text: "Sub" }] }),
     );
-    expect(result.issues.some((i) => i.message === "Missing H1 tag")).toBe(true);
+    expect(result.issues.some((i) => i.message === "Missing H1 tag")).toBe(
+      true,
+    );
   });
 
   it("detects multiple H1 tags", () => {
     const result = auditPage(
       makePage(),
-      makeContent({ headings: [{ level: 1, text: "A" }, { level: 1, text: "B" }] }),
+      makeContent({
+        headings: [
+          { level: 1, text: "A" },
+          { level: 1, text: "B" },
+        ],
+      }),
     );
-    expect(result.issues.some((i) => i.message.includes("Multiple H1"))).toBe(true);
+    expect(result.issues.some((i) => i.message.includes("Multiple H1"))).toBe(
+      true,
+    );
   });
 
   it("detects thin content", () => {
@@ -119,18 +157,35 @@ describe("auditPage", () => {
       makePage(),
       makeContent({ wordCount: 50, bodyText: "short" }),
     );
-    expect(result.issues.some((i) => i.category === "content" && i.message.includes("Thin content"))).toBe(true);
+    expect(
+      result.issues.some(
+        (i) => i.category === "content" && i.message.includes("Thin content"),
+      ),
+    ).toBe(true);
   });
 
   it("detects images without alt text", () => {
     const result = auditPage(
       makePage(),
       makeContent({
-        images: [{ src: "/img.jpg", alt: "", hasAlt: false, altStatus: "empty" as const, isLazyLoaded: false, isAriaHidden: false }],
+        images: [
+          {
+            src: "/img.jpg",
+            alt: "",
+            hasAlt: false,
+            altStatus: "empty" as const,
+            isLazyLoaded: false,
+            isAriaHidden: false,
+          },
+        ],
         imagesWithoutAlt: 1,
       }),
     );
-    expect(result.issues.some((i) => i.category === "images" && i.message.includes("missing alt"))).toBe(true);
+    expect(
+      result.issues.some(
+        (i) => i.category === "images" && i.message.includes("missing alt"),
+      ),
+    ).toBe(true);
   });
 
   it("detects orphan pages (no internal links)", () => {
@@ -138,13 +193,17 @@ describe("auditPage", () => {
       makePage(),
       makeContent({ internalLinks: [], internalLinkCount: 0 }),
     );
-    expect(result.issues.some((i) => i.message.includes("No internal links"))).toBe(true);
+    expect(
+      result.issues.some((i) => i.message.includes("No internal links")),
+    ).toBe(true);
   });
 
   it("records schema types", () => {
     const result = auditPage(
       makePage(),
-      makeContent({ schemaMarkup: [{ type: "Article", properties: ["headline"] }] }),
+      makeContent({
+        schemaMarkup: [{ type: "Article", properties: ["headline"] }],
+      }),
     );
     expect(result.schemaTypes).toEqual(["Article"]);
   });
@@ -155,21 +214,46 @@ describe("auditPage", () => {
 describe("detectSiteWideIssues", () => {
   it("detects duplicate meta titles", () => {
     const pages: PageAuditResult[] = [
-      auditPage(makePage({ url: "https://example.com/" }), makeContent({ metaTitle: "Same Title" })),
-      auditPage(makePage({ url: "https://example.com/about" }), makeContent({ metaTitle: "Same Title" })),
+      auditPage(
+        makePage({ url: "https://example.com/" }),
+        makeContent({ metaTitle: "Same Title" }),
+      ),
+      auditPage(
+        makePage({ url: "https://example.com/about" }),
+        makeContent({ metaTitle: "Same Title" }),
+      ),
     ];
     const issues = detectSiteWideIssues(pages);
-    expect(issues.some((i) => i.category === "duplicates" && i.message.includes("Duplicate meta title"))).toBe(true);
+    expect(
+      issues.some(
+        (i) =>
+          i.category === "duplicates" &&
+          i.message.includes("Duplicate meta title"),
+      ),
+    ).toBe(true);
   });
 
   it("detects duplicate meta descriptions", () => {
-    const desc = "This is the same description used on multiple pages for testing.";
+    const desc =
+      "This is the same description used on multiple pages for testing.";
     const pages: PageAuditResult[] = [
-      auditPage(makePage({ url: "https://example.com/" }), makeContent({ metaDescription: desc })),
-      auditPage(makePage({ url: "https://example.com/about" }), makeContent({ metaDescription: desc })),
+      auditPage(
+        makePage({ url: "https://example.com/" }),
+        makeContent({ metaDescription: desc }),
+      ),
+      auditPage(
+        makePage({ url: "https://example.com/about" }),
+        makeContent({ metaDescription: desc }),
+      ),
     ];
     const issues = detectSiteWideIssues(pages);
-    expect(issues.some((i) => i.category === "duplicates" && i.message.includes("Duplicate meta description"))).toBe(true);
+    expect(
+      issues.some(
+        (i) =>
+          i.category === "duplicates" &&
+          i.message.includes("Duplicate meta description"),
+      ),
+    ).toBe(true);
   });
 
   it("detects no schema markup across entire site", () => {
@@ -183,24 +267,37 @@ describe("detectSiteWideIssues", () => {
   it("detects low average word count", () => {
     const pages: PageAuditResult[] = [
       auditPage(makePage(), makeContent({ wordCount: 50, bodyText: "short" })),
-      auditPage(makePage({ url: "https://example.com/2" }), makeContent({ wordCount: 100, bodyText: "short" })),
+      auditPage(
+        makePage({ url: "https://example.com/2" }),
+        makeContent({ wordCount: 100, bodyText: "short" }),
+      ),
     ];
     const issues = detectSiteWideIssues(pages);
-    expect(issues.some((i) => i.message.includes("Low average word count"))).toBe(true);
+    expect(
+      issues.some((i) => i.message.includes("Low average word count")),
+    ).toBe(true);
   });
 
   it("returns no issues for unique, well-structured pages", () => {
     const pages: PageAuditResult[] = [
-      auditPage(makePage(), makeContent({
-        metaTitle: "Page One",
-        metaDescription: "Description for page one is long enough to pass validation.",
-        schemaMarkup: [{ type: "WebPage", properties: [] }],
-      })),
-      auditPage(makePage({ url: "https://example.com/two" }), makeContent({
-        metaTitle: "Page Two",
-        metaDescription: "Description for page two is different and also long enough.",
-        schemaMarkup: [{ type: "Article", properties: [] }],
-      })),
+      auditPage(
+        makePage(),
+        makeContent({
+          metaTitle: "Page One",
+          metaDescription:
+            "Description for page one is long enough to pass validation.",
+          schemaMarkup: [{ type: "WebPage", properties: [] }],
+        }),
+      ),
+      auditPage(
+        makePage({ url: "https://example.com/two" }),
+        makeContent({
+          metaTitle: "Page Two",
+          metaDescription:
+            "Description for page two is different and also long enough.",
+          schemaMarkup: [{ type: "Article", properties: [] }],
+        }),
+      ),
     ];
     const issues = detectSiteWideIssues(pages);
     expect(issues).toHaveLength(0);
@@ -235,15 +332,27 @@ describe("generateAuditReport", () => {
           schemaTypes: ["WebPage"],
           readabilityScore: 65.5,
           issues: [
-            { severity: "warning", category: "images", message: "1 image(s) missing alt text" },
+            {
+              severity: "warning",
+              category: "images",
+              message: "1 image(s) missing alt text",
+            },
           ],
         },
       ],
       siteWideIssues: [
-        { severity: "error", category: "meta", message: "Missing canonical tags" },
+        {
+          severity: "error",
+          category: "meta",
+          message: "Missing canonical tags",
+        },
       ],
       reportPath: "/tmp/report.md",
       pdfPath: null,
+      categoryStats: [
+        { category: "meta", affectedCount: 1, percentage: 50 },
+        { category: "images", affectedCount: 1, percentage: 50 },
+      ],
     };
 
     const report = generateAuditReport(result);

@@ -163,8 +163,16 @@ export function createSiteToDatasetTool(
           description: "Max pages to crawl (default: 50)",
         },
         maxDepth: { type: "number", description: "Crawl depth (default: 3)" },
-        includePaths: { type: "array", description: "URL patterns to include" },
-        excludePaths: { type: "array", description: "URL patterns to exclude" },
+        includePaths: {
+          type: "array",
+          items: { type: "string" },
+          description: "URL patterns to include",
+        },
+        excludePaths: {
+          type: "array",
+          items: { type: "string" },
+          description: "URL patterns to exclude",
+        },
         format: {
           type: "string",
           enum: ["markdown", "jsonl", "csv"],

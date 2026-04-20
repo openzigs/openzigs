@@ -1,12 +1,11 @@
 import { Tray, Menu, nativeImage } from "electron";
-import type { BackendStatus, HealthData } from "./backend.js";
+import type { BackendStatus } from "./backend.js";
 
 export interface TrayManagerOptions {
   onShowWindow: () => void;
   onStartServer: () => void;
   onStopServer: () => void;
   onQuit: () => void;
-  getHealthData?: () => HealthData | null;
 }
 
 // Simple 16x16 colored circle icons as base64 data URLs
@@ -73,21 +72,7 @@ export class TrayManager {
       icon.setTemplateImage(true);
     }
     this.tray.setImage(icon);
-    this.tray.setToolTip(this.buildTooltip());
-  }
-
-  private buildTooltip(): string {
-    const base = `OpenZigs — ${this.currentStatus}`;
-    if (this.currentStatus !== "running") return base;
-
-    const health = this.callbacks.getHealthData?.();
-    if (!health) return base;
-
-    const hrs = Math.floor(health.uptime / 3600);
-    const mins = Math.floor((health.uptime % 3600) / 60);
-    const uptimeStr = hrs > 0 ? `${hrs}h ${mins}m` : `${mins}m`;
-    const memStr = `${Math.round(health.memoryMB)}MB`;
-    return `${base} (${uptimeStr}, ${memStr})`;
+    this.tray.setToolTip(`OpenZigs — ${this.currentStatus}`);
   }
 
   private updateContextMenu(): void {

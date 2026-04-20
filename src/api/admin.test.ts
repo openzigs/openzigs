@@ -18,21 +18,35 @@ vi.mock("../config/index.js", () => ({
     tasks: {},
   }),
   customAgentSchema: {
-    safeParse: vi.fn().mockImplementation((data: unknown) => ({ success: true, data })),
+    safeParse: vi
+      .fn()
+      .mockImplementation((data: unknown) => ({ success: true, data })),
   },
   mcpServerConfigSchema: {
-    safeParse: vi.fn().mockImplementation((data: unknown) => ({ success: true, data })),
+    safeParse: vi
+      .fn()
+      .mockImplementation((data: unknown) => ({ success: true, data })),
   },
   nativeMcpServersSchema: {
-    safeParse: vi.fn().mockImplementation((data: unknown) => ({ success: true, data })),
+    safeParse: vi
+      .fn()
+      .mockImplementation((data: unknown) => ({ success: true, data })),
   },
 }));
 
 vi.mock("../tasks/post-action-registry.js", () => ({
   postActionRegistry: {
     list: vi.fn().mockReturnValue([
-      { type: "create-github-issues", label: "Create Issues", description: "Creates GitHub issues" },
-      { type: "send-webhook", label: "Send Webhook", description: "Sends to webhook URL" },
+      {
+        type: "create-github-issues",
+        label: "Create Issues",
+        description: "Creates GitHub issues",
+      },
+      {
+        type: "send-webhook",
+        label: "Send Webhook",
+        description: "Sends to webhook URL",
+      },
     ]),
   },
 }));
@@ -66,18 +80,20 @@ vi.mock("node:fs/promises", () => ({
 }));
 
 vi.mock("../skills/skill-loader.js", () => ({
-  loadSkillMetadata: vi.fn().mockResolvedValue([{
-    name: "test-skill",
-    displayName: "Test Skill",
-    description: "A test skill",
-    icon: "🧪",
-    tools: ["web-search"],
-    rulesCount: 1,
-    loaded: true,
-    examples: [],
-    skillMdPath: "/tmp/test/SKILL.md",
-    allowedTools: ["web-search"],
-  }]),
+  loadSkillMetadata: vi.fn().mockResolvedValue([
+    {
+      name: "test-skill",
+      displayName: "Test Skill",
+      description: "A test skill",
+      icon: "🧪",
+      tools: ["web-search"],
+      rulesCount: 1,
+      loaded: true,
+      examples: [],
+      skillMdPath: "/tmp/test/SKILL.md",
+      allowedTools: ["web-search"],
+    },
+  ]),
 }));
 
 const mockGetPlatformCapabilities = vi.fn().mockReturnValue({
@@ -92,14 +108,18 @@ const mockGetPlatformCapabilities = vi.fn().mockReturnValue({
 });
 
 vi.mock("../config/platform.js", () => ({
-  getPlatformCapabilities: (...args: unknown[]) => mockGetPlatformCapabilities(...args),
+  getPlatformCapabilities: (...args: unknown[]) =>
+    mockGetPlatformCapabilities(...args),
 }));
 
 vi.mock("../productivity/template-service.js", () => ({
   TemplateService: vi.fn().mockImplementation(() => ({
     export: vi.fn().mockImplementation((id: string) => {
       if (id !== "p1") throw new Error("Prompt not found");
-      return { version: "1.0", prompt: { name: "Summarize", template: "Summarize {{input}}" } };
+      return {
+        version: "1.0",
+        prompt: { name: "Summarize", template: "Summarize {{input}}" },
+      };
     }),
     analyze: vi.fn().mockReturnValue({ valid: true, issues: [], warnings: [] }),
     import: vi.fn().mockReturnValue({ id: "imported", name: "Imported" }),
@@ -109,10 +129,37 @@ vi.mock("../productivity/template-service.js", () => ({
 // ── Helpers ──────────────────────────────────────────────────
 
 function createMockToolRegistry() {
-  const tools = new Map<string, { name: string; description: string; category: string; riskLevel: string; enabled: boolean }>();
-  tools.set("read-file", { name: "read-file", description: "Read a file", category: "filesystem", riskLevel: "low", enabled: true });
-  tools.set("shell-execute", { name: "shell-execute", description: "Execute shell", category: "system", riskLevel: "high", enabled: true });
-  tools.set("web-search", { name: "web-search", description: "Search web", category: "web", riskLevel: "low", enabled: true });
+  const tools = new Map<
+    string,
+    {
+      name: string;
+      description: string;
+      category: string;
+      riskLevel: string;
+      enabled: boolean;
+    }
+  >();
+  tools.set("read-file", {
+    name: "read-file",
+    description: "Read a file",
+    category: "filesystem",
+    riskLevel: "low",
+    enabled: true,
+  });
+  tools.set("shell-execute", {
+    name: "shell-execute",
+    description: "Execute shell",
+    category: "system",
+    riskLevel: "high",
+    enabled: true,
+  });
+  tools.set("web-search", {
+    name: "web-search",
+    description: "Search web",
+    category: "web",
+    riskLevel: "low",
+    enabled: true,
+  });
 
   return {
     getAllTools: vi.fn().mockReturnValue({
@@ -120,8 +167,11 @@ function createMockToolRegistry() {
       system: [tools.get("shell-execute")],
       web: [tools.get("web-search")],
     }),
-    listEnabledTools: vi.fn().mockReturnValue(Array.from(tools.values()).filter(t => t.enabled)),
+    listEnabledTools: vi
+      .fn()
+      .mockReturnValue(Array.from(tools.values()).filter((t) => t.enabled)),
     getToolDefinition: vi.fn((name: string) => tools.get(name) ?? null),
+    isEnabled: vi.fn((name: string) => tools.get(name)?.enabled ?? false),
     setEnabled: vi.fn().mockResolvedValue(undefined),
     setRiskOverride: vi.fn().mockResolvedValue(undefined),
     setGlobalApprovalOverride: vi.fn().mockResolvedValue(undefined),
@@ -139,37 +189,59 @@ function createMockPersonalityManager() {
   };
   return {
     getConfig: vi.fn().mockReturnValue(config),
-    update: vi.fn((updates: Partial<typeof config>) => ({ ...config, ...updates })),
+    update: vi.fn((updates: Partial<typeof config>) => ({
+      ...config,
+      ...updates,
+    })),
     reset: vi.fn().mockReturnValue(config),
   };
 }
 
 function createMockWebhookManager() {
-  const webhooks = new Map<string, {
-    id: string; name: string; action: string; actionPayload: Record<string, unknown>;
-    enabled: boolean; allowedIps: string[]; rateLimit: number;
-    triggerCount: number; lastTriggeredAt: string | null; createdAt: string; secret: string;
-  }>();
+  const webhooks = new Map<
+    string,
+    {
+      id: string;
+      name: string;
+      action: string;
+      actionPayload: Record<string, unknown>;
+      enabled: boolean;
+      allowedIps: string[];
+      rateLimit: number;
+      triggerCount: number;
+      lastTriggeredAt: string | null;
+      createdAt: string;
+      secret: string;
+    }
+  >();
 
   return {
     list: vi.fn(() => Array.from(webhooks.values())),
-    create: vi.fn((data: { name: string; action: string; actionPayload: Record<string, unknown>; allowedIps: string[]; rateLimit: number }) => {
-      const webhook = {
-        id: "wh-001",
-        name: data.name,
-        action: data.action,
-        actionPayload: data.actionPayload,
-        enabled: true,
-        allowedIps: data.allowedIps,
-        rateLimit: data.rateLimit,
-        triggerCount: 0,
-        lastTriggeredAt: null,
-        createdAt: new Date().toISOString(),
-        secret: "secret-123",
-      };
-      webhooks.set(webhook.id, webhook);
-      return { webhook, apiKey: "ak-test-key" };
-    }),
+    create: vi.fn(
+      (data: {
+        name: string;
+        action: string;
+        actionPayload: Record<string, unknown>;
+        allowedIps: string[];
+        rateLimit: number;
+      }) => {
+        const webhook = {
+          id: "wh-001",
+          name: data.name,
+          action: data.action,
+          actionPayload: data.actionPayload,
+          enabled: true,
+          allowedIps: data.allowedIps,
+          rateLimit: data.rateLimit,
+          triggerCount: 0,
+          lastTriggeredAt: null,
+          createdAt: new Date().toISOString(),
+          secret: "secret-123",
+        };
+        webhooks.set(webhook.id, webhook);
+        return { webhook, apiKey: "ak-test-key" };
+      },
+    ),
     toggle: vi.fn((id: string, enabled: boolean) => {
       const wh = webhooks.get(id);
       if (!wh) return null;
@@ -231,7 +303,9 @@ function createMockCopilot() {
     setCustomAgents: vi.fn(),
     getNativeMcpServers: vi.fn().mockReturnValue({}),
     setNativeMcpServers: vi.fn(),
-    getSessionAnalytics: vi.fn().mockReturnValue({ totalSessions: 0, totalTokens: 0 }),
+    getSessionAnalytics: vi
+      .fn()
+      .mockReturnValue({ totalSessions: 0, totalTokens: 0 }),
     resetSessionAnalytics: vi.fn(),
     listSdkSessions: vi.fn().mockResolvedValue([]),
     deleteSdkSession: vi.fn().mockResolvedValue(undefined),
@@ -240,24 +314,55 @@ function createMockCopilot() {
 }
 
 function createMockPromptManager() {
-  const prompts = new Map<string, {
-    id: string; name: string; template: string; description: string;
-    tags: string[]; createdAt: string; updatedAt: string;
-  }>();
+  const prompts = new Map<
+    string,
+    {
+      id: string;
+      name: string;
+      template: string;
+      description: string;
+      tags: string[];
+      createdAt: string;
+      updatedAt: string;
+    }
+  >();
   prompts.set("p1", {
-    id: "p1", name: "Summarize", template: "Summarize {{input}}",
-    description: "Summarizes text", tags: ["util"], createdAt: "2025-01-01", updatedAt: "2025-01-01",
+    id: "p1",
+    name: "Summarize",
+    template: "Summarize {{input}}",
+    description: "Summarizes text",
+    tags: ["util"],
+    createdAt: "2025-01-01",
+    updatedAt: "2025-01-01",
   });
 
   return {
     list: vi.fn(() => Array.from(prompts.values())),
-    search: vi.fn((q: string) => Array.from(prompts.values()).filter(p => p.name.toLowerCase().includes(q.toLowerCase()))),
+    search: vi.fn((q: string) =>
+      Array.from(prompts.values()).filter((p) =>
+        p.name.toLowerCase().includes(q.toLowerCase()),
+      ),
+    ),
     getById: vi.fn((id: string) => prompts.get(id) ?? null),
-    create: vi.fn((data: { name: string; template: string; description?: string; tags?: string[] }) => {
-      const p = { id: "p-new", ...data, description: data.description ?? "", tags: data.tags ?? [], createdAt: "now", updatedAt: "now" };
-      prompts.set(p.id, p);
-      return p;
-    }),
+    create: vi.fn(
+      (data: {
+        name: string;
+        template: string;
+        description?: string;
+        tags?: string[];
+      }) => {
+        const p = {
+          id: "p-new",
+          ...data,
+          description: data.description ?? "",
+          tags: data.tags ?? [],
+          createdAt: "now",
+          updatedAt: "now",
+        };
+        prompts.set(p.id, p);
+        return p;
+      },
+    ),
     update: vi.fn((id: string, data: Record<string, unknown>) => {
       const p = prompts.get(id);
       if (!p) throw new Error("Prompt not found");
@@ -268,19 +373,35 @@ function createMockPromptManager() {
 }
 
 function createMockScheduler() {
-  const jobs = new Map<string, {
-    id: string; name: string; cronExpression: string; timezone: string;
-    actionType: string; actionPayload: Record<string, unknown>; enabled: boolean;
-  }>();
+  const jobs = new Map<
+    string,
+    {
+      id: string;
+      name: string;
+      cronExpression: string;
+      timezone: string;
+      actionType: string;
+      actionPayload: Record<string, unknown>;
+      enabled: boolean;
+    }
+  >();
   jobs.set("j1", {
-    id: "j1", name: "Daily Check", cronExpression: "0 9 * * *", timezone: "UTC",
-    actionType: "prompt", actionPayload: { promptName: "Summarize" }, enabled: true,
+    id: "j1",
+    name: "Daily Check",
+    cronExpression: "0 9 * * *",
+    timezone: "UTC",
+    actionType: "prompt",
+    actionPayload: { promptName: "Summarize" },
+    enabled: true,
   });
 
   return {
     list: vi.fn(() => Array.from(jobs.values())),
     getById: vi.fn((id: string) => jobs.get(id) ?? null),
-    create: vi.fn((data: Record<string, unknown>) => ({ id: "j-new", ...data })),
+    create: vi.fn((data: Record<string, unknown>) => ({
+      id: "j-new",
+      ...data,
+    })),
     update: vi.fn((id: string, data: Record<string, unknown>) => {
       const j = jobs.get(id);
       if (!j) throw new Error("not found");
@@ -301,7 +422,8 @@ function buildApp(overrides: Partial<AdminRouterOptions> = {}) {
   app.use(express.json());
 
   const opts: AdminRouterOptions = {
-    toolRegistry: createMockToolRegistry() as unknown as AdminRouterOptions["toolRegistry"],
+    toolRegistry:
+      createMockToolRegistry() as unknown as AdminRouterOptions["toolRegistry"],
     ...overrides,
   };
 
@@ -425,6 +547,125 @@ describe("Admin API router", () => {
     });
   });
 
+  // ── POST /tools/:name/invoke ─────────────────────────────
+
+  describe("POST /tools/:name/invoke", () => {
+    function buildAppWithInvocableTool() {
+      const handler = vi.fn(async (args: Record<string, unknown>) => ({
+        text: `ok:${args.keyword}`,
+      }));
+      const tool = {
+        name: "seo-meta-generator",
+        description: "stub",
+        category: "search",
+        riskLevel: "low",
+        enabled: true,
+        zodSchema: {
+          safeParse: (v: unknown) => {
+            const obj = (v ?? {}) as Record<string, unknown>;
+            if (typeof obj.keyword !== "string" || !obj.keyword) {
+              return {
+                success: false,
+                error: { issues: [{ message: "keyword required" }] },
+              };
+            }
+            return { success: true, data: obj };
+          },
+        },
+        handler,
+      };
+      const registry = {
+        getAllTools: vi.fn().mockReturnValue({}),
+        listEnabledTools: vi.fn().mockReturnValue([]),
+        getToolDefinition: vi.fn((name: string) =>
+          name === tool.name ? tool : null,
+        ),
+        isEnabled: vi.fn(() => true),
+        setEnabled: vi.fn(),
+        setRiskOverride: vi.fn(),
+        setGlobalApprovalOverride: vi.fn(),
+        getToolsBySource: vi.fn().mockReturnValue([]),
+      };
+      const app = express();
+      app.use(express.json());
+      app.use(
+        "/admin",
+        createAdminRouter({
+          toolRegistry:
+            registry as unknown as AdminRouterOptions["toolRegistry"],
+        }),
+      );
+      return { app, handler, registry };
+    }
+
+    it("returns 404 when the tool is not registered", async () => {
+      const { app } = buildApp();
+      const res = await request(app)
+        .post("/admin/tools/does-not-exist/invoke")
+        .send({});
+      expect(res.status).toBe(404);
+    });
+
+    it("returns 400 when arguments fail schema validation", async () => {
+      const { app } = buildAppWithInvocableTool();
+      const res = await request(app)
+        .post("/admin/tools/seo-meta-generator/invoke")
+        .send({});
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe("Invalid arguments");
+    });
+
+    it("invokes the tool handler and returns its text output", async () => {
+      const { app, handler } = buildAppWithInvocableTool();
+      const res = await request(app)
+        .post("/admin/tools/seo-meta-generator/invoke")
+        .send({ keyword: "hammers" });
+      expect(res.status).toBe(200);
+      expect(res.body.ok).toBe(true);
+      expect(res.body.tool).toBe("seo-meta-generator");
+      expect(res.body.text).toBe("ok:hammers");
+      expect(handler).toHaveBeenCalledWith({ keyword: "hammers" });
+    });
+
+    it("returns 502 when the tool handler reports isError", async () => {
+      const handler = vi
+        .fn()
+        .mockResolvedValue({ text: "boom", isError: true });
+      const tool = {
+        name: "seo-meta-generator",
+        description: "stub",
+        category: "search",
+        riskLevel: "low",
+        zodSchema: { safeParse: () => ({ success: true, data: {} }) },
+        handler,
+      };
+      const registry = {
+        getAllTools: vi.fn().mockReturnValue({}),
+        listEnabledTools: vi.fn().mockReturnValue([]),
+        getToolDefinition: vi.fn(() => tool),
+        isEnabled: vi.fn(() => true),
+        setEnabled: vi.fn(),
+        setRiskOverride: vi.fn(),
+        setGlobalApprovalOverride: vi.fn(),
+        getToolsBySource: vi.fn().mockReturnValue([]),
+      };
+      const app = express();
+      app.use(express.json());
+      app.use(
+        "/admin",
+        createAdminRouter({
+          toolRegistry:
+            registry as unknown as AdminRouterOptions["toolRegistry"],
+        }),
+      );
+      const res = await request(app)
+        .post("/admin/tools/seo-meta-generator/invoke")
+        .send({});
+      expect(res.status).toBe(502);
+      expect(res.body.error).toBe("boom");
+    });
+  });
+
   // ── POST-Actions ─────────────────────────────────────────
 
   describe("GET /post-actions", () => {
@@ -456,7 +697,9 @@ describe("Admin API router", () => {
 
     it("lists webhooks", async () => {
       const whm = createMockWebhookManager();
-      const { app } = buildApp({ webhookManager: whm as unknown as AdminRouterOptions["webhookManager"] });
+      const { app } = buildApp({
+        webhookManager: whm as unknown as AdminRouterOptions["webhookManager"],
+      });
       const res = await request(app).get("/admin/webhooks");
       expect(res.status).toBe(200);
       expect(res.body.webhooks).toEqual([]);
@@ -464,12 +707,16 @@ describe("Admin API router", () => {
 
     it("creates a webhook", async () => {
       const whm = createMockWebhookManager();
-      const { app } = buildApp({ webhookManager: whm as unknown as AdminRouterOptions["webhookManager"] });
-      const res = await request(app).post("/admin/webhooks").send({
-        name: "Test Hook",
-        action: "prompt",
-        actionPayload: { promptName: "Summarize" },
+      const { app } = buildApp({
+        webhookManager: whm as unknown as AdminRouterOptions["webhookManager"],
       });
+      const res = await request(app)
+        .post("/admin/webhooks")
+        .send({
+          name: "Test Hook",
+          action: "prompt",
+          actionPayload: { promptName: "Summarize" },
+        });
       expect(res.status).toBe(201);
       expect(res.body.webhook.name).toBe("Test Hook");
       expect(res.body.apiKey).toBe("ak-test-key");
@@ -477,7 +724,9 @@ describe("Admin API router", () => {
 
     it("rejects invalid webhook action", async () => {
       const whm = createMockWebhookManager();
-      const { app } = buildApp({ webhookManager: whm as unknown as AdminRouterOptions["webhookManager"] });
+      const { app } = buildApp({
+        webhookManager: whm as unknown as AdminRouterOptions["webhookManager"],
+      });
       const res = await request(app).post("/admin/webhooks").send({
         name: "Bad",
         action: "invalid",
@@ -488,42 +737,78 @@ describe("Admin API router", () => {
     it("toggles webhook", async () => {
       const whm = createMockWebhookManager();
       whm._webhooks.set("wh-1", {
-        id: "wh-1", name: "Test", action: "prompt", actionPayload: {},
-        enabled: true, allowedIps: [], rateLimit: 60,
-        triggerCount: 0, lastTriggeredAt: null, createdAt: "now", secret: "s",
+        id: "wh-1",
+        name: "Test",
+        action: "prompt",
+        actionPayload: {},
+        enabled: true,
+        allowedIps: [],
+        rateLimit: 60,
+        triggerCount: 0,
+        lastTriggeredAt: null,
+        createdAt: "now",
+        secret: "s",
       });
-      const { app } = buildApp({ webhookManager: whm as unknown as AdminRouterOptions["webhookManager"] });
-      const res = await request(app).post("/admin/webhooks/wh-1/toggle").send({ enabled: false });
+      const { app } = buildApp({
+        webhookManager: whm as unknown as AdminRouterOptions["webhookManager"],
+      });
+      const res = await request(app)
+        .post("/admin/webhooks/wh-1/toggle")
+        .send({ enabled: false });
       expect(res.status).toBe(200);
     });
 
     it("deletes webhook", async () => {
       const whm = createMockWebhookManager();
       whm._webhooks.set("wh-del", {
-        id: "wh-del", name: "Del", action: "prompt", actionPayload: {},
-        enabled: true, allowedIps: [], rateLimit: 60,
-        triggerCount: 0, lastTriggeredAt: null, createdAt: "now", secret: "s",
+        id: "wh-del",
+        name: "Del",
+        action: "prompt",
+        actionPayload: {},
+        enabled: true,
+        allowedIps: [],
+        rateLimit: 60,
+        triggerCount: 0,
+        lastTriggeredAt: null,
+        createdAt: "now",
+        secret: "s",
       });
-      const { app } = buildApp({ webhookManager: whm as unknown as AdminRouterOptions["webhookManager"] });
+      const { app } = buildApp({
+        webhookManager: whm as unknown as AdminRouterOptions["webhookManager"],
+      });
       const res = await request(app).delete("/admin/webhooks/wh-del");
       expect(res.status).toBe(200);
     });
 
     it("returns 404 for missing webhook toggle", async () => {
       const whm = createMockWebhookManager();
-      const { app } = buildApp({ webhookManager: whm as unknown as AdminRouterOptions["webhookManager"] });
-      const res = await request(app).post("/admin/webhooks/missing/toggle").send({ enabled: true });
+      const { app } = buildApp({
+        webhookManager: whm as unknown as AdminRouterOptions["webhookManager"],
+      });
+      const res = await request(app)
+        .post("/admin/webhooks/missing/toggle")
+        .send({ enabled: true });
       expect(res.status).toBe(404);
     });
 
     it("rotates webhook key", async () => {
       const whm = createMockWebhookManager();
       whm._webhooks.set("wh-rot", {
-        id: "wh-rot", name: "R", action: "prompt", actionPayload: {},
-        enabled: true, allowedIps: [], rateLimit: 60,
-        triggerCount: 0, lastTriggeredAt: null, createdAt: "now", secret: "s",
+        id: "wh-rot",
+        name: "R",
+        action: "prompt",
+        actionPayload: {},
+        enabled: true,
+        allowedIps: [],
+        rateLimit: 60,
+        triggerCount: 0,
+        lastTriggeredAt: null,
+        createdAt: "now",
+        secret: "s",
       });
-      const { app } = buildApp({ webhookManager: whm as unknown as AdminRouterOptions["webhookManager"] });
+      const { app } = buildApp({
+        webhookManager: whm as unknown as AdminRouterOptions["webhookManager"],
+      });
       const res = await request(app).post("/admin/webhooks/wh-rot/rotate-key");
       expect(res.status).toBe(200);
       expect(res.body.apiKey).toBe("ak-new-key");
@@ -535,7 +820,10 @@ describe("Admin API router", () => {
   describe("personality", () => {
     it("returns personality config", async () => {
       const pm = createMockPersonalityManager();
-      const { app } = buildApp({ personalityManager: pm as unknown as AdminRouterOptions["personalityManager"] });
+      const { app } = buildApp({
+        personalityManager:
+          pm as unknown as AdminRouterOptions["personalityManager"],
+      });
       const res = await request(app).get("/admin/personality");
       expect(res.status).toBe(200);
       expect(res.body.systemInstruction).toBe("You are a helpful assistant");
@@ -543,7 +831,10 @@ describe("Admin API router", () => {
 
     it("updates personality", async () => {
       const pm = createMockPersonalityManager();
-      const { app } = buildApp({ personalityManager: pm as unknown as AdminRouterOptions["personalityManager"] });
+      const { app } = buildApp({
+        personalityManager:
+          pm as unknown as AdminRouterOptions["personalityManager"],
+      });
       const res = await request(app).put("/admin/personality").send({
         systemInstruction: "You are Gilfoyle",
       });
@@ -553,7 +844,10 @@ describe("Admin API router", () => {
 
     it("resets personality", async () => {
       const pm = createMockPersonalityManager();
-      const { app } = buildApp({ personalityManager: pm as unknown as AdminRouterOptions["personalityManager"] });
+      const { app } = buildApp({
+        personalityManager:
+          pm as unknown as AdminRouterOptions["personalityManager"],
+      });
       const res = await request(app).post("/admin/personality/reset");
       expect(res.status).toBe(200);
     });
@@ -582,7 +876,9 @@ describe("Admin API router", () => {
   describe("tasks config", () => {
     it("GET /tasks/stats returns engine stats", async () => {
       const te = createMockTaskEngine();
-      const { app } = buildApp({ taskEngine: te as unknown as AdminRouterOptions["taskEngine"] });
+      const { app } = buildApp({
+        taskEngine: te as unknown as AdminRouterOptions["taskEngine"],
+      });
       const res = await request(app).get("/admin/tasks/stats");
       expect(res.status).toBe(200);
       expect(res.body.queued).toBe(2);
@@ -608,7 +904,9 @@ describe("Admin API router", () => {
   describe("GET /models/config", () => {
     it("returns model configuration", async () => {
       const copilot = createMockCopilot();
-      const { app } = buildApp({ copilot: copilot as unknown as AdminRouterOptions["copilot"] });
+      const { app } = buildApp({
+        copilot: copilot as unknown as AdminRouterOptions["copilot"],
+      });
       const res = await request(app).get("/admin/models/config");
       expect(res.status).toBe(200);
       expect(res.body.reasoningEffort).toBe("medium");
@@ -621,7 +919,9 @@ describe("Admin API router", () => {
   describe("agents", () => {
     it("GET /agents returns empty list", async () => {
       const copilot = createMockCopilot();
-      const { app } = buildApp({ copilot: copilot as unknown as AdminRouterOptions["copilot"] });
+      const { app } = buildApp({
+        copilot: copilot as unknown as AdminRouterOptions["copilot"],
+      });
       const res = await request(app).get("/admin/agents");
       expect(res.status).toBe(200);
       expect(res.body.agents).toEqual([]);
@@ -629,8 +929,12 @@ describe("Admin API router", () => {
 
     it("PUT /agents rejects non-array", async () => {
       const copilot = createMockCopilot();
-      const { app } = buildApp({ copilot: copilot as unknown as AdminRouterOptions["copilot"] });
-      const res = await request(app).put("/admin/agents").send({ agents: "not-array" });
+      const { app } = buildApp({
+        copilot: copilot as unknown as AdminRouterOptions["copilot"],
+      });
+      const res = await request(app)
+        .put("/admin/agents")
+        .send({ agents: "not-array" });
       expect(res.status).toBe(400);
     });
   });
@@ -640,7 +944,9 @@ describe("Admin API router", () => {
   describe("prompts", () => {
     const buildWithPrompts = () => {
       const pm = createMockPromptManager();
-      const { app } = buildApp({ promptManager: pm as unknown as AdminRouterOptions["promptManager"] });
+      const { app } = buildApp({
+        promptManager: pm as unknown as AdminRouterOptions["promptManager"],
+      });
       return { app, pm };
     };
 
@@ -690,10 +996,12 @@ describe("Admin API router", () => {
 
     it("POST /prompts rejects overly long template", async () => {
       const { app } = buildWithPrompts();
-      const res = await request(app).post("/admin/prompts").send({
-        name: "Big",
-        template: "x".repeat(100_001),
-      });
+      const res = await request(app)
+        .post("/admin/prompts")
+        .send({
+          name: "Big",
+          template: "x".repeat(100_001),
+        });
       expect(res.status).toBe(400);
     });
 
@@ -715,7 +1023,9 @@ describe("Admin API router", () => {
   describe("scheduled jobs", () => {
     const buildWithScheduler = () => {
       const sched = createMockScheduler();
-      const { app } = buildApp({ scheduler: sched as unknown as AdminRouterOptions["scheduler"] });
+      const { app } = buildApp({
+        scheduler: sched as unknown as AdminRouterOptions["scheduler"],
+      });
       return { app, sched };
     };
 
@@ -751,7 +1061,9 @@ describe("Admin API router", () => {
   describe("sentinel", () => {
     const buildWithSentinel = () => {
       const sent = createMockSentinel();
-      const { app } = buildApp({ sentinel: sent as unknown as AdminRouterOptions["sentinel"] });
+      const { app } = buildApp({
+        sentinel: sent as unknown as AdminRouterOptions["sentinel"],
+      });
       return { app, sent };
     };
 
@@ -782,7 +1094,9 @@ describe("Admin API router", () => {
   describe("copilot sessions", () => {
     const buildWithCopilot = () => {
       const cp = createMockCopilot();
-      const { app } = buildApp({ copilot: cp as unknown as AdminRouterOptions["copilot"] });
+      const { app } = buildApp({
+        copilot: cp as unknown as AdminRouterOptions["copilot"],
+      });
       return { app, cp };
     };
 
@@ -795,7 +1109,9 @@ describe("Admin API router", () => {
 
     it("POST /copilot-sessions/analytics/reset resets analytics", async () => {
       const { app } = buildWithCopilot();
-      const res = await request(app).post("/admin/copilot-sessions/analytics/reset");
+      const res = await request(app).post(
+        "/admin/copilot-sessions/analytics/reset",
+      );
       expect(res.status).toBe(200);
       expect(res.body.reset).toBe(true);
     });
@@ -855,7 +1171,9 @@ describe("Admin API router", () => {
 
     it("rejects unsupported voice", async () => {
       const { app } = buildApp();
-      const res = await request(app).post("/admin/voice-settings").send({ voiceName: "invalid-voice" });
+      const res = await request(app)
+        .post("/admin/voice-settings")
+        .send({ voiceName: "invalid-voice" });
       expect(res.status).toBe(400);
       expect(res.body.error).toContain("Unsupported");
     });
@@ -891,7 +1209,9 @@ describe("Admin API router", () => {
   describe("POST /sidecars/credentials", () => {
     it("rejects non-object credentials", async () => {
       const { app } = buildApp();
-      const res = await request(app).post("/admin/sidecars/credentials").send({ credentials: "not-object" });
+      const res = await request(app)
+        .post("/admin/sidecars/credentials")
+        .send({ credentials: "not-object" });
       expect(res.status).toBe(400);
       expect(res.body.error).toContain("credentials must be an object");
     });
@@ -902,9 +1222,13 @@ describe("Admin API router", () => {
   describe("session routes", () => {
     function createMockSessionManager() {
       return {
-        listSessions: vi.fn().mockResolvedValue([{ id: "s1", name: "Session 1" }]),
+        listSessions: vi
+          .fn()
+          .mockResolvedValue([{ id: "s1", name: "Session 1" }]),
         getSession: vi.fn().mockResolvedValue({ id: "s1", name: "Session 1" }),
-        getHistory: vi.fn().mockResolvedValue([{ role: "user", content: "Hello" }]),
+        getHistory: vi
+          .fn()
+          .mockResolvedValue([{ role: "user", content: "Hello" }]),
         forkSession: vi.fn().mockResolvedValue({ id: "s2", name: "Forked" }),
         deleteSession: vi.fn().mockResolvedValue(undefined),
       };
@@ -945,7 +1269,9 @@ describe("Admin API router", () => {
     it("POST /sessions/:id/fork creates a forked session", async () => {
       const sessionManager = createMockSessionManager();
       const { app } = buildApp({ sessionManager: sessionManager as any });
-      const res = await request(app).post("/admin/sessions/s1/fork").send({ upToIndex: 5 });
+      const res = await request(app)
+        .post("/admin/sessions/s1/fork")
+        .send({ upToIndex: 5 });
       expect(res.status).toBe(201);
       expect(res.body.id).toBe("s2");
     });
@@ -967,10 +1293,14 @@ describe("Admin API router", () => {
       return {
         getAll: vi.fn().mockReturnValue(voices),
         getActive: vi.fn().mockReturnValue(voices[0]),
-        getById: vi.fn((id: string) => id === "bv1" ? voices[0] : null),
-        analyzeAndSave: vi.fn().mockResolvedValue({ id: "bv-new", name: "New" }),
-        update: vi.fn((id: string, _data: any) => id === "bv1" ? { ...voices[0], name: "Updated" } : null),
-        setActive: vi.fn((id: string) => id === "bv1" ? voices[0] : null),
+        getById: vi.fn((id: string) => (id === "bv1" ? voices[0] : null)),
+        analyzeAndSave: vi
+          .fn()
+          .mockResolvedValue({ id: "bv-new", name: "New" }),
+        update: vi.fn((id: string, _data: any) =>
+          id === "bv1" ? { ...voices[0], name: "Updated" } : null,
+        ),
+        setActive: vi.fn((id: string) => (id === "bv1" ? voices[0] : null)),
         reanalyze: vi.fn().mockResolvedValue({ id: "bv1", name: "Reanalyzed" }),
         deactivateAll: vi.fn(),
         delete: vi.fn((id: string) => id === "bv1"),
@@ -1011,7 +1341,9 @@ describe("Admin API router", () => {
     it("POST /brand-voice/analyze rejects empty samples", async () => {
       const bvs = createMockBrandVoiceService();
       const { app } = buildApp({ brandVoiceService: bvs as any });
-      const res = await request(app).post("/admin/brand-voice/analyze").send({ name: "Test", samples: [] });
+      const res = await request(app)
+        .post("/admin/brand-voice/analyze")
+        .send({ name: "Test", samples: [] });
       expect(res.status).toBe(400);
       expect(res.body.error).toContain("sample");
     });
@@ -1019,7 +1351,9 @@ describe("Admin API router", () => {
     it("POST /brand-voice/analyze rejects missing name", async () => {
       const bvs = createMockBrandVoiceService();
       const { app } = buildApp({ brandVoiceService: bvs as any });
-      const res = await request(app).post("/admin/brand-voice/analyze").send({ samples: ["Hello world"] });
+      const res = await request(app)
+        .post("/admin/brand-voice/analyze")
+        .send({ samples: ["Hello world"] });
       expect(res.status).toBe(400);
       expect(res.body.error).toContain("Name");
     });
@@ -1027,11 +1361,13 @@ describe("Admin API router", () => {
     it("POST /brand-voice/analyze succeeds with valid input", async () => {
       const bvs = createMockBrandVoiceService();
       const { app } = buildApp({ brandVoiceService: bvs as any });
-      const res = await request(app).post("/admin/brand-voice/analyze").send({
-        name: "Test Voice",
-        samples: ["Sample writing text here"],
-        active: true,
-      });
+      const res = await request(app)
+        .post("/admin/brand-voice/analyze")
+        .send({
+          name: "Test Voice",
+          samples: ["Sample writing text here"],
+          active: true,
+        });
       expect(res.status).toBe(200);
       expect(res.body.id).toBe("bv-new");
     });
@@ -1039,7 +1375,9 @@ describe("Admin API router", () => {
     it("PUT /brand-voice/:id updates voice", async () => {
       const bvs = createMockBrandVoiceService();
       const { app } = buildApp({ brandVoiceService: bvs as any });
-      const res = await request(app).put("/admin/brand-voice/bv1").send({ name: "Updated" });
+      const res = await request(app)
+        .put("/admin/brand-voice/bv1")
+        .send({ name: "Updated" });
       expect(res.status).toBe(200);
       expect(res.body.name).toBe("Updated");
     });
@@ -1047,7 +1385,9 @@ describe("Admin API router", () => {
     it("PUT /brand-voice/:id returns 404 for missing", async () => {
       const bvs = createMockBrandVoiceService();
       const { app } = buildApp({ brandVoiceService: bvs as any });
-      const res = await request(app).put("/admin/brand-voice/missing").send({ name: "X" });
+      const res = await request(app)
+        .put("/admin/brand-voice/missing")
+        .send({ name: "X" });
       expect(res.status).toBe(404);
     });
 
@@ -1061,14 +1401,18 @@ describe("Admin API router", () => {
     it("POST /brand-voice/:id/activate returns 404 for missing", async () => {
       const bvs = createMockBrandVoiceService();
       const { app } = buildApp({ brandVoiceService: bvs as any });
-      const res = await request(app).post("/admin/brand-voice/missing/activate");
+      const res = await request(app).post(
+        "/admin/brand-voice/missing/activate",
+      );
       expect(res.status).toBe(404);
     });
 
     it("POST /brand-voice/:id/reanalyze rejects empty samples", async () => {
       const bvs = createMockBrandVoiceService();
       const { app } = buildApp({ brandVoiceService: bvs as any });
-      const res = await request(app).post("/admin/brand-voice/bv1/reanalyze").send({ samples: [] });
+      const res = await request(app)
+        .post("/admin/brand-voice/bv1/reanalyze")
+        .send({ samples: [] });
       expect(res.status).toBe(400);
     });
 
@@ -1105,7 +1449,9 @@ describe("Admin API router", () => {
     it("POST /jobs rejects missing fields", async () => {
       const scheduler = createMockScheduler();
       const { app } = buildApp({ scheduler: scheduler as any });
-      const res = await request(app).post("/admin/jobs").send({ name: "No Cron" });
+      const res = await request(app)
+        .post("/admin/jobs")
+        .send({ name: "No Cron" });
       expect(res.status).toBe(400);
       expect(res.body.error).toContain("required");
     });
@@ -1113,7 +1459,9 @@ describe("Admin API router", () => {
     it("PUT /jobs/:id updates a job", async () => {
       const scheduler = createMockScheduler();
       const { app } = buildApp({ scheduler: scheduler as any });
-      const res = await request(app).put("/admin/jobs/j1").send({ name: "Updated" });
+      const res = await request(app)
+        .put("/admin/jobs/j1")
+        .send({ name: "Updated" });
       expect(res.status).toBe(200);
       expect(res.body.name).toBe("Updated");
     });
@@ -1121,7 +1469,9 @@ describe("Admin API router", () => {
     it("POST /jobs/:id/toggle toggles enabled state", async () => {
       const scheduler = createMockScheduler();
       const { app } = buildApp({ scheduler: scheduler as any });
-      const res = await request(app).post("/admin/jobs/j1/toggle").send({ enabled: false });
+      const res = await request(app)
+        .post("/admin/jobs/j1/toggle")
+        .send({ enabled: false });
       expect(res.status).toBe(200);
       expect(res.body.enabled).toBe(false);
     });
@@ -1177,7 +1527,9 @@ describe("Admin API router", () => {
     it("POST /sentinel/toggle toggles sentinel", async () => {
       const sentinel = createMockSentinel();
       const { app } = buildApp({ sentinel: sentinel as any });
-      const res = await request(app).post("/admin/sentinel/toggle").send({ enabled: true });
+      const res = await request(app)
+        .post("/admin/sentinel/toggle")
+        .send({ enabled: true });
       expect(res.status).toBe(200);
     });
   });
@@ -1186,7 +1538,9 @@ describe("Admin API router", () => {
 
   describe("POST /restart", () => {
     it("returns ok", async () => {
-      const exitSpy = vi.spyOn(process, "exit").mockImplementation(() => undefined as never);
+      const exitSpy = vi
+        .spyOn(process, "exit")
+        .mockImplementation(() => undefined as never);
       vi.useFakeTimers();
       try {
         const { app } = buildApp();
@@ -1207,7 +1561,9 @@ describe("Admin API router", () => {
   describe("POST /allowed-dirs", () => {
     it("normalizes and sets allowed dirs", async () => {
       const { app } = buildApp();
-      const res = await request(app).post("/admin/allowed-dirs").send({ value: " /tmp , /home " });
+      const res = await request(app)
+        .post("/admin/allowed-dirs")
+        .send({ value: " /tmp , /home " });
       // upsertEnvFile is an internal function that writes to .env;
       // it may fail in test (no actual .env file), which returns 500,
       // or succeed if mocked via fs. Either way the route is exercised.
@@ -1220,7 +1576,9 @@ describe("Admin API router", () => {
   describe("POST /voice-tts-credentials", () => {
     it("attempts to set credentials", async () => {
       const { app } = buildApp();
-      const res = await request(app).post("/admin/voice-tts-credentials").send({ value: "/path/creds.json" });
+      const res = await request(app)
+        .post("/admin/voice-tts-credentials")
+        .send({ value: "/path/creds.json" });
       expect([200, 500]).toContain(res.status);
     });
   });
@@ -1284,10 +1642,12 @@ describe("Admin API router", () => {
     it("rejects enabling telegram without token", async () => {
       delete process.env.TELEGRAM_BOT_TOKEN;
       const { app } = buildApp();
-      const res = await request(app).post("/admin/channels").send({
-        telegram: { enabled: true },
-        discord: { enabled: false },
-      });
+      const res = await request(app)
+        .post("/admin/channels")
+        .send({
+          telegram: { enabled: true },
+          discord: { enabled: false },
+        });
       expect(res.status).toBe(400);
       expect(res.body.error).toContain("TELEGRAM_BOT_TOKEN");
     });
@@ -1295,10 +1655,12 @@ describe("Admin API router", () => {
     it("rejects enabling discord without token", async () => {
       delete process.env.DISCORD_BOT_TOKEN;
       const { app } = buildApp();
-      const res = await request(app).post("/admin/channels").send({
-        telegram: { enabled: false },
-        discord: { enabled: true },
-      });
+      const res = await request(app)
+        .post("/admin/channels")
+        .send({
+          telegram: { enabled: false },
+          discord: { enabled: true },
+        });
       expect(res.status).toBe(400);
       expect(res.body.error).toContain("DISCORD_BOT_TOKEN");
     });
@@ -1339,7 +1701,9 @@ describe("Admin API router", () => {
   describe("custom post-action routes", () => {
     it("GET /post-actions/custom/:type returns 404 without manager", async () => {
       const { app } = buildApp();
-      const res = await request(app).get("/admin/post-actions/custom/some-type");
+      const res = await request(app).get(
+        "/admin/post-actions/custom/some-type",
+      );
       expect(res.status).toBe(404);
     });
 
@@ -1354,15 +1718,19 @@ describe("Admin API router", () => {
 
     it("PUT /post-actions/custom/:type returns 503 without manager", async () => {
       const { app } = buildApp();
-      const res = await request(app).put("/admin/post-actions/custom/my-action").send({
-        label: "Updated",
-      });
+      const res = await request(app)
+        .put("/admin/post-actions/custom/my-action")
+        .send({
+          label: "Updated",
+        });
       expect(res.status).toBe(503);
     });
 
     it("DELETE /post-actions/custom/:type returns 503 without manager", async () => {
       const { app } = buildApp();
-      const res = await request(app).delete("/admin/post-actions/custom/my-action");
+      const res = await request(app).delete(
+        "/admin/post-actions/custom/my-action",
+      );
       expect(res.status).toBe(503);
     });
   });
@@ -1372,7 +1740,9 @@ describe("Admin API router", () => {
   describe("prompt update and export", () => {
     const buildWithPrompts = () => {
       const pm = createMockPromptManager();
-      const { app } = buildApp({ promptManager: pm as unknown as AdminRouterOptions["promptManager"] });
+      const { app } = buildApp({
+        promptManager: pm as unknown as AdminRouterOptions["promptManager"],
+      });
       return { app, pm };
     };
 
@@ -1388,8 +1758,12 @@ describe("Admin API router", () => {
 
     it("PUT /prompts/:id returns 400 for missing prompt", async () => {
       const { app, pm } = buildWithPrompts();
-      pm.update.mockImplementation(() => { throw new Error("Prompt not found"); });
-      const res = await request(app).put("/admin/prompts/missing").send({ name: "X" });
+      pm.update.mockImplementation(() => {
+        throw new Error("Prompt not found");
+      });
+      const res = await request(app)
+        .put("/admin/prompts/missing")
+        .send({ name: "X" });
       expect(res.status).toBe(400);
     });
   });
@@ -1399,7 +1773,9 @@ describe("Admin API router", () => {
   describe("template import", () => {
     it("POST /templates/import rejects missing template", async () => {
       const pm = createMockPromptManager();
-      const { app } = buildApp({ promptManager: pm as unknown as AdminRouterOptions["promptManager"] });
+      const { app } = buildApp({
+        promptManager: pm as unknown as AdminRouterOptions["promptManager"],
+      });
       const res = await request(app).post("/admin/templates/import").send({});
       expect(res.status).toBe(400);
       expect(res.body.error).toContain("template is required");
@@ -1411,20 +1787,26 @@ describe("Admin API router", () => {
   describe("PUT /session/config", () => {
     it("rejects invalid maxToolsPerRequest", async () => {
       const { app } = buildApp();
-      const res = await request(app).put("/admin/session/config").send({ maxToolsPerRequest: 0 });
+      const res = await request(app)
+        .put("/admin/session/config")
+        .send({ maxToolsPerRequest: 0 });
       expect(res.status).toBe(400);
       expect(res.body.error).toContain("maxToolsPerRequest");
     });
 
     it("rejects non-integer maxToolsPerRequest", async () => {
       const { app } = buildApp();
-      const res = await request(app).put("/admin/session/config").send({ maxToolsPerRequest: 3.5 });
+      const res = await request(app)
+        .put("/admin/session/config")
+        .send({ maxToolsPerRequest: 3.5 });
       expect(res.status).toBe(400);
     });
 
     it("rejects maxToolsPerRequest > 128", async () => {
       const { app } = buildApp();
-      const res = await request(app).put("/admin/session/config").send({ maxToolsPerRequest: 200 });
+      const res = await request(app)
+        .put("/admin/session/config")
+        .send({ maxToolsPerRequest: 200 });
       expect(res.status).toBe(400);
     });
   });
@@ -1434,14 +1816,18 @@ describe("Admin API router", () => {
   describe("PUT /tasks/config", () => {
     it("rejects invalid maxConcurrent", async () => {
       const { app } = buildApp();
-      const res = await request(app).put("/admin/tasks/config").send({ maxConcurrent: 0 });
+      const res = await request(app)
+        .put("/admin/tasks/config")
+        .send({ maxConcurrent: 0 });
       expect(res.status).toBe(400);
       expect(res.body.error).toContain("maxConcurrent");
     });
 
     it("rejects maxConcurrent > 10", async () => {
       const { app } = buildApp();
-      const res = await request(app).put("/admin/tasks/config").send({ maxConcurrent: 50 });
+      const res = await request(app)
+        .put("/admin/tasks/config")
+        .send({ maxConcurrent: 50 });
       expect(res.status).toBe(400);
     });
   });
@@ -1452,7 +1838,9 @@ describe("Admin API router", () => {
     it("rejects invalid reasoningEffort", async () => {
       const copilot = createMockCopilot();
       const { app } = buildApp({ copilot: copilot as any });
-      const res = await request(app).put("/admin/models/config").send({ reasoningEffort: "ultra" });
+      const res = await request(app)
+        .put("/admin/models/config")
+        .send({ reasoningEffort: "ultra" });
       expect(res.status).toBe(400);
       expect(res.body.error).toContain("reasoningEffort");
     });
@@ -1460,9 +1848,11 @@ describe("Admin API router", () => {
     it("rejects invalid provider type", async () => {
       const copilot = createMockCopilot();
       const { app } = buildApp({ copilot: copilot as any });
-      const res = await request(app).put("/admin/models/config").send({
-        provider: { type: "invalid", baseUrl: "http://localhost" },
-      });
+      const res = await request(app)
+        .put("/admin/models/config")
+        .send({
+          provider: { type: "invalid", baseUrl: "http://localhost" },
+        });
       expect(res.status).toBe(400);
       expect(res.body.error).toContain("provider.type");
     });
@@ -1470,9 +1860,11 @@ describe("Admin API router", () => {
     it("rejects provider missing baseUrl", async () => {
       const copilot = createMockCopilot();
       const { app } = buildApp({ copilot: copilot as any });
-      const res = await request(app).put("/admin/models/config").send({
-        provider: { type: "openai" },
-      });
+      const res = await request(app)
+        .put("/admin/models/config")
+        .send({
+          provider: { type: "openai" },
+        });
       expect(res.status).toBe(400);
       expect(res.body.error).toContain("baseUrl");
     });
@@ -1480,7 +1872,9 @@ describe("Admin API router", () => {
     it("rejects invalid workingDirectory type", async () => {
       const copilot = createMockCopilot();
       const { app } = buildApp({ copilot: copilot as any });
-      const res = await request(app).put("/admin/models/config").send({ workingDirectory: 123 });
+      const res = await request(app)
+        .put("/admin/models/config")
+        .send({ workingDirectory: 123 });
       expect(res.status).toBe(400);
     });
   });
@@ -1536,7 +1930,9 @@ describe("Admin API router", () => {
   describe("native MCP server routes", () => {
     it("GET /native-mcp-servers returns servers", async () => {
       const copilot = createMockCopilot();
-      copilot.getNativeMcpServers.mockReturnValue({ "test-server": { command: "node", args: ["server.js"] } });
+      copilot.getNativeMcpServers.mockReturnValue({
+        "test-server": { command: "node", args: ["server.js"] },
+      });
       const { app } = buildApp({ copilot: copilot as any });
       const res = await request(app).get("/admin/native-mcp-servers");
       expect(res.status).toBe(200);
@@ -1546,14 +1942,18 @@ describe("Admin API router", () => {
     it("PUT /native-mcp-servers rejects non-object servers", async () => {
       const copilot = createMockCopilot();
       const { app } = buildApp({ copilot: copilot as any });
-      const res = await request(app).put("/admin/native-mcp-servers").send({ servers: "not-object" });
+      const res = await request(app)
+        .put("/admin/native-mcp-servers")
+        .send({ servers: "not-object" });
       expect(res.status).toBe(400);
     });
 
     it("PUT /native-mcp-servers rejects array servers", async () => {
       const copilot = createMockCopilot();
       const { app } = buildApp({ copilot: copilot as any });
-      const res = await request(app).put("/admin/native-mcp-servers").send({ servers: [] });
+      const res = await request(app)
+        .put("/admin/native-mcp-servers")
+        .send({ servers: [] });
       expect(res.status).toBe(400);
     });
 
@@ -1561,7 +1961,9 @@ describe("Admin API router", () => {
       const copilot = createMockCopilot();
       copilot.getNativeMcpServers.mockReturnValue({});
       const { app } = buildApp({ copilot: copilot as any });
-      const res = await request(app).delete("/admin/native-mcp-servers/missing");
+      const res = await request(app).delete(
+        "/admin/native-mcp-servers/missing",
+      );
       expect(res.status).toBe(404);
     });
 
@@ -1569,7 +1971,9 @@ describe("Admin API router", () => {
       const copilot = createMockCopilot();
       copilot.getNativeMcpServers.mockReturnValue({});
       const { app } = buildApp({ copilot: copilot as any });
-      const res = await request(app).post("/admin/native-mcp-servers/missing/reconnect");
+      const res = await request(app).post(
+        "/admin/native-mcp-servers/missing/reconnect",
+      );
       expect(res.status).toBe(404);
     });
 
@@ -1577,7 +1981,9 @@ describe("Admin API router", () => {
       const copilot = createMockCopilot();
       copilot.getNativeMcpServers.mockReturnValue({});
       const { app } = buildApp({ copilot: copilot as any });
-      const res = await request(app).get("/admin/native-mcp-servers/missing/tools");
+      const res = await request(app).get(
+        "/admin/native-mcp-servers/missing/tools",
+      );
       expect(res.status).toBe(404);
     });
   });
@@ -1589,14 +1995,22 @@ describe("Admin API router", () => {
       const copilot = createMockCopilot();
       copilot.listSdkSessions.mockResolvedValue([]);
       const { app } = buildApp({ copilot: copilot as any });
-      const res = await request(app).post("/admin/copilot-sessions/missing/resume");
+      const res = await request(app).post(
+        "/admin/copilot-sessions/missing/resume",
+      );
       expect(res.status).toBe(404);
     });
 
     it("POST /copilot-sessions/:id/resume returns session data for existing", async () => {
       const copilot = createMockCopilot();
       copilot.listSdkSessions.mockResolvedValue([
-        { sessionId: "s1", summary: "Test session", context: {}, startTime: "2025-01-01", modifiedTime: "2025-01-01" },
+        {
+          sessionId: "s1",
+          summary: "Test session",
+          context: {},
+          startTime: "2025-01-01",
+          modifiedTime: "2025-01-01",
+        },
       ]);
       const { app } = buildApp({ copilot: copilot as any });
       const res = await request(app).post("/admin/copilot-sessions/s1/resume");
@@ -1611,9 +2025,13 @@ describe("Admin API router", () => {
   describe("native MCP server tool management", () => {
     it("POST /native-mcp-servers/:name/tools/add rejects missing toolName", async () => {
       const copilot = createMockCopilot();
-      copilot.getNativeMcpServers.mockReturnValue({ "my-server": { command: "node", args: [] } });
+      copilot.getNativeMcpServers.mockReturnValue({
+        "my-server": { command: "node", args: [] },
+      });
       const { app } = buildApp({ copilot: copilot as any });
-      const res = await request(app).post("/admin/native-mcp-servers/my-server/tools/add").send({});
+      const res = await request(app)
+        .post("/admin/native-mcp-servers/my-server/tools/add")
+        .send({});
       expect(res.status).toBe(400);
       expect(res.body.error).toContain("toolName");
     });
@@ -1622,15 +2040,21 @@ describe("Admin API router", () => {
       const copilot = createMockCopilot();
       copilot.getNativeMcpServers.mockReturnValue({});
       const { app } = buildApp({ copilot: copilot as any });
-      const res = await request(app).post("/admin/native-mcp-servers/missing/tools/add").send({ toolName: "tool1" });
+      const res = await request(app)
+        .post("/admin/native-mcp-servers/missing/tools/add")
+        .send({ toolName: "tool1" });
       expect(res.status).toBe(404);
     });
 
     it("POST /native-mcp-servers/:name/tools/:toolName/toggle rejects non-boolean", async () => {
       const copilot = createMockCopilot();
-      copilot.getNativeMcpServers.mockReturnValue({ "my-server": { command: "node", args: [] } });
+      copilot.getNativeMcpServers.mockReturnValue({
+        "my-server": { command: "node", args: [] },
+      });
       const { app } = buildApp({ copilot: copilot as any });
-      const res = await request(app).post("/admin/native-mcp-servers/my-server/tools/tool1/toggle").send({ enabled: "yes" });
+      const res = await request(app)
+        .post("/admin/native-mcp-servers/my-server/tools/tool1/toggle")
+        .send({ enabled: "yes" });
       expect(res.status).toBe(400);
     });
 
@@ -1638,7 +2062,9 @@ describe("Admin API router", () => {
       const copilot = createMockCopilot();
       copilot.getNativeMcpServers.mockReturnValue({});
       const { app } = buildApp({ copilot: copilot as any });
-      const res = await request(app).post("/admin/native-mcp-servers/missing/tools/tool1/toggle").send({ enabled: true });
+      const res = await request(app)
+        .post("/admin/native-mcp-servers/missing/tools/tool1/toggle")
+        .send({ enabled: true });
       expect(res.status).toBe(404);
     });
 
@@ -1646,7 +2072,9 @@ describe("Admin API router", () => {
       const copilot = createMockCopilot();
       copilot.getNativeMcpServers.mockReturnValue({});
       const { app } = buildApp({ copilot: copilot as any });
-      const res = await request(app).post("/admin/native-mcp-servers/missing/tools/tool1/remove");
+      const res = await request(app).post(
+        "/admin/native-mcp-servers/missing/tools/tool1/remove",
+      );
       expect(res.status).toBe(404);
     });
   });
@@ -1656,9 +2084,13 @@ describe("Admin API router", () => {
   describe("tool toggle error paths", () => {
     it("returns 400 when setEnabled throws", async () => {
       const toolRegistry = createMockToolRegistry();
-      toolRegistry.setEnabled.mockRejectedValue(new Error("Cannot disable always-on tool"));
+      toolRegistry.setEnabled.mockRejectedValue(
+        new Error("Cannot disable always-on tool"),
+      );
       const { app } = buildApp({ toolRegistry: toolRegistry as any });
-      const res = await request(app).post("/admin/tools/read-file/toggle").send({ enabled: false });
+      const res = await request(app)
+        .post("/admin/tools/read-file/toggle")
+        .send({ enabled: false });
       expect(res.status).toBe(400);
       expect(res.body.error).toContain("Cannot disable");
     });
@@ -1666,7 +2098,9 @@ describe("Admin API router", () => {
     it("rejects mcp: tool with invalid identifier format", async () => {
       const copilot = createMockCopilot();
       const { app } = buildApp({ copilot: copilot as any });
-      const res = await request(app).post("/admin/tools/mcp:x/toggle").send({ enabled: true });
+      const res = await request(app)
+        .post("/admin/tools/mcp:x/toggle")
+        .send({ enabled: true });
       expect(res.status).toBe(400);
       expect(res.body.error).toContain("Invalid MCP tool identifier");
     });
@@ -1674,22 +2108,31 @@ describe("Admin API router", () => {
     it("rejects toggling mcp: __disconnected__ marker", async () => {
       const copilot = createMockCopilot();
       const { app } = buildApp({ copilot: copilot as any });
-      const res = await request(app).post("/admin/tools/mcp:server:__disconnected__/toggle").send({ enabled: true });
+      const res = await request(app)
+        .post("/admin/tools/mcp:server:__disconnected__/toggle")
+        .send({ enabled: true });
       expect(res.status).toBe(400);
       expect(res.body.error).toContain("Cannot toggle disconnected");
     });
 
     it("returns 503 for mcp: tool when copilot unavailable", async () => {
       const { app } = buildApp();
-      const res = await request(app).post("/admin/tools/mcp:server:tool1/toggle").send({ enabled: true });
+      const res = await request(app)
+        .post("/admin/tools/mcp:server:tool1/toggle")
+        .send({ enabled: true });
       expect(res.status).toBe(503);
     });
 
     it("returns 409 for mcp: tool when tasks are active", async () => {
       const copilot = createMockCopilot();
       const taskEngine = createMockTaskEngine();
-      const { app } = buildApp({ copilot: copilot as any, taskEngine: taskEngine as any });
-      const res = await request(app).post("/admin/tools/mcp:server:tool1/toggle").send({ enabled: true });
+      const { app } = buildApp({
+        copilot: copilot as any,
+        taskEngine: taskEngine as any,
+      });
+      const res = await request(app)
+        .post("/admin/tools/mcp:server:tool1/toggle")
+        .send({ enabled: true });
       expect(res.status).toBe(409);
       expect(res.body.error).toContain("active");
     });
@@ -1698,7 +2141,9 @@ describe("Admin API router", () => {
       const copilot = createMockCopilot();
       copilot.getNativeMcpServers.mockReturnValue({});
       const { app } = buildApp({ copilot: copilot as any });
-      const res = await request(app).post("/admin/tools/mcp:missing:tool1/toggle").send({ enabled: true });
+      const res = await request(app)
+        .post("/admin/tools/mcp:missing:tool1/toggle")
+        .send({ enabled: true });
       expect(res.status).toBe(404);
     });
   });
@@ -1710,15 +2155,21 @@ describe("Admin API router", () => {
       const toolRegistry = createMockToolRegistry();
       toolRegistry.setRiskOverride.mockRejectedValue(new Error("Unknown tool"));
       const { app } = buildApp({ toolRegistry: toolRegistry as any });
-      const res = await request(app).post("/admin/tools/missing/risk").send({ riskLevel: "high" });
+      const res = await request(app)
+        .post("/admin/tools/missing/risk")
+        .send({ riskLevel: "high" });
       expect(res.status).toBe(400);
     });
 
     it("returns 400 when setGlobalApprovalOverride throws", async () => {
       const toolRegistry = createMockToolRegistry();
-      toolRegistry.setGlobalApprovalOverride.mockRejectedValue(new Error("Unknown tool"));
+      toolRegistry.setGlobalApprovalOverride.mockRejectedValue(
+        new Error("Unknown tool"),
+      );
       const { app } = buildApp({ toolRegistry: toolRegistry as any });
-      const res = await request(app).post("/admin/tools/missing/global-approval").send({ required: true });
+      const res = await request(app)
+        .post("/admin/tools/missing/global-approval")
+        .send({ required: true });
       expect(res.status).toBe(400);
     });
   });
@@ -1728,18 +2179,22 @@ describe("Admin API router", () => {
   describe("sidecar credentials validation", () => {
     it("rejects unknown credential key", async () => {
       const { app } = buildApp();
-      const res = await request(app).post("/admin/sidecars/credentials").send({
-        credentials: { UNKNOWN_KEY: "value" },
-      });
+      const res = await request(app)
+        .post("/admin/sidecars/credentials")
+        .send({
+          credentials: { UNKNOWN_KEY: "value" },
+        });
       expect(res.status).toBe(400);
       expect(res.body.error).toContain("Unknown credential");
     });
 
     it("rejects non-string credential value", async () => {
       const { app } = buildApp();
-      const res = await request(app).post("/admin/sidecars/credentials").send({
-        credentials: { JDBC_URL: 123 },
-      });
+      const res = await request(app)
+        .post("/admin/sidecars/credentials")
+        .send({
+          credentials: { JDBC_URL: 123 },
+        });
       expect(res.status).toBe(400);
       expect(res.body.error).toContain("must be a string");
     });
@@ -1750,10 +2205,19 @@ describe("Admin API router", () => {
   describe("custom post-actions with manager", () => {
     function createMockCustomPostActionManager() {
       return {
-        list: vi.fn().mockReturnValue([{ type: "my-action", label: "My Action" }]),
-        getByType: vi.fn((type: string) => type === "my-action" ? { type: "my-action", label: "My Action" } : undefined),
+        list: vi
+          .fn()
+          .mockReturnValue([{ type: "my-action", label: "My Action" }]),
+        getByType: vi.fn((type: string) =>
+          type === "my-action"
+            ? { type: "my-action", label: "My Action" }
+            : undefined,
+        ),
         create: vi.fn(async (data: any) => ({ ...data, id: "cpa-1" })),
-        update: vi.fn(async (_type: string, data: any) => ({ type: _type, ...data })),
+        update: vi.fn(async (_type: string, data: any) => ({
+          type: _type,
+          ...data,
+        })),
         delete: vi.fn(async (type: string) => type === "my-action"),
       };
     }
@@ -1769,7 +2233,9 @@ describe("Admin API router", () => {
     it("GET /post-actions/custom/:type returns action when found", async () => {
       const cpm = createMockCustomPostActionManager();
       const { app } = buildApp({ customPostActionManager: cpm as any });
-      const res = await request(app).get("/admin/post-actions/custom/my-action");
+      const res = await request(app).get(
+        "/admin/post-actions/custom/my-action",
+      );
       expect(res.status).toBe(200);
       expect(res.body.type).toBe("my-action");
     });
@@ -1794,7 +2260,9 @@ describe("Admin API router", () => {
     it("DELETE /post-actions/custom/:type deletes action", async () => {
       const cpm = createMockCustomPostActionManager();
       const { app } = buildApp({ customPostActionManager: cpm as any });
-      const res = await request(app).delete("/admin/post-actions/custom/my-action");
+      const res = await request(app).delete(
+        "/admin/post-actions/custom/my-action",
+      );
       expect(res.status).toBe(200);
       expect(res.body.ok).toBe(true);
     });
@@ -1858,7 +2326,9 @@ describe("Admin API router", () => {
     it("PUT /session/config succeeds with valid value", async () => {
       const copilot = createMockCopilot();
       const { app } = buildApp({ copilot: copilot as any });
-      const res = await request(app).put("/admin/session/config").send({ maxToolsPerRequest: 50 });
+      const res = await request(app)
+        .put("/admin/session/config")
+        .send({ maxToolsPerRequest: 50 });
       expect(res.status).toBe(200);
       expect(res.body.ok).toBe(true);
       expect(res.body.maxToolsPerRequest).toBe(50);
@@ -1867,7 +2337,9 @@ describe("Admin API router", () => {
     it("PUT /tasks/config succeeds with valid value", async () => {
       const tw = createMockTaskWorker();
       const { app } = buildApp({ taskWorker: tw as any });
-      const res = await request(app).put("/admin/tasks/config").send({ maxConcurrent: 5 });
+      const res = await request(app)
+        .put("/admin/tasks/config")
+        .send({ maxConcurrent: 5 });
       expect(res.status).toBe(200);
       expect(res.body.ok).toBe(true);
       expect(tw.setMaxConcurrent).toHaveBeenCalledWith(5);
@@ -1876,7 +2348,9 @@ describe("Admin API router", () => {
     it("PUT /models/config succeeds with valid reasoningEffort", async () => {
       const copilot = createMockCopilot();
       const { app } = buildApp({ copilot: copilot as any });
-      const res = await request(app).put("/admin/models/config").send({ reasoningEffort: "high" });
+      const res = await request(app)
+        .put("/admin/models/config")
+        .send({ reasoningEffort: "high" });
       expect(res.status).toBe(200);
       expect(res.body.ok).toBe(true);
       expect(copilot.setReasoningEffort).toHaveBeenCalledWith("high");
@@ -1884,7 +2358,9 @@ describe("Admin API router", () => {
 
     it("POST /voice-config succeeds with valid boolean field", async () => {
       const { app } = buildApp();
-      const res = await request(app).post("/admin/voice-config").send({ enabled: true });
+      const res = await request(app)
+        .post("/admin/voice-config")
+        .send({ enabled: true });
       expect(res.status).toBe(200);
       expect(res.body.ok).toBe(true);
       expect(res.body.updated).toHaveProperty("enabled", true);
@@ -1897,16 +2373,20 @@ describe("Admin API router", () => {
     it("PUT /agents updates all agents", async () => {
       const copilot = createMockCopilot();
       const { app } = buildApp({ copilot: copilot as any });
-      const res = await request(app).put("/admin/agents").send({
-        agents: [{ name: "a1", role: "coder", instructions: "Code" }],
-      });
+      const res = await request(app)
+        .put("/admin/agents")
+        .send({
+          agents: [{ name: "a1", role: "coder", instructions: "Code" }],
+        });
       expect(res.status).toBe(200);
       expect(res.body.ok).toBe(true);
     });
 
     it("PUT /agents/:name updates existing agent", async () => {
       const copilot = createMockCopilot();
-      copilot.getCustomAgents.mockReturnValue([{ name: "a1", role: "coder", instructions: "Old" }]);
+      copilot.getCustomAgents.mockReturnValue([
+        { name: "a1", role: "coder", instructions: "Old" },
+      ]);
       const { app } = buildApp({ copilot: copilot as any });
       const res = await request(app).put("/admin/agents/a1").send({
         name: "a1",
@@ -1933,7 +2413,9 @@ describe("Admin API router", () => {
     it("PUT /sentinel/config updates config", async () => {
       const sent = createMockSentinel();
       const { app } = buildApp({ sentinel: sent as any });
-      const res = await request(app).put("/admin/sentinel/config").send({ cronSchedule: "*/10 * * * *" });
+      const res = await request(app)
+        .put("/admin/sentinel/config")
+        .send({ cronSchedule: "*/10 * * * *" });
       expect(res.status).toBe(200);
       expect(res.body.ok).toBe(true);
     });
@@ -1941,7 +2423,9 @@ describe("Admin API router", () => {
     it("POST /sentinel/toggle rejects invalid body", async () => {
       const sent = createMockSentinel();
       const { app } = buildApp({ sentinel: sent as any });
-      const res = await request(app).post("/admin/sentinel/toggle").send({ enabled: "yes" });
+      const res = await request(app)
+        .post("/admin/sentinel/toggle")
+        .send({ enabled: "yes" });
       expect(res.status).toBe(400);
     });
 
@@ -1960,7 +2444,9 @@ describe("Admin API router", () => {
       return {
         listSessions: vi.fn().mockResolvedValue([]),
         getSession: vi.fn().mockResolvedValue({ id: "s1" }),
-        getHistory: vi.fn().mockResolvedValue([{ role: "user", content: "Hello" }]),
+        getHistory: vi
+          .fn()
+          .mockResolvedValue([{ role: "user", content: "Hello" }]),
         forkSession: vi.fn().mockResolvedValue({ id: "s2" }),
         deleteSession: vi.fn().mockResolvedValue(undefined),
       };
@@ -1968,7 +2454,9 @@ describe("Admin API router", () => {
 
     it("DELETE /sessions/:id returns 400 on error", async () => {
       const sm = createSessionManager();
-      sm.deleteSession.mockRejectedValue(new Error("Cannot delete active session"));
+      sm.deleteSession.mockRejectedValue(
+        new Error("Cannot delete active session"),
+      );
       const { app } = buildApp({ sessionManager: sm as any });
       const res = await request(app).delete("/admin/sessions/s1");
       expect(res.status).toBe(400);
@@ -1997,9 +2485,14 @@ describe("Admin API router", () => {
     it("GET /copilot-sessions passes filter params", async () => {
       const copilot = createMockCopilot();
       const { app } = buildApp({ copilot: copilot as any });
-      const res = await request(app).get("/admin/copilot-sessions?repository=my-repo&branch=main");
+      const res = await request(app).get(
+        "/admin/copilot-sessions?repository=my-repo&branch=main",
+      );
       expect(res.status).toBe(200);
-      expect(copilot.listSdkSessions).toHaveBeenCalledWith({ repository: "my-repo", branch: "main" });
+      expect(copilot.listSdkSessions).toHaveBeenCalledWith({
+        repository: "my-repo",
+        branch: "main",
+      });
     });
   });
 
@@ -2009,21 +2502,30 @@ describe("Admin API router", () => {
     it("PUT /native-mcp-servers blocks when tasks active", async () => {
       const copilot = createMockCopilot();
       const taskEngine = createMockTaskEngine();
-      const { app } = buildApp({ copilot: copilot as any, taskEngine: taskEngine as any });
-      const res = await request(app).put("/admin/native-mcp-servers").send({
-        servers: { test: { command: "node", args: [] } },
+      const { app } = buildApp({
+        copilot: copilot as any,
+        taskEngine: taskEngine as any,
       });
+      const res = await request(app)
+        .put("/admin/native-mcp-servers")
+        .send({
+          servers: { test: { command: "node", args: [] } },
+        });
       expect(res.status).toBe(409);
     });
 
     it("POST /native-mcp-servers/:name returns 409 for existing server", async () => {
       const copilot = createMockCopilot();
-      copilot.getNativeMcpServers.mockReturnValue({ existing: { command: "node", args: [] } });
-      const { app } = buildApp({ copilot: copilot as any });
-      const res = await request(app).post("/admin/native-mcp-servers/existing").send({
-        command: "node",
-        args: ["server.js"],
+      copilot.getNativeMcpServers.mockReturnValue({
+        existing: { command: "node", args: [] },
       });
+      const { app } = buildApp({ copilot: copilot as any });
+      const res = await request(app)
+        .post("/admin/native-mcp-servers/existing")
+        .send({
+          command: "node",
+          args: ["server.js"],
+        });
       expect(res.status).toBe(409);
     });
 
@@ -2031,52 +2533,73 @@ describe("Admin API router", () => {
       const copilot = createMockCopilot();
       copilot.getNativeMcpServers.mockReturnValue({});
       const { app } = buildApp({ copilot: copilot as any });
-      const res = await request(app).put("/admin/native-mcp-servers/missing").send({
-        command: "node",
-        args: ["server.js"],
-      });
+      const res = await request(app)
+        .put("/admin/native-mcp-servers/missing")
+        .send({
+          command: "node",
+          args: ["server.js"],
+        });
       expect(res.status).toBe(404);
     });
 
     it("DELETE /native-mcp-servers/:name blocks when tasks active", async () => {
       const copilot = createMockCopilot();
-      copilot.getNativeMcpServers.mockReturnValue({ test: { command: "node", args: [] } });
+      copilot.getNativeMcpServers.mockReturnValue({
+        test: { command: "node", args: [] },
+      });
       const taskEngine = createMockTaskEngine();
-      const { app } = buildApp({ copilot: copilot as any, taskEngine: taskEngine as any });
+      const { app } = buildApp({
+        copilot: copilot as any,
+        taskEngine: taskEngine as any,
+      });
       const res = await request(app).delete("/admin/native-mcp-servers/test");
       expect(res.status).toBe(409);
     });
 
     it("GET /native-mcp-servers/tool-cache returns cache", async () => {
       const { app } = buildApp();
-      const res = await request(app).get("/admin/native-mcp-servers/tool-cache");
+      const res = await request(app).get(
+        "/admin/native-mcp-servers/tool-cache",
+      );
       expect(res.status).toBe(200);
       expect(res.body).toHaveProperty("cache");
     });
 
     it("POST /native-mcp-servers/:name/tools/add succeeds", async () => {
       const copilot = createMockCopilot();
-      copilot.getNativeMcpServers.mockReturnValue({ "my-server": { command: "node", args: [] } });
+      copilot.getNativeMcpServers.mockReturnValue({
+        "my-server": { command: "node", args: [] },
+      });
       const { app } = buildApp({ copilot: copilot as any });
-      const res = await request(app).post("/admin/native-mcp-servers/my-server/tools/add").send({ toolName: "new-tool" });
+      const res = await request(app)
+        .post("/admin/native-mcp-servers/my-server/tools/add")
+        .send({ toolName: "new-tool" });
       expect(res.status).toBe(200);
       expect(res.body.ok).toBe(true);
     });
 
     it("POST /native-mcp-servers/:name/tools/add returns ok for duplicate", async () => {
       const copilot = createMockCopilot();
-      copilot.getNativeMcpServers.mockReturnValue({ "my-server": { command: "node", args: [], tools: ["existing-tool"] } });
+      copilot.getNativeMcpServers.mockReturnValue({
+        "my-server": { command: "node", args: [], tools: ["existing-tool"] },
+      });
       const { app } = buildApp({ copilot: copilot as any });
-      const res = await request(app).post("/admin/native-mcp-servers/my-server/tools/add").send({ toolName: "existing-tool" });
+      const res = await request(app)
+        .post("/admin/native-mcp-servers/my-server/tools/add")
+        .send({ toolName: "existing-tool" });
       expect(res.status).toBe(200);
       expect(res.body.message).toBe("already exists");
     });
 
     it("POST /native-mcp-servers/:name/tools/:tool/toggle succeeds", async () => {
       const copilot = createMockCopilot();
-      copilot.getNativeMcpServers.mockReturnValue({ "my-server": { command: "node", args: [] } });
+      copilot.getNativeMcpServers.mockReturnValue({
+        "my-server": { command: "node", args: [] },
+      });
       const { app } = buildApp({ copilot: copilot as any });
-      const res = await request(app).post("/admin/native-mcp-servers/my-server/tools/tool1/toggle").send({ enabled: false });
+      const res = await request(app)
+        .post("/admin/native-mcp-servers/my-server/tools/tool1/toggle")
+        .send({ enabled: false });
       expect(res.status).toBe(200);
       expect(res.body.ok).toBe(true);
       expect(res.body.enabled).toBe(false);
@@ -2084,9 +2607,13 @@ describe("Admin API router", () => {
 
     it("POST /native-mcp-servers/:name/tools/:tool/remove succeeds", async () => {
       const copilot = createMockCopilot();
-      copilot.getNativeMcpServers.mockReturnValue({ "my-server": { command: "node", args: [], tools: ["tool1"] } });
+      copilot.getNativeMcpServers.mockReturnValue({
+        "my-server": { command: "node", args: [], tools: ["tool1"] },
+      });
       const { app } = buildApp({ copilot: copilot as any });
-      const res = await request(app).post("/admin/native-mcp-servers/my-server/tools/tool1/remove");
+      const res = await request(app).post(
+        "/admin/native-mcp-servers/my-server/tools/tool1/remove",
+      );
       expect(res.status).toBe(200);
       expect(res.body.ok).toBe(true);
     });
@@ -2104,14 +2631,18 @@ describe("Admin API router", () => {
 
     it("PUT /presenter/config rejects invalid URL", async () => {
       const { app } = buildApp();
-      const res = await request(app).put("/admin/presenter/config").send({ baseUrl: "not-a-url" });
+      const res = await request(app)
+        .put("/admin/presenter/config")
+        .send({ baseUrl: "not-a-url" });
       expect(res.status).toBe(400);
       expect(res.body.error).toContain("valid HTTP");
     });
 
     it("PUT /presenter/config rejects non-string baseUrl", async () => {
       const { app } = buildApp();
-      const res = await request(app).put("/admin/presenter/config").send({ baseUrl: 123 });
+      const res = await request(app)
+        .put("/admin/presenter/config")
+        .send({ baseUrl: 123 });
       expect(res.status).toBe(400);
     });
   });
@@ -2128,14 +2659,18 @@ describe("Admin API router", () => {
 
     it("PUT /image-gen/config rejects invalid mode", async () => {
       const { app } = buildApp();
-      const res = await request(app).put("/admin/image-gen/config").send({ mode: "cloud" });
+      const res = await request(app)
+        .put("/admin/image-gen/config")
+        .send({ mode: "cloud" });
       expect(res.status).toBe(400);
       expect(res.body.error).toContain("mode");
     });
 
     it("PUT /image-gen/config rejects invalid networkNodeUrl", async () => {
       const { app } = buildApp();
-      const res = await request(app).put("/admin/image-gen/config").send({ networkNodeUrl: "not-url" });
+      const res = await request(app)
+        .put("/admin/image-gen/config")
+        .send({ networkNodeUrl: "not-url" });
       expect(res.status).toBe(400);
     });
 
@@ -2148,7 +2683,9 @@ describe("Admin API router", () => {
 
     it("PUT /video-gen/config rejects invalid mode", async () => {
       const { app } = buildApp();
-      const res = await request(app).put("/admin/video-gen/config").send({ mode: "cloud" });
+      const res = await request(app)
+        .put("/admin/video-gen/config")
+        .send({ mode: "cloud" });
       expect(res.status).toBe(400);
     });
 
@@ -2161,7 +2698,9 @@ describe("Admin API router", () => {
 
     it("PUT /music-gen/config rejects invalid mode", async () => {
       const { app } = buildApp();
-      const res = await request(app).put("/admin/music-gen/config").send({ mode: "cloud" });
+      const res = await request(app)
+        .put("/admin/music-gen/config")
+        .send({ mode: "cloud" });
       expect(res.status).toBe(400);
     });
   });
@@ -2186,10 +2725,12 @@ describe("Admin API router", () => {
     it("POST /brand-voice/analyze rejects overly long sample", async () => {
       const bvs = createBrandVoiceSvc();
       const { app } = buildApp({ brandVoiceService: bvs as any });
-      const res = await request(app).post("/admin/brand-voice/analyze").send({
-        name: "Test",
-        samples: ["x".repeat(10_001)],
-      });
+      const res = await request(app)
+        .post("/admin/brand-voice/analyze")
+        .send({
+          name: "Test",
+          samples: ["x".repeat(10_001)],
+        });
       expect(res.status).toBe(400);
       expect(res.body.error).toContain("10000");
     });
@@ -2197,9 +2738,11 @@ describe("Admin API router", () => {
     it("POST /brand-voice/:id/reanalyze returns 404 for missing voice", async () => {
       const bvs = createBrandVoiceSvc();
       const { app } = buildApp({ brandVoiceService: bvs as any });
-      const res = await request(app).post("/admin/brand-voice/missing/reanalyze").send({
-        samples: ["Some writing sample"],
-      });
+      const res = await request(app)
+        .post("/admin/brand-voice/missing/reanalyze")
+        .send({
+          samples: ["Some writing sample"],
+        });
       expect(res.status).toBe(404);
     });
 
@@ -2217,14 +2760,18 @@ describe("Admin API router", () => {
     it("POST /webhooks/:id/toggle rejects missing enabled", async () => {
       const whm = createMockWebhookManager();
       const { app } = buildApp({ webhookManager: whm as any });
-      const res = await request(app).post("/admin/webhooks/wh-1/toggle").send({});
+      const res = await request(app)
+        .post("/admin/webhooks/wh-1/toggle")
+        .send({});
       expect(res.status).toBe(400);
     });
 
     it("POST /webhooks rejects missing name", async () => {
       const whm = createMockWebhookManager();
       const { app } = buildApp({ webhookManager: whm as any });
-      const res = await request(app).post("/admin/webhooks").send({ action: "prompt" });
+      const res = await request(app)
+        .post("/admin/webhooks")
+        .send({ action: "prompt" });
       expect(res.status).toBe(400);
     });
 
@@ -2264,19 +2811,26 @@ describe("Admin API router", () => {
     it("POST /templates/analyze returns analysis", async () => {
       const pm = createMockPromptManager();
       const { app } = buildApp({ promptManager: pm as any });
-      const res = await request(app).post("/admin/templates/analyze").send({
-        version: "1.0",
-        prompt: { name: "Test", template: "Do {{thing}}" },
-      });
+      const res = await request(app)
+        .post("/admin/templates/analyze")
+        .send({
+          version: "1.0",
+          prompt: { name: "Test", template: "Do {{thing}}" },
+        });
       expect(res.status).toBe(200);
     });
 
     it("POST /templates/import succeeds with valid template", async () => {
       const pm = createMockPromptManager();
       const { app } = buildApp({ promptManager: pm as any });
-      const res = await request(app).post("/admin/templates/import").send({
-        template: { version: "1.0", prompt: { name: "Imported", template: "Do stuff" } },
-      });
+      const res = await request(app)
+        .post("/admin/templates/import")
+        .send({
+          template: {
+            version: "1.0",
+            prompt: { name: "Imported", template: "Do stuff" },
+          },
+        });
       expect(res.status).toBe(201);
       expect(res.body.success).toBe(true);
     });
@@ -2288,13 +2842,15 @@ describe("Admin API router", () => {
     it("POST /webhooks creates a webhook with valid input", async () => {
       const whm = createMockWebhookManager();
       const { app } = buildApp({ webhookManager: whm as any });
-      const res = await request(app).post("/admin/webhooks").send({
-        name: "My Hook",
-        action: "prompt",
-        actionPayload: { prompt: "test" },
-        allowedIps: ["127.0.0.1"],
-        rateLimit: 30,
-      });
+      const res = await request(app)
+        .post("/admin/webhooks")
+        .send({
+          name: "My Hook",
+          action: "prompt",
+          actionPayload: { prompt: "test" },
+          allowedIps: ["127.0.0.1"],
+          rateLimit: 30,
+        });
       expect(res.status).toBe(201);
       expect(res.body.webhook.name).toBe("My Hook");
       expect(res.body.apiKey).toBeTruthy();
@@ -2303,7 +2859,9 @@ describe("Admin API router", () => {
     it("POST /webhooks rejects missing name", async () => {
       const whm = createMockWebhookManager();
       const { app } = buildApp({ webhookManager: whm as any });
-      const res = await request(app).post("/admin/webhooks").send({ action: "prompt" });
+      const res = await request(app)
+        .post("/admin/webhooks")
+        .send({ action: "prompt" });
       expect(res.status).toBe(400);
       expect(res.body.error).toContain("name");
     });
@@ -2311,16 +2869,32 @@ describe("Admin API router", () => {
     it("POST /webhooks rejects invalid action", async () => {
       const whm = createMockWebhookManager();
       const { app } = buildApp({ webhookManager: whm as any });
-      const res = await request(app).post("/admin/webhooks").send({ name: "Hook", action: "invalid" });
+      const res = await request(app)
+        .post("/admin/webhooks")
+        .send({ name: "Hook", action: "invalid" });
       expect(res.status).toBe(400);
       expect(res.body.error).toContain("action");
     });
 
     it("POST /webhooks/:id/toggle toggles webhook", async () => {
       const whm = createMockWebhookManager();
-      whm._webhooks.set("wh-1", { id: "wh-1", name: "Hook", action: "prompt", actionPayload: {}, enabled: true, allowedIps: [], rateLimit: 60, triggerCount: 0, lastTriggeredAt: null, createdAt: "2025-01-01", secret: "s" });
+      whm._webhooks.set("wh-1", {
+        id: "wh-1",
+        name: "Hook",
+        action: "prompt",
+        actionPayload: {},
+        enabled: true,
+        allowedIps: [],
+        rateLimit: 60,
+        triggerCount: 0,
+        lastTriggeredAt: null,
+        createdAt: "2025-01-01",
+        secret: "s",
+      });
       const { app } = buildApp({ webhookManager: whm as any });
-      const res = await request(app).post("/admin/webhooks/wh-1/toggle").send({ enabled: false });
+      const res = await request(app)
+        .post("/admin/webhooks/wh-1/toggle")
+        .send({ enabled: false });
       expect(res.status).toBe(200);
       expect(res.body.ok).toBe(true);
     });
@@ -2328,13 +2902,27 @@ describe("Admin API router", () => {
     it("POST /webhooks/:id/toggle rejects non-boolean", async () => {
       const whm = createMockWebhookManager();
       const { app } = buildApp({ webhookManager: whm as any });
-      const res = await request(app).post("/admin/webhooks/wh-1/toggle").send({});
+      const res = await request(app)
+        .post("/admin/webhooks/wh-1/toggle")
+        .send({});
       expect(res.status).toBe(400);
     });
 
     it("POST /webhooks/:id/rotate-key rotates key", async () => {
       const whm = createMockWebhookManager();
-      whm._webhooks.set("wh-1", { id: "wh-1", name: "Hook", action: "prompt", actionPayload: {}, enabled: true, allowedIps: [], rateLimit: 60, triggerCount: 0, lastTriggeredAt: null, createdAt: "2025-01-01", secret: "s" });
+      whm._webhooks.set("wh-1", {
+        id: "wh-1",
+        name: "Hook",
+        action: "prompt",
+        actionPayload: {},
+        enabled: true,
+        allowedIps: [],
+        rateLimit: 60,
+        triggerCount: 0,
+        lastTriggeredAt: null,
+        createdAt: "2025-01-01",
+        secret: "s",
+      });
       const { app } = buildApp({ webhookManager: whm as any });
       const res = await request(app).post("/admin/webhooks/wh-1/rotate-key");
       expect(res.status).toBe(200);
@@ -2350,7 +2938,19 @@ describe("Admin API router", () => {
 
     it("DELETE /webhooks/:id deletes webhook", async () => {
       const whm = createMockWebhookManager();
-      whm._webhooks.set("wh-1", { id: "wh-1", name: "Hook", action: "prompt", actionPayload: {}, enabled: true, allowedIps: [], rateLimit: 60, triggerCount: 0, lastTriggeredAt: null, createdAt: "2025-01-01", secret: "s" });
+      whm._webhooks.set("wh-1", {
+        id: "wh-1",
+        name: "Hook",
+        action: "prompt",
+        actionPayload: {},
+        enabled: true,
+        allowedIps: [],
+        rateLimit: 60,
+        triggerCount: 0,
+        lastTriggeredAt: null,
+        createdAt: "2025-01-01",
+        secret: "s",
+      });
       const { app } = buildApp({ webhookManager: whm as any });
       const res = await request(app).delete("/admin/webhooks/wh-1");
       expect(res.status).toBe(200);
@@ -2359,9 +2959,13 @@ describe("Admin API router", () => {
 
     it("webhooks return 501 when manager missing", async () => {
       const { app } = buildApp();
-      const res1 = await request(app).post("/admin/webhooks").send({ name: "Hook", action: "prompt" });
+      const res1 = await request(app)
+        .post("/admin/webhooks")
+        .send({ name: "Hook", action: "prompt" });
       expect(res1.status).toBe(501);
-      const res2 = await request(app).post("/admin/webhooks/x/toggle").send({ enabled: true });
+      const res2 = await request(app)
+        .post("/admin/webhooks/x/toggle")
+        .send({ enabled: true });
       expect(res2.status).toBe(501);
       const res3 = await request(app).post("/admin/webhooks/x/rotate-key");
       expect(res3.status).toBe(501);
@@ -2397,7 +3001,9 @@ describe("Admin API router", () => {
     it("PUT /jobs/:id rejects invalid reasoningEffort", async () => {
       const scheduler = createMockScheduler();
       const { app } = buildApp({ scheduler: scheduler as any });
-      const res = await request(app).put("/admin/jobs/j1").send({ reasoningEffort: "super" });
+      const res = await request(app)
+        .put("/admin/jobs/j1")
+        .send({ reasoningEffort: "super" });
       expect(res.status).toBe(400);
     });
 
@@ -2490,10 +3096,12 @@ describe("Admin API router", () => {
 
     it("POST /pinterest/app-credentials attempts to save app credentials", async () => {
       const { app } = buildApp();
-      const res = await request(app).post("/admin/pinterest/app-credentials").send({
-        appId: "app-123",
-        appSecret: "secret-456",
-      });
+      const res = await request(app)
+        .post("/admin/pinterest/app-credentials")
+        .send({
+          appId: "app-123",
+          appSecret: "secret-456",
+        });
       expect([200, 500]).toContain(res.status);
     });
 
@@ -2529,7 +3137,9 @@ describe("Admin API router", () => {
   describe("gen config success paths", () => {
     it("PUT /image-gen/config succeeds with valid local mode", async () => {
       const { app } = buildApp();
-      const res = await request(app).put("/admin/image-gen/config").send({ mode: "local" });
+      const res = await request(app)
+        .put("/admin/image-gen/config")
+        .send({ mode: "local" });
       expect([200, 500]).toContain(res.status);
     });
 
@@ -2544,31 +3154,41 @@ describe("Admin API router", () => {
 
     it("PUT /video-gen/config succeeds with valid mode", async () => {
       const { app } = buildApp();
-      const res = await request(app).put("/admin/video-gen/config").send({ mode: "local" });
+      const res = await request(app)
+        .put("/admin/video-gen/config")
+        .send({ mode: "local" });
       expect([200, 500]).toContain(res.status);
     });
 
     it("PUT /video-gen/config rejects invalid URL", async () => {
       const { app } = buildApp();
-      const res = await request(app).put("/admin/video-gen/config").send({ networkNodeUrl: "not-a-url" });
+      const res = await request(app)
+        .put("/admin/video-gen/config")
+        .send({ networkNodeUrl: "not-a-url" });
       expect(res.status).toBe(400);
     });
 
     it("PUT /music-gen/config succeeds with valid mode", async () => {
       const { app } = buildApp();
-      const res = await request(app).put("/admin/music-gen/config").send({ mode: "local" });
+      const res = await request(app)
+        .put("/admin/music-gen/config")
+        .send({ mode: "local" });
       expect([200, 500]).toContain(res.status);
     });
 
     it("PUT /music-gen/config rejects invalid URL", async () => {
       const { app } = buildApp();
-      const res = await request(app).put("/admin/music-gen/config").send({ networkNodeUrl: "bad-url" });
+      const res = await request(app)
+        .put("/admin/music-gen/config")
+        .send({ networkNodeUrl: "bad-url" });
       expect(res.status).toBe(400);
     });
 
     it("PUT /presenter/config succeeds with valid URL", async () => {
       const { app } = buildApp();
-      const res = await request(app).put("/admin/presenter/config").send({ baseUrl: "https://presenter.example.com" });
+      const res = await request(app)
+        .put("/admin/presenter/config")
+        .send({ baseUrl: "https://presenter.example.com" });
       expect([200, 500]).toContain(res.status);
     });
   });
@@ -2593,7 +3213,9 @@ describe("Admin API router", () => {
 
     it("POST /voice-config clamps extreme speaking rate", async () => {
       const { app } = buildApp();
-      const res = await request(app).post("/admin/voice-config").send({ speakingRate: 100 });
+      const res = await request(app)
+        .post("/admin/voice-config")
+        .send({ speakingRate: 100 });
       // The route clamps to 0.25-4.0, so it should accept it (clamped internally)
       expect([200, 500]).toContain(res.status);
     });
@@ -2651,9 +3273,11 @@ describe("Admin API router", () => {
         delete: vi.fn(),
       };
       const { app } = buildApp({ brandVoiceService: bvs as any });
-      const res = await request(app).post("/admin/brand-voice/bv1/reanalyze").send({
-        samples: ["New writing sample"],
-      });
+      const res = await request(app)
+        .post("/admin/brand-voice/bv1/reanalyze")
+        .send({
+          samples: ["New writing sample"],
+        });
       expect(res.status).toBe(200);
       expect(res.body.name).toBe("Reanalyzed");
     });
@@ -2664,20 +3288,32 @@ describe("Admin API router", () => {
   describe("custom post-action by type", () => {
     it("GET /post-actions/custom/:type returns 404 without manager", async () => {
       const { app } = buildApp();
-      const res = await request(app).get("/admin/post-actions/custom/some-type");
+      const res = await request(app).get(
+        "/admin/post-actions/custom/some-type",
+      );
       expect(res.status).toBe(404);
     });
 
     it("GET /post-actions/custom/:type returns action with manager", async () => {
       const mgr = {
-        list: vi.fn().mockReturnValue([{ type: "my-action", label: "My Action", handler: {} }]),
-        getByType: vi.fn().mockReturnValue({ type: "my-action", label: "My Action", handler: {} }),
+        list: vi
+          .fn()
+          .mockReturnValue([
+            { type: "my-action", label: "My Action", handler: {} },
+          ]),
+        getByType: vi.fn().mockReturnValue({
+          type: "my-action",
+          label: "My Action",
+          handler: {},
+        }),
         add: vi.fn(),
         update: vi.fn(),
         remove: vi.fn(),
       };
       const { app } = buildApp({ customPostActionManager: mgr as any });
-      const res = await request(app).get("/admin/post-actions/custom/my-action");
+      const res = await request(app).get(
+        "/admin/post-actions/custom/my-action",
+      );
       expect(res.status).toBe(200);
     });
   });
@@ -2707,7 +3343,9 @@ describe("Admin API router", () => {
       const copilot = createMockCopilot();
       (copilot as any).getNativeMcpToolCache = vi.fn().mockReturnValue({});
       const { app } = buildApp({ copilot: copilot as any });
-      const res = await request(app).get("/admin/native-mcp-servers/tool-cache");
+      const res = await request(app).get(
+        "/admin/native-mcp-servers/tool-cache",
+      );
       expect(res.status).toBe(200);
     });
   });
@@ -2724,7 +3362,9 @@ describe("Admin API router", () => {
         stopServer: vi.fn().mockResolvedValue({ ok: true }),
       };
       const { app } = buildApp({ localServerManager: lsm as any });
-      const res = await request(app).post("/admin/local-servers/test-server/stop");
+      const res = await request(app).post(
+        "/admin/local-servers/test-server/stop",
+      );
       expect(res.status).toBe(200);
     });
   });
@@ -2741,9 +3381,11 @@ describe("Admin API router", () => {
 
     it("GET /native-mcp-servers returns servers from copilot", async () => {
       const copilot = createMockCopilot();
-      (copilot.getNativeMcpServers as ReturnType<typeof vi.fn>).mockReturnValue({
-        "my-server": { command: "node", args: ["server.js"] },
-      });
+      (copilot.getNativeMcpServers as ReturnType<typeof vi.fn>).mockReturnValue(
+        {
+          "my-server": { command: "node", args: ["server.js"] },
+        },
+      );
       const { app } = buildApp({ copilot: copilot as any });
       const res = await request(app).get("/admin/native-mcp-servers");
       expect(res.status).toBe(200);
@@ -2753,18 +3395,28 @@ describe("Admin API router", () => {
     it("PUT /native-mcp-servers returns 400 for non-object", async () => {
       const copilot = createMockCopilot();
       const { app } = buildApp({ copilot: copilot as any });
-      const res = await request(app).put("/admin/native-mcp-servers").send({ servers: "bad" });
+      const res = await request(app)
+        .put("/admin/native-mcp-servers")
+        .send({ servers: "bad" });
       expect(res.status).toBe(400);
     });
 
     it("PUT /native-mcp-servers returns 409 when tasks are active", async () => {
       const copilot = createMockCopilot();
       const te = createMockTaskEngine();
-      (te.getStats as ReturnType<typeof vi.fn>).mockReturnValue({ running: 2, queued: 1 });
-      const { app } = buildApp({ copilot: copilot as any, taskEngine: te as any });
-      const res = await request(app).put("/admin/native-mcp-servers").send({
-        servers: { "test-srv": { command: "node", args: [] } },
+      (te.getStats as ReturnType<typeof vi.fn>).mockReturnValue({
+        running: 2,
+        queued: 1,
       });
+      const { app } = buildApp({
+        copilot: copilot as any,
+        taskEngine: te as any,
+      });
+      const res = await request(app)
+        .put("/admin/native-mcp-servers")
+        .send({
+          servers: { "test-srv": { command: "node", args: [] } },
+        });
       expect(res.status).toBe(409);
       expect(res.body.activeCount).toBe(3);
     });
@@ -2772,9 +3424,11 @@ describe("Admin API router", () => {
     it("PUT /native-mcp-servers succeeds", async () => {
       const copilot = createMockCopilot();
       const { app } = buildApp({ copilot: copilot as any });
-      const res = await request(app).put("/admin/native-mcp-servers").send({
-        servers: { "test-srv": { command: "node", args: ["server.js"] } },
-      });
+      const res = await request(app)
+        .put("/admin/native-mcp-servers")
+        .send({
+          servers: { "test-srv": { command: "node", args: ["server.js"] } },
+        });
       expect(res.status).toBe(200);
       expect(res.body.ok).toBe(true);
       expect(copilot.setNativeMcpServers).toHaveBeenCalled();
@@ -2783,35 +3437,45 @@ describe("Admin API router", () => {
     it("POST /native-mcp-servers/:name adds new server", async () => {
       const copilot = createMockCopilot();
       const { app } = buildApp({ copilot: copilot as any });
-      const res = await request(app).post("/admin/native-mcp-servers/new-srv").send({
-        command: "npx",
-        args: ["-y", "my-mcp-server"],
-      });
+      const res = await request(app)
+        .post("/admin/native-mcp-servers/new-srv")
+        .send({
+          command: "npx",
+          args: ["-y", "my-mcp-server"],
+        });
       expect(res.status).toBe(201);
       expect(res.body.ok).toBe(true);
     });
 
     it("PUT /native-mcp-servers/:name updates server config", async () => {
       const copilot = createMockCopilot();
-      (copilot.getNativeMcpServers as ReturnType<typeof vi.fn>).mockReturnValue({
-        existing: { command: "node", args: ["old.js"] },
-      });
+      (copilot.getNativeMcpServers as ReturnType<typeof vi.fn>).mockReturnValue(
+        {
+          existing: { command: "node", args: ["old.js"] },
+        },
+      );
       const { app } = buildApp({ copilot: copilot as any });
-      const res = await request(app).put("/admin/native-mcp-servers/existing").send({
-        command: "node",
-        args: ["new.js"],
-      });
+      const res = await request(app)
+        .put("/admin/native-mcp-servers/existing")
+        .send({
+          command: "node",
+          args: ["new.js"],
+        });
       expect(res.status).toBe(200);
       expect(res.body.ok).toBe(true);
     });
 
     it("DELETE /native-mcp-servers/:name removes server", async () => {
       const copilot = createMockCopilot();
-      (copilot.getNativeMcpServers as ReturnType<typeof vi.fn>).mockReturnValue({
-        existing: { command: "node", args: ["server.js"] },
-      });
+      (copilot.getNativeMcpServers as ReturnType<typeof vi.fn>).mockReturnValue(
+        {
+          existing: { command: "node", args: ["server.js"] },
+        },
+      );
       const { app } = buildApp({ copilot: copilot as any });
-      const res = await request(app).delete("/admin/native-mcp-servers/existing");
+      const res = await request(app).delete(
+        "/admin/native-mcp-servers/existing",
+      );
       expect(res.status).toBe(200);
       expect(res.body.ok).toBe(true);
     });
@@ -2819,14 +3483,18 @@ describe("Admin API router", () => {
     it("DELETE /native-mcp-servers/:name returns 404 for unknown", async () => {
       const copilot = createMockCopilot();
       const { app } = buildApp({ copilot: copilot as any });
-      const res = await request(app).delete("/admin/native-mcp-servers/nonexistent");
+      const res = await request(app).delete(
+        "/admin/native-mcp-servers/nonexistent",
+      );
       expect(res.status).toBe(404);
     });
 
     it("POST /native-mcp-servers/:name/reconnect returns 404 for unknown", async () => {
       const copilot = createMockCopilot();
       const { app } = buildApp({ copilot: copilot as any });
-      const res = await request(app).post("/admin/native-mcp-servers/nonexistent/reconnect");
+      const res = await request(app).post(
+        "/admin/native-mcp-servers/nonexistent/reconnect",
+      );
       expect(res.status).toBe(404);
     });
   });
@@ -2837,7 +3505,9 @@ describe("Admin API router", () => {
     it("POST /sentinel/toggle enables sentinel", async () => {
       const sentinel = createMockSentinel();
       const { app } = buildApp({ sentinel: sentinel as any });
-      const res = await request(app).post("/admin/sentinel/toggle").send({ enabled: true });
+      const res = await request(app)
+        .post("/admin/sentinel/toggle")
+        .send({ enabled: true });
       expect(res.status).toBe(200);
       expect(sentinel.toggle).toHaveBeenCalledWith(true);
     });
@@ -2855,7 +3525,9 @@ describe("Admin API router", () => {
 
     it("PUT /presenter/config updates base URL", async () => {
       const { app } = buildApp();
-      const res = await request(app).put("/admin/presenter/config").send({ baseUrl: "https://presenter.example.com" });
+      const res = await request(app)
+        .put("/admin/presenter/config")
+        .send({ baseUrl: "https://presenter.example.com" });
       expect(res.status).toBe(200);
       expect(res.body.ok).toBe(true);
     });
@@ -2891,71 +3563,112 @@ describe("Admin API router", () => {
   describe("native MCP tool management", () => {
     it("GET /native-mcp-servers/:name/tools returns tools from cache", async () => {
       const copilot = createMockCopilot();
-      (copilot.getNativeMcpServers as ReturnType<typeof vi.fn>).mockReturnValue({
-        "my-server": { command: "node", args: ["server.js"], tools: ["tool-a"] },
-      });
+      (copilot.getNativeMcpServers as ReturnType<typeof vi.fn>).mockReturnValue(
+        {
+          "my-server": {
+            command: "node",
+            args: ["server.js"],
+            tools: ["tool-a"],
+          },
+        },
+      );
       const { app } = buildApp({ copilot: copilot as any });
-      const res = await request(app).get("/admin/native-mcp-servers/my-server/tools");
+      const res = await request(app).get(
+        "/admin/native-mcp-servers/my-server/tools",
+      );
       expect(res.status).toBe(200);
     });
 
     it("GET /native-mcp-servers/:name/tools returns 404 for unknown server", async () => {
       const copilot = createMockCopilot();
       const { app } = buildApp({ copilot: copilot as any });
-      const res = await request(app).get("/admin/native-mcp-servers/nonexistent/tools");
+      const res = await request(app).get(
+        "/admin/native-mcp-servers/nonexistent/tools",
+      );
       expect(res.status).toBe(404);
     });
 
     it("POST /native-mcp-servers/:name/tools/add returns 404 for unknown server", async () => {
       const copilot = createMockCopilot();
       const { app } = buildApp({ copilot: copilot as any });
-      const res = await request(app).post("/admin/native-mcp-servers/nonexistent/tools/add").send({ toolName: "test-tool" });
+      const res = await request(app)
+        .post("/admin/native-mcp-servers/nonexistent/tools/add")
+        .send({ toolName: "test-tool" });
       expect(res.status).toBe(404);
     });
 
     it("POST /native-mcp-servers/:name/tools/:tool/toggle returns 404 for unknown server", async () => {
       const copilot = createMockCopilot();
       const { app } = buildApp({ copilot: copilot as any });
-      const res = await request(app).post("/admin/native-mcp-servers/nonexistent/tools/test-tool/toggle").send({ enabled: true });
+      const res = await request(app)
+        .post("/admin/native-mcp-servers/nonexistent/tools/test-tool/toggle")
+        .send({ enabled: true });
       expect(res.status).toBe(404);
     });
 
     it("POST /native-mcp-servers/:name/tools/:tool/remove returns 404 for unknown server", async () => {
       const copilot = createMockCopilot();
       const { app } = buildApp({ copilot: copilot as any });
-      const res = await request(app).post("/admin/native-mcp-servers/nonexistent/tools/test-tool/remove");
+      const res = await request(app).post(
+        "/admin/native-mcp-servers/nonexistent/tools/test-tool/remove",
+      );
       expect(res.status).toBe(404);
     });
 
     it("POST /native-mcp-servers/:name/tools/add adds tool to server", async () => {
       const copilot = createMockCopilot();
-      (copilot.getNativeMcpServers as ReturnType<typeof vi.fn>).mockReturnValue({
-        "my-server": { command: "node", args: ["server.js"], tools: ["existing-tool"] },
-      });
+      (copilot.getNativeMcpServers as ReturnType<typeof vi.fn>).mockReturnValue(
+        {
+          "my-server": {
+            command: "node",
+            args: ["server.js"],
+            tools: ["existing-tool"],
+          },
+        },
+      );
       const { app } = buildApp({ copilot: copilot as any });
-      const res = await request(app).post("/admin/native-mcp-servers/my-server/tools/add").send({ toolName: "new-tool" });
+      const res = await request(app)
+        .post("/admin/native-mcp-servers/my-server/tools/add")
+        .send({ toolName: "new-tool" });
       expect(res.status).toBe(200);
       expect(res.body.ok).toBe(true);
     });
 
     it("POST /native-mcp-servers/:name/tools/:tool/toggle toggles tool", async () => {
       const copilot = createMockCopilot();
-      (copilot.getNativeMcpServers as ReturnType<typeof vi.fn>).mockReturnValue({
-        "my-server": { command: "node", args: ["server.js"], tools: ["test-tool"], disabledTools: [] },
-      });
+      (copilot.getNativeMcpServers as ReturnType<typeof vi.fn>).mockReturnValue(
+        {
+          "my-server": {
+            command: "node",
+            args: ["server.js"],
+            tools: ["test-tool"],
+            disabledTools: [],
+          },
+        },
+      );
       const { app } = buildApp({ copilot: copilot as any });
-      const res = await request(app).post("/admin/native-mcp-servers/my-server/tools/test-tool/toggle").send({ enabled: false });
+      const res = await request(app)
+        .post("/admin/native-mcp-servers/my-server/tools/test-tool/toggle")
+        .send({ enabled: false });
       expect(res.status).toBe(200);
       expect(res.body.ok).toBe(true);
     });
 
     it("POST /native-mcp-servers/:name/tools/:tool/remove removes tool", async () => {
       const copilot = createMockCopilot();
-      (copilot.getNativeMcpServers as ReturnType<typeof vi.fn>).mockReturnValue({
-        "my-server": { command: "node", args: ["server.js"], tools: ["test-tool"] },
-      });
+      (copilot.getNativeMcpServers as ReturnType<typeof vi.fn>).mockReturnValue(
+        {
+          "my-server": {
+            command: "node",
+            args: ["server.js"],
+            tools: ["test-tool"],
+          },
+        },
+      );
       const { app } = buildApp({ copilot: copilot as any });
-      const res = await request(app).post("/admin/native-mcp-servers/my-server/tools/test-tool/remove");
+      const res = await request(app).post(
+        "/admin/native-mcp-servers/my-server/tools/test-tool/remove",
+      );
       expect(res.status).toBe(200);
       expect(res.body.ok).toBe(true);
     });
@@ -2966,7 +3679,9 @@ describe("Admin API router", () => {
   describe("Skill CRUD", () => {
     function buildAppWithCopilotSkills(builtInDirs: string[] = []) {
       const copilot = createMockCopilot();
-      (copilot as any).getSkillDirectories = vi.fn().mockReturnValue(builtInDirs);
+      (copilot as any).getSkillDirectories = vi
+        .fn()
+        .mockReturnValue(builtInDirs);
       (copilot as any).addSkillDirectory = vi.fn();
       return { ...buildApp({ copilot: copilot as any }), copilot };
     }
@@ -2974,14 +3689,18 @@ describe("Admin API router", () => {
     describe("POST /skills/validate", () => {
       it("rejects empty content", async () => {
         const { app } = buildAppWithCopilotSkills();
-        const res = await request(app).post("/admin/skills/validate").send({ content: "" });
+        const res = await request(app)
+          .post("/admin/skills/validate")
+          .send({ content: "" });
         expect(res.status).toBe(400);
         expect(res.body.error).toBe("content is required");
       });
 
       it("reports missing name in frontmatter", async () => {
         const { app } = buildAppWithCopilotSkills();
-        const res = await request(app).post("/admin/skills/validate").send({ content: "# No frontmatter" });
+        const res = await request(app)
+          .post("/admin/skills/validate")
+          .send({ content: "# No frontmatter" });
         expect(res.status).toBe(200);
         expect(res.body.valid).toBe(false);
         expect(res.body.errors).toContain("Missing 'name' in YAML frontmatter");
@@ -3001,7 +3720,9 @@ describe("Admin API router", () => {
     describe("POST /skills", () => {
       it("rejects missing name or content", async () => {
         const { app } = buildAppWithCopilotSkills();
-        const res = await request(app).post("/admin/skills").send({ name: "", content: "" });
+        const res = await request(app)
+          .post("/admin/skills")
+          .send({ name: "", content: "" });
         expect(res.status).toBe(400);
         expect(res.body.error).toBe("name and content are required");
       });
@@ -3017,9 +3738,10 @@ describe("Admin API router", () => {
 
       it("creates a valid skill", async () => {
         const { app, copilot } = buildAppWithCopilotSkills();
-        const res = await request(app)
-          .post("/admin/skills")
-          .send({ name: "test-skill", content: "---\nname: test-skill\n---\n# Test" });
+        const res = await request(app).post("/admin/skills").send({
+          name: "test-skill",
+          content: "---\nname: test-skill\n---\n# Test",
+        });
         expect(res.status).toBe(200);
         expect(res.body.success).toBe(true);
         expect(res.body.skill).toBeDefined();
@@ -3031,7 +3753,9 @@ describe("Admin API router", () => {
     describe("PUT /skills/:name", () => {
       it("rejects missing content", async () => {
         const { app } = buildAppWithCopilotSkills();
-        const res = await request(app).put("/admin/skills/my-skill").send({ content: "" });
+        const res = await request(app)
+          .put("/admin/skills/my-skill")
+          .send({ content: "" });
         expect(res.status).toBe(400);
         expect(res.body.error).toBe("content is required");
       });
@@ -3092,13 +3816,20 @@ describe("sidecar platform gate", () => {
     const app = express();
     const toolRegistry = createMockToolRegistry();
     const router = createAdminRouter({
-      toolRegistry: toolRegistry as unknown as AdminRouterOptions["toolRegistry"],
-      promptManager: createMockPromptManager() as unknown as AdminRouterOptions["promptManager"],
-      scheduler: createMockScheduler() as unknown as AdminRouterOptions["scheduler"],
-      personalityManager: createMockPersonalityManager() as unknown as AdminRouterOptions["personalityManager"],
-      sessionManager: undefined as unknown as AdminRouterOptions["sessionManager"],
-      localServerManager: undefined as unknown as AdminRouterOptions["localServerManager"],
-      sidecarManager: undefined as unknown as AdminRouterOptions["sidecarManager"],
+      toolRegistry:
+        toolRegistry as unknown as AdminRouterOptions["toolRegistry"],
+      promptManager:
+        createMockPromptManager() as unknown as AdminRouterOptions["promptManager"],
+      scheduler:
+        createMockScheduler() as unknown as AdminRouterOptions["scheduler"],
+      personalityManager:
+        createMockPersonalityManager() as unknown as AdminRouterOptions["personalityManager"],
+      sessionManager:
+        undefined as unknown as AdminRouterOptions["sessionManager"],
+      localServerManager:
+        undefined as unknown as AdminRouterOptions["localServerManager"],
+      sidecarManager:
+        undefined as unknown as AdminRouterOptions["sidecarManager"],
       copilot: undefined as unknown as AdminRouterOptions["copilot"],
       taskWorker: undefined as unknown as AdminRouterOptions["taskWorker"],
       taskEngine: undefined as unknown as AdminRouterOptions["taskEngine"],
@@ -3109,8 +3840,14 @@ describe("sidecar platform gate", () => {
 
   it("allows image-gen routes on macOS ARM (sidecarsSupported=true)", async () => {
     mockGetPlatformCapabilities.mockReturnValue({
-      os: "darwin", arch: "arm64", dockerAvailable: true, sidecarsSupported: true,
-      chromePath: null, isWindows: false, isMacOS: true, isLinux: false,
+      os: "darwin",
+      arch: "arm64",
+      dockerAvailable: true,
+      sidecarsSupported: true,
+      chromePath: null,
+      isWindows: false,
+      isMacOS: true,
+      isLinux: false,
     });
     const app = buildGatedApp();
     const res = await request(app).get("/admin/image-gen/config");
@@ -3119,8 +3856,14 @@ describe("sidecar platform gate", () => {
 
   it("returns 501 for image-gen routes on Windows (sidecarsSupported=false)", async () => {
     mockGetPlatformCapabilities.mockReturnValue({
-      os: "win32", arch: "x64", dockerAvailable: false, sidecarsSupported: false,
-      chromePath: null, isWindows: true, isMacOS: false, isLinux: false,
+      os: "win32",
+      arch: "x64",
+      dockerAvailable: false,
+      sidecarsSupported: false,
+      chromePath: null,
+      isWindows: true,
+      isMacOS: false,
+      isLinux: false,
     });
     const app = buildGatedApp();
     const res = await request(app).get("/admin/image-gen/config");
@@ -3131,8 +3874,14 @@ describe("sidecar platform gate", () => {
 
   it("returns 501 for music-studio routes on Linux (sidecarsSupported=false)", async () => {
     mockGetPlatformCapabilities.mockReturnValue({
-      os: "linux", arch: "x64", dockerAvailable: true, sidecarsSupported: false,
-      chromePath: null, isWindows: false, isMacOS: false, isLinux: true,
+      os: "linux",
+      arch: "x64",
+      dockerAvailable: true,
+      sidecarsSupported: false,
+      chromePath: null,
+      isWindows: false,
+      isMacOS: false,
+      isLinux: true,
     });
     const app = buildGatedApp();
     const res = await request(app).get("/admin/music-studio/models");
@@ -3143,8 +3892,14 @@ describe("sidecar platform gate", () => {
 
   it("allows music-studio routes on macOS ARM", async () => {
     mockGetPlatformCapabilities.mockReturnValue({
-      os: "darwin", arch: "arm64", dockerAvailable: true, sidecarsSupported: true,
-      chromePath: null, isWindows: false, isMacOS: true, isLinux: false,
+      os: "darwin",
+      arch: "arm64",
+      dockerAvailable: true,
+      sidecarsSupported: true,
+      chromePath: null,
+      isWindows: false,
+      isMacOS: true,
+      isLinux: false,
     });
     const app = buildGatedApp();
     // music-studio/models proxies to sidecar — will fail with network error,
@@ -3155,8 +3910,14 @@ describe("sidecar platform gate", () => {
 
   it("GET /platform returns capabilities on any platform", async () => {
     mockGetPlatformCapabilities.mockReturnValue({
-      os: "win32", arch: "x64", dockerAvailable: false, sidecarsSupported: false,
-      chromePath: null, isWindows: true, isMacOS: false, isLinux: false,
+      os: "win32",
+      arch: "x64",
+      dockerAvailable: false,
+      sidecarsSupported: false,
+      chromePath: null,
+      isWindows: true,
+      isMacOS: false,
+      isLinux: false,
     });
     const app = buildGatedApp();
     const res = await request(app).get("/admin/platform");
@@ -3168,8 +3929,14 @@ describe("sidecar platform gate", () => {
 
   it("GET /platform returns features available on macOS ARM", async () => {
     mockGetPlatformCapabilities.mockReturnValue({
-      os: "darwin", arch: "arm64", dockerAvailable: true, sidecarsSupported: true,
-      chromePath: null, isWindows: false, isMacOS: true, isLinux: false,
+      os: "darwin",
+      arch: "arm64",
+      dockerAvailable: true,
+      sidecarsSupported: true,
+      chromePath: null,
+      isWindows: false,
+      isMacOS: true,
+      isLinux: false,
     });
     const app = buildGatedApp();
     const res = await request(app).get("/admin/platform");
@@ -3195,7 +3962,11 @@ describe("firecrawl status endpoint", () => {
       voice: {},
       session: {},
       tasks: {},
-      firecrawl: { enabled: true, url: "http://localhost:3002", idleTimeoutMs: 600000 },
+      firecrawl: {
+        enabled: true,
+        url: "http://localhost:3002",
+        idleTimeoutMs: 600000,
+      },
     });
 
     const { app } = buildApp();

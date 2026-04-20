@@ -45,7 +45,6 @@ app.whenReady().then(async () => {
       backendManager.stop();
       app.quit();
     },
-    getHealthData: () => backendManager.getHealthData(),
   });
 
   // Initialize IPC bridge

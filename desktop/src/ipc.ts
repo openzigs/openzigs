@@ -43,10 +43,6 @@ export class IpcBridge {
       this.backendManager.stop();
     });
 
-    ipcMain.handle("backend:getHealth", () => {
-      return this.backendManager.getHealthData();
-    });
-
     // Forward status changes to renderer
     this.backendManager.on("status", (status) => {
       const win = this.windowManager.getWindow();

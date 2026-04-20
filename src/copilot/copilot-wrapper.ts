@@ -2,7 +2,11 @@ import { EventEmitter } from "node:events";
 import os from "node:os";
 import path from "node:path";
 import fs from "node:fs/promises";
-import { CopilotClient, defineTool, type SessionConfig } from "@github/copilot-sdk";
+import {
+  CopilotClient,
+  defineTool,
+  type SessionConfig,
+} from "@github/copilot-sdk";
 import {
   secureDirOptions,
   secureFileOptions,
@@ -904,7 +908,8 @@ export class CopilotWrapperService
       );
     }
 
-    const effectiveModel = options?.model ?? (await getUserSelectedModel()) ?? this.model;
+    const effectiveModel =
+      options?.model ?? (await getUserSelectedModel()) ?? this.model;
     const perCallToolCallback = options?.onToolCall;
 
     // When availableTools is specified (skill scoping or explicit client filter),

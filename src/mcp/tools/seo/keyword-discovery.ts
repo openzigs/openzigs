@@ -16,25 +16,57 @@ export type KeywordDiscoveryResult = {
 // ── Intent classification ────────────────────────────────────────────────
 
 const TRANSACTIONAL_SIGNALS = [
-  "buy", "price", "pricing", "cost", "cheap", "deal", "discount",
-  "order", "purchase", "shop", "store", "coupon", "sale", "free trial",
+  "buy",
+  "price",
+  "pricing",
+  "cost",
+  "cheap",
+  "deal",
+  "discount",
+  "order",
+  "purchase",
+  "shop",
+  "store",
+  "coupon",
+  "sale",
+  "free trial",
 ];
 
 const COMMERCIAL_SIGNALS = [
-  "best", "top", "review", "comparison", "vs", "versus", "alternative",
-  "recommend", "rated", "ranking", "benchmark",
+  "best",
+  "top",
+  "review",
+  "comparison",
+  "vs",
+  "versus",
+  "alternative",
+  "recommend",
+  "rated",
+  "ranking",
+  "benchmark",
 ];
 
 const NAVIGATIONAL_SIGNALS = [
-  "login", "sign in", "dashboard", "account", "download", "install",
-  "official", "support", "contact", "docs", "documentation",
+  "login",
+  "sign in",
+  "dashboard",
+  "account",
+  "download",
+  "install",
+  "official",
+  "support",
+  "contact",
+  "docs",
+  "documentation",
 ];
 
 function classifyIntent(text: string): KeywordCandidate["intent"] {
   const lower = text.toLowerCase();
-  if (TRANSACTIONAL_SIGNALS.some((s) => lower.includes(s))) return "transactional";
+  if (TRANSACTIONAL_SIGNALS.some((s) => lower.includes(s)))
+    return "transactional";
   if (COMMERCIAL_SIGNALS.some((s) => lower.includes(s))) return "commercial";
-  if (NAVIGATIONAL_SIGNALS.some((s) => lower.includes(s))) return "navigational";
+  if (NAVIGATIONAL_SIGNALS.some((s) => lower.includes(s)))
+    return "navigational";
   return "informational";
 }
 
@@ -44,11 +76,12 @@ function classifyIntent(text: string): KeywordCandidate["intent"] {
 function extractSlugKeywords(url: string): string[] {
   try {
     const { pathname } = new URL(url);
-    const slug = pathname
-      .replace(/\.[^/.]+$/, "") // strip file extension
-      .replace(/^\/|\/$/g, "")  // strip leading/trailing slashes
-      .split("/")
-      .pop() ?? "";
+    const slug =
+      pathname
+        .replace(/\.[^/.]+$/, "") // strip file extension
+        .replace(/^\/|\/$/g, "") // strip leading/trailing slashes
+        .split("/")
+        .pop() ?? "";
 
     if (!slug || slug.length < 3) return [];
 
@@ -61,18 +94,57 @@ function extractSlugKeywords(url: string): string[] {
 /** Remove common stop-word prefixes/suffixes from a phrase to normalize it. */
 function cleanPhrase(phrase: string): string {
   const STOP_WORDS = new Set([
-    "a", "an", "the", "in", "on", "at", "to", "for", "of", "with",
-    "by", "from", "is", "are", "was", "were", "be", "been", "being",
-    "and", "or", "but", "not", "no", "into", "as", "its", "it",
-    "this", "that", "these", "those", "my", "your", "our", "their",
-    "how", "what", "why", "when", "where", "which", "who",
+    "a",
+    "an",
+    "the",
+    "in",
+    "on",
+    "at",
+    "to",
+    "for",
+    "of",
+    "with",
+    "by",
+    "from",
+    "is",
+    "are",
+    "was",
+    "were",
+    "be",
+    "been",
+    "being",
+    "and",
+    "or",
+    "but",
+    "not",
+    "no",
+    "into",
+    "as",
+    "its",
+    "it",
+    "this",
+    "that",
+    "these",
+    "those",
+    "my",
+    "your",
+    "our",
+    "their",
+    "how",
+    "what",
+    "why",
+    "when",
+    "where",
+    "which",
+    "who",
   ]);
 
   const words = phrase.toLowerCase().trim().split(/\s+/);
   // Strip leading stop words
   while (words.length > 1 && STOP_WORDS.has(words[0])) words.shift();
   // Strip trailing stop words
-  while (words.length > 1 && STOP_WORDS.has(words[words.length - 1])) words.pop();
+  while (words.length > 1 && STOP_WORDS.has(words[words.length - 1]))
+    words.pop();
 
   return words.join(" ");
 }

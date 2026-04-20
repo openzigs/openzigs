@@ -4,12 +4,25 @@ import path from "node:path";
 import os from "node:os";
 import type { ToolDefinition } from "../tool-registry.js";
 import { saveReportPdf } from "./shared/pdf-export.js";
-import { getFirecrawlClient, isBlockedUrl } from "../../browser/firecrawl-client.js";
+import {
+  getFirecrawlClient,
+  isBlockedUrl,
+} from "../../browser/firecrawl-client.js";
 
 // ── Shared constants ────────────────────────────────────────────────────────
 
 const PINTEREST_REGIONS = [
-  "US", "CA", "GB", "AU", "DE", "FR", "JP", "BR", "MX", "IT", "ES",
+  "US",
+  "CA",
+  "GB",
+  "AU",
+  "DE",
+  "FR",
+  "JP",
+  "BR",
+  "MX",
+  "IT",
+  "ES",
 ] as const;
 
 const PINTEREST_API_BASE = "https://api.pinterest.com/v5";
@@ -24,7 +37,9 @@ const pinterestTrendsSchema = z.object({
   trend_type: z
     .enum(["growing", "monthly", "seasonal", "yearly"])
     .default("growing")
-    .describe("Trend type: growing (fastest rising), monthly/seasonal/yearly (top by period)"),
+    .describe(
+      "Trend type: growing (fastest rising), monthly/seasonal/yearly (top by period)",
+    ),
   limit: z
     .number()
     .int()
@@ -35,7 +50,9 @@ const pinterestTrendsSchema = z.object({
   normalize_against_group: z
     .boolean()
     .optional()
-    .describe("Normalize time_series across all returned keywords for comparison"),
+    .describe(
+      "Normalize time_series across all returned keywords for comparison",
+    ),
 });
 
 const pinterestKeywordMetricsSchema = z.object({
@@ -53,7 +70,9 @@ const pinterestKeywordMetricsSchema = z.object({
 const pinterestAnalyticsSchema = z.object({
   action: z
     .enum(["account_summary", "top_pins"])
-    .describe("account_summary: overall metrics; top_pins: best-performing pins"),
+    .describe(
+      "account_summary: overall metrics; top_pins: best-performing pins",
+    ),
   start_date: z
     .string()
     .regex(/^\d{4}-\d{2}-\d{2}$/)
@@ -91,8 +110,15 @@ const pinterestSeoAnalyzeSchema = z
       .describe(
         "analyze_pin: single pin by ID; analyze_url: any Pinterest URL; bulk_analyze: batch pin IDs",
       ),
-    pin_id: z.string().optional().describe("Pinterest pin ID (for analyze_pin action)"),
-    url: z.string().url().optional().describe("Pinterest pin or board URL (for analyze_url action)"),
+    pin_id: z
+      .string()
+      .optional()
+      .describe("Pinterest pin ID (for analyze_pin action)"),
+    url: z
+      .string()
+      .url()
+      .optional()
+      .describe("Pinterest pin or board URL (for analyze_url action)"),
     pin_ids: z
       .array(z.string())
       .max(20)
@@ -105,7 +131,9 @@ const pinterestSeoAnalyzeSchema = z
     include_competitors: z
       .boolean()
       .default(false)
-      .describe("Also fetch top-ranking pins for the same keywords for comparison"),
+      .describe(
+        "Also fetch top-ranking pins for the same keywords for comparison",
+      ),
   })
   .refine(
     (data) => {
@@ -122,53 +150,136 @@ const pinterestSeoAnalyzeSchema = z
 
 // ── New Schemas: create-pin & pin-insights ──────────────────────────────────
 
-const pinterestCreatePinSchema = z.object({
-  board_id: z.string().describe("Board ID to pin to (use GET /v5/boards to list boards)"),
-  title: z.string().max(100).describe("Pin title (max 100 chars)"),
-  description: z.string().max(800).describe("Pin description with keywords and hashtags (max 800 chars)"),
-  link: z.string().url().optional().describe("Destination URL for the pin"),
-  alt_text: z.string().max(500).optional().describe("Alt text for accessibility and SEO (max 500 chars)"),
-  image_url: z.string().url().optional().describe("Public URL of the image to pin"),
-  image_path: z.string().optional().describe("Local file path of the image to pin (base64 uploaded)"),
-  board_section_id: z.string().optional().describe("Board section ID for organization"),
-}).refine(
-  (data) => !!data.image_url || !!data.image_path,
-  { message: "Must provide either image_url or image_path" },
-);
+const pinterestCreatePinSchema = z
+  .object({
+    board_id: z
+      .string()
+      .describe("Board ID to pin to (use GET /v5/boards to list boards)"),
+    title: z.string().max(100).describe("Pin title (max 100 chars)"),
+    description: z
+      .string()
+      .max(800)
+      .describe("Pin description with keywords and hashtags (max 800 chars)"),
+    link: z.string().url().optional().describe("Destination URL for the pin"),
+    alt_text: z
+      .string()
+      .max(500)
+      .optional()
+      .describe("Alt text for accessibility and SEO (max 500 chars)"),
+    image_url: z
+      .string()
+      .url()
+      .optional()
+      .describe("Public URL of the image to pin"),
+    image_path: z
+      .string()
+      .optional()
+      .describe("Local file path of the image to pin (base64 uploaded)"),
+    board_section_id: z
+      .string()
+      .optional()
+      .describe("Board section ID for organization"),
+  })
+  .refine((data) => !!data.image_url || !!data.image_path, {
+    message: "Must provide either image_url or image_path",
+  });
 
 const pinterestPinInsightsSchema = z.object({
-  query: z.string().describe("Topic/subject to research (e.g., 'spring nails', 'AI tools', 'home decor')"),
-  region: z.enum(PINTEREST_REGIONS).default("US").describe("Region for trend/keyword data"),
-  pin_ids: z.array(z.string()).max(10).optional().describe("Specific pin IDs to include in the competitive analysis"),
-  pin_urls: z.array(z.string().url()).max(10).optional().describe("Pinterest pin URLs to include in the analysis"),
-  include_keyword_metrics: z.boolean().default(true).describe("Include search volume/competition data for the query keywords"),
-  include_trend_data: z.boolean().default(true).describe("Include trending data showing growth rates"),
-  include_pin_analysis: z.boolean().default(true).describe("Analyze provided pins for SEO scoring"),
+  query: z
+    .string()
+    .describe(
+      "Topic/subject to research (e.g., 'spring nails', 'AI tools', 'home decor')",
+    ),
+  region: z
+    .enum(PINTEREST_REGIONS)
+    .default("US")
+    .describe("Region for trend/keyword data"),
+  pin_ids: z
+    .array(z.string())
+    .max(10)
+    .optional()
+    .describe("Specific pin IDs to include in the competitive analysis"),
+  pin_urls: z
+    .array(z.string().url())
+    .max(10)
+    .optional()
+    .describe("Pinterest pin URLs to include in the analysis"),
+  include_keyword_metrics: z
+    .boolean()
+    .default(true)
+    .describe("Include search volume/competition data for the query keywords"),
+  include_trend_data: z
+    .boolean()
+    .default(true)
+    .describe("Include trending data showing growth rates"),
+  include_pin_analysis: z
+    .boolean()
+    .default(true)
+    .describe("Analyze provided pins for SEO scoring"),
 });
 
 const pinterestSearchPinsSchema = z.object({
-  query: z.string().describe("Topic to research (e.g., 'spring nails', 'keto recipes', 'home office decor')"),
-  pin_urls: z.array(z.string().url()).max(10).optional()
-    .describe("Seed pin URLs to start discovery from — the tool will find more pins from the same boards"),
-  pin_ids: z.array(z.string()).max(10).optional()
+  query: z
+    .string()
+    .describe(
+      "Topic to research (e.g., 'spring nails', 'keto recipes', 'home office decor')",
+    ),
+  pin_urls: z
+    .array(z.string().url())
+    .max(10)
+    .optional()
+    .describe(
+      "Seed pin URLs to start discovery from — the tool will find more pins from the same boards",
+    ),
+  pin_ids: z
+    .array(z.string())
+    .max(10)
+    .optional()
     .describe("Seed pin IDs to start discovery from"),
-  count: z.number().int().min(1).max(25).default(10)
-    .describe("Maximum number of pins to discover and analyze (default: 10, max: 25)"),
-  region: z.enum(PINTEREST_REGIONS).default("US")
+  count: z
+    .number()
+    .int()
+    .min(1)
+    .max(25)
+    .default(10)
+    .describe(
+      "Maximum number of pins to discover and analyze (default: 10, max: 25)",
+    ),
+  region: z
+    .enum(PINTEREST_REGIONS)
+    .default("US")
     .describe("Region for trend and keyword data"),
-  include_board_discovery: z.boolean().default(true)
+  include_board_discovery: z
+    .boolean()
+    .default(true)
     .describe("Discover additional pins from the same boards as seed pins"),
 });
 
 const pinterestContentIdeasSchema = z.object({
-  topic: z.string().describe("Topic to generate content ideas for (e.g., 'home office decor', 'keto recipes')"),
-  region: z.enum(PINTEREST_REGIONS).default("US").describe("Region for trend data"),
-  count: z.number().int().min(1).max(10).optional().describe("Number of ideas to generate (default: 5, max: 10)"),
+  topic: z
+    .string()
+    .describe(
+      "Topic to generate content ideas for (e.g., 'home office decor', 'keto recipes')",
+    ),
+  region: z
+    .enum(PINTEREST_REGIONS)
+    .default("US")
+    .describe("Region for trend data"),
+  count: z
+    .number()
+    .int()
+    .min(1)
+    .max(10)
+    .optional()
+    .describe("Number of ideas to generate (default: 5, max: 10)"),
 });
 
 const pinterestRelatedKeywordsSchema = z.object({
   seed: z.string().describe("Seed keyword to expand into related terms"),
-  region: z.enum(PINTEREST_REGIONS).default("US").describe("Region for keyword metrics"),
+  region: z
+    .enum(PINTEREST_REGIONS)
+    .default("US")
+    .describe("Region for keyword metrics"),
 });
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
@@ -193,18 +304,27 @@ async function pinterestApiFetch(
 
   if (!res.ok) {
     const errorBody = await res.text();
-    return { text: `Pinterest API error (${res.status}): ${errorBody}`, isError: true };
+    return {
+      text: `Pinterest API error (${res.status}): ${errorBody}`,
+      isError: true,
+    };
   }
 
   const rawBody = await res.text();
   if (!rawBody.trim()) {
-    return { text: `Pinterest API returned empty response (${res.status})`, isError: true };
+    return {
+      text: `Pinterest API returned empty response (${res.status})`,
+      isError: true,
+    };
   }
   try {
     const data = JSON.parse(rawBody) as unknown;
     return { text: JSON.stringify(data, null, 2) };
   } catch {
-    return { text: `Pinterest API returned non-JSON response (${res.status}): ${rawBody.slice(0, 500)}`, isError: true };
+    return {
+      text: `Pinterest API returned non-JSON response (${res.status}): ${rawBody.slice(0, 500)}`,
+      isError: true,
+    };
   }
 }
 
@@ -212,7 +332,11 @@ async function pinterestApiPost(
   urlPath: string,
   token: string,
   body: Record<string, unknown>,
-): Promise<{ data?: Record<string, unknown>; text: string; isError?: boolean }> {
+): Promise<{
+  data?: Record<string, unknown>;
+  text: string;
+  isError?: boolean;
+}> {
   const url = `${PINTEREST_API_BASE}${urlPath}`;
   const res = await fetch(url, {
     method: "POST",
@@ -226,13 +350,19 @@ async function pinterestApiPost(
 
   const rawBody = await res.text();
   if (!res.ok) {
-    return { text: `Pinterest API error (${res.status}): ${rawBody}`, isError: true };
+    return {
+      text: `Pinterest API error (${res.status}): ${rawBody}`,
+      isError: true,
+    };
   }
   try {
     const data = JSON.parse(rawBody) as Record<string, unknown>;
     return { data, text: JSON.stringify(data, null, 2) };
   } catch {
-    return { text: `Pinterest API returned non-JSON (${res.status}): ${rawBody.slice(0, 500)}`, isError: true };
+    return {
+      text: `Pinterest API returned non-JSON (${res.status}): ${rawBody.slice(0, 500)}`,
+      isError: true,
+    };
   }
 }
 
@@ -288,9 +418,10 @@ interface EnrichedKeyword {
  * Returns related keyword suggestions with a relative popularity tier.
  * The `relevance` score from Chrome client is a rough proxy for interest.
  */
-async function fetchGoogleSuggestKeywords(
-  query: string,
-): Promise<{ suggestions: string[]; relativePopularity: Map<string, "High" | "Medium" | "Low"> }> {
+async function fetchGoogleSuggestKeywords(query: string): Promise<{
+  suggestions: string[];
+  relativePopularity: Map<string, "High" | "Medium" | "Low">;
+}> {
   const relativePopularity = new Map<string, "High" | "Medium" | "Low">();
   try {
     const url = `https://www.google.com/complete/search?client=chrome&q=${encodeURIComponent(query)}`;
@@ -341,11 +472,15 @@ async function fetchDataForSeoKeywordMetrics(
           Authorization: `Basic ${Buffer.from(`${login}:${password}`).toString("base64")}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify([{ keywords, location_code: locationCode, language_code: "en" }]),
+        body: JSON.stringify([
+          { keywords, location_code: locationCode, language_code: "en" },
+        ]),
       },
     );
     if (!res.ok) {
-      console.warn(`[pinterest-seo] DataForSEO HTTP ${res.status}: ${await res.text().catch(() => "")}`);
+      console.warn(
+        `[pinterest-seo] DataForSEO HTTP ${res.status}: ${await res.text().catch(() => "")}`,
+      );
       return null;
     }
     const data = (await res.json()) as {
@@ -360,18 +495,25 @@ async function fetchDataForSeoKeywordMetrics(
     };
     const results = data.tasks?.[0]?.result;
     if (!results?.length) {
-      console.warn("[pinterest-seo] DataForSEO returned no results for keywords:", keywords.join(", "));
+      console.warn(
+        "[pinterest-seo] DataForSEO returned no results for keywords:",
+        keywords.join(", "),
+      );
       return null;
     }
 
     return results.map((r) => ({
       keyword: r.keyword,
-      searches: r.search_volume != null ? r.search_volume.toLocaleString() : "—",
+      searches:
+        r.search_volume != null ? r.search_volume.toLocaleString() : "—",
       competition: r.competition ?? "—",
       source: "dataforseo" as const,
     }));
   } catch (err) {
-    console.warn("[pinterest-seo] DataForSEO request failed:", err instanceof Error ? err.message : String(err));
+    console.warn(
+      "[pinterest-seo] DataForSEO request failed:",
+      err instanceof Error ? err.message : String(err),
+    );
     return null;
   }
 }
@@ -400,7 +542,9 @@ async function enrichKeywordMetrics(
       params,
     );
     if (!result.isError) {
-      const kwData = JSON.parse(result.text) as { data?: Array<Record<string, unknown>> };
+      const kwData = JSON.parse(result.text) as {
+        data?: Array<Record<string, unknown>>;
+      };
       const items = kwData.data ?? [];
       for (const item of items) {
         const metrics = item.metrics as Record<string, unknown> | undefined;
@@ -420,26 +564,38 @@ async function enrichKeywordMetrics(
         }
       }
       if (items.length === 0) {
-        diagnostics.push("Pinterest Ads API returned no keyword data for these terms");
+        diagnostics.push(
+          "Pinterest Ads API returned no keyword data for these terms",
+        );
       } else if (enriched.length === 0) {
-        diagnostics.push("Pinterest Ads API returned keywords but with null metrics (ad account may lack campaign history)");
+        diagnostics.push(
+          "Pinterest Ads API returned keywords but with null metrics (ad account may lack campaign history)",
+        );
       }
     } else {
-      diagnostics.push(`Pinterest Ads keyword API error: ${result.text.slice(0, 200)}`);
+      diagnostics.push(
+        `Pinterest Ads keyword API error: ${result.text.slice(0, 200)}`,
+      );
     }
   } else {
-    diagnostics.push("PINTEREST_AD_ACCOUNT_ID not configured — skipping Pinterest keyword metrics");
+    diagnostics.push(
+      "PINTEREST_AD_ACCOUNT_ID not configured — skipping Pinterest keyword metrics",
+    );
   }
 
   // Identify which keywords still need data
   const coveredKeywords = new Set(enriched.map((e) => e.keyword.toLowerCase()));
-  const uncovered = keywords.filter((k) => !coveredKeywords.has(k.toLowerCase()));
+  const uncovered = keywords.filter(
+    (k) => !coveredKeywords.has(k.toLowerCase()),
+  );
 
   // 2. Try DataForSEO for uncovered keywords (optional, paid)
   if (uncovered.length > 0) {
     const dfResults = await fetchDataForSeoKeywordMetrics(uncovered);
     if (dfResults === null && process.env.DATAFORSEO_LOGIN) {
-      diagnostics.push("DataForSEO API returned no data — check credentials or account status");
+      diagnostics.push(
+        "DataForSEO API returned no data — check credentials or account status",
+      );
     }
     if (dfResults) {
       for (const r of dfResults) {
@@ -448,22 +604,27 @@ async function enrichKeywordMetrics(
           coveredKeywords.add(r.keyword.toLowerCase());
         }
       }
-      diagnostics.push(`DataForSEO provided data for ${dfResults.filter((r) => r.searches !== "—").length}/${uncovered.length} keywords`);
+      diagnostics.push(
+        `DataForSEO provided data for ${dfResults.filter((r) => r.searches !== "—").length}/${uncovered.length} keywords`,
+      );
     }
   }
 
   // 3. Google Suggest fallback for any remaining uncovered keywords
-  const stillUncovered = keywords.filter((k) => !coveredKeywords.has(k.toLowerCase()));
+  const stillUncovered = keywords.filter(
+    (k) => !coveredKeywords.has(k.toLowerCase()),
+  );
   if (stillUncovered.length > 0) {
     // Fetch suggestions for the primary query to get relevance data
     const primaryQuery = keywords[0];
-    const { relativePopularity } = await fetchGoogleSuggestKeywords(primaryQuery);
+    const { relativePopularity } =
+      await fetchGoogleSuggestKeywords(primaryQuery);
 
     for (const kw of stillUncovered) {
       const tier = relativePopularity.get(kw.toLowerCase());
       enriched.push({
         keyword: kw,
-        searches: tier ? `${tier} (estimated)` : "~Popular (in Google Suggest)" ,
+        searches: tier ? `${tier} (estimated)` : "~Popular (in Google Suggest)",
         competition: "—",
         source: tier ? "google-suggest" : "estimated",
       });
@@ -472,21 +633,34 @@ async function enrichKeywordMetrics(
       // Also try individual keyword lookups for tier data
       for (const kw of stillUncovered) {
         const { suggestions } = await fetchGoogleSuggestKeywords(kw);
-        const idx = enriched.findIndex((e) => e.keyword.toLowerCase() === kw.toLowerCase());
+        const idx = enriched.findIndex(
+          (e) => e.keyword.toLowerCase() === kw.toLowerCase(),
+        );
         if (idx !== -1 && suggestions.length > 0) {
-          enriched[idx].searches = suggestions.length >= 8 ? "High (estimated)" : suggestions.length >= 4 ? "Medium (estimated)" : "Low (estimated)";
+          enriched[idx].searches =
+            suggestions.length >= 8
+              ? "High (estimated)"
+              : suggestions.length >= 4
+                ? "Medium (estimated)"
+                : "Low (estimated)";
           enriched[idx].source = "google-suggest";
         }
       }
     }
-    diagnostics.push(`Google Suggest provided estimated data for ${stillUncovered.length} keywords`);
+    diagnostics.push(
+      `Google Suggest provided estimated data for ${stillUncovered.length} keywords`,
+    );
   }
 
   // Build diagnostic note
   let diagnosticNote = "";
   if (diagnostics.length > 0) {
     diagnosticNote = `\n> **Keyword Data Sources:** ${diagnostics.join("; ")}`;
-    if (enriched.some((e) => e.source !== "pinterest" && e.source !== "dataforseo")) {
+    if (
+      enriched.some(
+        (e) => e.source !== "pinterest" && e.source !== "dataforseo",
+      )
+    ) {
       diagnosticNote += `\n> _Tip: For accurate search volume data, configure DataForSEO credentials (DATAFORSEO_LOGIN + DATAFORSEO_PASSWORD) or ensure your Pinterest ad account has active campaigns._`;
     }
   }
@@ -504,7 +678,8 @@ function formatPct(val: unknown): string {
 }
 
 function formatTrendsMarkdown(data: Record<string, unknown>): string {
-  const trends = (data as { trends?: Array<Record<string, unknown>> }).trends ?? [];
+  const trends =
+    (data as { trends?: Array<Record<string, unknown>> }).trends ?? [];
 
   // Build structured data for UI consumption
   const structured = trends.map((t, i) => {
@@ -528,11 +703,16 @@ function formatTrendsMarkdown(data: Record<string, unknown>): string {
 
   // Top 10 highlights
   if (structured.length > 0) {
-    const topGrowing = [...structured].filter(t => t.yoy != null).sort((a, b) => Number(b.yoy ?? 0) - Number(a.yoy ?? 0)).slice(0, 5);
+    const topGrowing = [...structured]
+      .filter((t) => t.yoy != null)
+      .sort((a, b) => Number(b.yoy ?? 0) - Number(a.yoy ?? 0))
+      .slice(0, 5);
     if (topGrowing.length > 0) {
       lines.push(`## Top Growing (YoY)`, ``);
       for (const t of topGrowing) {
-        lines.push(`- **${t.keyword}** — YoY: ${formatPct(t.yoy)}, MoM: ${formatPct(t.mom)}, WoW: ${formatPct(t.wow)}`);
+        lines.push(
+          `- **${t.keyword}** — YoY: ${formatPct(t.yoy)}, MoM: ${formatPct(t.mom)}, WoW: ${formatPct(t.wow)}`,
+        );
       }
       lines.push(``);
     }
@@ -542,14 +722,28 @@ function formatTrendsMarkdown(data: Record<string, unknown>): string {
   lines.push(`| # | Keyword | WoW | MoM | YoY |`);
   lines.push(`|---|---------|-----|-----|-----|`);
   for (const t of structured) {
-    lines.push(`| ${t.rank} | ${t.keyword} | ${formatPct(t.wow)} | ${formatPct(t.mom)} | ${formatPct(t.yoy)} |`);
+    lines.push(
+      `| ${t.rank} | ${t.keyword} | ${formatPct(t.wow)} | ${formatPct(t.mom)} | ${formatPct(t.yoy)} |`,
+    );
   }
 
   if (trends.length === 0) {
     lines.push(``, `_No trending keywords returned._`);
   }
 
-  lines.push(``, `---`, ``, `<details>`, `<summary>Raw API Response</summary>`, ``, "```json", JSON.stringify(data, null, 2), "```", ``, `</details>`);
+  lines.push(
+    ``,
+    `---`,
+    ``,
+    `<details>`,
+    `<summary>Raw API Response</summary>`,
+    ``,
+    "```json",
+    JSON.stringify(data, null, 2),
+    "```",
+    ``,
+    `</details>`,
+  );
   return lines.join("\n");
 }
 
@@ -580,22 +774,42 @@ function formatEnrichedKeywordMetricsMarkdown(
 
   for (const kw of enrichedKws) {
     const sourceLabel =
-      kw.source === "pinterest" ? "📌 Pinterest Ads" :
-      kw.source === "dataforseo" ? "📊 DataForSEO" :
-      kw.source === "google-suggest" ? "🔍 Google Suggest" :
-      "⚡ Estimated";
-    lines.push(`| ${kw.keyword} | ${kw.searches} | ${kw.competition} | ${sourceLabel} |`);
+      kw.source === "pinterest"
+        ? "📌 Pinterest Ads"
+        : kw.source === "dataforseo"
+          ? "📊 DataForSEO"
+          : kw.source === "google-suggest"
+            ? "🔍 Google Suggest"
+            : "⚡ Estimated";
+    lines.push(
+      `| ${kw.keyword} | ${kw.searches} | ${kw.competition} | ${sourceLabel} |`,
+    );
   }
 
   if (enrichedKws.length === 0) {
     lines.push(``, `_No keyword data available from any source._`);
   }
 
-  lines.push(``, `---`, ``, `<details>`, `<summary>Raw Data</summary>`, ``, "```json", JSON.stringify(enrichedKws, null, 2), "```", ``, `</details>`);
+  lines.push(
+    ``,
+    `---`,
+    ``,
+    `<details>`,
+    `<summary>Raw Data</summary>`,
+    ``,
+    "```json",
+    JSON.stringify(enrichedKws, null, 2),
+    "```",
+    ``,
+    `</details>`,
+  );
   return lines.join("\n");
 }
 
-function formatAnalyticsMarkdown(data: Record<string, unknown>, action: string): string {
+function formatAnalyticsMarkdown(
+  data: Record<string, unknown>,
+  action: string,
+): string {
   const lines: string[] = [
     `# Pinterest Analytics Report`,
     ``,
@@ -606,7 +820,9 @@ function formatAnalyticsMarkdown(data: Record<string, unknown>, action: string):
 
   if (action === "account_summary") {
     const allData = data.all as Record<string, unknown> | undefined;
-    const summary = (allData?.summary_metrics ?? data.summary_metrics ?? data) as Record<string, unknown>;
+    const summary = (allData?.summary_metrics ??
+      data.summary_metrics ??
+      data) as Record<string, unknown>;
 
     // Summary totals at the top
     lines.push(`## Summary Totals`, ``);
@@ -617,7 +833,9 @@ function formatAnalyticsMarkdown(data: Record<string, unknown>, action: string):
     }
     lines.push(``);
 
-    const dailyMetrics = (allData?.daily_metrics ?? data.daily_metrics) as Array<Record<string, unknown>> | undefined;
+    const dailyMetrics = (allData?.daily_metrics ?? data.daily_metrics) as
+      | Array<Record<string, unknown>>
+      | undefined;
     if (dailyMetrics && Array.isArray(dailyMetrics)) {
       // Filter to only days with activity
       const activeDays = dailyMetrics.filter((day) => {
@@ -632,7 +850,9 @@ function formatAnalyticsMarkdown(data: Record<string, unknown>, action: string):
         lines.push(`|------|------------|-------|-----------|-----------|`);
         for (const day of activeDays) {
           const metrics = day.metrics as Record<string, unknown> | undefined;
-          lines.push(`| ${day.date ?? "—"} | ${metrics?.IMPRESSION ?? 0} | ${metrics?.SAVE ?? 0} | ${metrics?.PIN_CLICK ?? 0} | ${metrics?.ENGAGEMENT ?? 0} |`);
+          lines.push(
+            `| ${day.date ?? "—"} | ${metrics?.IMPRESSION ?? 0} | ${metrics?.SAVE ?? 0} | ${metrics?.PIN_CLICK ?? 0} | ${metrics?.ENGAGEMENT ?? 0} |`,
+          );
         }
       } else {
         lines.push(`_No days with activity in this date range._`);
@@ -640,8 +860,10 @@ function formatAnalyticsMarkdown(data: Record<string, unknown>, action: string):
     }
   } else {
     lines.push(`## Top Pins`, ``);
-    const pinsData = (data as Record<string, unknown>).pins as Record<string, unknown>[] | undefined;
-    const pins = Array.isArray(data) ? data : pinsData ?? [];
+    const pinsData = (data as Record<string, unknown>).pins as
+      | Record<string, unknown>[]
+      | undefined;
+    const pins = Array.isArray(data) ? data : (pinsData ?? []);
     if (Array.isArray(pins) && pins.length > 0) {
       lines.push(`| # | Pin ID | Impressions | Saves | Clicks |`);
       lines.push(`|---|--------|------------|-------|--------|`);
@@ -649,14 +871,28 @@ function formatAnalyticsMarkdown(data: Record<string, unknown>, action: string):
         const pin = pins[i] as Record<string, unknown>;
         const metrics = pin.metrics as Record<string, unknown> | undefined;
         const pinId = pin.pin_id ?? pin.id ?? "—";
-        lines.push(`| ${i + 1} | ${pinId} | ${metrics?.IMPRESSION ?? 0} | ${metrics?.SAVE ?? 0} | ${metrics?.PIN_CLICK ?? 0} |`);
+        lines.push(
+          `| ${i + 1} | ${pinId} | ${metrics?.IMPRESSION ?? 0} | ${metrics?.SAVE ?? 0} | ${metrics?.PIN_CLICK ?? 0} |`,
+        );
       }
     } else {
       lines.push(`_No pins found with metrics in this date range._`);
     }
   }
 
-  lines.push(``, `---`, ``, `<details>`, `<summary>Raw API Response</summary>`, ``, "```json", JSON.stringify(data, null, 2), "```", ``, `</details>`);
+  lines.push(
+    ``,
+    `---`,
+    ``,
+    `<details>`,
+    `<summary>Raw API Response</summary>`,
+    ``,
+    "```json",
+    JSON.stringify(data, null, 2),
+    "```",
+    ``,
+    `</details>`,
+  );
   return lines.join("\n");
 }
 
@@ -680,15 +916,21 @@ function formatSeoAnalysisMarkdown(
     lines.push(`|-------|-------|`);
     lines.push(`| **Title** | ${pin.title ?? "—"} |`);
     lines.push(`| **Pin URL** | [View on Pinterest](${pin.pin_url}) |`);
-    lines.push(`| **Description** | ${pin.description?.slice(0, 200) ?? "—"} |`);
+    lines.push(
+      `| **Description** | ${pin.description?.slice(0, 200) ?? "—"} |`,
+    );
     lines.push(`| **Link** | ${pin.link ?? "—"} |`);
     lines.push(`| **Media Type** | ${pin.media_type ?? "—"} |`);
     if (pin.api_data_available || pin.html_data_available) {
-      lines.push(`| **Pin Score** | **${pin.pin_score}/100** ${pin.pin_score >= 70 ? "✅" : pin.pin_score >= 40 ? "⚠️" : "❌"} |`);
+      lines.push(
+        `| **Pin Score** | **${pin.pin_score}/100** ${pin.pin_score >= 70 ? "✅" : pin.pin_score >= 40 ? "⚠️" : "❌"} |`,
+      );
     } else {
       lines.push(`| **Pin Score** | N/A (no API or HTML data retrieved) |`);
     }
-    lines.push(`| **Data Source** | ${pin.api_data_available ? "API" : pin.html_data_available ? "HTML scrape" : "None"} |`);
+    lines.push(
+      `| **Data Source** | ${pin.api_data_available ? "API" : pin.html_data_available ? "HTML scrape" : "None"} |`,
+    );
 
     if (pin.annotations.length > 0) {
       lines.push(`| **Annotations** | ${pin.annotations.join(", ")} |`);
@@ -699,14 +941,25 @@ function formatSeoAnalysisMarkdown(
 
     // Pin metrics (90d/lifetime) if available
     if (pin.pin_metrics) {
-      const metrics90d = pin.pin_metrics["90d"] as Record<string, unknown> | undefined;
-      const lifetime = pin.pin_metrics.lifetime_metrics as Record<string, unknown> | undefined;
+      const metrics90d = pin.pin_metrics["90d"] as
+        | Record<string, unknown>
+        | undefined;
+      const lifetime = pin.pin_metrics.lifetime_metrics as
+        | Record<string, unknown>
+        | undefined;
       if (metrics90d || lifetime) {
         lines.push(`### Performance Metrics`);
         lines.push(``);
         lines.push(`| Metric | 90-Day | Lifetime |`);
         lines.push(`|--------|--------|----------|`);
-        const metricKeys = ["impression", "pin_click", "clickthrough", "save", "reaction", "comment"];
+        const metricKeys = [
+          "impression",
+          "pin_click",
+          "clickthrough",
+          "save",
+          "reaction",
+          "comment",
+        ];
         for (const k of metricKeys) {
           const d90 = metrics90d?.[k] ?? "—";
           const lt = lifetime?.[k] ?? "—";
@@ -740,16 +993,32 @@ function formatSeoAnalysisMarkdown(
     );
     for (const kw of keywordData.keywords) {
       const sourceLabel =
-        kw.source === "pinterest" ? "📌 Pinterest Ads" :
-        kw.source === "dataforseo" ? "📊 DataForSEO" :
-        kw.source === "google-suggest" ? "🔍 Google Suggest" :
-        "⚡ Estimated";
-      lines.push(`| ${kw.keyword} | ${kw.searches} | ${kw.competition} | ${sourceLabel} |`);
+        kw.source === "pinterest"
+          ? "📌 Pinterest Ads"
+          : kw.source === "dataforseo"
+            ? "📊 DataForSEO"
+            : kw.source === "google-suggest"
+              ? "🔍 Google Suggest"
+              : "⚡ Estimated";
+      lines.push(
+        `| ${kw.keyword} | ${kw.searches} | ${kw.competition} | ${sourceLabel} |`,
+      );
     }
     lines.push(``);
   }
 
-  lines.push(`---`, ``, `<details>`, `<summary>Raw JSON Data</summary>`, ``, "```json", JSON.stringify(items, null, 2), "```", ``, `</details>`);
+  lines.push(
+    `---`,
+    ``,
+    `<details>`,
+    `<summary>Raw JSON Data</summary>`,
+    ``,
+    "```json",
+    JSON.stringify(items, null, 2),
+    "```",
+    ``,
+    `</details>`,
+  );
   return lines.join("\n");
 }
 
@@ -793,7 +1062,8 @@ export function calculatePinScore(
 
   // Media type is image or video (5 points)
   const media = apiData.media as Record<string, unknown> | undefined;
-  if (media?.media_type === "image" || media?.media_type === "video") score += 5;
+  if (media?.media_type === "image" || media?.media_type === "video")
+    score += 5;
 
   // Annotation density (up to 30 points)
   const annotationCount = annotations.length;
@@ -812,22 +1082,32 @@ export function generateSeoRecommendations(
   const recs: string[] = [];
 
   if (!apiData) {
-    recs.push("Unable to fetch pin data — ensure PINTEREST_ACCESS_TOKEN is configured and pin ID is valid.");
+    recs.push(
+      "Unable to fetch pin data — ensure PINTEREST_ACCESS_TOKEN is configured and pin ID is valid.",
+    );
     return recs;
   }
 
   const title = apiData.title as string | null | undefined;
   if (!title || title.length === 0) {
-    recs.push("Add a title (max 100 chars) with your primary keyword in the first 40 characters.");
+    recs.push(
+      "Add a title (max 100 chars) with your primary keyword in the first 40 characters.",
+    );
   } else if (title.length > 100) {
-    recs.push(`Title is ${title.length} chars — trim to 100 chars max for optimal display.`);
+    recs.push(
+      `Title is ${title.length} chars — trim to 100 chars max for optimal display.`,
+    );
   }
 
   const desc = apiData.description as string | null | undefined;
   if (!desc || desc.length === 0) {
-    recs.push("Add a description (100–500 chars) with 2–4 relevant keywords naturally integrated.");
+    recs.push(
+      "Add a description (100–500 chars) with 2–4 relevant keywords naturally integrated.",
+    );
   } else if (desc.length < 100) {
-    recs.push(`Description is only ${desc.length} chars — expand to 100–500 chars for better SEO.`);
+    recs.push(
+      `Description is only ${desc.length} chars — expand to 100–500 chars for better SEO.`,
+    );
   }
 
   if (!apiData.link) {
@@ -842,7 +1122,9 @@ export function generateSeoRecommendations(
   // Check which annotation keywords are missing from the description
   if (annotations.length > 0 && desc) {
     const descLower = desc.toLowerCase();
-    const missing = annotations.filter((kw) => !descLower.includes(kw.toLowerCase()));
+    const missing = annotations.filter(
+      (kw) => !descLower.includes(kw.toLowerCase()),
+    );
     if (missing.length > 0) {
       recs.push(
         `Include these annotation keywords in your description: ${missing.join(", ")}`,
@@ -898,7 +1180,8 @@ const extractFromScriptTags: AnnotationStrategy = {
   name: "script-tags",
   extract: (html: string) => {
     const annotations: string[] = [];
-    const scriptRegex = /<script[^>]*type="application\/json"[^>]*>([\s\S]*?)<\/script>/g;
+    const scriptRegex =
+      /<script[^>]*type="application\/json"[^>]*>([\s\S]*?)<\/script>/g;
     let scriptMatch: RegExpExecArray | null;
     while ((scriptMatch = scriptRegex.exec(html)) !== null) {
       try {
@@ -913,7 +1196,9 @@ const extractFromScriptTags: AnnotationStrategy = {
           }
         }
         // Also check for annotatedInterests or annotations fields
-        const annotationMatches = str.match(/"(?:annotated_interests?|annotations?)":\s*\[([^\]]+)\]/g);
+        const annotationMatches = str.match(
+          /"(?:annotated_interests?|annotations?)":\s*\[([^\]]+)\]/g,
+        );
         if (annotationMatches) {
           for (const m of annotationMatches) {
             const valMatch = m.match(/"([^"]+)"/g);
@@ -949,7 +1234,8 @@ const extractFromMetaTags: AnnotationStrategy = {
     for (const propName of propNames) {
       // Order 1: property/name first
       const r1 = new RegExp(
-        `<meta\\s+(?:property|name)="${propName}"[^>]*?content="([^"]+)"`, "gi"
+        `<meta\\s+(?:property|name)="${propName}"[^>]*?content="([^"]+)"`,
+        "gi",
       );
       let m: RegExpExecArray | null;
       while ((m = r1.exec(html)) !== null) {
@@ -957,7 +1243,8 @@ const extractFromMetaTags: AnnotationStrategy = {
       }
       // Order 2: content first
       const r2 = new RegExp(
-        `<meta\\s+content="([^"]+)"[^>]*?(?:property|name)="${propName}"`, "gi"
+        `<meta\\s+content="([^"]+)"[^>]*?(?:property|name)="${propName}"`,
+        "gi",
       );
       while ((m = r2.exec(html)) !== null) {
         if (m[1]) annotations.push(m[1]);
@@ -973,8 +1260,12 @@ const extractFromOgTitle: AnnotationStrategy = {
   name: "og-title",
   extract: (html: string) => {
     // Handle both attribute orders
-    const r1 = html.match(/<meta\s+(?:property|name)="og:title"[^>]*?content="([^"]+)"/i);
-    const r2 = html.match(/<meta\s+content="([^"]+)"[^>]*?(?:property|name)="og:title"/i);
+    const r1 = html.match(
+      /<meta\s+(?:property|name)="og:title"[^>]*?content="([^"]+)"/i,
+    );
+    const r2 = html.match(
+      /<meta\s+content="([^"]+)"[^>]*?(?:property|name)="og:title"/i,
+    );
     const title = r1?.[1] ?? r2?.[1];
     if (!title) return [];
     const pipeIdx = title.lastIndexOf("|");
@@ -1009,7 +1300,9 @@ const extractFromIdeaUrls: AnnotationStrategy = {
       if (!seen.has(slug)) {
         seen.add(slug);
         // Convert slug to readable name: "diy-and-crafts" → "DIY And Crafts"
-        const name = slug.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+        const name = slug
+          .replace(/-/g, " ")
+          .replace(/\b\w/g, (c) => c.toUpperCase());
         annotations.push(name);
       }
     }
@@ -1029,7 +1322,9 @@ const ANNOTATION_STRATEGIES: AnnotationStrategy[] = [
  * Strategy 0 (async): Use Firecrawl to scrape a Pinterest URL for richer content.
  * Falls back to null if Firecrawl is not available.
  */
-export async function extractAnnotationsViaFirecrawl(url: string): Promise<string[] | null> {
+export async function extractAnnotationsViaFirecrawl(
+  url: string,
+): Promise<string[] | null> {
   try {
     if (isBlockedUrl(url)) return null;
     const client = getFirecrawlClient();
@@ -1092,8 +1387,13 @@ function formatPinInsightsMarkdown(insights: InsightsData): string {
   // Trend data
   if (insights.trends && insights.trends.length > 0) {
     lines.push(`## Trending Keywords`, ``);
-    lines.push(`These keywords are currently trending on Pinterest and related to your query.`);
-    lines.push(`Use these in your pin titles, descriptions, and hashtags for maximum reach.`, ``);
+    lines.push(
+      `These keywords are currently trending on Pinterest and related to your query.`,
+    );
+    lines.push(
+      `Use these in your pin titles, descriptions, and hashtags for maximum reach.`,
+      ``,
+    );
     lines.push(`| Keyword | WoW Growth | MoM Growth | YoY Growth |`);
     lines.push(`|---------|-----------|-----------|-----------|`);
     for (const t of insights.trends) {
@@ -1105,7 +1405,10 @@ function formatPinInsightsMarkdown(insights: InsightsData): string {
   // Keyword metrics
   if (insights.keywords && insights.keywords.length > 0) {
     lines.push(`## Keyword Search Volume & Competition`, ``);
-    lines.push(`How many people search for these terms monthly and how competitive they are.`, ``);
+    lines.push(
+      `How many people search for these terms monthly and how competitive they are.`,
+      ``,
+    );
     if (insights.keywordDiagnosticNote) {
       lines.push(insights.keywordDiagnosticNote, ``);
     }
@@ -1120,26 +1423,40 @@ function formatPinInsightsMarkdown(insights: InsightsData): string {
   // Pin analyses
   if (insights.pinAnalyses && insights.pinAnalyses.length > 0) {
     lines.push(`## Pin Analysis`, ``);
-    lines.push(`Detailed analysis of pins with SEO scoring and recommendations.`, ``);
+    lines.push(
+      `Detailed analysis of pins with SEO scoring and recommendations.`,
+      ``,
+    );
 
     for (const pin of insights.pinAnalyses) {
-      const scoreEmoji = pin.pin_score >= 70 ? "✅" : pin.pin_score >= 40 ? "⚠️" : "❌";
+      const scoreEmoji =
+        pin.pin_score >= 70 ? "✅" : pin.pin_score >= 40 ? "⚠️" : "❌";
       lines.push(`### Pin ${pin.pin_id}`);
       lines.push(``);
       lines.push(`| Field | Value |`);
       lines.push(`|-------|-------|`);
       lines.push(`| **Title** | ${pin.title ?? "—"} |`);
-      lines.push(`| **Description** | ${(pin.description ?? "—").slice(0, 150)}${(pin.description?.length ?? 0) > 150 ? "..." : ""} |`);
+      lines.push(
+        `| **Description** | ${(pin.description ?? "—").slice(0, 150)}${(pin.description?.length ?? 0) > 150 ? "..." : ""} |`,
+      );
       lines.push(`| **Link** | ${pin.link ?? "—"} |`);
       lines.push(`| **Pin Score** | **${pin.pin_score}/100** ${scoreEmoji} |`);
-      lines.push(`| **Annotations** | ${pin.annotations.length > 0 ? pin.annotations.join(", ") : "None"} |`);
-      lines.push(`| **Data Source** | ${pin.api_data_available ? "API" : pin.html_data_available ? "HTML" : "None"} |`);
+      lines.push(
+        `| **Annotations** | ${pin.annotations.length > 0 ? pin.annotations.join(", ") : "None"} |`,
+      );
+      lines.push(
+        `| **Data Source** | ${pin.api_data_available ? "API" : pin.html_data_available ? "HTML" : "None"} |`,
+      );
       lines.push(``);
 
       if (pin.pin_metrics) {
-        const lifetime = pin.pin_metrics.lifetime_metrics as Record<string, unknown> | undefined;
+        const lifetime = pin.pin_metrics.lifetime_metrics as
+          | Record<string, unknown>
+          | undefined;
         if (lifetime) {
-          lines.push(`**Lifetime Metrics:** Impressions: ${lifetime.impression ?? 0} | Saves: ${lifetime.save ?? 0} | Clicks: ${lifetime.pin_click ?? 0} | Reactions: ${lifetime.reaction ?? 0}`);
+          lines.push(
+            `**Lifetime Metrics:** Impressions: ${lifetime.impression ?? 0} | Saves: ${lifetime.save ?? 0} | Clicks: ${lifetime.pin_click ?? 0} | Reactions: ${lifetime.reaction ?? 0}`,
+          );
           lines.push(``);
         }
       }
@@ -1156,16 +1473,28 @@ function formatPinInsightsMarkdown(insights: InsightsData): string {
 
   // Action items
   lines.push(`## How to Create a Winning Pin for This Topic`, ``);
-  lines.push(`1. **Title**: Include the top-trending keyword in the first 40 characters`);
+  lines.push(
+    `1. **Title**: Include the top-trending keyword in the first 40 characters`,
+  );
   if (insights.trends && insights.trends.length > 0) {
     lines.push(`   - Try: "${insights.trends[0].keyword}" or a variation`);
   }
-  lines.push(`2. **Description**: Write 100–500 chars with 2–4 related keywords naturally integrated`);
-  lines.push(`3. **Hashtags**: Add 3–5 relevant hashtags from the trending keywords`);
-  lines.push(`4. **Image**: Use a 2:3 vertical image (1000x1500px) with clear, bright visuals`);
-  lines.push(`5. **Alt Text**: Describe the image using keywords for accessibility and SEO`);
+  lines.push(
+    `2. **Description**: Write 100–500 chars with 2–4 related keywords naturally integrated`,
+  );
+  lines.push(
+    `3. **Hashtags**: Add 3–5 relevant hashtags from the trending keywords`,
+  );
+  lines.push(
+    `4. **Image**: Use a 2:3 vertical image (1000x1500px) with clear, bright visuals`,
+  );
+  lines.push(
+    `5. **Alt Text**: Describe the image using keywords for accessibility and SEO`,
+  );
   lines.push(`6. **Link**: Point to your website or landing page`);
-  lines.push(`7. **Timing**: Post during peak hours (2-4 PM, 8-11 PM) for your audience's timezone`);
+  lines.push(
+    `7. **Timing**: Post during peak hours (2-4 PM, 8-11 PM) for your audience's timezone`,
+  );
   lines.push(``);
 
   return lines.join("\n");
@@ -1187,7 +1516,9 @@ function extractPinIdsFromBoardHtml(html: string): string[] {
 /** Fetch a board page and extract pin IDs from SSR-rendered HTML. */
 async function discoverPinsFromBoard(boardUrl: string): Promise<string[]> {
   try {
-    const url = boardUrl.startsWith("http") ? boardUrl : `https://www.pinterest.com${boardUrl}`;
+    const url = boardUrl.startsWith("http")
+      ? boardUrl
+      : `https://www.pinterest.com${boardUrl}`;
     const res = await fetch(url, {
       headers: {
         "User-Agent":
@@ -1206,9 +1537,13 @@ async function discoverPinsFromBoard(boardUrl: string): Promise<string[]> {
 /** Extract board URL from a pin's HTML page via pinterestapp:pinboard meta tag. */
 function extractBoardUrlFromPinHtml(html: string): string | null {
   // Handle both attribute orders: property then content, or content then property
-  const r1 = html.match(/<meta\s+(?:property|name)="pinterestapp:pinboard"[^>]*?content="([^"]+)"/i);
+  const r1 = html.match(
+    /<meta\s+(?:property|name)="pinterestapp:pinboard"[^>]*?content="([^"]+)"/i,
+  );
   if (r1?.[1]) return r1[1];
-  const r2 = html.match(/<meta\s+content="([^"]+)"[^>]*?(?:property|name)="pinterestapp:pinboard"/i);
+  const r2 = html.match(
+    /<meta\s+content="([^"]+)"[^>]*?(?:property|name)="pinterestapp:pinboard"/i,
+  );
   return r2?.[1] ?? null;
 }
 
@@ -1279,28 +1614,45 @@ function formatSearchPinsMarkdown(result: SearchPinsResult): string {
   ];
 
   // Executive Summary
-  const avgScore = result.discovered_pins.length > 0
-    ? Math.round(result.discovered_pins.reduce((s, p) => s + p.pin_score, 0) / result.discovered_pins.length)
-    : 0;
-  const topPin = [...result.discovered_pins].sort((a, b) => (b.repins ?? 0) - (a.repins ?? 0))[0];
-  const allAnnotations = new Set(result.discovered_pins.flatMap((p) => p.annotations));
+  const avgScore =
+    result.discovered_pins.length > 0
+      ? Math.round(
+          result.discovered_pins.reduce((s, p) => s + p.pin_score, 0) /
+            result.discovered_pins.length,
+        )
+      : 0;
+  const topPin = [...result.discovered_pins].sort(
+    (a, b) => (b.repins ?? 0) - (a.repins ?? 0),
+  )[0];
+  const allAnnotations = new Set(
+    result.discovered_pins.flatMap((p) => p.annotations),
+  );
 
   lines.push(`## Executive Summary`, ``);
   lines.push(`| Metric | Value |`);
   lines.push(`|--------|-------|`);
-  lines.push(`| **Average Pin Score** | ${avgScore}/100 ${avgScore >= 70 ? "✅" : avgScore >= 40 ? "⚠️" : "❌"} |`);
+  lines.push(
+    `| **Average Pin Score** | ${avgScore}/100 ${avgScore >= 70 ? "✅" : avgScore >= 40 ? "⚠️" : "❌"} |`,
+  );
   lines.push(`| **Total Pins Analyzed** | ${result.discovered_pins.length} |`);
   lines.push(`| **Unique Annotations Found** | ${allAnnotations.size} |`);
   if (topPin) {
-    lines.push(`| **Most Saved Pin** | ${topPin.title?.slice(0, 50) ?? topPin.pin_id}${topPin.repins != null ? ` (${topPin.repins.toLocaleString()} saves)` : ""} |`);
+    lines.push(
+      `| **Most Saved Pin** | ${topPin.title?.slice(0, 50) ?? topPin.pin_id}${topPin.repins != null ? ` (${topPin.repins.toLocaleString()} saves)` : ""} |`,
+    );
   }
   lines.push(``);
 
   // Annotation keyword cloud
   if (allAnnotations.size > 0) {
     lines.push(`## Annotation Keywords (Pinterest's Algorithm Tags)`, ``);
-    lines.push(`These are the keywords Pinterest's algorithm associates with top pins for this topic.`);
-    lines.push(`**Include these in your pin titles, descriptions, and alt text for maximum distribution.**`, ``);
+    lines.push(
+      `These are the keywords Pinterest's algorithm associates with top pins for this topic.`,
+    );
+    lines.push(
+      `**Include these in your pin titles, descriptions, and alt text for maximum distribution.**`,
+      ``,
+    );
     const sortedAnnotations = [...allAnnotations].sort();
     lines.push(sortedAnnotations.map((a) => `\`${a}\``).join(" · "));
     lines.push(``);
@@ -1330,36 +1682,53 @@ function formatSearchPinsMarkdown(result: SearchPinsResult): string {
 
   // Pin comparison table
   if (result.discovered_pins.length > 0) {
-    const sorted = [...result.discovered_pins].sort((a, b) => (b.repins ?? 0) - (a.repins ?? 0));
+    const sorted = [...result.discovered_pins].sort(
+      (a, b) => (b.repins ?? 0) - (a.repins ?? 0),
+    );
     lines.push(`## Competitor Pin Analysis`, ``);
-    lines.push(`Pins ranked by saves (engagement). Use these as benchmarks for your own pins.`, ``);
+    lines.push(
+      `Pins ranked by saves (engagement). Use these as benchmarks for your own pins.`,
+      ``,
+    );
     lines.push(`| # | Pin | Score | Saves | Annotations | Source Link |`);
     lines.push(`|---|-----|-------|-------|-------------|-------------|`);
     for (let i = 0; i < sorted.length; i++) {
       const p = sorted[i];
-      const scoreEmoji = p.pin_score >= 70 ? "✅" : p.pin_score >= 40 ? "⚠️" : "❌";
-      const title = (p.title ?? "Untitled").slice(0, 40) + ((p.title?.length ?? 0) > 40 ? "..." : "");
+      const scoreEmoji =
+        p.pin_score >= 70 ? "✅" : p.pin_score >= 40 ? "⚠️" : "❌";
+      const title =
+        (p.title ?? "Untitled").slice(0, 40) +
+        ((p.title?.length ?? 0) > 40 ? "..." : "");
       const saves = p.repins != null ? p.repins.toLocaleString() : "—";
       const annCount = p.annotations.length;
       const sourceLink = p.link ? `[link](${p.link})` : "—";
-      lines.push(`| ${i + 1} | [${title}](https://pinterest.com/pin/${p.pin_id}/) | ${p.pin_score} ${scoreEmoji} | ${saves} | ${annCount} | ${sourceLink} |`);
+      lines.push(
+        `| ${i + 1} | [${title}](https://pinterest.com/pin/${p.pin_id}/) | ${p.pin_score} ${scoreEmoji} | ${saves} | ${annCount} | ${sourceLink} |`,
+      );
     }
     lines.push(``);
 
     // Detailed per-pin breakdown
     lines.push(`## Detailed Pin Breakdowns`, ``);
     for (const p of sorted) {
-      const scoreEmoji = p.pin_score >= 70 ? "✅" : p.pin_score >= 40 ? "⚠️" : "❌";
+      const scoreEmoji =
+        p.pin_score >= 70 ? "✅" : p.pin_score >= 40 ? "⚠️" : "❌";
       lines.push(`### ${p.title ?? `Pin ${p.pin_id}`}`);
       lines.push(``);
       lines.push(`| Field | Value |`);
       lines.push(`|-------|-------|`);
-      lines.push(`| **Pin ID** | [${p.pin_id}](https://pinterest.com/pin/${p.pin_id}/) |`);
+      lines.push(
+        `| **Pin ID** | [${p.pin_id}](https://pinterest.com/pin/${p.pin_id}/) |`,
+      );
       lines.push(`| **Score** | ${p.pin_score}/100 ${scoreEmoji} |`);
-      if (p.repins != null) lines.push(`| **Saves** | ${p.repins.toLocaleString()} |`);
+      if (p.repins != null)
+        lines.push(`| **Saves** | ${p.repins.toLocaleString()} |`);
       if (p.link) lines.push(`| **Source** | ${p.link} |`);
-      if (p.annotations.length > 0) lines.push(`| **Annotations** | ${p.annotations.join(", ")} |`);
-      lines.push(`| **Discovery** | ${p.source === "seed" ? "Provided" : "Board discovery"} |`);
+      if (p.annotations.length > 0)
+        lines.push(`| **Annotations** | ${p.annotations.join(", ")} |`);
+      lines.push(
+        `| **Discovery** | ${p.source === "seed" ? "Provided" : "Board discovery"} |`,
+      );
       lines.push(``);
       if (p.seo_recommendations.length > 0) {
         lines.push(`**SEO Observations:**`);
@@ -1374,23 +1743,45 @@ function formatSearchPinsMarkdown(result: SearchPinsResult): string {
   lines.push(`Based on the competitive analysis above:`, ``);
   lines.push(`### Content Gaps to Exploit`);
   if (allAnnotations.size > 0) {
-    lines.push(`- Target these annotation keywords that top competitors use: **${[...allAnnotations].slice(0, 5).join(", ")}**`);
+    lines.push(
+      `- Target these annotation keywords that top competitors use: **${[...allAnnotations].slice(0, 5).join(", ")}**`,
+    );
   }
-  lines.push(`- Create pins with better SEO scores than the average (${avgScore}/100)`);
+  lines.push(
+    `- Create pins with better SEO scores than the average (${avgScore}/100)`,
+  );
   lines.push(``);
   lines.push(`### Pin Creation Checklist`);
-  lines.push(`1. **Title**: Include "${result.query}" + top annotation keyword in first 40 chars`);
-  lines.push(`2. **Description**: 200-300 chars with 3-4 annotation keywords from the list above`);
-  lines.push(`3. **Image**: 2:3 vertical (1000x1500px), clear, bright, text overlay with keyword`);
-  lines.push(`4. **Link**: Point to your landing page or blog post for traffic generation`);
-  lines.push(`5. **Alt text**: Describe image with keywords for accessibility + SEO boost`);
+  lines.push(
+    `1. **Title**: Include "${result.query}" + top annotation keyword in first 40 chars`,
+  );
+  lines.push(
+    `2. **Description**: 200-300 chars with 3-4 annotation keywords from the list above`,
+  );
+  lines.push(
+    `3. **Image**: 2:3 vertical (1000x1500px), clear, bright, text overlay with keyword`,
+  );
+  lines.push(
+    `4. **Link**: Point to your landing page or blog post for traffic generation`,
+  );
+  lines.push(
+    `5. **Alt text**: Describe image with keywords for accessibility + SEO boost`,
+  );
   lines.push(``);
   lines.push(`### Traffic Generation Strategy`);
-  lines.push(`1. Create 3-5 pin variations targeting different annotation keywords`);
-  lines.push(`2. Pin to a topically relevant board (or create one named after the top keyword)`);
-  lines.push(`3. Schedule pins during peak hours (2-4 PM, 8-11 PM in target timezone)`);
+  lines.push(
+    `1. Create 3-5 pin variations targeting different annotation keywords`,
+  );
+  lines.push(
+    `2. Pin to a topically relevant board (or create one named after the top keyword)`,
+  );
+  lines.push(
+    `3. Schedule pins during peak hours (2-4 PM, 8-11 PM in target timezone)`,
+  );
   lines.push(`4. Repin weekly to maintain algorithmic freshness`);
-  lines.push(`5. Monitor with \`pinterest-analytics\` after 7 days to identify winners`);
+  lines.push(
+    `5. Monitor with \`pinterest-analytics\` after 7 days to identify winners`,
+  );
   lines.push(``);
 
   return lines.join("\n");
@@ -1414,15 +1805,27 @@ export function createPinterestSeoTools(): ToolDefinition[] {
       source: "pinterest",
       handler: async () => {
         const token = getToken();
-        if (!token) return { text: "PINTEREST_ACCESS_TOKEN not configured.", isError: true };
+        if (!token)
+          return {
+            text: "PINTEREST_ACCESS_TOKEN not configured.",
+            isError: true,
+          };
 
-        const result = await pinterestApiFetch("/boards", token, new URLSearchParams({ page_size: "100" }));
+        const result = await pinterestApiFetch(
+          "/boards",
+          token,
+          new URLSearchParams({ page_size: "100" }),
+        );
         if (result.isError) return result;
 
-        const data = JSON.parse(result.text) as { items?: Array<Record<string, unknown>> };
+        const data = JSON.parse(result.text) as {
+          items?: Array<Record<string, unknown>>;
+        };
         const boards = data.items ?? [];
         if (boards.length === 0) {
-          return { text: "No boards found. Create a board first on Pinterest or use the API." };
+          return {
+            text: "No boards found. Create a board first on Pinterest or use the API.",
+          };
         }
 
         const lines = [
@@ -1432,7 +1835,9 @@ export function createPinterestSeoTools(): ToolDefinition[] {
           `|----------|------|------|---------|-------------|`,
         ];
         for (const b of boards) {
-          lines.push(`| ${b.id} | ${b.name} | ${b.pin_count ?? 0} | ${b.privacy ?? "PUBLIC"} | ${String(b.description ?? "—").slice(0, 60)} |`);
+          lines.push(
+            `| ${b.id} | ${b.name} | ${b.pin_count ?? 0} | ${b.privacy ?? "PUBLIC"} | ${String(b.description ?? "—").slice(0, 60)} |`,
+          );
         }
         lines.push(``, `_${boards.length} boards found_`);
         return { text: lines.join("\n") };
@@ -1462,7 +1867,8 @@ export function createPinterestSeoTools(): ToolDefinition[] {
           },
           limit: {
             type: "number",
-            description: "Number of trending keywords to return (default: 25, max: 50)",
+            description:
+              "Number of trending keywords to return (default: 25, max: 50)",
           },
           normalize_against_group: {
             type: "boolean",
@@ -1478,11 +1884,16 @@ export function createPinterestSeoTools(): ToolDefinition[] {
       handler: async (args) => {
         const input = pinterestTrendsSchema.parse(args);
         const token = getToken();
-        if (!token) return { text: "PINTEREST_ACCESS_TOKEN not configured.", isError: true };
+        if (!token)
+          return {
+            text: "PINTEREST_ACCESS_TOKEN not configured.",
+            isError: true,
+          };
 
         const params = new URLSearchParams();
         if (input.limit) params.set("limit", String(input.limit));
-        if (input.normalize_against_group) params.set("normalize_against_group", "true");
+        if (input.normalize_against_group)
+          params.set("normalize_against_group", "true");
 
         const result = await pinterestApiFetch(
           `/trends/keywords/${encodeURIComponent(input.region)}/top/${encodeURIComponent(input.trend_type)}`,
@@ -1497,9 +1908,17 @@ export function createPinterestSeoTools(): ToolDefinition[] {
         const ts = timestamp();
         const baseName = `trends-${input.region}-${input.trend_type}-${ts}`;
         const filePath = saveReport(`${baseName}.md`, md);
-        saveReportJson(baseName, { type: "trends", region: input.region, trend_type: input.trend_type, generated: new Date().toISOString(), data });
+        saveReportJson(baseName, {
+          type: "trends",
+          region: input.region,
+          trend_type: input.trend_type,
+          generated: new Date().toISOString(),
+          data,
+        });
         const pdfPathTrends = await saveReportPdf(baseName, md, REPORTS_DIR);
-        return { text: `${md}\n\n---\n_Report saved to ${filePath}${pdfPathTrends ? ` · PDF: ${pdfPathTrends}` : ""}_` };
+        return {
+          text: `${md}\n\n---\n_Report saved to ${filePath}${pdfPathTrends ? ` · PDF: ${pdfPathTrends}` : ""}_`,
+        };
       },
     },
 
@@ -1534,23 +1953,40 @@ export function createPinterestSeoTools(): ToolDefinition[] {
       handler: async (args) => {
         const input = pinterestKeywordMetricsSchema.parse(args);
         const token = getToken();
-        if (!token) return { text: "PINTEREST_ACCESS_TOKEN not configured.", isError: true };
+        if (!token)
+          return {
+            text: "PINTEREST_ACCESS_TOKEN not configured.",
+            isError: true,
+          };
 
         // Use enriched keyword pipeline (Pinterest → DataForSEO → Google Suggest)
-        const { keywords: enrichedKws, diagnosticNote } = await enrichKeywordMetrics(
-          input.keywords,
-          token,
-          input.country,
-        );
+        const { keywords: enrichedKws, diagnosticNote } =
+          await enrichKeywordMetrics(input.keywords, token, input.country);
 
-        const md = formatEnrichedKeywordMetricsMarkdown(enrichedKws, input.keywords, diagnosticNote);
-        const slug = input.keywords.slice(0, 3).join("-").replace(/\s+/g, "-").toLowerCase();
+        const md = formatEnrichedKeywordMetricsMarkdown(
+          enrichedKws,
+          input.keywords,
+          diagnosticNote,
+        );
+        const slug = input.keywords
+          .slice(0, 3)
+          .join("-")
+          .replace(/\s+/g, "-")
+          .toLowerCase();
         const ts = timestamp();
         const baseName = `keyword-metrics-${slug}-${ts}`;
         const filePath = saveReport(`${baseName}.md`, md);
-        saveReportJson(baseName, { type: "keyword-metrics", keywords: input.keywords, country: input.country, generated: new Date().toISOString(), data: enrichedKws });
+        saveReportJson(baseName, {
+          type: "keyword-metrics",
+          keywords: input.keywords,
+          country: input.country,
+          generated: new Date().toISOString(),
+          data: enrichedKws,
+        });
         const pdfPathKw = await saveReportPdf(baseName, md, REPORTS_DIR);
-        return { text: `${md}\n\n---\n_Report saved to ${filePath}${pdfPathKw ? ` · PDF: ${pdfPathKw}` : ""}_` };
+        return {
+          text: `${md}\n\n---\n_Report saved to ${filePath}${pdfPathKw ? ` · PDF: ${pdfPathKw}` : ""}_`,
+        };
       },
     },
 
@@ -1586,7 +2022,13 @@ export function createPinterestSeoTools(): ToolDefinition[] {
           },
           sort_by: {
             type: "string",
-            enum: ["IMPRESSION", "SAVE", "PIN_CLICK", "OUTBOUND_CLICK", "ENGAGEMENT"],
+            enum: [
+              "IMPRESSION",
+              "SAVE",
+              "PIN_CLICK",
+              "OUTBOUND_CLICK",
+              "ENGAGEMENT",
+            ],
             description: "Sort top_pins by this metric (default: IMPRESSION)",
           },
         },
@@ -1599,7 +2041,11 @@ export function createPinterestSeoTools(): ToolDefinition[] {
       handler: async (args) => {
         const input = pinterestAnalyticsSchema.parse(args);
         const token = getToken();
-        if (!token) return { text: "PINTEREST_ACCESS_TOKEN not configured.", isError: true };
+        if (!token)
+          return {
+            text: "PINTEREST_ACCESS_TOKEN not configured.",
+            isError: true,
+          };
 
         const baseMetrics = input.metrics ?? [
           "IMPRESSION",
@@ -1622,17 +2068,32 @@ export function createPinterestSeoTools(): ToolDefinition[] {
           params.set("sort_by", input.sort_by);
         }
 
-        return pinterestApiFetch(endpoint, token, params).then(async (result) => {
-          if (result.isError) return result;
-          const data = JSON.parse(result.text);
-          const md = formatAnalyticsMarkdown(data, input.action);
-          const ts = timestamp();
-          const baseName = `analytics-${input.action}-${ts}`;
-          const filePath = saveReport(`${baseName}.md`, md);
-          saveReportJson(baseName, { type: "analytics", action: input.action, start_date: input.start_date, end_date: input.end_date, generated: new Date().toISOString(), data });
-          const pdfPathAnalytics = await saveReportPdf(baseName, md, REPORTS_DIR);
-          return { text: `${md}\n\n---\n_Report saved to ${filePath}${pdfPathAnalytics ? ` · PDF: ${pdfPathAnalytics}` : ""}_` };
-        });
+        return pinterestApiFetch(endpoint, token, params).then(
+          async (result) => {
+            if (result.isError) return result;
+            const data = JSON.parse(result.text);
+            const md = formatAnalyticsMarkdown(data, input.action);
+            const ts = timestamp();
+            const baseName = `analytics-${input.action}-${ts}`;
+            const filePath = saveReport(`${baseName}.md`, md);
+            saveReportJson(baseName, {
+              type: "analytics",
+              action: input.action,
+              start_date: input.start_date,
+              end_date: input.end_date,
+              generated: new Date().toISOString(),
+              data,
+            });
+            const pdfPathAnalytics = await saveReportPdf(
+              baseName,
+              md,
+              REPORTS_DIR,
+            );
+            return {
+              text: `${md}\n\n---\n_Report saved to ${filePath}${pdfPathAnalytics ? ` · PDF: ${pdfPathAnalytics}` : ""}_`,
+            };
+          },
+        );
       },
     },
 
@@ -1712,20 +2173,36 @@ export function createPinterestSeoTools(): ToolDefinition[] {
         }
 
         // Collect unique annotations across all analyzed pins for keyword enrichment
-        const allAnnotations = [...new Set(results.flatMap((r) => r.annotations))];
-        let keywordData: { keywords: EnrichedKeyword[]; diagnosticNote: string } | null = null;
+        const allAnnotations = [
+          ...new Set(results.flatMap((r) => r.annotations)),
+        ];
+        let keywordData: {
+          keywords: EnrichedKeyword[];
+          diagnosticNote: string;
+        } | null = null;
         if (allAnnotations.length > 0 && token) {
           keywordData = await enrichKeywordMetrics(allAnnotations, token, "US");
         }
 
         const analysisData = results.length === 1 ? results[0] : results;
-        const md = formatSeoAnalysisMarkdown(analysisData, keywordData ?? undefined);
+        const md = formatSeoAnalysisMarkdown(
+          analysisData,
+          keywordData ?? undefined,
+        );
         const ts = timestamp();
         const baseName = `seo-analysis-${pinIds[0]}-${ts}`;
         const filePath = saveReport(`${baseName}.md`, md);
-        saveReportJson(baseName, { type: "seo-analysis", pin_ids: pinIds, generated: new Date().toISOString(), data: results, keywordMetrics: keywordData });
+        saveReportJson(baseName, {
+          type: "seo-analysis",
+          pin_ids: pinIds,
+          generated: new Date().toISOString(),
+          data: results,
+          keywordMetrics: keywordData,
+        });
         const pdfPathSeo = await saveReportPdf(baseName, md, REPORTS_DIR);
-        return { text: `${md}\n\n---\n_Report saved to ${filePath}${pdfPathSeo ? ` · PDF: ${pdfPathSeo}` : ""}_` };
+        return {
+          text: `${md}\n\n---\n_Report saved to ${filePath}${pdfPathSeo ? ` · PDF: ${pdfPathSeo}` : ""}_`,
+        };
       },
     },
 
@@ -1743,11 +2220,20 @@ export function createPinterestSeoTools(): ToolDefinition[] {
         properties: {
           board_id: { type: "string", description: "Board ID to pin to" },
           title: { type: "string", description: "Pin title (max 100 chars)" },
-          description: { type: "string", description: "Pin description with keywords and hashtags" },
+          description: {
+            type: "string",
+            description: "Pin description with keywords and hashtags",
+          },
           link: { type: "string", description: "Destination URL" },
-          alt_text: { type: "string", description: "Alt text for accessibility and SEO" },
+          alt_text: {
+            type: "string",
+            description: "Alt text for accessibility and SEO",
+          },
           image_url: { type: "string", description: "Public image URL to pin" },
-          image_path: { type: "string", description: "Local image file path (base64 uploaded)" },
+          image_path: {
+            type: "string",
+            description: "Local image file path (base64 uploaded)",
+          },
           board_section_id: { type: "string", description: "Board section ID" },
         },
         required: ["board_id", "title", "description"],
@@ -1758,20 +2244,33 @@ export function createPinterestSeoTools(): ToolDefinition[] {
       source: "pinterest",
       handler: async (args) => {
         // Auto-truncate title/description before validation for Pinterest API compliance
-        const sanitized = { ...args as Record<string, unknown> };
-        if (typeof sanitized.title === "string" && sanitized.title.length > 100) {
+        const sanitized = { ...(args as Record<string, unknown>) };
+        if (
+          typeof sanitized.title === "string" &&
+          sanitized.title.length > 100
+        ) {
           sanitized.title = sanitized.title.slice(0, 97) + "...";
         }
-        if (typeof sanitized.description === "string" && sanitized.description.length > 800) {
+        if (
+          typeof sanitized.description === "string" &&
+          sanitized.description.length > 800
+        ) {
           sanitized.description = sanitized.description.slice(0, 797) + "...";
         }
         const validated = pinterestCreatePinSchema.safeParse(sanitized);
         if (!validated.success) {
-          return { text: `Validation error: ${validated.error.issues.map(i => `${i.path.join(".")}: ${i.message}`).join("; ")}`, isError: true };
+          return {
+            text: `Validation error: ${validated.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ")}`,
+            isError: true,
+          };
         }
         const input = validated.data;
         const token = getToken();
-        if (!token) return { text: "PINTEREST_ACCESS_TOKEN not configured.", isError: true };
+        if (!token)
+          return {
+            text: "PINTEREST_ACCESS_TOKEN not configured.",
+            isError: true,
+          };
 
         // Build the pin payload
         const pin: Record<string, unknown> = {
@@ -1781,7 +2280,8 @@ export function createPinterestSeoTools(): ToolDefinition[] {
         };
         if (input.link) pin.link = input.link;
         if (input.alt_text) pin.alt_text = input.alt_text;
-        if (input.board_section_id) pin.board_section_id = input.board_section_id;
+        if (input.board_section_id)
+          pin.board_section_id = input.board_section_id;
 
         // Handle image source
         if (input.image_path) {
@@ -1792,8 +2292,11 @@ export function createPinterestSeoTools(): ToolDefinition[] {
           const imgBuf = fs.readFileSync(absPath);
           const ext = path.extname(absPath).toLowerCase();
           const contentTypes: Record<string, string> = {
-            ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
-            ".gif": "image/gif", ".webp": "image/webp",
+            ".png": "image/png",
+            ".jpg": "image/jpeg",
+            ".jpeg": "image/jpeg",
+            ".gif": "image/gif",
+            ".webp": "image/webp",
           };
           const contentType = contentTypes[ext] ?? "image/png";
           pin.media_source = {
@@ -1814,8 +2317,11 @@ export function createPinterestSeoTools(): ToolDefinition[] {
         const pinData = result.data!;
         const pinId = pinData.id as string;
         const pinUrl = `https://www.pinterest.com/pin/${pinId}/`;
-        const images = (pinData.media as Record<string, unknown>)?.images as Record<string, Record<string, unknown>> | undefined;
-        const thumbUrl = images?.["400x300"]?.url || images?.["600x"]?.url || "";
+        const images = (pinData.media as Record<string, unknown>)?.images as
+          | Record<string, Record<string, unknown>>
+          | undefined;
+        const thumbUrl =
+          images?.["400x300"]?.url || images?.["600x"]?.url || "";
 
         const md = [
           `# Pin Created Successfully`,
@@ -1837,8 +2343,15 @@ export function createPinterestSeoTools(): ToolDefinition[] {
         const ts = timestamp();
         const baseName = `pin-created-${pinId}-${ts}`;
         saveReport(`${baseName}.md`, md);
-        saveReportJson(baseName, { type: "pin-created", pin_id: pinId, generated: new Date().toISOString(), data: pinData });
-        return { text: `${md}\n\n---\n_Report saved to ${REPORTS_DIR}/${baseName}.md_` };
+        saveReportJson(baseName, {
+          type: "pin-created",
+          pin_id: pinId,
+          generated: new Date().toISOString(),
+          data: pinData,
+        });
+        return {
+          text: `${md}\n\n---\n_Report saved to ${REPORTS_DIR}/${baseName}.md_`,
+        };
       },
     },
 
@@ -1855,13 +2368,37 @@ export function createPinterestSeoTools(): ToolDefinition[] {
       inputSchema: {
         type: "object",
         properties: {
-          query: { type: "string", description: "Topic to research (e.g., 'spring nails', 'AI tools')" },
-          region: { type: "string", enum: [...PINTEREST_REGIONS], description: "Region for data" },
-          pin_ids: { type: "array", items: { type: "string" }, description: "Pin IDs to analyze" },
-          pin_urls: { type: "array", items: { type: "string" }, description: "Pinterest URLs to analyze" },
-          include_keyword_metrics: { type: "boolean", description: "Include search volume data" },
-          include_trend_data: { type: "boolean", description: "Include trend growth data" },
-          include_pin_analysis: { type: "boolean", description: "Analyze provided pins" },
+          query: {
+            type: "string",
+            description: "Topic to research (e.g., 'spring nails', 'AI tools')",
+          },
+          region: {
+            type: "string",
+            enum: [...PINTEREST_REGIONS],
+            description: "Region for data",
+          },
+          pin_ids: {
+            type: "array",
+            items: { type: "string" },
+            description: "Pin IDs to analyze",
+          },
+          pin_urls: {
+            type: "array",
+            items: { type: "string" },
+            description: "Pinterest URLs to analyze",
+          },
+          include_keyword_metrics: {
+            type: "boolean",
+            description: "Include search volume data",
+          },
+          include_trend_data: {
+            type: "boolean",
+            description: "Include trend growth data",
+          },
+          include_pin_analysis: {
+            type: "boolean",
+            description: "Analyze provided pins",
+          },
         },
         required: ["query"],
       },
@@ -1872,9 +2409,16 @@ export function createPinterestSeoTools(): ToolDefinition[] {
       handler: async (args) => {
         const input = pinterestPinInsightsSchema.parse(args);
         const token = getToken();
-        if (!token) return { text: "PINTEREST_ACCESS_TOKEN not configured.", isError: true };
+        if (!token)
+          return {
+            text: "PINTEREST_ACCESS_TOKEN not configured.",
+            isError: true,
+          };
 
-        const insights: InsightsData = { query: input.query, region: input.region };
+        const insights: InsightsData = {
+          query: input.query,
+          region: input.region,
+        };
 
         // 1. Get trend data for related keywords
         if (input.include_trend_data) {
@@ -1884,16 +2428,24 @@ export function createPinterestSeoTools(): ToolDefinition[] {
             new URLSearchParams({ limit: "25" }),
           );
           if (!trendResult.isError) {
-            const trendData = JSON.parse(trendResult.text) as { trends?: Array<Record<string, unknown>> };
+            const trendData = JSON.parse(trendResult.text) as {
+              trends?: Array<Record<string, unknown>>;
+            };
             const queryWords = input.query.toLowerCase().split(/\s+/);
             // Filter trends that match or relate to the query
             const allTrends = trendData.trends ?? [];
             const matchingTrends = allTrends.filter((t) => {
               const kw = String(t.keyword ?? "").toLowerCase();
-              return queryWords.some((w) => kw.includes(w)) || kw.includes(input.query.toLowerCase());
+              return (
+                queryWords.some((w) => kw.includes(w)) ||
+                kw.includes(input.query.toLowerCase())
+              );
             });
             // If no matching trends, show top trends as context
-            const trendsToShow = matchingTrends.length > 0 ? matchingTrends.slice(0, 15) : allTrends.slice(0, 10);
+            const trendsToShow =
+              matchingTrends.length > 0
+                ? matchingTrends.slice(0, 15)
+                : allTrends.slice(0, 10);
             insights.trends = trendsToShow.map((t) => ({
               keyword: String(t.keyword ?? "—"),
               wow: formatPct(t.pct_growth_wow),
@@ -1905,13 +2457,13 @@ export function createPinterestSeoTools(): ToolDefinition[] {
 
         // 2. Get keyword metrics for the query terms (enriched pipeline)
         if (input.include_keyword_metrics) {
-          const queryKeywords = [input.query, ...input.query.split(/\s+/).filter((w) => w.length > 2)];
+          const queryKeywords = [
+            input.query,
+            ...input.query.split(/\s+/).filter((w) => w.length > 2),
+          ];
           const uniqueKeywords = [...new Set(queryKeywords)].slice(0, 10);
-          const { keywords: enrichedKws, diagnosticNote } = await enrichKeywordMetrics(
-            uniqueKeywords,
-            token,
-            input.region,
-          );
+          const { keywords: enrichedKws, diagnosticNote } =
+            await enrichKeywordMetrics(uniqueKeywords, token, input.region);
           insights.keywords = enrichedKws.map((e) => ({
             keyword: e.keyword,
             searches: e.searches,
@@ -1933,7 +2485,9 @@ export function createPinterestSeoTools(): ToolDefinition[] {
           if (pinIds.length > 0) {
             const analyses: PinAnalysis[] = [];
             for (const pinId of [...new Set(pinIds)].slice(0, 10)) {
-              const analysis = await analyzeSinglePin(pinId, token, { includeAnnotations: true });
+              const analysis = await analyzeSinglePin(pinId, token, {
+                includeAnnotations: true,
+              });
               analyses.push(analysis);
             }
             insights.pinAnalyses = analyses;
@@ -1942,12 +2496,21 @@ export function createPinterestSeoTools(): ToolDefinition[] {
 
         const md = formatPinInsightsMarkdown(insights);
         const ts = timestamp();
-        const slug = input.query.replace(/\s+/g, "-").toLowerCase().slice(0, 30);
+        const slug = input.query
+          .replace(/\s+/g, "-")
+          .toLowerCase()
+          .slice(0, 30);
         const baseName = `pin-insights-${slug}-${ts}`;
         const filePath = saveReport(`${baseName}.md`, md);
-        saveReportJson(baseName, { type: "pin-insights", ...insights, generated: new Date().toISOString() });
+        saveReportJson(baseName, {
+          type: "pin-insights",
+          ...insights,
+          generated: new Date().toISOString(),
+        });
         const pdfPathInsights = await saveReportPdf(baseName, md, REPORTS_DIR);
-        return { text: `${md}\n\n---\n_Report saved to ${filePath}${pdfPathInsights ? ` · PDF: ${pdfPathInsights}` : ""}_` };
+        return {
+          text: `${md}\n\n---\n_Report saved to ${filePath}${pdfPathInsights ? ` · PDF: ${pdfPathInsights}` : ""}_`,
+        };
       },
     },
 
@@ -1967,11 +2530,30 @@ export function createPinterestSeoTools(): ToolDefinition[] {
         type: "object",
         properties: {
           query: { type: "string", description: "Topic to research" },
-          pin_urls: { type: "array", items: { type: "string" }, description: "Seed pin URLs to analyze and discover from" },
-          pin_ids: { type: "array", items: { type: "string" }, description: "Seed pin IDs to analyze and discover from" },
-          count: { type: "number", description: "Max pins to analyze (default: 10, max: 25)" },
-          region: { type: "string", enum: [...PINTEREST_REGIONS], description: "Region for trends/keywords" },
-          include_board_discovery: { type: "boolean", description: "Discover more pins from seed pin boards (default: true)" },
+          pin_urls: {
+            type: "array",
+            items: { type: "string" },
+            description: "Seed pin URLs to analyze and discover from",
+          },
+          pin_ids: {
+            type: "array",
+            items: { type: "string" },
+            description: "Seed pin IDs to analyze and discover from",
+          },
+          count: {
+            type: "number",
+            description: "Max pins to analyze (default: 10, max: 25)",
+          },
+          region: {
+            type: "string",
+            enum: [...PINTEREST_REGIONS],
+            description: "Region for trends/keywords",
+          },
+          include_board_discovery: {
+            type: "boolean",
+            description:
+              "Discover more pins from seed pin boards (default: true)",
+          },
         },
         required: ["query"],
       },
@@ -1982,7 +2564,11 @@ export function createPinterestSeoTools(): ToolDefinition[] {
       handler: async (args) => {
         const input = pinterestSearchPinsSchema.parse(args);
         const token = getToken();
-        if (!token) return { text: "PINTEREST_ACCESS_TOKEN not configured.", isError: true };
+        if (!token)
+          return {
+            text: "PINTEREST_ACCESS_TOKEN not configured.",
+            isError: true,
+          };
 
         const maxPins = input.count;
         const seedPinIds: string[] = [...(input.pin_ids ?? [])];
@@ -2012,8 +2598,9 @@ export function createPinterestSeoTools(): ToolDefinition[] {
 
           const { metadata, annotations, boardUrl } = pageData;
           if (metadata) {
-            const images = (metadata.media as Record<string, unknown> | undefined)?.images as
-              Record<string, Record<string, unknown>> | undefined;
+            const images = (
+              metadata.media as Record<string, unknown> | undefined
+            )?.images as Record<string, Record<string, unknown>> | undefined;
             const imageUrl = images?.original?.url as string | undefined;
             discoveredPins.push({
               pin_id: pinId,
@@ -2026,7 +2613,10 @@ export function createPinterestSeoTools(): ToolDefinition[] {
               board_url: (metadata.board_url as string) ?? null,
               annotations,
               pin_score: calculatePinScore(metadata, annotations),
-              seo_recommendations: generateSeoRecommendations(metadata, annotations),
+              seo_recommendations: generateSeoRecommendations(
+                metadata,
+                annotations,
+              ),
               source: "seed",
             });
           }
@@ -2058,8 +2648,9 @@ export function createPinterestSeoTools(): ToolDefinition[] {
               if (!pageData?.metadata) continue;
 
               const { metadata, annotations } = pageData;
-              const images = (metadata.media as Record<string, unknown> | undefined)?.images as
-                Record<string, Record<string, unknown>> | undefined;
+              const images = (
+                metadata.media as Record<string, unknown> | undefined
+              )?.images as Record<string, Record<string, unknown>> | undefined;
               const imageUrl = images?.original?.url as string | undefined;
               discoveredPins.push({
                 pin_id: pinId,
@@ -2072,7 +2663,10 @@ export function createPinterestSeoTools(): ToolDefinition[] {
                 board_url: (metadata.board_url as string) ?? null,
                 annotations,
                 pin_score: calculatePinScore(metadata, annotations),
-                seo_recommendations: generateSeoRecommendations(metadata, annotations),
+                seo_recommendations: generateSeoRecommendations(
+                  metadata,
+                  annotations,
+                ),
                 source: "board_discovery",
               });
 
@@ -2101,14 +2695,22 @@ export function createPinterestSeoTools(): ToolDefinition[] {
           new URLSearchParams({ limit: "25" }),
         );
         if (!trendResult.isError) {
-          const trendData = JSON.parse(trendResult.text) as { trends?: Array<Record<string, unknown>> };
+          const trendData = JSON.parse(trendResult.text) as {
+            trends?: Array<Record<string, unknown>>;
+          };
           const queryWords = input.query.toLowerCase().split(/\s+/);
           const allTrends = trendData.trends ?? [];
           const matchingTrends = allTrends.filter((t) => {
             const kw = String(t.keyword ?? "").toLowerCase();
-            return queryWords.some((w) => kw.includes(w)) || kw.includes(input.query.toLowerCase());
+            return (
+              queryWords.some((w) => kw.includes(w)) ||
+              kw.includes(input.query.toLowerCase())
+            );
           });
-          const trendsToShow = matchingTrends.length > 0 ? matchingTrends.slice(0, 15) : allTrends.slice(0, 10);
+          const trendsToShow =
+            matchingTrends.length > 0
+              ? matchingTrends.slice(0, 15)
+              : allTrends.slice(0, 10);
           result.trends = trendsToShow.map((t) => ({
             keyword: String(t.keyword ?? "—"),
             wow: formatPct(t.pct_growth_wow),
@@ -2119,7 +2721,10 @@ export function createPinterestSeoTools(): ToolDefinition[] {
 
         // Fetch keyword metrics (enriched pipeline)
         {
-          const queryKeywords = [input.query, ...input.query.split(/\s+/).filter((w) => w.length > 2)];
+          const queryKeywords = [
+            input.query,
+            ...input.query.split(/\s+/).filter((w) => w.length > 2),
+          ];
           const uniqueKeywords = [...new Set(queryKeywords)].slice(0, 10);
           const { keywords: enrichedKws } = await enrichKeywordMetrics(
             uniqueKeywords,
@@ -2135,23 +2740,33 @@ export function createPinterestSeoTools(): ToolDefinition[] {
 
         const md = formatSearchPinsMarkdown(result);
         const ts = timestamp();
-        const slug = input.query.replace(/\s+/g, "-").toLowerCase().slice(0, 30);
+        const slug = input.query
+          .replace(/\s+/g, "-")
+          .toLowerCase()
+          .slice(0, 30);
         const baseName = `search-pins-${slug}-${ts}`;
         const filePath = saveReport(`${baseName}.md`, md);
-        saveReportJson(baseName, { type: "search-pins", ...result, generated: new Date().toISOString() });
+        saveReportJson(baseName, {
+          type: "search-pins",
+          ...result,
+          generated: new Date().toISOString(),
+        });
         const pdfPathSearch = await saveReportPdf(baseName, md, REPORTS_DIR);
         const pdfSuffix = pdfPathSearch ? ` · PDF: ${pdfPathSearch}` : "";
 
         if (discoveredPins.length === 0 && uniqueSeeds.length === 0) {
           return {
-            text: `${md}\n\n---\n⚠️ **No seed pins provided.** To discover competitor pins, run one of:\n` +
+            text:
+              `${md}\n\n---\n⚠️ **No seed pins provided.** To discover competitor pins, run one of:\n` +
               `- \`web-search\` with query: \`site:pinterest.com/pin "${input.query}"\`\n` +
               `- \`browser-navigate\` to \`https://pinterest.com/search/pins/?q=${encodeURIComponent(input.query)}\` and extract pin URLs\n\n` +
               `Then re-run this tool with the discovered pin_urls.\n\n_Report saved to ${filePath}${pdfSuffix}_`,
           };
         }
 
-        return { text: `${md}\n\n---\n_Report saved to ${filePath}${pdfSuffix}_` };
+        return {
+          text: `${md}\n\n---\n_Report saved to ${filePath}${pdfSuffix}_`,
+        };
       },
     },
 
@@ -2165,9 +2780,20 @@ export function createPinterestSeoTools(): ToolDefinition[] {
       inputSchema: {
         type: "object",
         properties: {
-          topic: { type: "string", description: "Topic to generate content ideas for (e.g., 'home office decor', 'keto recipes')" },
-          region: { type: "string", enum: [...PINTEREST_REGIONS], description: "Region for trend data (default: US)" },
-          count: { type: "number", description: "Number of ideas to generate (default: 5, max: 10)" },
+          topic: {
+            type: "string",
+            description:
+              "Topic to generate content ideas for (e.g., 'home office decor', 'keto recipes')",
+          },
+          region: {
+            type: "string",
+            enum: [...PINTEREST_REGIONS],
+            description: "Region for trend data (default: US)",
+          },
+          count: {
+            type: "number",
+            description: "Number of ideas to generate (default: 5, max: 10)",
+          },
         },
         required: ["topic"],
       },
@@ -2178,7 +2804,11 @@ export function createPinterestSeoTools(): ToolDefinition[] {
       handler: async (args) => {
         const input = pinterestContentIdeasSchema.parse(args);
         const token = getToken();
-        if (!token) return { text: "PINTEREST_ACCESS_TOKEN not configured.", isError: true };
+        if (!token)
+          return {
+            text: "PINTEREST_ACCESS_TOKEN not configured.",
+            isError: true,
+          };
 
         const maxIdeas = Math.min(input.count ?? 5, 10);
 
@@ -2188,16 +2818,27 @@ export function createPinterestSeoTools(): ToolDefinition[] {
           token,
           new URLSearchParams({ limit: "25" }),
         );
-        let trendingKeywords: Array<{ keyword: string; mom: number; yoy: number }> = [];
+        let trendingKeywords: Array<{
+          keyword: string;
+          mom: number;
+          yoy: number;
+        }> = [];
         if (!trendResult.isError) {
-          const trendData = JSON.parse(trendResult.text) as { trends?: Array<Record<string, unknown>> };
+          const trendData = JSON.parse(trendResult.text) as {
+            trends?: Array<Record<string, unknown>>;
+          };
           const queryWords = input.topic.toLowerCase().split(/\s+/);
           const allTrends = trendData.trends ?? [];
           const matching = allTrends.filter((t) => {
             const kw = String(t.keyword ?? "").toLowerCase();
-            return queryWords.some((w) => kw.includes(w)) || kw.includes(input.topic.toLowerCase());
+            return (
+              queryWords.some((w) => kw.includes(w)) ||
+              kw.includes(input.topic.toLowerCase())
+            );
           });
-          trendingKeywords = (matching.length > 0 ? matching : allTrends.slice(0, 10)).map((t) => ({
+          trendingKeywords = (
+            matching.length > 0 ? matching : allTrends.slice(0, 10)
+          ).map((t) => ({
             keyword: String(t.keyword ?? ""),
             mom: Number(t.pct_growth_mom ?? 0),
             yoy: Number(t.pct_growth_yoy ?? 0),
@@ -2205,15 +2846,23 @@ export function createPinterestSeoTools(): ToolDefinition[] {
         }
 
         // Phase 2: Expand topic with Google Suggest for related keywords
-        const { suggestions } = await fetchGoogleSuggestKeywords(`${input.topic} pinterest`);
-        const expandedKeywords = [...new Set([
-          input.topic,
-          ...suggestions.slice(0, 10),
-          ...trendingKeywords.slice(0, 5).map((t) => t.keyword),
-        ])].slice(0, 20);
+        const { suggestions } = await fetchGoogleSuggestKeywords(
+          `${input.topic} pinterest`,
+        );
+        const expandedKeywords = [
+          ...new Set([
+            input.topic,
+            ...suggestions.slice(0, 10),
+            ...trendingKeywords.slice(0, 5).map((t) => t.keyword),
+          ]),
+        ].slice(0, 20);
 
         // Phase 3: Get keyword metrics for expanded keywords
-        const { keywords: enrichedKws } = await enrichKeywordMetrics(expandedKeywords, token, input.region);
+        const { keywords: enrichedKws } = await enrichKeywordMetrics(
+          expandedKeywords,
+          token,
+          input.region,
+        );
 
         // Phase 4: Generate content ideas
         const ideas: Array<{
@@ -2229,8 +2878,16 @@ export function createPinterestSeoTools(): ToolDefinition[] {
         const sortedKws = enrichedKws
           .filter((k) => k.searches !== "N/A" && k.searches !== "0")
           .sort((a, b) => {
-            const aScore = (a.competition.toLowerCase().includes("low") ? 3 : a.competition.toLowerCase().includes("med") ? 2 : 1);
-            const bScore = (b.competition.toLowerCase().includes("low") ? 3 : b.competition.toLowerCase().includes("med") ? 2 : 1);
+            const aScore = a.competition.toLowerCase().includes("low")
+              ? 3
+              : a.competition.toLowerCase().includes("med")
+                ? 2
+                : 1;
+            const bScore = b.competition.toLowerCase().includes("low")
+              ? 3
+              : b.competition.toLowerCase().includes("med")
+                ? 2
+                : 1;
             return bScore - aScore;
           });
 
@@ -2242,12 +2899,21 @@ export function createPinterestSeoTools(): ToolDefinition[] {
           usedKeywords.add(kw.keyword.toLowerCase());
 
           const relatedKws = sortedKws
-            .filter((k) => k.keyword !== kw.keyword && k.keyword.toLowerCase().includes(kw.keyword.toLowerCase().split(" ")[0]))
+            .filter(
+              (k) =>
+                k.keyword !== kw.keyword &&
+                k.keyword
+                  .toLowerCase()
+                  .includes(kw.keyword.toLowerCase().split(" ")[0]),
+            )
             .slice(0, 3)
             .map((k) => k.keyword);
 
-          const difficulty = kw.competition.toLowerCase().includes("high") ? "high"
-            : kw.competition.toLowerCase().includes("med") ? "medium" : "low";
+          const difficulty = kw.competition.toLowerCase().includes("high")
+            ? "high"
+            : kw.competition.toLowerCase().includes("med")
+              ? "medium"
+              : "low";
 
           ideas.push({
             title: generateIdeaTitle(kw.keyword, input.topic),
@@ -2277,7 +2943,8 @@ export function createPinterestSeoTools(): ToolDefinition[] {
 
         // Save ideas to tracker DB
         const { getDatabase } = await import("../../productivity/database.js");
-        const { PinterestTrackerRepository } = await import("./pinterest-tracker.js");
+        const { PinterestTrackerRepository } =
+          await import("./pinterest-tracker.js");
         const db = getDatabase();
         const trackerRepo = new PinterestTrackerRepository(db);
         for (const idea of ideas) {
@@ -2288,7 +2955,10 @@ export function createPinterestSeoTools(): ToolDefinition[] {
             target_keywords: JSON.stringify(idea.target_keywords),
             difficulty: idea.difficulty,
             estimated_volume: idea.estimated_volume,
-            source_data: JSON.stringify({ reasoning: idea.reasoning, region: input.region }),
+            source_data: JSON.stringify({
+              reasoning: idea.reasoning,
+              region: input.region,
+            }),
             created_at: new Date().toISOString(),
             status: "new",
             pin_id: null,
@@ -2310,7 +2980,9 @@ export function createPinterestSeoTools(): ToolDefinition[] {
           lines.push(`## ${i + 1}. ${idea.title}`);
           lines.push(``);
           lines.push(`**Target Keywords:** ${idea.target_keywords.join(", ")}`);
-          lines.push(`**Search Volume:** ${idea.estimated_volume} | **Difficulty:** ${idea.difficulty}`);
+          lines.push(
+            `**Search Volume:** ${idea.estimated_volume} | **Difficulty:** ${idea.difficulty}`,
+          );
           lines.push(`**Why:** ${idea.reasoning}`);
           lines.push(``);
           lines.push(`> ${idea.description}`);
@@ -2318,14 +2990,25 @@ export function createPinterestSeoTools(): ToolDefinition[] {
         }
 
         lines.push(`---`);
-        lines.push(`_${ideas.length} ideas saved to your Content Ideas tracker. View them in the Pinterest Analytics dashboard._`);
+        lines.push(
+          `_${ideas.length} ideas saved to your Content Ideas tracker. View them in the Pinterest Analytics dashboard._`,
+        );
 
         const md = lines.join("\n");
         const ts = timestamp();
-        const slug = input.topic.replace(/\s+/g, "-").toLowerCase().slice(0, 30);
+        const slug = input.topic
+          .replace(/\s+/g, "-")
+          .toLowerCase()
+          .slice(0, 30);
         const baseName = `content-ideas-${slug}-${ts}`;
         saveReport(`${baseName}.md`, md);
-        saveReportJson(baseName, { type: "content-ideas", topic: input.topic, region: input.region, generated: new Date().toISOString(), ideas });
+        saveReportJson(baseName, {
+          type: "content-ideas",
+          topic: input.topic,
+          region: input.region,
+          generated: new Date().toISOString(),
+          ideas,
+        });
 
         return { text: md };
       },
@@ -2341,8 +3024,15 @@ export function createPinterestSeoTools(): ToolDefinition[] {
       inputSchema: {
         type: "object",
         properties: {
-          seed: { type: "string", description: "Seed keyword to expand (e.g., 'home office decor')" },
-          region: { type: "string", enum: [...PINTEREST_REGIONS], description: "Region for metrics (default: US)" },
+          seed: {
+            type: "string",
+            description: "Seed keyword to expand (e.g., 'home office decor')",
+          },
+          region: {
+            type: "string",
+            enum: [...PINTEREST_REGIONS],
+            description: "Region for metrics (default: US)",
+          },
         },
         required: ["seed"],
       },
@@ -2353,7 +3043,11 @@ export function createPinterestSeoTools(): ToolDefinition[] {
       handler: async (args) => {
         const input = pinterestRelatedKeywordsSchema.parse(args);
         const token = getToken();
-        if (!token) return { text: "PINTEREST_ACCESS_TOKEN not configured.", isError: true };
+        if (!token)
+          return {
+            text: "PINTEREST_ACCESS_TOKEN not configured.",
+            isError: true,
+          };
 
         // Phase 1: Google Suggest expansion (multiple variations)
         const variations = [
@@ -2379,30 +3073,40 @@ export function createPinterestSeoTools(): ToolDefinition[] {
             new URLSearchParams({ term: input.seed, limit: "20" }),
           );
           if (!pinterestAcResult.isError) {
-            const acData = JSON.parse(pinterestAcResult.text) as Array<Record<string, unknown>>;
+            const acData = JSON.parse(pinterestAcResult.text) as Array<
+              Record<string, unknown>
+            >;
             for (const item of acData) {
-              if (typeof item.keyword === "string") allSuggestions.add(item.keyword);
+              if (typeof item.keyword === "string")
+                allSuggestions.add(item.keyword);
             }
           }
-        } catch { /* Pinterest autocomplete may not be available */ }
+        } catch {
+          /* Pinterest autocomplete may not be available */
+        }
 
         const expandedKeywords = [...allSuggestions].slice(0, 30);
 
         // Phase 3: Get metrics for all expanded keywords
-        const { keywords: enrichedKws, diagnosticNote } = await enrichKeywordMetrics(
-          expandedKeywords,
-          token,
-          input.region,
-        );
+        const { keywords: enrichedKws, diagnosticNote } =
+          await enrichKeywordMetrics(expandedKeywords, token, input.region);
 
         // Sort by opportunity score (low competition + high volume = better)
-        const scored = enrichedKws.map((kw) => {
-          const compScore = kw.competition.toLowerCase().includes("low") ? 3
-            : kw.competition.toLowerCase().includes("med") ? 2 : 1;
-          const volScore = kw.searches.toLowerCase().includes("k") ? 2
-            : kw.searches !== "N/A" && kw.searches !== "0" ? 1 : 0;
-          return { ...kw, opportunityScore: compScore + volScore };
-        }).sort((a, b) => b.opportunityScore - a.opportunityScore);
+        const scored = enrichedKws
+          .map((kw) => {
+            const compScore = kw.competition.toLowerCase().includes("low")
+              ? 3
+              : kw.competition.toLowerCase().includes("med")
+                ? 2
+                : 1;
+            const volScore = kw.searches.toLowerCase().includes("k")
+              ? 2
+              : kw.searches !== "N/A" && kw.searches !== "0"
+                ? 1
+                : 0;
+            return { ...kw, opportunityScore: compScore + volScore };
+          })
+          .sort((a, b) => b.opportunityScore - a.opportunityScore);
 
         // Format output
         const lines = [
@@ -2419,8 +3123,12 @@ export function createPinterestSeoTools(): ToolDefinition[] {
         ];
 
         for (const kw of scored) {
-          const stars = "★".repeat(kw.opportunityScore) + "☆".repeat(5 - kw.opportunityScore);
-          lines.push(`| ${kw.keyword} | ${kw.searches} | ${kw.competition} | ${kw.source} | ${stars} |`);
+          const stars =
+            "★".repeat(kw.opportunityScore) +
+            "☆".repeat(5 - kw.opportunityScore);
+          lines.push(
+            `| ${kw.keyword} | ${kw.searches} | ${kw.competition} | ${kw.source} | ${stars} |`,
+          );
         }
 
         lines.push(``);
@@ -2434,17 +3142,27 @@ export function createPinterestSeoTools(): ToolDefinition[] {
           lines.push(`## 🎯 Top Picks (Low Competition + High Volume)`);
           lines.push(``);
           for (const kw of goldKeywords) {
-            lines.push(`- **${kw.keyword}** — ${kw.searches} searches, ${kw.competition} competition`);
+            lines.push(
+              `- **${kw.keyword}** — ${kw.searches} searches, ${kw.competition} competition`,
+            );
           }
           lines.push(``);
         }
 
         lines.push(`## Suggested Pin Strategy`);
         lines.push(``);
-        lines.push(`1. Create pins targeting the top 3-5 low-competition keywords first`);
-        lines.push(`2. Use the high-volume keywords in pin descriptions and alt text`);
-        lines.push(`3. Monitor performance with \`pinterest-analytics\` after 7 days`);
-        lines.push(`4. Generate content ideas with \`pinterest-content-ideas\` for any winning keywords`);
+        lines.push(
+          `1. Create pins targeting the top 3-5 low-competition keywords first`,
+        );
+        lines.push(
+          `2. Use the high-volume keywords in pin descriptions and alt text`,
+        );
+        lines.push(
+          `3. Monitor performance with \`pinterest-analytics\` after 7 days`,
+        );
+        lines.push(
+          `4. Generate content ideas with \`pinterest-content-ideas\` for any winning keywords`,
+        );
 
         const md = lines.join("\n");
         const ts = timestamp();
@@ -2460,7 +3178,9 @@ export function createPinterestSeoTools(): ToolDefinition[] {
         });
         const pdfPathRelated = await saveReportPdf(baseName, md, REPORTS_DIR);
 
-        return { text: `${md}\n\n---\n_Report saved to ${filePath}${pdfPathRelated ? ` · PDF: ${pdfPathRelated}` : ""}_` };
+        return {
+          text: `${md}\n\n---\n_Report saved to ${filePath}${pdfPathRelated ? ` · PDF: ${pdfPathRelated}` : ""}_`,
+        };
       },
     },
   ];
@@ -2496,44 +3216,69 @@ function extractMetadataFromHtml(html: string): Record<string, unknown> | null {
   /** Match a meta tag by property/name, regardless of attribute order. */
   const getMetaContent = (propName: string): string | null => {
     // Order 1: property/name first, then content
-    const r1 = new RegExp(`<meta\\s+(?:property|name)="${propName}"[^>]*?content="([^"]+)"`, "i");
+    const r1 = new RegExp(
+      `<meta\\s+(?:property|name)="${propName}"[^>]*?content="([^"]+)"`,
+      "i",
+    );
     const m1 = html.match(r1);
     if (m1?.[1]) return m1[1];
     // Order 2: content first, then property/name
-    const r2 = new RegExp(`<meta\\s+content="([^"]+)"[^>]*?(?:property|name)="${propName}"`, "i");
+    const r2 = new RegExp(
+      `<meta\\s+content="([^"]+)"[^>]*?(?:property|name)="${propName}"`,
+      "i",
+    );
     const m2 = html.match(r2);
     return m2?.[1] ?? null;
   };
 
   const title = getMetaContent("og:title");
-  if (title) { meta.title = title; found = true; }
+  if (title) {
+    meta.title = title;
+    found = true;
+  }
 
   const desc = getMetaContent("og:description");
-  if (desc) { meta.description = desc; found = true; }
+  if (desc) {
+    meta.description = desc;
+    found = true;
+  }
 
-  const image = getMetaContent("pinterestapp:pinimage") ?? getMetaContent("og:image");
+  const image =
+    getMetaContent("pinterestapp:pinimage") ?? getMetaContent("og:image");
   if (image) {
     meta.media = { media_type: "image", images: { original: { url: image } } };
     found = true;
   }
 
   const link = getMetaContent("pinterestapp:source");
-  if (link) { meta.link = link; found = true; }
+  if (link) {
+    meta.link = link;
+    found = true;
+  }
 
   // pinterestapp:repins (engagement metric — saves/repins count)
   const repinsStr = getMetaContent("pinterestapp:repins");
   if (repinsStr) {
     const repins = parseInt(repinsStr, 10);
-    if (!isNaN(repins)) { meta.repins = repins; found = true; }
+    if (!isNaN(repins)) {
+      meta.repins = repins;
+      found = true;
+    }
   }
 
   // pinterestapp:pinboard (board URL for discovery)
   const boardUrl = getMetaContent("pinterestapp:pinboard");
-  if (boardUrl) { meta.board_url = boardUrl; found = true; }
+  if (boardUrl) {
+    meta.board_url = boardUrl;
+    found = true;
+  }
 
   // pinterestapp:pinner
   const pinnerUrl = getMetaContent("pinterestapp:pinner");
-  if (pinnerUrl) { meta.pinner_url = pinnerUrl; found = true; }
+  if (pinnerUrl) {
+    meta.pinner_url = pinnerUrl;
+    found = true;
+  }
 
   // Also try __PWS_DATA__ for richer data
   const pwsMatch = html.match(/__PWS_DATA__\s*=\s*({[\s\S]*?});\s*<\/script>/);
@@ -2542,10 +3287,18 @@ function extractMetadataFromHtml(html: string): Record<string, unknown> | null {
       const pws = JSON.parse(pwsMatch[1]);
       const traverse = (obj: unknown): void => {
         if (!obj || typeof obj !== "object") return;
-        if (Array.isArray(obj)) { for (const item of obj) traverse(item); return; }
+        if (Array.isArray(obj)) {
+          for (const item of obj) traverse(item);
+          return;
+        }
         const rec = obj as Record<string, unknown>;
         // Look for pin-level data with title/description
-        if (rec.title && typeof rec.title === "string" && rec.description !== undefined && !meta.title) {
+        if (
+          rec.title &&
+          typeof rec.title === "string" &&
+          rec.description !== undefined &&
+          !meta.title
+        ) {
           meta.title = rec.title;
           if (rec.description) meta.description = rec.description;
           if (rec.link) meta.link = rec.link;
@@ -2555,7 +3308,9 @@ function extractMetadataFromHtml(html: string): Record<string, unknown> | null {
         for (const val of Object.values(rec)) traverse(val);
       };
       traverse(pws);
-    } catch { /* ignore parse errors */ }
+    } catch {
+      /* ignore parse errors */
+    }
   }
 
   return found ? meta : null;
@@ -2572,7 +3327,12 @@ async function analyzeSinglePin(
     try {
       const res = await fetch(
         `${PINTEREST_API_BASE}/pins/${encodeURIComponent(pinId)}?pin_metrics=true`,
-        { headers: { Authorization: `Bearer ${token}`, Accept: "application/json" } },
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            Accept: "application/json",
+          },
+        },
       );
       if (res.ok) apiData = (await res.json()) as Record<string, unknown>;
     } catch {
@@ -2613,10 +3373,15 @@ async function analyzeSinglePin(
   const pinScore = calculatePinScore(effectiveData, annotations);
 
   // Phase 4: SEO recommendations
-  const seoRecommendations = generateSeoRecommendations(effectiveData, annotations);
+  const seoRecommendations = generateSeoRecommendations(
+    effectiveData,
+    annotations,
+  );
 
   const media = effectiveData?.media as Record<string, unknown> | undefined;
-  const pinMetrics = apiData?.pin_metrics as Record<string, unknown> | undefined;
+  const pinMetrics = apiData?.pin_metrics as
+    | Record<string, unknown>
+    | undefined;
 
   return {
     pin_id: pinId,

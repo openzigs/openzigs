@@ -156,6 +156,7 @@ export function createLeadExtractTool(
         includePatterns: {
           type: "array",
           description: "Additional URL path patterns to include (regex)",
+          items: { type: "string" },
         },
         outputTo: {
           type: "object",

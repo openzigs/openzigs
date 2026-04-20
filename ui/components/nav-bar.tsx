@@ -61,6 +61,7 @@ const NAV_GROUPS: NavGroup[] = [
       { href: "/skills", label: "Skills" },
       { href: "/scheduler", label: "Scheduler" },
       { href: "/tasks", label: "Tasks" },
+      { href: "/seo", label: "SEO Suite" },
     ],
   },
   {

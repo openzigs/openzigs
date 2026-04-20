@@ -4,26 +4,18 @@ import { CrawlDashboardPage } from "./pages/crawl-dashboard.page";
 /**
  * E2E tests for the Firecrawl Crawl Dashboard (Epic #723, Issue #730).
  *
- * Acceptance Criteria Coverage:
- * | # | Criterion (from #730)                                     | Test(s)                                             |
- * |---|-----------------------------------------------------------|-----------------------------------------------------|
- * | 1 | Crawl dashboard accessible from workbench toolbar          | should show Crawl button in workbench toolbar        |
- * | 2 | Dialog opens with title and description                   | should open dialog with title and description        |
- * | 3 | Three action modes: Site Audit, Ingest, Monitor           | should display all three action mode buttons         |
- * | 4 | URL validation rejects empty URL                          | should show error when submitting with empty URL     |
- * | 5 | Max pages and max depth controls visible                  | should display max pages and max depth inputs        |
- * | 6 | Submit button text changes per action                     | should show correct submit button text per action    |
- * | 7 | Ingest mode shows category and visibility selects         | should show ingest-specific fields                   |
- * | 8 | Monitor mode shows action type selector                   | should show monitor-specific fields                  |
- * | 9 | Cancel closes dialog                                      | should close dialog when cancel is clicked           |
- * |10 | Monitor "List" action hides URL input                     | should hide URL input for Monitor List action        |
- * |11 | Monitor "Add" action shows competitor name field           | should show competitor name for Add action           |
- * |12 | URL input has correct placeholder                         | should show correct placeholder on URL input         |
- * |13 | Max pages respects bounds per action                      | should have correct max attribute on page limit      |
- * |14 | Dialog not rendered when closed                           | should not show dialog content before opening        |
+ * NOTE: These tests were written for the CrawlDashboardDialog when it was
+ * mounted in the Workbench toolbar. The dialog has been removed from the
+ * Workbench and its functionality consolidated into the /seo page
+ * (see SEO Suite consolidation in Epic #838). The component file itself
+ * is kept for potential future standalone use.
+ *
+ * TODO: Migrate these tests to target the /seo page mode-specific forms,
+ * or re-enable if CrawlDashboardDialog is re-mounted elsewhere.
  */
 
-test.describe("Firecrawl Crawl Dashboard (#730)", () => {
+test.describe
+  .skip("Firecrawl Crawl Dashboard (#730) — SKIPPED: migrated to /seo", () => {
   let cd: CrawlDashboardPage;
 
   test.beforeEach(async ({ page }) => {
@@ -117,7 +109,7 @@ test.describe("Firecrawl Crawl Dashboard (#730)", () => {
   });
 });
 
-test.describe("Firecrawl Crawl Dashboard — Ingest mode (#730)", () => {
+test.describe.skip("Firecrawl Crawl Dashboard — Ingest mode (#730)", () => {
   let cd: CrawlDashboardPage;
 
   test.beforeEach(async ({ page }) => {
@@ -179,7 +171,7 @@ test.describe("Firecrawl Crawl Dashboard — Ingest mode (#730)", () => {
   });
 });
 
-test.describe("Firecrawl Crawl Dashboard — Monitor mode (#730)", () => {
+test.describe.skip("Firecrawl Crawl Dashboard — Monitor mode (#730)", () => {
   let cd: CrawlDashboardPage;
 
   test.beforeEach(async ({ page }) => {
@@ -255,7 +247,7 @@ test.describe("Firecrawl Crawl Dashboard — Monitor mode (#730)", () => {
   });
 });
 
-test.describe("Firecrawl Crawl Dashboard — action switching (#730)", () => {
+test.describe.skip("Firecrawl Crawl Dashboard — action switching (#730)", () => {
   let cd: CrawlDashboardPage;
 
   test.beforeEach(async ({ page }) => {
@@ -338,7 +330,7 @@ test.describe("Firecrawl Crawl Dashboard — action switching (#730)", () => {
  * |24 | All 7 modes switchable                                        | should cycle through all seven action modes                  |
  */
 
-test.describe("Firecrawl Crawl Dashboard — all action modes (#723)", () => {
+test.describe.skip("Firecrawl Crawl Dashboard — all action modes (#723)", () => {
   let cd: CrawlDashboardPage;
 
   test.beforeEach(async ({ page }) => {
@@ -425,7 +417,7 @@ test.describe("Firecrawl Crawl Dashboard — all action modes (#723)", () => {
   });
 });
 
-test.describe("Firecrawl Crawl Dashboard — Extract mode (#733, #734)", () => {
+test.describe.skip("Firecrawl Crawl Dashboard — Extract mode (#733, #734)", () => {
   let cd: CrawlDashboardPage;
 
   test.beforeEach(async ({ page }) => {
@@ -526,7 +518,7 @@ test.describe("Firecrawl Crawl Dashboard — Extract mode (#733, #734)", () => {
   });
 });
 
-test.describe("Firecrawl Crawl Dashboard — Extraction History (#734)", () => {
+test.describe.skip("Firecrawl Crawl Dashboard — Extraction History (#734)", () => {
   let cd: CrawlDashboardPage;
 
   test.beforeEach(async ({ page }) => {
@@ -603,7 +595,7 @@ test.describe("Firecrawl Crawl Dashboard — Extraction History (#734)", () => {
   });
 });
 
-test.describe("Firecrawl Crawl Dashboard — Leads mode (#723)", () => {
+test.describe.skip("Firecrawl Crawl Dashboard — Leads mode (#723)", () => {
   let cd: CrawlDashboardPage;
 
   test.beforeEach(async ({ page }) => {
@@ -642,7 +634,7 @@ test.describe("Firecrawl Crawl Dashboard — Leads mode (#723)", () => {
   });
 });
 
-test.describe("Firecrawl Crawl Dashboard — Prices mode (#736)", () => {
+test.describe.skip("Firecrawl Crawl Dashboard — Prices mode (#736)", () => {
   let cd: CrawlDashboardPage;
 
   test.beforeEach(async ({ page }) => {
@@ -718,7 +710,7 @@ test.describe("Firecrawl Crawl Dashboard — Prices mode (#736)", () => {
   });
 });
 
-test.describe("Firecrawl Crawl Dashboard — Dataset mode (#723)", () => {
+test.describe.skip("Firecrawl Crawl Dashboard — Dataset mode (#723)", () => {
   let cd: CrawlDashboardPage;
 
   test.beforeEach(async ({ page }) => {

@@ -26,21 +26,48 @@ const makeContent = (overrides = {}) => ({
   readabilityScore: 65.2,
   metaTitle: "Test Page - Example",
   metaDescription: "A test page for SEO analysis with detailed content.",
-  metaTags: [{ name: "description", content: "A test page for SEO analysis with detailed content." }],
+  metaTags: [
+    {
+      name: "description",
+      content: "A test page for SEO analysis with detailed content.",
+    },
+  ],
   images: [
-    { src: "/img/hero.jpg", alt: "Hero image", hasAlt: true, altStatus: "present" as const, isAriaHidden: false, isLazyLoaded: false },
-    { src: "/img/chart.png", alt: "", hasAlt: false, altStatus: "empty" as const, isAriaHidden: false, isLazyLoaded: false },
+    {
+      src: "/img/hero.jpg",
+      alt: "Hero image",
+      hasAlt: true,
+      altStatus: "present" as const,
+      isAriaHidden: false,
+      isLazyLoaded: false,
+    },
+    {
+      src: "/img/chart.png",
+      alt: "",
+      hasAlt: false,
+      altStatus: "empty" as const,
+      isAriaHidden: false,
+      isLazyLoaded: false,
+    },
   ],
   imagesWithoutAlt: 1,
   imagesMissingAlt: 0,
   imagesEmptyAlt: 1,
   imagesAriaHidden: 0,
   imagesLazyLoaded: 0,
-  schemaMarkup: [{ type: "Article", properties: ["headline", "author", "datePublished"] }],
+  schemaMarkup: [
+    { type: "Article", properties: ["headline", "author", "datePublished"] },
+  ],
   internalLinks: [{ href: "/about", text: "About Us", isInternal: true }],
-  externalLinks: [{ href: "https://external.com", text: "External", isInternal: false }],
+  externalLinks: [
+    { href: "https://external.com", text: "External", isInternal: false },
+  ],
   internalLinkCount: 1,
   externalLinkCount: 1,
+  canonical: null,
+  hreflangTags: [],
+  metaRobots: null,
+  jsonLdBlocks: [],
   ...overrides,
 });
 
@@ -49,8 +76,14 @@ const makeInput = (overrides = {}): AnalysisInput => ({
   targetKeyword: "test keyword",
   targetContent: makeContent(),
   competitors: [
-    { ...makeContent({ title: "Competitor 1", wordCount: 800 }), url: "https://comp1.com/page" },
-    { ...makeContent({ title: "Competitor 2", wordCount: 600 }), url: "https://comp2.com/page" },
+    {
+      ...makeContent({ title: "Competitor 1", wordCount: 800 }),
+      url: "https://comp1.com/page",
+    },
+    {
+      ...makeContent({ title: "Competitor 2", wordCount: 600 }),
+      url: "https://comp2.com/page",
+    },
   ],
   serpFeatures: {
     paa: ["What is testing?", "How to test?"],
@@ -127,7 +160,11 @@ describe("report-generator", () => {
     it("handles empty PAA and related searches", () => {
       const prompt = buildAnalysisPrompt(
         makeInput({
-          serpFeatures: { paa: [], relatedSearches: [], featuredSnippet: undefined },
+          serpFeatures: {
+            paa: [],
+            relatedSearches: [],
+            featuredSnippet: undefined,
+          },
         }),
       );
       expect(prompt).not.toContain("People Also Ask");
@@ -215,7 +252,11 @@ describe("report-generator", () => {
     it("omits SERP section when empty", () => {
       const report = generateMetricsReport(
         makeInput({
-          serpFeatures: { paa: [], relatedSearches: [], featuredSnippet: undefined },
+          serpFeatures: {
+            paa: [],
+            relatedSearches: [],
+            featuredSnippet: undefined,
+          },
         }),
       );
       expect(report).not.toContain("SERP Feature Opportunities");
@@ -252,7 +293,10 @@ describe("report-generator", () => {
         makeInput({
           targetContent: makeContent({ schemaMarkup: [] }),
           competitors: [
-            { ...makeContent({ title: "C1", wordCount: 800, schemaMarkup: [] }), url: "https://comp1.com/page" },
+            {
+              ...makeContent({ title: "C1", wordCount: 800, schemaMarkup: [] }),
+              url: "https://comp1.com/page",
+            },
           ],
         }),
       );
@@ -295,8 +339,13 @@ describe("report-generator", () => {
 
   describe("buildReportFilename", () => {
     it("generates a filename with domain and keyword slug", () => {
-      const name = buildReportFilename("https://example.com/page", "best coffee makers");
-      expect(name).toMatch(/^example\.com-best-coffee-makers-\d{4}-\d{2}-\d{2}\.md$/);
+      const name = buildReportFilename(
+        "https://example.com/page",
+        "best coffee makers",
+      );
+      expect(name).toMatch(
+        /^example\.com-best-coffee-makers-\d{4}-\d{2}-\d{2}\.md$/,
+      );
     });
 
     it("strips www. from domain", () => {
@@ -305,7 +354,10 @@ describe("report-generator", () => {
     });
 
     it("handles special characters in keyword", () => {
-      const name = buildReportFilename("https://example.com", "what's the best way?");
+      const name = buildReportFilename(
+        "https://example.com",
+        "what's the best way?",
+      );
       expect(name).not.toContain("?");
       expect(name).not.toContain("'");
       expect(name).toMatch(/\.md$/);
@@ -336,7 +388,9 @@ describe("report-generator", () => {
     });
 
     it("strips www. prefix", () => {
-      expect(buildReportSubdir("https://www.example.com/page")).toBe("example.com");
+      expect(buildReportSubdir("https://www.example.com/page")).toBe(
+        "example.com",
+      );
     });
 
     it("returns 'unknown' for invalid URLs", () => {
@@ -344,7 +398,9 @@ describe("report-generator", () => {
     });
 
     it("preserves subdomains other than www", () => {
-      expect(buildReportSubdir("https://blog.example.com/post")).toBe("blog.example.com");
+      expect(buildReportSubdir("https://blog.example.com/post")).toBe(
+        "blog.example.com",
+      );
     });
   });
 });

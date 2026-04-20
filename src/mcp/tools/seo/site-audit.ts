@@ -18,9 +18,42 @@ import path from "node:path";
 import os from "node:os";
 import type { ToolDefinition } from "../../tool-registry.js";
 import { extractContent, type ExtractedContent } from "./html-extractor.js";
-import { getFirecrawlClient, isBlockedUrl, type CrawlPage } from "../../../browser/firecrawl-client.js";
+import {
+  getFirecrawlClient,
+  isBlockedUrl,
+  type CrawlPage,
+} from "../../../browser/firecrawl-client.js";
 import { buildReportSubdir, buildReportFilename } from "./report-generator.js";
 import { saveReportPdf } from "../shared/pdf-export.js";
+import {
+  calculateHealthScore,
+  classifyAuditIssue,
+  type ClassifiedIssue,
+} from "./health-score.js";
+import { AuditHistoryRepository } from "./audit-history.js";
+import { getDatabase } from "../../../productivity/database.js";
+import {
+  analyzeLinks,
+  type CrawledPageLinks,
+  type LinkAnalysisResult,
+} from "./link-analyzer.js";
+import {
+  analyzeContent,
+  analyzeContentFreshness,
+  type ContentPage,
+  type ContentAnalysisResult,
+} from "./content-analyzer.js";
+import {
+  type RobotsTxtResult,
+  fetchRobotsTxt,
+  isUrlAllowed,
+  detectRobotsIssues,
+} from "./robots-checker.js";
+import {
+  fetchAndValidateSitemap,
+  compareSitemapToCrawl,
+} from "./sitemap-validator.js";
+import { validateStructuredData } from "./structured-data-validator.js";
 
 const SEO_REPORTS_DIR = path.join(os.homedir(), ".openzigs", "seo-reports");
 
@@ -60,6 +93,7 @@ export interface SiteAuditResult {
   infoCount: number;
   pages: PageAuditResult[];
   siteWideIssues: AuditIssue[];
+  categoryStats: CategoryStats[];
   reportPath: string;
   pdfPath: string | null;
 }
@@ -96,6 +130,138 @@ const seoSiteAuditSchema = z.object({
 
 // ── Audit Logic ──────────────────────────────────────────────────────────
 
+/**
+ * Validate a BCP 47 language code (simplified).
+ * Accepts: en, en-US, zh-Hans, pt-BR, etc.
+ */
+export function isValidBcp47(code: string): boolean {
+  return /^[a-zA-Z]{2,3}(-[a-zA-Z]{2,4}(-[a-zA-Z]{2})?)?$/.test(code);
+}
+
+/**
+ * Calculate the percentage of total URLs affected for each issue category.
+ * Returns a map of category → { count, percentage }.
+ */
+export interface CategoryStats {
+  category: string;
+  affectedCount: number;
+  percentage: number;
+}
+
+export function calculateAffectedPercentages(
+  pages: PageAuditResult[],
+  siteWideIssues: AuditIssue[],
+): CategoryStats[] {
+  const totalUrls = pages.length;
+  if (totalUrls === 0) return [];
+
+  const categoryUrls = new Map<string, Set<string>>();
+
+  for (const page of pages) {
+    for (const issue of page.issues) {
+      const urls = categoryUrls.get(issue.category) ?? new Set();
+      urls.add(page.url);
+      categoryUrls.set(issue.category, urls);
+    }
+  }
+
+  // Site-wide issues affect all pages
+  for (const issue of siteWideIssues) {
+    if (!categoryUrls.has(issue.category)) {
+      categoryUrls.set(issue.category, new Set(pages.map((p) => p.url)));
+    }
+  }
+
+  return [...categoryUrls.entries()].map(([category, urls]) => ({
+    category,
+    affectedCount: urls.size,
+    percentage: Math.round((urls.size / totalUrls) * 100),
+  }));
+}
+
+// ── Social Meta (OG & Twitter Card) Audit (#876) ────────────────────────
+
+const VALID_TWITTER_CARD_TYPES = new Set([
+  "summary",
+  "summary_large_image",
+  "app",
+  "player",
+]);
+
+/**
+ * Audit Open Graph and Twitter Card meta tags for a single page.
+ * Returns issues in the "Social" category.
+ */
+export function auditSocialMeta(content: ExtractedContent): AuditIssue[] {
+  const issues: AuditIssue[] = [];
+  const metaMap = new Map<string, string>();
+
+  for (const tag of content.metaTags) {
+    const key = tag.name.toLowerCase();
+    if (key.startsWith("og:") || key.startsWith("twitter:")) {
+      metaMap.set(key, tag.content);
+    }
+  }
+
+  // Open Graph checks
+  if (!metaMap.has("og:title")) {
+    issues.push({
+      severity: "error",
+      category: "Social",
+      message: "Missing og:title — required for social sharing previews",
+    });
+  }
+  if (!metaMap.has("og:description")) {
+    issues.push({
+      severity: "error",
+      category: "Social",
+      message: "Missing og:description — required for social sharing previews",
+    });
+  }
+  if (!metaMap.has("og:image")) {
+    issues.push({
+      severity: "warning",
+      category: "Social",
+      message: "Missing og:image — social shares will lack a preview image",
+    });
+  }
+  if (!metaMap.has("og:url")) {
+    issues.push({
+      severity: "info",
+      category: "Social",
+      message: "Missing og:url — recommended for canonical social sharing URL",
+    });
+  }
+  if (!metaMap.has("og:type")) {
+    issues.push({
+      severity: "info",
+      category: "Social",
+      message: 'Missing og:type — defaults to "website" but explicit is better',
+    });
+  }
+
+  // Twitter Card checks
+  if (!metaMap.has("twitter:card")) {
+    issues.push({
+      severity: "warning",
+      category: "Social",
+      message:
+        "Missing twitter:card — Twitter will not display a rich card preview",
+    });
+  } else {
+    const cardValue = metaMap.get("twitter:card")!;
+    if (!VALID_TWITTER_CARD_TYPES.has(cardValue)) {
+      issues.push({
+        severity: "warning",
+        category: "Social",
+        message: `Invalid twitter:card value "${cardValue}" — must be one of: summary, summary_large_image, app, player`,
+      });
+    }
+  }
+
+  return issues;
+}
+
 /** Audit a single crawled page for SEO issues. */
 export function auditPage(
   page: CrawlPage,
@@ -105,56 +271,224 @@ export function auditPage(
 
   // Title checks
   if (!content.title && !content.metaTitle) {
-    issues.push({ severity: "error", category: "meta", message: "Missing page title" });
+    issues.push({
+      severity: "error",
+      category: "meta",
+      message: "Missing page title",
+    });
   }
   if (content.metaTitle.length > 60) {
-    issues.push({ severity: "warning", category: "meta", message: `Meta title too long (${content.metaTitle.length} chars, recommended ≤60)` });
+    issues.push({
+      severity: "warning",
+      category: "meta",
+      message: `Meta title too long (${content.metaTitle.length} chars, recommended ≤60)`,
+    });
   }
   if (content.metaTitle.length > 0 && content.metaTitle.length < 30) {
-    issues.push({ severity: "warning", category: "meta", message: `Meta title too short (${content.metaTitle.length} chars, recommended ≥30)` });
+    issues.push({
+      severity: "warning",
+      category: "meta",
+      message: `Meta title too short (${content.metaTitle.length} chars, recommended ≥30)`,
+    });
   }
 
   // Meta description checks
   if (!content.metaDescription) {
-    issues.push({ severity: "error", category: "meta", message: "Missing meta description" });
+    issues.push({
+      severity: "error",
+      category: "meta",
+      message: "Missing meta description",
+    });
   } else if (content.metaDescription.length > 160) {
-    issues.push({ severity: "warning", category: "meta", message: `Meta description too long (${content.metaDescription.length} chars, recommended ≤160)` });
+    issues.push({
+      severity: "warning",
+      category: "meta",
+      message: `Meta description too long (${content.metaDescription.length} chars, recommended ≤160)`,
+    });
   } else if (content.metaDescription.length < 50) {
-    issues.push({ severity: "warning", category: "meta", message: `Meta description too short (${content.metaDescription.length} chars, recommended ≥50)` });
+    issues.push({
+      severity: "warning",
+      category: "meta",
+      message: `Meta description too short (${content.metaDescription.length} chars, recommended ≥50)`,
+    });
   }
 
   // Heading checks
   const h1s = content.headings.filter((h) => h.level === 1);
   if (h1s.length === 0) {
-    issues.push({ severity: "error", category: "headings", message: "Missing H1 tag" });
+    issues.push({
+      severity: "error",
+      category: "headings",
+      message: "Missing H1 tag",
+    });
   } else if (h1s.length > 1) {
-    issues.push({ severity: "warning", category: "headings", message: `Multiple H1 tags found (${h1s.length})` });
+    issues.push({
+      severity: "warning",
+      category: "headings",
+      message: `Multiple H1 tags found (${h1s.length})`,
+    });
   }
   if (content.headingCount === 0) {
-    issues.push({ severity: "warning", category: "headings", message: "No heading tags found on page" });
+    issues.push({
+      severity: "warning",
+      category: "headings",
+      message: "No heading tags found on page",
+    });
   }
 
   // Content checks
   if (content.wordCount < 300) {
-    issues.push({ severity: "warning", category: "content", message: `Thin content (${content.wordCount} words, recommended ≥300)` });
+    issues.push({
+      severity: "warning",
+      category: "content",
+      message: `Thin content (${content.wordCount} words, recommended ≥300)`,
+    });
   }
   if (content.readabilityScore < 30) {
-    issues.push({ severity: "info", category: "content", message: `Low readability score (${content.readabilityScore.toFixed(1)})` });
+    issues.push({
+      severity: "info",
+      category: "content",
+      message: `Low readability score (${content.readabilityScore.toFixed(1)})`,
+    });
   }
 
   // Image checks
   if (content.imagesWithoutAlt > 0) {
-    issues.push({ severity: "warning", category: "images", message: `${content.imagesWithoutAlt} image(s) missing alt text` });
+    issues.push({
+      severity: "warning",
+      category: "images",
+      message: `${content.imagesWithoutAlt} image(s) missing alt text`,
+    });
   }
 
   // Link checks
   if (content.internalLinkCount === 0) {
-    issues.push({ severity: "warning", category: "links", message: "No internal links found (orphan page risk)" });
+    issues.push({
+      severity: "warning",
+      category: "links",
+      message: "No internal links found (orphan page risk)",
+    });
   }
 
   // Schema checks
   if (content.schemaMarkup.length === 0) {
-    issues.push({ severity: "info", category: "schema", message: "No structured data (JSON-LD) found" });
+    issues.push({
+      severity: "info",
+      category: "schema",
+      message: "No structured data (JSON-LD) found",
+    });
+  }
+
+  // Canonical URL checks (#851)
+  if (!content.canonical) {
+    issues.push({
+      severity: "warning",
+      category: "canonical",
+      message: "Missing canonical tag",
+    });
+  } else {
+    if (content.canonical.count > 1) {
+      issues.push({
+        severity: "error",
+        category: "canonical",
+        message: `Multiple canonical tags found (${content.canonical.count})`,
+      });
+    }
+    try {
+      const canonicalUrl = new URL(content.canonical.href, page.url);
+      const pageUrl = new URL(page.url);
+      if (canonicalUrl.hostname !== pageUrl.hostname) {
+        issues.push({
+          severity: "warning",
+          category: "canonical",
+          message: `Canonical points to different domain: ${canonicalUrl.hostname}`,
+        });
+      } else if (
+        canonicalUrl.href.replace(/\/$/, "") === pageUrl.href.replace(/\/$/, "")
+      ) {
+        issues.push({
+          severity: "info",
+          category: "canonical",
+          message: "Self-referencing canonical (good practice)",
+        });
+      } else {
+        issues.push({
+          severity: "info",
+          category: "canonical",
+          message: `Canonical points to a different URL (cross-page canonical): ${canonicalUrl.href}`,
+        });
+      }
+    } catch {
+      issues.push({
+        severity: "error",
+        category: "canonical",
+        message: `Invalid canonical URL: ${content.canonical.href}`,
+      });
+    }
+  }
+
+  // Hreflang checks (#853)
+  if (content.hreflangTags.length > 0) {
+    const hasXDefault = content.hreflangTags.some(
+      (t) => t.lang === "x-default",
+    );
+    if (!hasXDefault) {
+      issues.push({
+        severity: "warning",
+        category: "hreflang",
+        message: "Hreflang tags present but missing x-default",
+      });
+    }
+
+    for (const tag of content.hreflangTags) {
+      if (tag.lang !== "x-default" && !isValidBcp47(tag.lang)) {
+        issues.push({
+          severity: "error",
+          category: "hreflang",
+          message: `Invalid hreflang language code: "${tag.lang}"`,
+        });
+      }
+    }
+
+    // Check for conflicting hreflang (same language, different URL)
+    const langMap = new Map<string, string[]>();
+    for (const tag of content.hreflangTags) {
+      const existing = langMap.get(tag.lang) ?? [];
+      existing.push(tag.href);
+      langMap.set(tag.lang, existing);
+    }
+    for (const [lang, hrefs] of langMap) {
+      const unique = new Set(hrefs);
+      if (unique.size > 1) {
+        issues.push({
+          severity: "error",
+          category: "hreflang",
+          message: `Conflicting hreflang: language "${lang}" points to ${unique.size} different URLs`,
+        });
+      }
+    }
+  }
+
+  // Social meta (Open Graph & Twitter Card) checks (#876)
+  issues.push(...auditSocialMeta(content));
+
+  // Meta robots checks (#852)
+  if (content.metaRobots) {
+    if (content.metaRobots.directives.includes("noindex")) {
+      issues.push({
+        severity: "info",
+        category: "robots",
+        message: "Page has noindex directive",
+      });
+    }
+    if (content.metaRobots.directives.includes("nofollow")) {
+      issues.push({
+        severity: "warning",
+        category: "robots",
+        message:
+          "Page has nofollow directive — internal links will not be followed",
+      });
+    }
   }
 
   return {
@@ -173,6 +507,83 @@ export function auditPage(
     schemaTypes: content.schemaMarkup.map((s) => s.type),
     readabilityScore: content.readabilityScore,
     issues,
+  };
+}
+
+/** Build link analysis data for the UI Links dashboard tab. */
+function buildLinkAnalysis(
+  pages: PageAuditResult[],
+  crawledContents: Map<string, ExtractedContent>,
+  siteUrl: string,
+): LinkAnalysisResult & {
+  links: { source: string; target: string }[];
+} {
+  const crawledPages: CrawledPageLinks[] = pages.map((p) => {
+    const content = crawledContents.get(p.url);
+    const links = content
+      ? [
+          ...content.internalLinks.map((l) => ({
+            href: l.href,
+            text: l.text,
+            isInternal: true,
+          })),
+          ...content.externalLinks.map((l) => ({
+            href: l.href,
+            text: l.text,
+            isInternal: false,
+          })),
+        ]
+      : [];
+    return { url: p.url, links, statusCode: p.statusCode };
+  });
+
+  const result = analyzeLinks(crawledPages, siteUrl);
+
+  // Build source→target link pairs for the force-directed graph (cap at 200)
+  const graphLinks: { source: string; target: string }[] = [];
+  const seen = new Set<string>();
+  for (const page of crawledPages) {
+    for (const link of page.links) {
+      if (!link.isInternal) continue;
+      const key = `${page.url}→${link.href}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      graphLinks.push({ source: page.url, target: link.href });
+      if (graphLinks.length >= 200) break;
+    }
+    if (graphLinks.length >= 200) break;
+  }
+
+  return { ...result, links: graphLinks };
+}
+
+/** Build content analysis data for the UI Content dashboard tab. */
+function buildContentAnalysis(
+  pages: PageAuditResult[],
+  crawledContents: Map<string, ExtractedContent>,
+): ContentAnalysisResult & { freshness: ReturnType<typeof analyzeContentFreshness> } {
+  const contentPages: ContentPage[] = pages.map((p) => {
+    const content = crawledContents.get(p.url);
+    return {
+      url: p.url,
+      title: p.title,
+      bodyText: content?.bodyText ?? "",
+      wordCount: p.wordCount,
+    };
+  });
+
+  const freshnessInput = pages
+    .map((p) => {
+      const content = crawledContents.get(p.url);
+      return content
+        ? { url: p.url, jsonLdBlocks: content.jsonLdBlocks }
+        : null;
+    })
+    .filter((entry): entry is { url: string; jsonLdBlocks: ExtractedContent["jsonLdBlocks"] } => entry !== null);
+
+  return {
+    ...analyzeContent(contentPages),
+    freshness: analyzeContentFreshness(freshnessInput),
   };
 }
 
@@ -250,7 +661,9 @@ export function generateAuditReport(result: SiteAuditResult): string {
   lines.push("");
   lines.push(`**Date:** ${new Date().toISOString().split("T")[0]}`);
   lines.push(`**Pages Audited:** ${result.pagesAudited}`);
-  lines.push(`**Total Issues:** ${result.totalIssues} (${result.errorCount} errors, ${result.warningCount} warnings, ${result.infoCount} info)`);
+  lines.push(
+    `**Total Issues:** ${result.totalIssues} (${result.errorCount} errors, ${result.warningCount} warnings, ${result.infoCount} info)`,
+  );
   lines.push("");
 
   // Summary table
@@ -268,7 +681,12 @@ export function generateAuditReport(result: SiteAuditResult): string {
     lines.push("## Site-Wide Issues");
     lines.push("");
     for (const issue of result.siteWideIssues) {
-      const icon = issue.severity === "error" ? "🔴" : issue.severity === "warning" ? "🟡" : "🔵";
+      const icon =
+        issue.severity === "error"
+          ? "🔴"
+          : issue.severity === "warning"
+            ? "🟡"
+            : "🔵";
       lines.push(`- ${icon} **[${issue.category}]** ${issue.message}`);
     }
     lines.push("");
@@ -286,7 +704,9 @@ export function generateAuditReport(result: SiteAuditResult): string {
     lines.push(`| Word Count | ${page.wordCount} |`);
     lines.push(`| H1 Tags | ${page.h1Count} |`);
     lines.push(`| Headings | ${page.headingCount} |`);
-    lines.push(`| Images (missing alt) | ${page.imagesWithoutAlt}/${page.imagesTotal} |`);
+    lines.push(
+      `| Images (missing alt) | ${page.imagesWithoutAlt}/${page.imagesTotal} |`,
+    );
     lines.push(`| Internal Links | ${page.internalLinkCount} |`);
     lines.push(`| External Links | ${page.externalLinkCount} |`);
     lines.push(`| Schema Types | ${page.schemaTypes.join(", ") || "*none*"} |`);
@@ -296,7 +716,12 @@ export function generateAuditReport(result: SiteAuditResult): string {
     if (page.issues.length > 0) {
       lines.push("**Issues:**");
       for (const issue of page.issues) {
-        const icon = issue.severity === "error" ? "🔴" : issue.severity === "warning" ? "🟡" : "🔵";
+        const icon =
+          issue.severity === "error"
+            ? "🔴"
+            : issue.severity === "warning"
+              ? "🟡"
+              : "🔵";
         lines.push(`- ${icon} **[${issue.category}]** ${issue.message}`);
       }
       lines.push("");
@@ -320,10 +745,24 @@ export function createSeoSiteAuditTool(): ToolDefinition {
       type: "object",
       properties: {
         url: { type: "string", description: "Root URL of the site to audit" },
-        maxPages: { type: "number", description: "Max pages to crawl (default: 50, max: 500)" },
-        maxDepth: { type: "number", description: "Max crawl depth (default: 3)" },
-        includePaths: { type: "array", items: { type: "string" }, description: "Regex patterns to include specific paths" },
-        excludePaths: { type: "array", items: { type: "string" }, description: "Regex patterns to exclude paths" },
+        maxPages: {
+          type: "number",
+          description: "Max pages to crawl (default: 50, max: 500)",
+        },
+        maxDepth: {
+          type: "number",
+          description: "Max crawl depth (default: 3)",
+        },
+        includePaths: {
+          type: "array",
+          items: { type: "string" },
+          description: "Regex patterns to include specific paths",
+        },
+        excludePaths: {
+          type: "array",
+          items: { type: "string" },
+          description: "Regex patterns to exclude paths",
+        },
       },
       required: ["url"],
     },
@@ -331,10 +770,14 @@ export function createSeoSiteAuditTool(): ToolDefinition {
     category: "search",
     riskLevel: "medium",
     handler: async (args) => {
-      const { url, maxPages, maxDepth, includePaths, excludePaths } = seoSiteAuditSchema.parse(args);
+      const { url, maxPages, maxDepth, includePaths, excludePaths } =
+        seoSiteAuditSchema.parse(args);
 
       if (isBlockedUrl(url)) {
-        return { text: `SSRF blocked: URL "${url}" targets an internal/private network address`, isError: true };
+        return {
+          text: `SSRF blocked: URL "${url}" targets an internal/private network address`,
+          isError: true,
+        };
       }
 
       const client = getFirecrawlClient();
@@ -356,29 +799,159 @@ export function createSeoSiteAuditTool(): ToolDefinition {
         });
 
         if (crawlResult.pages.length === 0) {
-          return { text: "Crawl returned no pages. Check that the URL is accessible.", isError: true };
+          return {
+            text: "Crawl returned no pages. Check that the URL is accessible.",
+            isError: true,
+          };
         }
 
         // 2. Audit each page
         const auditedPages: PageAuditResult[] = [];
+        const crawledContents = new Map<string, ExtractedContent>();
         for (const page of crawlResult.pages) {
           if (!page.html && !page.markdown) continue;
-          const html = page.html ?? `<html><body>${page.markdown ?? ""}</body></html>`;
+          const html =
+            page.html ?? `<html><body>${page.markdown ?? ""}</body></html>`;
           const content = extractContent(html, page.url);
+          crawledContents.set(page.url, content);
           auditedPages.push(auditPage(page, content));
         }
 
         // 3. Detect site-wide issues
         const siteWideIssues = detectSiteWideIssues(auditedPages);
 
+        // 3b. Robots.txt analysis (#852)
+        let robotsTxtResult: RobotsTxtResult | undefined;
+        try {
+          robotsTxtResult = await fetchRobotsTxt(url);
+          if (!robotsTxtResult.exists) {
+            siteWideIssues.push({
+              severity: "info",
+              category: "robots",
+              message: "No robots.txt found",
+            });
+          } else {
+            const robotsIssues = detectRobotsIssues(robotsTxtResult);
+            siteWideIssues.push(...robotsIssues);
+
+            // Check for noindex pages that are in sitemap (detected below)
+            for (const page of auditedPages) {
+              const content = crawledContents.get(page.url);
+              if (!content) continue;
+              try {
+                const urlPath = new URL(page.url).pathname;
+                const check = isUrlAllowed(urlPath, robotsTxtResult.rules);
+                if (!check.allowed && page.wordCount > 0) {
+                  siteWideIssues.push({
+                    severity: "warning",
+                    category: "robots",
+                    message: `Page blocked by robots.txt but has content (${page.wordCount} words): ${page.url}`,
+                    url: page.url,
+                  });
+                }
+              } catch {
+                // Skip invalid URLs
+              }
+            }
+          }
+        } catch {
+          // Non-fatal: robots.txt analysis is optional
+        }
+
+        // 3c. Sitemap validation (#857)
+        try {
+          const sitemapResult = await fetchAndValidateSitemap(
+            url,
+            robotsTxtResult?.sitemaps ?? [],
+          );
+          siteWideIssues.push(
+            ...sitemapResult.issues.map((i) => ({
+              severity: i.severity,
+              category: i.category,
+              message: i.message,
+              url: i.url,
+            })),
+          );
+
+          if (sitemapResult.found) {
+            const crawledUrls = auditedPages.map((p) => p.url);
+            const { orphanedUrls, missingUrls } = compareSitemapToCrawl(
+              sitemapResult.sitemapUrls,
+              crawledUrls,
+            );
+            if (orphanedUrls.length > 0) {
+              siteWideIssues.push({
+                severity: "warning",
+                category: "sitemap",
+                message: `${orphanedUrls.length} URL(s) in sitemap but not found during crawl`,
+              });
+            }
+            if (missingUrls.length > 0) {
+              siteWideIssues.push({
+                severity: "info",
+                category: "sitemap",
+                message: `${missingUrls.length} crawled URL(s) not in sitemap`,
+              });
+            }
+
+            // Check for noindex pages in sitemap (#852)
+            for (const page of auditedPages) {
+              const content = crawledContents.get(page.url);
+              if (
+                content?.metaRobots?.directives.includes("noindex") &&
+                sitemapResult.sitemapUrls.some((su) => {
+                  try {
+                    return new URL(su).pathname === new URL(page.url).pathname;
+                  } catch {
+                    return false;
+                  }
+                })
+              ) {
+                siteWideIssues.push({
+                  severity: "error",
+                  category: "robots",
+                  message: `Page has noindex but is in sitemap: ${page.url}`,
+                  url: page.url,
+                });
+              }
+            }
+          }
+        } catch {
+          // Non-fatal: sitemap validation is optional
+        }
+
+        // 3d. Structured data validation (#860)
+        for (const page of auditedPages) {
+          const content = crawledContents.get(page.url);
+          if (!content || content.jsonLdBlocks.length === 0) continue;
+          const sdResult = validateStructuredData(content.jsonLdBlocks);
+          for (const issue of sdResult.issues) {
+            page.issues.push({
+              severity: issue.severity,
+              category: issue.category,
+              message: issue.message,
+            });
+          }
+        }
+
         // 4. Tally issues
         const allIssues = [
           ...siteWideIssues,
           ...auditedPages.flatMap((p) => p.issues),
         ];
-        const errorCount = allIssues.filter((i) => i.severity === "error").length;
-        const warningCount = allIssues.filter((i) => i.severity === "warning").length;
+        const errorCount = allIssues.filter(
+          (i) => i.severity === "error",
+        ).length;
+        const warningCount = allIssues.filter(
+          (i) => i.severity === "warning",
+        ).length;
         const infoCount = allIssues.filter((i) => i.severity === "info").length;
+
+        // 4b. Calculate % affected (#854)
+        const categoryStats = calculateAffectedPercentages(
+          auditedPages,
+          siteWideIssues,
+        );
 
         // 5. Build result
         const subdir = buildReportSubdir(url);
@@ -396,6 +969,7 @@ export function createSeoSiteAuditTool(): ToolDefinition {
           infoCount,
           pages: auditedPages,
           siteWideIssues,
+          categoryStats,
           reportPath,
           pdfPath: null,
         };
@@ -408,22 +982,96 @@ export function createSeoSiteAuditTool(): ToolDefinition {
         const pdfPath = await saveReportPdf(pdfBasename, report, reportDir);
         result.pdfPath = pdfPath;
 
-        return {
-          text: `REPORT SAVED: ${reportPath}\n${pdfPath ? `PDF SAVED: ${pdfPath}` : "PDF: Not generated"}\n` +
-            `Pages audited: ${auditedPages.length}\n` +
-            `Issues found: ${allIssues.length} (${errorCount} errors, ${warningCount} warnings, ${infoCount} info)\n\n` +
+        // 7. Compute health score and save audit snapshot
+        const classifiedIssues: ClassifiedIssue[] = allIssues.map((i) =>
+          classifyAuditIssue(i),
+        );
+        const healthScore = calculateHealthScore(
+          classifiedIssues,
+          auditedPages.length,
+        );
+
+        try {
+          const db = getDatabase();
+          const historyRepo = new AuditHistoryRepository(db);
+
+          // Build dashboard-compatible data for the UI tabs
+          const dashboardPages = auditedPages.map((p) => ({
+            url: p.url,
+            issues: p.issues.map((i) => ({
+              severity: i.severity,
+              category: i.category,
+              message: i.message,
+            })),
+            metrics: {
+              wordCount: p.wordCount,
+              h1Count: p.h1Count,
+              headingCount: p.headingCount,
+              imagesTotal: p.imagesTotal,
+              imagesWithoutAlt: p.imagesWithoutAlt,
+              internalLinkCount: p.internalLinkCount,
+              externalLinkCount: p.externalLinkCount,
+              readabilityScore: p.readabilityScore,
+            },
+          }));
+
+          const linkAnalysis = buildLinkAnalysis(
+            auditedPages,
+            crawledContents,
+            url,
+          );
+          const contentAnalysis = buildContentAnalysis(
+            auditedPages,
+            crawledContents,
+          );
+
+          historyRepo.saveSnapshot(
+            url,
+            healthScore,
+            auditedPages.length,
             JSON.stringify({
+              // Dashboard tab data (consumed by ui/app/seo/page.tsx)
+              pages: dashboardPages,
+              linkAnalysis,
+              contentAnalysis,
+              categoryStats,
+              // Original audit metadata
+              issues: allIssues,
+              healthScore,
               reportPath,
               pdfPath: pdfPath ?? null,
-              siteUrl: url,
-              pagesAudited: auditedPages.length,
-              totalIssues: allIssues.length,
-              errorCount,
-              warningCount,
-              infoCount,
-              topIssues: allIssues.filter((i) => i.severity === "error").slice(0, 10),
-              siteWideIssues,
-            }, null, 2),
+            }),
+          );
+        } catch {
+          // Non-fatal: audit history is optional
+        }
+
+        return {
+          text:
+            `REPORT SAVED: ${reportPath}\n${pdfPath ? `PDF SAVED: ${pdfPath}` : "PDF: Not generated"}\n` +
+            `Pages audited: ${auditedPages.length}\n` +
+            `Issues found: ${allIssues.length} (${errorCount} errors, ${warningCount} warnings, ${infoCount} info)\n` +
+            `Health Score: ${healthScore.score}/100 (${healthScore.rating})\n\n` +
+            JSON.stringify(
+              {
+                reportPath,
+                pdfPath: pdfPath ?? null,
+                siteUrl: url,
+                pagesAudited: auditedPages.length,
+                totalIssues: allIssues.length,
+                errorCount,
+                warningCount,
+                infoCount,
+                healthScore: healthScore.score,
+                healthRating: healthScore.rating,
+                topIssues: allIssues
+                  .filter((i) => i.severity === "error")
+                  .slice(0, 10),
+                siteWideIssues,
+              },
+              null,
+              2,
+            ),
         };
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);

@@ -13,6 +13,7 @@ import { WebhookRepository } from "../webhooks/webhook-repository.js";
 import { YouTubePublishRepository } from "../video/youtube-publish-repository.js";
 import { BrandKitRepository } from "../video/brand-kit.js";
 import { PostTemplateRepository } from "../creative/post-template-repository.js";
+import { AuditHistoryRepository } from "../mcp/tools/seo/audit-history.js";
 
 export type DatabaseOptions = {
   dbPath?: string;
@@ -81,6 +82,10 @@ export const getDatabase = (
   // Run Webhook migration (webhooks table)
   const webhookRepo = new WebhookRepository(db);
   webhookRepo.migrate();
+
+  // Run SEO Audit History migration (seo_audit_snapshots table)
+  const auditHistoryRepo = new AuditHistoryRepository(db);
+  auditHistoryRepo.migrate();
 
   sharedDb = db;
   return db;

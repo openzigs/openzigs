@@ -1575,6 +1575,44 @@ export const createAdminRouter = ({
   });
 
   /**
+   * Direct tool invocation endpoint (used by SEO admin panels that need to
+   * call a specific MCP tool without going through chat). Validates input
+   * against the tool's Zod schema and runs the handler.
+   */
+  router.post("/tools/:name/invoke", async (req, res) => {
+    const { name } = req.params;
+    const tool = toolRegistry.getToolDefinition(name);
+    if (!tool) {
+      return res.status(404).json({ error: `Unknown tool: ${name}` });
+    }
+    if (!toolRegistry.isEnabled(name)) {
+      return res.status(403).json({ error: `Tool '${name}' is disabled` });
+    }
+    const args = (req.body ?? {}) as Record<string, unknown>;
+    const parsed = tool.zodSchema.safeParse(args);
+    if (!parsed.success) {
+      return res.status(400).json({
+        error: "Invalid arguments",
+        details: parsed.error.issues,
+      });
+    }
+    try {
+      const result = await tool.handler(parsed.data as Record<string, unknown>);
+      if (result.isError) {
+        return res.status(502).json({ error: result.text, isError: true });
+      }
+      return res.json({ ok: true, tool: name, text: result.text });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      logger.error("[admin] Tool invocation failed", {
+        tool: name,
+        error: message,
+      });
+      return res.status(500).json({ error: message });
+    }
+  });
+
+  /**
    * @deprecated Redirects to local-server tools endpoint.
    * Kept for backward compatibility with older UI builds.
    */
@@ -3726,9 +3764,10 @@ export const createAdminRouter = ({
     const prov = body.provider as Record<string, unknown> | undefined;
 
     if (!prov || typeof prov !== "object" || !prov.type || !prov.baseUrl) {
-      return res
-        .status(400)
-        .json({ success: false, error: "provider.type and provider.baseUrl are required" });
+      return res.status(400).json({
+        success: false,
+        error: "provider.type and provider.baseUrl are required",
+      });
     }
 
     const baseUrl = String(prov.baseUrl).replace(/\/+$/, "");
@@ -3740,14 +3779,26 @@ export const createAdminRouter = ({
     try {
       parsedUrl = new URL(baseUrl);
     } catch {
-      return res.status(400).json({ success: false, error: "Invalid base URL" });
+      return res
+        .status(400)
+        .json({ success: false, error: "Invalid base URL" });
     }
     if (parsedUrl.protocol !== "http:" && parsedUrl.protocol !== "https:") {
-      return res.status(400).json({ success: false, error: "URL scheme must be http or https" });
+      return res
+        .status(400)
+        .json({ success: false, error: "URL scheme must be http or https" });
     }
-    const ALLOWED_PROVIDER_TYPES = ["openai", "azure", "anthropic", "ollama", "custom"];
+    const ALLOWED_PROVIDER_TYPES = [
+      "openai",
+      "azure",
+      "anthropic",
+      "ollama",
+      "custom",
+    ];
     if (!ALLOWED_PROVIDER_TYPES.includes(provType)) {
-      return res.status(400).json({ success: false, error: `Unknown provider type: ${provType}` });
+      return res
+        .status(400)
+        .json({ success: false, error: `Unknown provider type: ${provType}` });
     }
 
     const start = Date.now();
@@ -3778,11 +3829,17 @@ export const createAdminRouter = ({
       }
 
       // OpenAI / Azure / Anthropic: hit /models or /v1/models
-      const modelsUrl = provType === "azure"
-        ? new URL(`/openai/models?api-version=${encodeURIComponent((prov.azure as Record<string, string>)?.apiVersion ?? "2024-10-21")}`, baseUrl).href
-        : new URL("/models", baseUrl).href;
+      const modelsUrl =
+        provType === "azure"
+          ? new URL(
+              `/openai/models?api-version=${encodeURIComponent((prov.azure as Record<string, string>)?.apiVersion ?? "2024-10-21")}`,
+              baseUrl,
+            ).href
+          : new URL("/models", baseUrl).href;
 
-      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+      };
       if (prov.apiKey) {
         if (provType === "anthropic") {
           headers["x-api-key"] = String(prov.apiKey);

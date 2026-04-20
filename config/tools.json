@@ -104,6 +104,8 @@
     "send_dm",
     "seo-extract-content",
     "seo-gap-analysis",
+    "seo-meta-generator",
+    "seo-schema-generator",
     "seo-site-audit",
     "shell-execute",
     "social-brain-stats",

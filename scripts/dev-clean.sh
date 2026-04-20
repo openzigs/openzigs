@@ -74,6 +74,9 @@ pkill -f "$PROJECT_ROOT/sidecars/audio/server.py" || true
 pkill -f "$PROJECT_ROOT/sidecars/music/server.py" || true
 pkill -f "$PROJECT_ROOT/sidecars/music-studio/server.py" || true
 pkill -f "$PROJECT_ROOT.*api_v2.py" || true
+# GPT-SoVITS lives outside PROJECT_ROOT — kill by its fixed install path
+pkill -f "$HOME/.openzigs/sidecars/gptsovits" || true
+pkill -f "api_v2.py" || true
 
 # Final deterministic sweep: kill any OpenZigs-rooted node/tsx/pnpm/next/python
 # process that may have escaped the explicit patterns above.
@@ -87,10 +90,19 @@ done
 
 # Force-clear any OpenZigs stragglers still holding their ports after the sweep.
 # Non-OpenZigs apps on those ports are intentionally left untouched.
-for _port in "$BACKEND_PORT" "$UI_PORT" 3101 5005 5006 9880 5009 5010; do
+for _port in "$BACKEND_PORT" "$UI_PORT" 3101; do
   STALE_PID=$(port_pid "$_port")
   if [ -n "$STALE_PID" ] && is_own_pid "$STALE_PID"; then
     echo "[clean-start] Killing stale OpenZigs process on port $_port (PID $STALE_PID)"
+    kill -9 "$STALE_PID" 2>/dev/null || true
+  fi
+done
+
+# Sidecar ports are exclusive to OpenZigs — kill any process holding them unconditionally.
+for _port in 5005 5006 9880 5009 5010; do
+  STALE_PID=$(port_pid "$_port")
+  if [ -n "$STALE_PID" ]; then
+    echo "[clean-start] Killing stale sidecar process on port $_port (PID $STALE_PID)"
     kill -9 "$STALE_PID" 2>/dev/null || true
   fi
 done
@@ -102,10 +114,8 @@ pkill -f "openzigs-chrome-profile" || true
 # Stop Firecrawl Docker containers if running (they survive process kills)
 FIRECRAWL_COMPOSE="$PROJECT_ROOT/docker-compose.firecrawl.yml"
 if [ -f "$FIRECRAWL_COMPOSE" ] && command -v docker >/dev/null 2>&1; then
-  if docker compose -f "$FIRECRAWL_COMPOSE" ps -q 2>/dev/null | grep -q .; then
-    echo "[clean-start] Stopping Firecrawl Docker containers..."
-    docker compose -f "$FIRECRAWL_COMPOSE" down 2>/dev/null || true
-  fi
+  echo "[clean-start] Stopping Firecrawl Docker containers..."
+  docker compose -f "$FIRECRAWL_COMPOSE" down 2>/dev/null || true
 fi
 
 echo "[clean-start] Starting OpenZigs in dev mode (backend + UI)..."
@@ -199,6 +209,22 @@ for _ in {1..30}; do
   fi
   sleep 1
 done
+
+# Optional: start Firecrawl Docker sidecar (default enabled)
+# Checks if Firecrawl is already reachable before attempting Docker startup.
+if [ "${OPENZIGS_START_FIRECRAWL:-1}" != "0" ] && [ -f "$FIRECRAWL_COMPOSE" ] && command -v docker >/dev/null 2>&1; then
+  if curl -sf http://127.0.0.1:3002/ >/dev/null 2>&1; then
+    echo "[clean-start] Firecrawl already running on port 3002 — skipping Docker startup"
+  else
+    echo "[clean-start] Starting Firecrawl Docker sidecar (port 3002)..."
+    if docker compose -f "$FIRECRAWL_COMPOSE" up -d 2>/dev/null; then
+      echo "[clean-start] Probing Firecrawl sidecar health in background..."
+      start_health_probe "Firecrawl sidecar (port 3002)" "http://127.0.0.1:3002/" 30 2
+    else
+      echo "[clean-start] WARNING: Firecrawl Docker startup failed — crawl tools will be unavailable"
+    fi
+  fi
+fi
 
 # Optional: start local image-gen sidecar (default enabled)
 # The sidecar starts in lazy mode — no model loaded until first /generate request.
@@ -415,6 +441,15 @@ cleanup() {
   pkill -f "$PROJECT_ROOT/sidecars/music/server.py" || true
   pkill -f "$PROJECT_ROOT/sidecars/music-studio/server.py" || true
   pkill -f "$PROJECT_ROOT.*api_v2.py" || true
+  pkill -f "$HOME/.openzigs/sidecars/gptsovits" || true
+  pkill -f "api_v2.py" || true
+  # Port-based sweep for sidecar ports — catches orphans not tracked by PID
+  for _port in 5005 5006 9880 5009 5010; do
+    _stale=$(lsof -ti:"$_port" 2>/dev/null | head -1 || true)
+    if [ -n "$_stale" ]; then
+      kill -9 "$_stale" 2>/dev/null || true
+    fi
+  done
   # Stop Firecrawl Docker containers on exit
   if [ -f "$FIRECRAWL_COMPOSE" ] && command -v docker >/dev/null 2>&1; then
     docker compose -f "$FIRECRAWL_COMPOSE" down 2>/dev/null || true

@@ -57,6 +57,7 @@ import {
   setAdminMessageRouter,
 } from "./api/admin.js";
 import { createTasksRouter } from "./api/tasks.js";
+import { createSeoRouter } from "./api/seo.js";
 import { createFilesRouter } from "./api/files.js";
 import { launchChrome, killChrome } from "./browser/chrome-launcher.js";
 import {
@@ -2250,11 +2251,26 @@ if (firecrawlUseWebhooks) {
   process.env.FIRECRAWL_WEBHOOK_URL = `http://host.docker.internal:${config.server.port}/api/webhooks/firecrawl`;
 
   logger.info("[Firecrawl] Webhook handler initialized");
+
+  // ── Wire crawl progress events to Socket.IO (#841) ────────────────────
+  firecrawlWebhookHandler.on("crawl:started", (event) => {
+    io.emit("crawl:started", event);
+  });
+  firecrawlWebhookHandler.on("crawl:progress", (event) => {
+    io.emit("crawl:progress", event);
+  });
+  firecrawlWebhookHandler.on("crawl:completed", (event) => {
+    io.emit("crawl:completed", event);
+  });
 }
 
 // Tasks API routes
 const tasksRouter = createTasksRouter({ taskEngine, taskRepository });
 app.use("/api/tasks", authMiddleware, tasksRouter);
+
+// SEO Suite API routes (#838)
+const seoRouter = createSeoRouter({ db, scheduler });
+app.use("/api/seo", authMiddleware, seoRouter);
 
 // Media Queue API routes (push-based distributed queue + gallery)
 // Callback route is mounted WITHOUT auth — remote workers (Mac Mini, FluxQ)

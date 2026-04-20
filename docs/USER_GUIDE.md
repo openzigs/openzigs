@@ -515,6 +515,7 @@ The OpenZigs UI is a **Next.js** application with a navigation bar providing acc
 | **Content Calendar** | `/calendar` | Visual FullCalendar content schedule synced with Outbox — drag-to-reschedule, click-to-edit, upcoming events panel |
 | **Inpainting Studio** | `/inpainting` | Canvas-based AI image editing — paint a mask, describe the change, queue Flux Kontext inpainting via the media queue |
 | **Outbox** | `/outbox` | Scheduled social post queue — review, edit, and publish pending outbox items across platforms |
+| **SEO Suite** | `/seo` | Consolidated SEO dashboard — site audits, gap analysis, competitive monitoring, data extraction, link graphs, health scoring, and report exports |
 
 ### Chat
 
@@ -7945,6 +7946,8 @@ This design means Firecrawl has **no embedded LLM instructions** — you don't n
 | Tool | Description |
 |---|---|
 | `seo-site-audit` | Full-site SEO audit: crawls up to 500 pages, analyzes titles, meta descriptions, headings, images, links, and performance |
+| `seo-schema-generator` | Generate JSON-LD structured data for 9 Schema.org types (Article, Product, LocalBusiness, FAQPage, HowTo, Recipe, Event, Organization, BreadcrumbList) |
+| `seo-meta-generator` | AI-powered title & meta description generator — produces 3 variants each with character counts, pixel width estimates, and SERP preview data |
 | `knowledge-ingest-website` | Crawl a website and ingest pages into the local knowledge base for RAG queries |
 | `competitive-monitor-add` | Add a competitor domain to the monitoring list |
 | `competitive-monitor-snapshot` | Take a point-in-time snapshot of a competitor's SEO metrics. Supports `extractSchema` for structured data extraction |
@@ -7953,22 +7956,191 @@ This design means Firecrawl has **no embedded LLM instructions** — you don't n
 | `web-extract` | Extract structured data from any URL using Firecrawl + LLM. Supports built-in templates (contacts, pricing, jobs, products) or custom JSON schemas. Results saved to SQLite |
 | `web-map` | Discover all URLs on a site without scraping content. Groups URLs by path section. Supports subdomain inclusion and keyword search filtering |
 
-### Using the Crawl Dashboard
+### Using the SEO Suite
 
-The **Workbench** tab in the UI includes a **Crawl Dashboard** dialog with these modes:
+All crawl and SEO features are consolidated into a single **SEO Suite** page at `/seo`. Navigate to **Automation → SEO Suite** in the nav bar.
 
-- **Site Audit** — Run a full SEO audit on any website
-- **Ingest** — Crawl and add pages to your knowledge base
-- **Monitor** — Track competitors over time
-- **Extract** — Scrape and extract structured data using templates or custom schemas
-- **Leads** — Extract contact information from websites
-- **Prices** — Monitor product prices over time
-- **Dataset** — Convert a website into a structured dataset
+The page has **8 modes** accessible via a horizontal mode selector at the top, and **9 dashboard tabs**: Overview, Audit, Links, Content, Performance, History, Export, **Schema**, and **Meta Gen**.
 
-Each mode supports:
-- **Model selection** — Choose which LLM to use for summarizing results
-- **Max pages / depth limits** — Control crawl scope
-- **Path filters** — Include/exclude specific URL patterns
+#### Advanced SEO Features (v3)
+
+The SEO Suite includes several advanced analysis and generation features:
+
+- **Social Meta Audit** — Automatically checks every audited page for Open Graph (`og:title`, `og:description`, `og:image`, `og:url`, `og:type`) and Twitter Card tags. Missing tags surface as errors/warnings in the Audit tab.
+- **Content Freshness** — Extracts publish and modified dates from JSON-LD structured data and rates each page as Fresh (<6 months), Aging (6–12 months), Stale (>12 months), or Unknown. View in the **Content** tab.
+- **Lighthouse Optimizations** — After running Core Web Vitals analysis, each page card in the **Performance** tab shows actionable optimization opportunities (e.g., "Eliminate render-blocking resources — save ~1.5s") extracted from PageSpeed Insights.
+- **Content Ideas (PAA)** — "People Also Ask" questions from competitor discovery SERP data are surfaced in the **Content** tab as content topic suggestions.
+- **Internal Linking Suggestions** — TF-IDF keyword overlap analysis suggests internal cross-links between pages, prioritizing orphan and deeply-nested pages. View in the **Links** tab.
+- **Schema Generator** — The **Schema** tab lets you generate JSON-LD structured data for 9 Schema.org types: Article, Product, LocalBusiness, FAQPage, HowTo, Recipe, Event, Organization, and BreadcrumbList. Dynamic form based on required/optional fields, with live JSON-LD preview and copy-to-clipboard.
+- **AI Meta Generator** — The **Meta Gen** tab uses AI to generate 3 optimized title variants (<60 chars) and 3 description variants (<160 chars) for a target keyword. Shows character counts, pixel width estimates, truncation warnings, and a Google-style SERP preview.
+- **SERP Preview** — Realistic Google search result preview component with truncation indicators, used throughout the Meta Generator panel.
+
+#### Mode Reference
+
+##### Site Audit
+
+Run a full-site SEO audit analyzing titles, meta descriptions, headings, images, links, and performance.
+
+| Field | Description |
+|-------|-------------|
+| **Website URL** | The site to audit (e.g., `https://example.com`) |
+| **Max Pages** | Number of pages to crawl (default: 50, max: 500) |
+| **Max Depth** | How many links deep to follow (default: 3) |
+| **Model** | LLM to summarize findings |
+
+**Results:** The AI agent calls `seo-site-audit` and streams a summary into the chat. Detailed reports are saved to `~/.openzigs/seo-reports/{domain}/` as Markdown and PDF. The SEO Dashboard tabs (see below) populate with structured data from the audit.
+
+**Requires:** Firecrawl sidecar
+
+##### Gap Analysis
+
+Compare your page against the top-ranking competitors for a target keyword. Identifies content gaps, missing keywords, SERP feature opportunities, and structural weaknesses.
+
+| Field | Description |
+|-------|-------------|
+| **Target URL** | The page to analyze (e.g., `https://example.com/my-blog-post`) |
+| **Target Keyword** | The search term to compete for |
+| **Search Provider** | `auto`, `brave`, or `firecrawl-search` |
+| **Orchestration Mode** | `standard` (single agent), `session` (SDK subagents), or `task` (TaskEngine fan-out) |
+| **Export PDF** | Generate a PDF report |
+| **Model** | LLM for analysis |
+
+**Results:** Streams a competitive gap analysis into the chat with keyword coverage tables, content depth comparison, and prioritized recommendations. When PDF export is enabled, a report is saved to `~/.openzigs/seo-reports/`.
+
+**Does NOT require Firecrawl** — uses web search APIs.
+
+##### Competitors
+
+Track competitor domains over time with point-in-time snapshots and comparison reports.
+
+| Action | Fields | Description |
+|--------|--------|-------------|
+| **Add** | URL, Name | Register a competitor domain for tracking |
+| **Discover** | URL | Auto-discover competitors from your latest site audit keywords |
+| **Snapshot** | URL, Max Pages | Crawl a competitor and save current SEO metrics |
+| **Report** | (none) | Generate a comparison report across all tracked competitors |
+| **List** | (none) | Show all tracked competitor domains |
+
+**Discover Competitors**
+
+The **Discover** action automatically finds competitor domains by analyzing the keywords extracted from your most recent site audit:
+
+1. **Prerequisites:** Run a Site Audit first — discovery uses the keyword data from your latest audit snapshot.
+2. **API Key Required:** Requires a Serper.dev API key (`SERPER_API_KEY`) or Brave Search API key (`BRAVE_API_KEY`) set in your environment variables. Without one, an error message is shown.
+3. **How it works:** The pipeline aggregates TF-IDF keyword scores across all audited pages, selects the top 10 keywords, and searches Google/Brave SERPs for each. Competitor domains are deduplicated, ranked by how many of your keywords they appear for (frequency score), and sorted by best SERP position.
+4. **Results table:** Shows each discovered domain with its best ranking position, the keywords it ranks for (as badges), and a frequency score.
+5. **Add to Monitoring:** Select competitors via checkboxes and click "Add Selected to Monitoring" to start tracking them with snapshots and comparison reports.
+
+**Results:** Competitor data is stored in `~/.openzigs/competitors/` with timestamped snapshots. Reports stream into the chat with field-level content diffs and trend analysis.
+
+**Requires:** Firecrawl sidecar (for audit), Serper.dev or Brave Search API key (for discovery)
+
+##### Extract
+
+Scrape and extract structured data from any website using built-in templates or custom JSON schemas.
+
+| Field | Description |
+|-------|-------------|
+| **Website URL** | Page(s) to extract from |
+| **Template** | `contacts`, `pricing`, `jobs`, `products`, or `custom` |
+| **JSON Schema** | Custom schema (when template = `custom`) |
+| **Prompt** | Optional LLM guidance for extraction |
+| **Max Pages** | Pages to scrape (default: 1) |
+| **Scroll for content** | Scroll page to load lazy content before extraction |
+| **Wait for dynamic** | Wait for JS-rendered content to load |
+
+**Results:** Extracted data streams into the chat as structured tables. Results are also saved to SQLite for later retrieval.
+
+**Requires:** Firecrawl sidecar
+
+##### Leads
+
+Extract contact information (names, emails, phone numbers, titles) from websites.
+
+| Field | Description |
+|-------|-------------|
+| **Website URL** | Site to scan for contacts |
+| **Max Pages** | Pages to crawl (default: 50) |
+
+**Results:** Contact information streams into the chat as a formatted table.
+
+**Requires:** Firecrawl sidecar
+
+##### Prices
+
+Monitor product prices over time with snapshots, comparisons, and history.
+
+| Action | Fields | Description |
+|--------|--------|-------------|
+| **Snapshot** | URL, Label, Scroll to load | Capture current prices from a product page |
+| **Compare** | URL | Compare latest snapshot to previous |
+| **History** | URL | Show price change history |
+| **List** | (none) | List all tracked products |
+
+**Results:** Price data is stored in SQLite. Snapshots and comparisons stream into the chat.
+
+**Requires:** Firecrawl sidecar
+
+##### Dataset
+
+Convert a website into a structured dataset for training data, research, or knowledge bases.
+
+| Field | Description |
+|-------|-------------|
+| **Website URL** | Site to crawl |
+| **Max Pages** | Pages to include (default: 50) |
+| **Max Depth** | Crawl depth (default: 3) |
+| **Output Format** | `Markdown` (individual .md files), `JSONL` (chunked for ML training), or `CSV` (tabular) |
+| **Include paths** | Comma-separated URL patterns to include (e.g., `/docs, /blog`) |
+| **Exclude paths** | Comma-separated URL patterns to exclude (e.g., `/admin, /login`) |
+
+**Results:** Dataset files are saved to `~/.openzigs/datasets/{domain}/{timestamp}/` with a `manifest.json` containing metadata (page count, total characters, file list). A summary streams into the chat.
+
+**Requires:** Firecrawl sidecar
+
+##### Ingest
+
+Crawl a website and ingest pages into the local knowledge base for RAG (Retrieval-Augmented Generation) queries.
+
+| Field | Description |
+|-------|-------------|
+| **Website URL** | Site to ingest |
+| **Max Pages** | Pages to crawl (default: 50) |
+| **Max Depth** | Crawl depth (default: 3) |
+| **Category** | Knowledge base category (default: `document`) |
+| **Visibility** | `internal` or `public` |
+
+**Results:** Pages are chunked, embedded, and stored in the local knowledge base. A summary of ingested pages and any failures streams into the chat. Ingested content is then available for RAG queries in the Chat.
+
+**Requires:** Firecrawl sidecar
+
+#### Crawl Progress
+
+When any Firecrawl-based mode is running, the **Crawl Progress Panel** appears at the top of the page showing real-time progress:
+
+- **Site URL** being crawled
+- **Pages completed / total** with a live progress bar
+- **Status** — running, completed, or failed
+
+Progress is tracked via both webhook callbacks and polling. If Firecrawl webhooks are configured (default), page-by-page progress updates appear in real time. Otherwise, progress updates every few seconds as the poll loop reports Firecrawl's status.
+
+> **Note:** The Run button is disabled with a warning banner if Firecrawl is unavailable. Start the sidecar with: `docker compose -f docker-compose.firecrawl.yml up -d`
+
+#### Dashboard Tabs
+
+Below the mode selector and form, the SEO Dashboard provides a **7-tab interface** showing structured data from your most recent audit:
+
+| Tab | Icon | What it shows |
+|-----|------|-------------|
+| **Overview** | 🔍 | Site Health Score (0-100 circular gauge) + Recent Trends chart |
+| **Audit** | ⚠️ | Detailed issue list grouped by severity (Errors, Warnings, Info) with per-page breakdown |
+| **Links** | 🔗 | Link statistics + D3 force-directed graph visualization showing internal link structure |
+| **Content** | 📄 | Duplicate content groups + thin content pages (<300 words) |
+| **Performance** | ⏱️ | Core Web Vitals metrics (LCP, CLS, TBT, FCP, SI, TTI) with good/needs-improvement/poor ratings |
+| **History** | 📊 | Past audit snapshots with score trends and regression detection |
+| **Export** | 📥 | Download reports as CSV, JSON, or PDF |
+
+> The dashboard tabs populate after running a **Site Audit**. Other modes (Gap Analysis, Extract, etc.) stream results directly into the Chat.
 
 ### Output Reports
 
@@ -7982,6 +8154,74 @@ Reports include:
 - Site-wide issue detection (duplicate titles, missing descriptions, broken links)
 - Category breakdowns (Critical, High, Medium, Low issues)
 - Actionable recommendations
+
+### Health Score
+
+The Health Score is computed from weighted issue severity:
+
+```
+Health Score = 100 - sum(issues × weight)
+```
+
+| Severity | Weight | Impact |
+|----------|--------|--------|
+| Critical | 10 | Missing title, broken navigation |
+| High | 3 | Missing meta description, duplicate titles |
+| Medium | 1 | Missing alt text, thin content |
+| Low | 0.25 | Minor optimizations |
+
+**Score Ranges:**
+- **75-100** (Green) — Excellent: Site is well-optimized
+- **50-74** (Yellow) — Good: Some issues need attention
+- **0-49** (Red) — Poor: Significant SEO problems
+
+### Content Analysis
+
+The **Content** tab shows:
+
+- **Duplicate Groups** — Pages with >85% content similarity (SimHash-based detection)
+  - Recommendations: Merge pages, add canonical tags, or noindex duplicates
+- **Thin Content** — Pages with fewer than 300 words
+  - Consider expanding content or consolidating with related pages
+
+### Export Formats
+
+Download audit reports in three formats:
+
+| Format | Best For |
+|--------|----------|
+| **CSV** | Importing into spreadsheets, bulk analysis, custom processing |
+| **JSON** | Programmatic access, API integrations, custom tooling |
+| **PDF** | Sharing with stakeholders, archiving, client reports |
+
+Export buttons are disabled until you run your first audit.
+
+### Core Web Vitals
+
+The `core-web-vitals` MCP tool fetches performance metrics from Google PageSpeed Insights:
+
+- **LCP** (Largest Contentful Paint), **CLS** (Cumulative Layout Shift), **TBT** (Total Blocking Time)
+- **FCP** (First Contentful Paint), **SI** (Speed Index), **TTI** (Time to Interactive)
+- Metrics are rated as good/needs-improvement/poor against Google's thresholds
+- Results are cached for 24 hours to respect API rate limits
+- Batch mode available for auditing multiple URLs
+
+### Content Quality Analysis
+
+The site audit now includes content quality analysis:
+
+- **Duplicate Detection** — SimHash-based similarity detection identifies pages with >85% content overlap, with recommendations (merge, canonical, noindex)
+- **Thin Content** — Flags pages with fewer than 300 words
+- **Keyword Density** — Top 5 keywords per page for content optimization
+
+### Link Analysis
+
+Advanced link analysis runs automatically during site audits:
+
+- **Broken Links** — Detects 4xx/5xx responses across all crawled pages
+- **Redirect Chains** — Identifies chains with 3+ hops and redirect loops
+- **Link Depth** — BFS traversal from homepage calculates click depth for each page
+- **Orphan Pages** — Pages with zero incoming internal links
 
 ### Example Prompts
 

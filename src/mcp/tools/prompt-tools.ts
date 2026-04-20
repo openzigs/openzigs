@@ -4,18 +4,35 @@ import type { PromptManager } from "../../productivity/prompt-manager.js";
 
 const PipelinePostActionSchema = z.object({
   type: z.string().describe("Post-action type (e.g., 'create-github-issues')"),
-  config: z.record(z.unknown()).optional().describe("Type-specific configuration"),
+  config: z
+    .record(z.unknown())
+    .optional()
+    .describe("Type-specific configuration"),
 });
 
 const PipelineStageSchema = z.object({
-  type: z.literal("prompt").optional().describe("Stage type — currently only 'prompt'"),
+  type: z
+    .literal("prompt")
+    .optional()
+    .describe("Stage type — currently only 'prompt'"),
   name: z.string().describe("Stage name (used in pipeline output headers)"),
   prompt: z.string().describe("Prompt text for this stage"),
-  tools: z.array(z.string()).optional().describe("Tool names available to this stage"),
-  autoApproveTools: z.array(z.string()).optional().describe("Tools that bypass approval gating for this stage"),
+  tools: z
+    .array(z.string())
+    .optional()
+    .describe("Tool names available to this stage"),
+  autoApproveTools: z
+    .array(z.string())
+    .optional()
+    .describe("Tools that bypass approval gating for this stage"),
   model: z.string().optional().describe("Override model for this stage"),
-  timeoutSeconds: z.number().optional().describe("Max execution time in seconds"),
-  postAction: PipelinePostActionSchema.optional().describe("Action to run after stage completes"),
+  timeoutSeconds: z
+    .number()
+    .optional()
+    .describe("Max execution time in seconds"),
+  postAction: PipelinePostActionSchema.optional().describe(
+    "Action to run after stage completes",
+  ),
 });
 
 const savePromptSchema = z.object({
@@ -23,12 +40,18 @@ const savePromptSchema = z.object({
   template: z.string(),
   description: z.string().optional(),
   tags: z.array(z.string()).optional(),
-  stages: z.array(PipelineStageSchema).optional().describe(
-    "Pipeline stages for multi-step execution. When set, the prompt runs as a sequential pipeline instead of a single prompt."
-  ),
-  preferredTools: z.array(z.string()).optional().describe(
-    "Restrict which tools this prompt can use. If not set, all enabled tools are available."
-  ),
+  stages: z
+    .array(PipelineStageSchema)
+    .optional()
+    .describe(
+      "Pipeline stages for multi-step execution. When set, the prompt runs as a sequential pipeline instead of a single prompt.",
+    ),
+  preferredTools: z
+    .array(z.string())
+    .optional()
+    .describe(
+      "Restrict which tools this prompt can use. If not set, all enabled tools are available.",
+    ),
 });
 
 const getPromptSchema = z.object({
@@ -45,12 +68,16 @@ const updatePromptSchema = z.object({
   template: z.string().optional(),
   description: z.string().optional(),
   tags: z.array(z.string()).optional(),
-  stages: z.array(PipelineStageSchema).optional().nullable().describe(
-    "Pipeline stages. Set to null to remove stages."
-  ),
-  preferredTools: z.array(z.string()).optional().nullable().describe(
-    "Preferred tools. Set to null to use all tools."
-  ),
+  stages: z
+    .array(PipelineStageSchema)
+    .optional()
+    .nullable()
+    .describe("Pipeline stages. Set to null to remove stages."),
+  preferredTools: z
+    .array(z.string())
+    .optional()
+    .nullable()
+    .describe("Preferred tools. Set to null to use all tools."),
 });
 
 const deletePromptSchema = z.object({
@@ -66,11 +93,14 @@ export type PromptToolsOptions = {
   promptManager: PromptManager;
 };
 
-export const createPromptTools = ({ promptManager }: PromptToolsOptions): ToolDefinition[] => {
+export const createPromptTools = ({
+  promptManager,
+}: PromptToolsOptions): ToolDefinition[] => {
   return [
     {
       name: "save-prompt",
-      description: "Save a reusable prompt template with {{variable}} placeholders. Optionally include pipeline stages for multi-step execution and preferred tools to restrict tool access.",
+      description:
+        "Save a reusable prompt template with {{variable}} placeholders. Optionally include pipeline stages for multi-step execution and preferred tools to restrict tool access.",
       inputSchema: {
         type: "object",
         properties: {
@@ -142,7 +172,8 @@ export const createPromptTools = ({ promptManager }: PromptToolsOptions): ToolDe
     },
     {
       name: "list-prompts",
-      description: "List all saved prompts, optionally filtered by search query",
+      description:
+        "List all saved prompts, optionally filtered by search query",
       inputSchema: {
         type: "object",
         properties: { query: { type: "string" } },
@@ -152,13 +183,16 @@ export const createPromptTools = ({ promptManager }: PromptToolsOptions): ToolDe
       riskLevel: "low",
       handler: async (args) => {
         const { query } = args as z.infer<typeof listPromptsSchema>;
-        const prompts = query ? promptManager.search(query) : promptManager.list();
+        const prompts = query
+          ? promptManager.search(query)
+          : promptManager.list();
         return { text: JSON.stringify(prompts) };
       },
     },
     {
       name: "update-prompt",
-      description: "Update an existing saved prompt. Supports updating stages for pipeline execution and preferred tools.",
+      description:
+        "Update an existing saved prompt. Supports updating stages for pipeline execution and preferred tools.",
       inputSchema: {
         type: "object",
         properties: {
@@ -209,7 +243,8 @@ export const createPromptTools = ({ promptManager }: PromptToolsOptions): ToolDe
           const updated = promptManager.update(id, rest);
           return { text: JSON.stringify(updated) };
         } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
+          const message =
+            error instanceof Error ? error.message : String(error);
           return { text: message, isError: true };
         }
       },
@@ -233,7 +268,8 @@ export const createPromptTools = ({ promptManager }: PromptToolsOptions): ToolDe
     },
     {
       name: "run-prompt",
-      description: "Resolve a saved prompt by name with variable interpolation and return the filled text",
+      description:
+        "Resolve a saved prompt by name with variable interpolation and return the filled text",
       inputSchema: {
         type: "object",
         properties: {
