@@ -127,10 +127,45 @@ export const createSeoRouter = ({
     }
 
     const format = (req.body?.format as string) ?? "json";
-    if (!["csv", "json", "pdf"].includes(format)) {
+    if (!["csv", "json", "pdf", "sheets"].includes(format)) {
       return res
         .status(400)
-        .json({ error: "Invalid format. Use csv, json, or pdf." });
+        .json({ error: "Invalid format. Use csv, json, pdf, or sheets." });
+    }
+
+    // Optional branding fields (PDF only). Validation/sanitization happens
+    // in shared/pdf-export.ts (sanitizeLogoUrl/escapeHtml/hex regex), but
+    // we whitelist allowed keys here so callers can't smuggle extra props.
+    const branding =
+      format === "pdf" &&
+      req.body?.branding &&
+      typeof req.body.branding === "object"
+        ? {
+            companyName:
+              typeof req.body.branding.companyName === "string"
+                ? req.body.branding.companyName
+                : undefined,
+            logoUrl:
+              typeof req.body.branding.logoUrl === "string"
+                ? req.body.branding.logoUrl
+                : undefined,
+            primaryColor:
+              typeof req.body.branding.primaryColor === "string"
+                ? req.body.branding.primaryColor
+                : undefined,
+          }
+        : undefined;
+
+    // Sheets format requires an OAuth2 access token in the body.
+    const sheetsAccessToken =
+      format === "sheets" && typeof req.body?.sheetsAccessToken === "string"
+        ? req.body.sheetsAccessToken.trim()
+        : undefined;
+    if (format === "sheets" && !sheetsAccessToken) {
+      return res.status(400).json({
+        error:
+          "Google Sheets export requires sheetsAccessToken (OAuth2 access token)",
+      });
     }
 
     try {
@@ -141,9 +176,11 @@ export const createSeoRouter = ({
           auditDate: snapshot.createdAt,
           healthScore: data.healthScore ?? undefined,
         },
-        format as "csv" | "json" | "pdf",
+        format as "csv" | "json" | "pdf" | "sheets",
+        undefined,
+        { branding, sheetsAccessToken },
       );
-      return res.json({ path: result.filePath });
+      return res.json({ path: result.filePath, format: result.format });
     } catch (err) {
       logger.error("[SEO] Export failed", {
         snapshotId: id,

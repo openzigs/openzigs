@@ -1,10 +1,15 @@
 "use client";
 
-import { useState, useCallback } from "react";
-import { Film, Loader2, Search, Sparkles, Clock, Brain } from "lucide-react";
+import { useState, useCallback, useMemo } from "react";
+import { Film, Loader2, Sparkles, Brain } from "lucide-react";
 import { fetchJson } from "@/lib/api";
 import { showToast } from "@/components/toast";
 import { InlineModelPicker } from "@/components/model-picker-select";
+import {
+  BRollPreviewStrip,
+  BRollCard,
+  type BRollSuggestionView,
+} from "./broll-preview-strip";
 
 interface BRollSuggestion {
   timestamp: number;
@@ -21,12 +26,6 @@ interface BRollPanelProps {
 
 type BRollDensity = "sparse" | "moderate" | "dense";
 
-function formatTime(seconds: number): string {
-  const m = Math.floor(seconds / 60);
-  const s = Math.floor(seconds % 60);
-  return `${m}:${s.toString().padStart(2, "0")}`;
-}
-
 export function BRollPanel({
   draftId: _draftId,
   videoSource,
@@ -35,7 +34,16 @@ export function BRollPanel({
   const [suggestions, setSuggestions] = useState<BRollSuggestion[]>([]);
   const [density, setDensity] = useState<BRollDensity>("moderate");
   const [model, setModel] = useState("");
-  const [accepted, setAccepted] = useState<Set<number>>(new Set());
+  const [statusMap, setStatusMap] = useState<
+    Record<string, "pending" | "accepted" | "rejected">
+  >({});
+
+  const updateStatus = useCallback(
+    (id: string, status: "accepted" | "rejected") => {
+      setStatusMap((prev) => ({ ...prev, [id]: status }));
+    },
+    [],
+  );
 
   const handleAnalyze = useCallback(async () => {
     if (!videoSource) {
@@ -97,17 +105,31 @@ export function BRollPanel({
     }
   }, [videoSource, density, model]);
 
-  const toggleAccepted = useCallback((index: number) => {
-    setAccepted((prev) => {
-      const next = new Set(prev);
-      if (next.has(index)) {
-        next.delete(index);
-      } else {
-        next.add(index);
-      }
-      return next;
-    });
-  }, []);
+  const mappedSuggestions = useMemo<BRollSuggestionView[]>(
+    () =>
+      suggestions.map((s, i) => {
+        const id = String(i);
+        return {
+          id,
+          timestamp: s.timestamp,
+          duration: s.duration,
+          query: s.query,
+          source: s.hasAsset ? "library" : "ai-suggested",
+          status: statusMap[id] ?? "pending",
+        };
+      }),
+    [suggestions, statusMap],
+  );
+
+  const totalDuration = useMemo(() => {
+    if (suggestions.length === 0) return 0;
+    const last = suggestions[suggestions.length - 1];
+    return Math.max(60, last.timestamp + last.duration + 30);
+  }, [suggestions]);
+
+  const acceptedCount = mappedSuggestions.filter(
+    (s) => s.status === "accepted",
+  ).length;
 
   return (
     <div className="space-y-3">
@@ -159,49 +181,31 @@ export function BRollPanel({
         )}
       </button>
 
-      {/* Suggestions */}
-      {suggestions.length > 0 && (
-        <div className="space-y-2">
+      {/* Suggestions (#835 wiring) */}
+      {mappedSuggestions.length > 0 && (
+        <div className="space-y-3">
           <div className="flex items-center justify-between">
             <p className="text-xs text-muted-foreground">
-              {suggestions.length} insertion points
+              {mappedSuggestions.length} insertion points
             </p>
             <p className="text-xs text-muted-foreground">
-              {accepted.size} accepted
+              {acceptedCount} accepted
             </p>
           </div>
-          {suggestions.map((s, i) => (
-            <button
-              key={i}
-              onClick={() => toggleAccepted(i)}
-              className={`w-full rounded-lg border p-2.5 text-left transition-colors ${
-                accepted.has(i)
-                  ? "border-primary bg-primary/5"
-                  : "border-border hover:bg-muted/50"
-              }`}
-            >
-              <div className="flex items-start justify-between">
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2">
-                    <Search className="h-3 w-3 text-muted-foreground" />
-                    <span className="text-sm font-medium">{s.query}</span>
-                  </div>
-                  <p className="mt-0.5 text-xs text-muted-foreground">
-                    {s.context}
-                  </p>
-                </div>
-                <div className="ml-2 flex flex-col items-end gap-0.5">
-                  <span className="flex items-center gap-1 text-xs text-muted-foreground">
-                    <Clock className="h-3 w-3" />
-                    {formatTime(s.timestamp)}
-                  </span>
-                  <span className="text-xs text-muted-foreground">
-                    {s.duration}s
-                  </span>
-                </div>
-              </div>
-            </button>
-          ))}
+          <BRollPreviewStrip
+            suggestions={mappedSuggestions}
+            totalDuration={totalDuration}
+          />
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            {mappedSuggestions.map((s) => (
+              <BRollCard
+                key={s.id}
+                suggestion={s}
+                onAccept={(id) => updateStatus(id, "accepted")}
+                onReject={(id) => updateStatus(id, "rejected")}
+              />
+            ))}
+          </div>
         </div>
       )}
     </div>

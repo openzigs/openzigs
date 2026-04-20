@@ -4,6 +4,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Subtitles, Eye, EyeOff } from "lucide-react";
 import { fetchJson } from "@/lib/api";
 import type { DirectorManifest, TimelineEntry } from "../types";
+import {
+  CaptionTemplatePreview,
+  type CaptionTemplatePreviewConfig,
+} from "./caption-template-preview";
+import { CaptionWordEditor, type CaptionWord } from "./caption-word-editor";
 
 type CaptionPosition = "bottom" | "center" | "top";
 
@@ -311,30 +316,41 @@ export function CaptionStylePanel({
 
       {enabled && (
         <div className="mt-3 space-y-3">
-          {/* Style picker */}
+          {/* Style picker — visual previews (#830 wiring) */}
           <div>
             <p className="mb-1.5 text-[10px] font-medium text-muted-foreground">
               Style
             </p>
-            <div className="grid grid-cols-2 gap-1.5">
-              {styleOptions.map((opt) => (
-                <button
-                  key={opt.value}
-                  onClick={() => updateOverlayProps({ style: opt.value })}
-                  className={`rounded-md border px-2 py-1.5 text-left transition ${
-                    currentStyle === opt.value
-                      ? "border-primary bg-primary/10 text-foreground"
-                      : "border-border bg-background text-muted-foreground hover:bg-muted"
-                  }`}
-                >
-                  <span className="block text-[11px] font-medium">
-                    {opt.label}
-                  </span>
-                  <span className="block text-[9px] text-muted-foreground">
-                    {opt.preview}
-                  </span>
-                </button>
-              ))}
+            <div className="grid grid-cols-2 gap-2">
+              {styleOptions.map((opt) => {
+                const template: CaptionTemplatePreviewConfig = {
+                  id: opt.value,
+                  name: opt.label,
+                  position: currentPosition,
+                  highlightColor:
+                    opt.value === "karaoke"
+                      ? "#FFD700"
+                      : opt.value === "pill"
+                        ? "#3b82f6"
+                        : "#ffffff",
+                  backgroundColor:
+                    opt.value === "boxed"
+                      ? "rgba(0,0,0,0.6)"
+                      : opt.value === "pill"
+                        ? "rgba(59,130,246,0.85)"
+                        : "transparent",
+                  animation:
+                    opt.value === "underline" ? "underline" : undefined,
+                };
+                return (
+                  <CaptionTemplatePreview
+                    key={opt.value}
+                    template={template}
+                    selected={currentStyle === opt.value}
+                    onSelect={() => updateOverlayProps({ style: opt.value })}
+                  />
+                );
+              })}
             </div>
           </div>
 
@@ -381,6 +397,20 @@ export function CaptionStylePanel({
               ))}
             </div>
           </div>
+
+          {/* Per-word editor (#831 wiring) */}
+          {captionProps?.words && captionProps.words.length > 0 && (
+            <div>
+              <p className="mb-1.5 text-[10px] font-medium text-muted-foreground">
+                Per-word styling
+              </p>
+              <CaptionWordEditor
+                words={captionProps.words as CaptionWord[]}
+                onChange={(words) => updateOverlayProps({ words })}
+                fps={manifest?.composition?.fps ?? 30}
+              />
+            </div>
+          )}
         </div>
       )}
     </div>

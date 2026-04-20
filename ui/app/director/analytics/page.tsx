@@ -13,6 +13,7 @@ import {
   ArrowUpDown,
   Search,
   AlertCircle,
+  CalendarRange,
 } from "lucide-react";
 import {
   BarChart,
@@ -23,8 +24,22 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from "recharts";
+import { KPICard } from "@/components/analytics/analytics-summary-cards";
+import {
+  AnalyticsContentCompare,
+  type ContentMetrics,
+} from "@/components/analytics/analytics-content-compare";
 
 // ── Types ────────────────────────────────────────────
+
+type AnalyticsPeriod = "7d" | "30d" | "90d" | "all";
+
+const PERIOD_OPTIONS: { value: AnalyticsPeriod; label: string }[] = [
+  { value: "7d", label: "Last 7 days" },
+  { value: "30d", label: "Last 30 days" },
+  { value: "90d", label: "Last 90 days" },
+  { value: "all", label: "All time" },
+];
 
 interface ChannelStats {
   channelId: string;
@@ -75,48 +90,29 @@ function formatDate(iso: string): string {
   });
 }
 
-// ── Stat Card ────────────────────────────────────────
-
-function StatCard({
-  icon: Icon,
-  label,
-  value,
-}: {
-  icon: typeof Eye;
-  label: string;
-  value: string;
-}) {
-  return (
-    <div className="rounded-lg border border-border bg-card p-4">
-      <div className="flex items-center gap-2 text-muted-foreground">
-        <Icon className="h-4 w-4" />
-        <span className="text-xs font-medium">{label}</span>
-      </div>
-      <p className="mt-1 text-2xl font-bold text-foreground">{value}</p>
-    </div>
-  );
-}
-
 // ── Page ─────────────────────────────────────────────
 
 export default function AnalyticsPage() {
   const [sortField, setSortField] = useState<SortField>("viewCount");
   const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc");
   const [searchQuery, setSearchQuery] = useState("");
+  const [period, setPeriod] = useState<AnalyticsPeriod>("30d");
 
   const channelQuery = useQuery({
-    queryKey: ["yt-analytics-channel"],
+    queryKey: ["yt-analytics-channel", period],
     queryFn: () =>
-      fetchJson<ChannelStats>("/api/admin/director/youtube/analytics/channel"),
+      fetchJson<ChannelStats>(
+        `/api/admin/director/youtube/analytics/channel?period=${period}`,
+      ),
     staleTime: 5 * 60 * 1000,
     retry: 1,
   });
 
   const videosQuery = useQuery({
-    queryKey: ["yt-analytics-videos"],
+    queryKey: ["yt-analytics-videos", period],
     queryFn: () =>
       fetchJson<VideosResponse>(
-        "/api/admin/director/youtube/analytics/videos?limit=50&sort=views&order=desc",
+        `/api/admin/director/youtube/analytics/videos?limit=50&sort=views&order=desc&period=${period}`,
       ),
     staleTime: 5 * 60 * 1000,
     retry: 1,
@@ -220,6 +216,35 @@ export default function AnalyticsPage() {
         </button>
       </div>
 
+      {/* Period selector (#838 wiring) */}
+      <div className="flex items-center gap-2 text-xs">
+        <CalendarRange className="h-3.5 w-3.5 text-muted-foreground" />
+        <span className="text-muted-foreground">Period:</span>
+        <div
+          className="inline-flex rounded-md border border-border bg-background"
+          role="group"
+          aria-label="Analytics period"
+          data-testid="analytics-period-selector"
+        >
+          {PERIOD_OPTIONS.map((opt) => (
+            <button
+              key={opt.value}
+              type="button"
+              onClick={() => setPeriod(opt.value)}
+              aria-pressed={period === opt.value}
+              data-testid={`period-${opt.value}`}
+              className={`px-2.5 py-1 text-[11px] font-medium transition first:rounded-l-md last:rounded-r-md ${
+                period === opt.value
+                  ? "bg-primary text-primary-foreground"
+                  : "text-muted-foreground hover:bg-muted"
+              }`}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
       {/* Channel Overview */}
       {channelQuery.isLoading ? (
         <div className="flex h-20 items-center justify-center">
@@ -247,18 +272,18 @@ export default function AnalyticsPage() {
             </div>
           </div>
           <div className="grid grid-cols-3 gap-4">
-            <StatCard
-              icon={Users}
+            <KPICard
+              icon={<Users className="h-3.5 w-3.5" />}
               label="Subscribers"
               value={formatCount(channelQuery.data.subscriberCount)}
             />
-            <StatCard
-              icon={Eye}
+            <KPICard
+              icon={<Eye className="h-3.5 w-3.5" />}
               label="Total Views"
               value={formatCount(channelQuery.data.viewCount)}
             />
-            <StatCard
-              icon={Video}
+            <KPICard
+              icon={<Video className="h-3.5 w-3.5" />}
               label="Videos"
               value={formatCount(channelQuery.data.videoCount)}
             />
@@ -405,6 +430,26 @@ export default function AnalyticsPage() {
           </div>
         )}
       </div>
+
+      {/* Content comparison (#840 wiring) */}
+      {videos.length >= 2 && (
+        <div className="rounded-lg border border-border bg-card p-4">
+          <h3 className="mb-3 text-sm font-semibold">Compare Videos</h3>
+          <AnalyticsContentCompare
+            posts={videos.map<ContentMetrics>((v) => ({
+              id: v.videoId,
+              title: v.title,
+              views: v.viewCount,
+              likes: v.likeCount,
+              comments: v.commentCount,
+              engagement:
+                v.viewCount > 0
+                  ? (v.likeCount + v.commentCount) / v.viewCount
+                  : 0,
+            }))}
+          />
+        </div>
+      )}
     </div>
   );
 }

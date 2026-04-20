@@ -2,10 +2,7 @@
 
 import { useState, useCallback } from "react";
 import { Move, RotateCcw, Maximize2, Crop } from "lucide-react";
-import {
-  ReframePreview,
-  type ReframePreviewProps,
-} from "./reframe-preview";
+import { ReframePreview, type ReframePreviewProps } from "./reframe-preview";
 import type { BoundingBox } from "./subject-overlay";
 
 interface FramingPanelProps {

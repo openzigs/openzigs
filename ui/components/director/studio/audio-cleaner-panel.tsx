@@ -9,8 +9,9 @@ import {
   Sparkles,
   Sliders,
 } from "lucide-react";
-import { fetchJson } from "@/lib/api";
+import { fetchJson, buildMediaUrl } from "@/lib/api";
 import { showToast } from "@/components/toast";
+import { AudioWaveformCompare } from "./audio-waveform-compare";
 
 interface AudioCleanerPanelProps {
   draftId: string;
@@ -214,6 +215,14 @@ export function AudioCleanerPanel({
             <p>Saved {result.durationSaved}</p>
           </div>
         </div>
+      )}
+
+      {/* Before/after waveform comparison (#836 wiring) */}
+      {audioSource && result?.outputPath && (
+        <AudioWaveformCompare
+          originalUrl={buildMediaUrl(audioSource)}
+          cleanedUrl={buildMediaUrl(result.outputPath)}
+        />
       )}
     </div>
   );
