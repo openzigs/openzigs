@@ -281,6 +281,8 @@ export class PresentationRepository {
     if (sets.length === 0) return false;
 
     params.push(id);
+    // Sub-issue #903 — `sets` only contains hardcoded `column = ?` literals
+    // chosen above; no key from `fields` ever flows into the SQL fragment.
     const result = this.db
       .prepare(`UPDATE presentations SET ${sets.join(", ")} WHERE id = ?`)
       .run(...params);

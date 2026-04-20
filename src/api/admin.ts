@@ -3770,7 +3770,15 @@ export const createAdminRouter = ({
       });
     }
 
-    const baseUrl = String(prov.baseUrl).replace(/\/+$/, "");
+    // Length-cap then trim trailing slashes with a linear loop to defeat
+    // the polynomial-ReDoS class CodeQL flagged on `/\/+$/` (sub-issue #900).
+    // The cap also guards against an attacker-supplied multi-MB baseUrl that
+    // would pin a CPU even on a linear regex.
+    const rawBaseUrl = String(prov.baseUrl).slice(0, 2048);
+    let baseUrl = rawBaseUrl;
+    while (baseUrl.endsWith("/")) {
+      baseUrl = baseUrl.slice(0, -1);
+    }
     const provType = String(prov.type);
 
     // SSRF protection: only allow http(s) URLs targeting known AI provider patterns

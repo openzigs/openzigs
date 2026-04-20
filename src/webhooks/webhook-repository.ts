@@ -85,6 +85,11 @@ export class WebhookRepository {
     if (!existing) return undefined;
 
     const now = this.clock().toISOString();
+    // Sub-issue #903 — `sets` is a closed allowlist of server-side string
+    // literals. The list below MUST stay in sync with this comment: every
+    // entry uses a hardcoded `column = ?` template, no key from the `updates`
+    // object ever flows into the SQL fragment. If you add a new field, keep
+    // the `column = ?` shape so the joined `UPDATE` cannot be SQL-injected.
     const sets: string[] = ["updated_at = ?"];
     const params: unknown[] = [now];
 

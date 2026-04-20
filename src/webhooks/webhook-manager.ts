@@ -188,10 +188,21 @@ export class WebhookManager {
   }
 
   private safeCompare(a: string, b: string): boolean {
-    try {
-      return timingSafeEqual(Buffer.from(a), Buffer.from(b));
-    } catch {
-      return false;
-    }
+    // Sub-issue #908 — `timingSafeEqual` throws on length mismatch and the
+    // surrounding try/catch returns false synchronously, which leaks the
+    // length-comparison via observable timing of the throw. Compare lengths
+    // explicitly *and* run a constant-time compare against equal-length
+    // padded buffers so the function takes the same time regardless of
+    // length mismatch.
+    const aBuf = Buffer.from(a);
+    const bBuf = Buffer.from(b);
+    const len = Math.max(aBuf.length, bBuf.length, 1);
+    const aPadded = Buffer.alloc(len);
+    const bPadded = Buffer.alloc(len);
+    aBuf.copy(aPadded);
+    bBuf.copy(bPadded);
+    const equalLength = aBuf.length === bBuf.length;
+    const equalContent = timingSafeEqual(aPadded, bPadded);
+    return equalLength && equalContent;
   }
 }

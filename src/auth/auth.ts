@@ -61,10 +61,15 @@ const extractToken = (req: Request) => {
     return header.slice("Bearer ".length).trim();
   }
   // Fallback: accept token as query param for media elements (img/video/audio)
-  // that cannot send Authorization headers.
-  const qToken = req.query?.token;
-  if (typeof qToken === "string" && qToken) {
-    return qToken;
+  // that cannot send Authorization headers. Disabled by default because query
+  // tokens leak via reverse-proxy logs, browser history, and `Referer` headers
+  // (sub-issue #908). Set OPENZIGS_ALLOW_QUERY_TOKEN=1 to opt back in for one
+  // release while a signed-URL replacement is rolled out.
+  if (process.env.OPENZIGS_ALLOW_QUERY_TOKEN === "1") {
+    const qToken = req.query?.token;
+    if (typeof qToken === "string" && qToken) {
+      return qToken;
+    }
   }
   return "";
 };

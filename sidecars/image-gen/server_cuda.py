@@ -63,6 +63,30 @@ logging.basicConfig(
 )
 log = logging.getLogger("image-gen-cuda")
 
+# ── Error Sanitisation (sub-issue #905) ─────────────────────
+# Strip absolute paths, pointer addresses, and traceback markers from
+# exception text before returning it to clients. The full traceback is
+# always logged server-side via `log.exception`.
+import re as _re
+
+def _sanitize_runtime_error(exc: BaseException, max_len: int = 240) -> str:
+    raw = str(exc) if exc is not None else ""
+    if not raw:
+        return type(exc).__name__
+    last_line = ""
+    for line in reversed(raw.strip().splitlines()):
+        if line.strip():
+            last_line = line.strip()
+            break
+    if not last_line:
+        last_line = raw.strip()
+    last_line = _re.sub(r"(/[^\s:]+/|[A-Za-z]:\\[^\s:]+\\)", "", last_line)
+    last_line = _re.sub(r"0x[0-9a-fA-F]{6,}", "0x…", last_line)
+    if len(last_line) > max_len:
+        last_line = last_line[:max_len] + "…"
+    return last_line or type(exc).__name__
+
+
 # â”€â”€ Lazy imports (torch/diffusers loaded on first use) â”€â”€â”€â”€â”€â”€â”€â”€â”€
 torch = None
 Image = None
@@ -643,8 +667,8 @@ def _bg_generate(
             },
         })
     except Exception as e:
-        log.error(f"[async] generate failed job={job_id}: {e}")
-        _post_callback(job_id, callback_url, {"job_id": job_id, "status": "failed", "error": str(e)})
+        log.exception(f"[async] generate failed job={job_id}")
+        _post_callback(job_id, callback_url, {"job_id": job_id, "status": "failed", "error": _sanitize_runtime_error(e)})
     finally:
         _generating = False
 
@@ -711,8 +735,8 @@ def _bg_img2img(
             },
         })
     except Exception as e:
-        log.error(f"[async] img2img failed job={job_id}: {e}")
-        _post_callback(job_id, callback_url, {"job_id": job_id, "status": "failed", "error": str(e)})
+        log.exception(f"[async] img2img failed job={job_id}")
+        _post_callback(job_id, callback_url, {"job_id": job_id, "status": "failed", "error": _sanitize_runtime_error(e)})
     finally:
         _generating = False
         # Clean up temp file

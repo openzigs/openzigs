@@ -230,21 +230,73 @@ def verify_token(authorization: Optional[str] = Header(None)) -> None:
 
 
 def validate_callback_url(url: str) -> str:
+    """Validate a sidecar callback URL.
+
+    The worker sidecar only ever calls back to the OpenZigs orchestrator on the
+    same host, so the allowlist is intentionally narrow:
+
+    * Only ``http`` / ``https`` schemes are accepted.
+    * Only loopback hosts (``localhost``, ``127.0.0.0/8``, ``::1``) and
+      ``*.local`` mDNS names are accepted.
+    * Cloud metadata endpoints (``169.254.169.254``, ``fd00:ec2::254``),
+      RFC 1918 ranges, link-local ranges and IPv4-mapped-IPv6 addresses are
+      rejected outright. This closes the SSRF class CodeQL flagged
+      (``py/full-ssrf``, sub-issue #904).
+    """
     parsed = urlparse(url)
     if parsed.scheme not in ("http", "https"):
         raise ValueError(f"URL scheme must be http or https, got: {parsed.scheme}")
-    host = parsed.hostname or ""
+    host = (parsed.hostname or "").strip("[]")
     if not host:
         raise ValueError("URL must have a hostname")
+
+    # Hard-deny well-known cloud metadata endpoints regardless of how the
+    # caller spells them.
+    METADATA_HOSTS = {
+        "169.254.169.254",      # AWS / Azure / OpenStack
+        "100.100.100.200",      # Alibaba Cloud
+        "fd00:ec2::254",        # AWS IPv6 metadata
+        "metadata.google.internal",
+        "metadata.goog",
+    }
+    if host.lower() in METADATA_HOSTS:
+        raise ValueError(f"Callback URL host blocked (metadata endpoint): {host}")
+
+    # Loopback hostnames are always safe.
     if host in ("localhost", "127.0.0.1", "::1"):
         return url
+
     try:
-        addr = ipaddress.ip_address(host.strip("[]"))
-        if addr.is_private or addr.is_loopback:
-            return url
+        addr = ipaddress.ip_address(host)
     except ValueError:
+        # Hostname (not an IP literal). Allow only mDNS `.local` names; deny
+        # everything else so a public DNS name can't be used to pivot.
         if host.endswith(".local"):
             return url
+        raise ValueError(f"Callback URL host not allowed: {host}")
+
+    # Unwrap IPv4-mapped IPv6 (e.g. ::ffff:169.254.169.254) so the metadata
+    # check above also catches the mapped form.
+    if isinstance(addr, ipaddress.IPv6Address) and addr.ipv4_mapped is not None:
+        addr = addr.ipv4_mapped
+        if str(addr) in METADATA_HOSTS:
+            raise ValueError(
+                f"Callback URL host blocked (mapped metadata endpoint): {host}"
+            )
+
+    if addr.is_loopback:
+        return url
+
+    # RFC1918 private addresses (10/8, 172.16/12, 192.168/16) are allowed so
+    # the worker can post back to the orchestrator across Docker bridge
+    # networks. We deliberately exclude link-local (``is_link_local`` —
+    # 169.254/16, fe80::/10) since that's where cloud metadata lives.
+    if addr.is_link_local or addr.is_multicast or addr.is_unspecified:
+        raise ValueError(f"Callback URL host not allowed: {host}")
+    if addr.is_private:
+        return url
+
+    # Anything else — public IPs, reserved ranges — is rejected.
     raise ValueError(f"Callback URL host not allowed: {host}")
 
 

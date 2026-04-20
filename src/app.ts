@@ -115,11 +115,26 @@ export const createApp = (
       },
     }),
   );
-  // CORS: restrict to explicit allowed origins
+  // CORS: restrict to explicit allowed origins.
+  // Sub-issue #908 — previously this allowed *any* localhost port, which
+  // means any other tool listening on the same machine (or a DNS-rebinding
+  // page) could call the API with the user's credentials. We now require
+  // the port to appear on a configurable allowlist.
   const corsOrigins = (process.env.OPENZIGS_CORS_ORIGINS ?? "")
     .split(",")
     .map((s) => s.trim())
     .filter(Boolean);
+  // Default localhost ports we ship: API (3000), Next dev/prod (3001), and
+  // a few common alt-ports for Next dev (3101) and CDP (9222).
+  const defaultLocalhostPorts = ["3000", "3001", "3101", "9222"];
+  const extraLocalhostPorts = (process.env.OPENZIGS_LOCALHOST_PORTS ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const allowedLocalhostPorts = new Set([
+    ...defaultLocalhostPorts,
+    ...extraLocalhostPorts,
+  ]);
   const explicitOrigins = new Set([
     uiOrigin,
     "http://localhost:3000",
@@ -131,21 +146,26 @@ export const createApp = (
       origin: (origin, callback) => {
         // Allow requests with no origin (curl, mobile apps, server-to-server)
         if (!origin) return callback(null, true);
-        // Allow any localhost origin regardless of port (local dev servers
-        // may run on non-default ports like 3101, 5173, etc.)
+        if (explicitOrigins.has(origin)) {
+          return callback(null, true);
+        }
+        // Allow localhost origins only on the explicit port allowlist.
         try {
           const url = new URL(origin);
-          if (url.hostname === "localhost" || url.hostname === "127.0.0.1") {
+          const isLocalhost =
+            url.hostname === "localhost" || url.hostname === "127.0.0.1";
+          // URL.port is "" for the protocol's default port; treat that as
+          // 80/443 explicitly so it can be opted-in via env.
+          const port =
+            url.port ||
+            (url.protocol === "https:" ? "443" : "80");
+          if (isLocalhost && allowedLocalhostPorts.has(port)) {
             return callback(null, true);
           }
         } catch {
           /* not a valid URL, fall through */
         }
-        if (explicitOrigins.has(origin)) {
-          callback(null, true);
-        } else {
-          callback(new Error("Not allowed by CORS"));
-        }
+        return callback(new Error("Not allowed by CORS"));
       },
       credentials: true,
       methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],

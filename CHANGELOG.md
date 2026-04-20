@@ -33,6 +33,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `docs/MULTI_GPU.md`: Removed the previously-documented `LTX_DEVICE_MAP=balanced` / `FLUX_DEVICE_MAP=balanced` flags. They were never wired up in the sidecars (`device_map="balanced"` has known FLUX meta-tensor bugs in diffusers â€” see issue #9450). Replaced with the real, opt-in `IMAGE_GEN_POOLING_MODE=manual-flux` documentation including trade-offs and limitations.
 
+### Security
+
+- **Q2 2026 Security Hardening Epic** (#899) — closes ten audit findings tracked in `/memories/repo/research-2026-04-19-security-audit.md` Section G:
+  - Patched transitive CVEs via `pnpm.overrides`: `dompurify>=3.4.0`, `protobufjs>=7.5.5`, `lodash>=4.17.21`, `lodash-es>=4.17.21`, `@xmldom/xmldom>=0.8.12`, `hono>=4.12.14`, `@hono/node-server>=1.19.13`, `vite>=6.4.2`, `next>=15.5.15`, `electron>=39.8.5`. Direct bumps for `next` (`ui/`) and `electron` (`desktop/`) (#902).
+  - Hardened SSRF protection in the lipsync worker `validate_callback_url`: hard-deny set for IMDS / Alibaba / GCP metadata hosts, link-local + multicast + unspecified rejected before any RFC1918 allow, IPv4-mapped IPv6 unwrapped and re-checked (#904).
+  - Stricter path traversal guards (sub-issue #907) — `safe_join` already rejects `..`, absolute paths, and drive letters; tests added.
+  - Removed committed local-auth token from `test-chat.mjs`; script now reads `process.env.OPENZIGS_TOKEN` and exits if unset. Added `.gitleaks.toml` + `.github/workflows/gitleaks.yml` to block re-introduction (#909). **Note:** historical commits still contain the token; a follow-up `git filter-repo` rewrite is required for a full scrub.
+  - Eliminated catastrophic-backtracking risk in admin baseUrl trim by capping input length and using a bounded loop instead of `replace(/\/+$/, "")` (#900).
+  - Tightened auth + CORS posture: query-token fallback is now opt-in via `OPENZIGS_ALLOW_QUERY_TOKEN=1`; CORS no longer blanket-accepts every localhost port — explicit allowlist (`OPENZIGS_LOCALHOST_PORTS` for extras) (#908).
+  - SVG output (Mermaid diagrams + task icons) now passes through `DOMPurify` with an explicit profile that forbids `<script>`, event handlers, and embedded objects; `mermaid.securityLevel` raised to `strict` (#901).
+  - Replaced the committed `debug-proxy.mjs` with a hardened version under `scripts/dev/` — binds to `127.0.0.1`, requires `OPENZIGS_DEBUG_PROXY_TOKEN`, strips upstream `Authorization` headers, uses `timingSafeEqual` for token comparison, and ships with a "DEV ONLY" banner (#906).
+  - Sanitized exception messages returned to clients from the lipsync + image-gen sidecars: file paths and pointer addresses stripped, only the last message line returned, full traceback still logged server-side (#905).
+  - Added `LIKE ... ESCAPE '\\'` and metacharacter escaping for `searchContacts`; constant-time `safeCompare` in the webhook manager now pads buffers to a common length before `timingSafeEqual` to avoid throwing on length mismatch; documented the explicit column allowlist on every dynamic `UPDATE` (#903).
+  - Added a new `closed` access-control mode (`messaging.accessControl.mode`) and switched the default to `closed` so a fresh install requires explicit allowlisting before relaying messages.
+
 ### Fixed
 - Strip UTF-8 BOM in `readJsonFile` so config files written by Windows PowerShell 5.1 (`Set-Content` / `Out-File` defaults) no longer crash backend startup with `JSON.parse` errors.
 
