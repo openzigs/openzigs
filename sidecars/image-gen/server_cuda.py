@@ -63,6 +63,30 @@ logging.basicConfig(
 )
 log = logging.getLogger("image-gen-cuda")
 
+# ── Error Sanitisation (sub-issue #905) ─────────────────────
+# Strip absolute paths, pointer addresses, and traceback markers from
+# exception text before returning it to clients. The full traceback is
+# always logged server-side via `log.exception`.
+import re as _re
+
+def _sanitize_runtime_error(exc: BaseException, max_len: int = 240) -> str:
+    raw = str(exc) if exc is not None else ""
+    if not raw:
+        return type(exc).__name__
+    last_line = ""
+    for line in reversed(raw.strip().splitlines()):
+        if line.strip():
+            last_line = line.strip()
+            break
+    if not last_line:
+        last_line = raw.strip()
+    last_line = _re.sub(r"(/[^\s:]+/|[A-Za-z]:\\[^\s:]+\\)", "", last_line)
+    last_line = _re.sub(r"0x[0-9a-fA-F]{6,}", "0x…", last_line)
+    if len(last_line) > max_len:
+        last_line = last_line[:max_len] + "…"
+    return last_line or type(exc).__name__
+
+
 # â”€â”€ Lazy imports (torch/diffusers loaded on first use) â”€â”€â”€â”€â”€â”€â”€â”€â”€
 torch = None
 Image = None
@@ -183,23 +207,10 @@ def _store_result(job_id: str, payload: dict) -> None:
 
 # â”€â”€ Security Utilities â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-def safe_join(base_dir: str, user_path: str) -> str:
-    """Safely join a base directory with a user-supplied path component."""
-    base = os.path.realpath(base_dir)
-    joined = os.path.realpath(os.path.join(base, user_path))
-    if not joined.startswith(base + os.sep) and joined != base:
-        raise ValueError(f"Path traversal blocked: {user_path}")
-    return joined
-
-
-def _sanitize_path(user_path: str) -> str:
-    s = str(user_path)
-    if "\x00" in s:
-        raise ValueError("Path contains null bytes")
-    normed = os.path.normpath(s)
-    if ".." in normed.split(os.sep):
-        raise ValueError(f"Path traversal detected: {user_path}")
-    return normed
+# ── Security Utilities ─────────────────────────────────────────
+# Sub-issue #907: helpers live in path_utils.py so the regression tests
+# import the exact same code path the routes use.
+from path_utils import safe_join, sanitize_path as _sanitize_path  # noqa: E402
 
 
 def _get_training_dir(character_id: str) -> str:
@@ -643,8 +654,8 @@ def _bg_generate(
             },
         })
     except Exception as e:
-        log.error(f"[async] generate failed job={job_id}: {e}")
-        _post_callback(job_id, callback_url, {"job_id": job_id, "status": "failed", "error": str(e)})
+        log.exception(f"[async] generate failed job={job_id}")
+        _post_callback(job_id, callback_url, {"job_id": job_id, "status": "failed", "error": _sanitize_runtime_error(e)})
     finally:
         _generating = False
 
@@ -711,8 +722,8 @@ def _bg_img2img(
             },
         })
     except Exception as e:
-        log.error(f"[async] img2img failed job={job_id}: {e}")
-        _post_callback(job_id, callback_url, {"job_id": job_id, "status": "failed", "error": str(e)})
+        log.exception(f"[async] img2img failed job={job_id}")
+        _post_callback(job_id, callback_url, {"job_id": job_id, "status": "failed", "error": _sanitize_runtime_error(e)})
     finally:
         _generating = False
         # Clean up temp file

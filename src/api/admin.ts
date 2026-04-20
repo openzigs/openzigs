@@ -52,6 +52,7 @@ import {
 import { AVAILABLE_VOICES } from "../voice/types.js";
 import { loadSkillMetadata } from "../skills/skill-loader.js";
 import { isAllowedNetworkNodeUrl } from "../security/url-validation.js";
+import { capAndTrimTrailingSlashes } from "../security/url-trim.js";
 import type { PipelineTemplateManager } from "../productivity/pipeline-template-manager.js";
 import type { Server as SocketIOServer } from "socket.io";
 import {
@@ -3770,7 +3771,10 @@ export const createAdminRouter = ({
       });
     }
 
-    const baseUrl = String(prov.baseUrl).replace(/\/+$/, "");
+    // Length-cap then trim trailing slashes via the shared bounded helper to
+    // defeat the polynomial-ReDoS class CodeQL flagged on `/\/+$/`
+    // (sub-issue #900).  See src/security/url-trim.ts for the regression test.
+    const baseUrl = capAndTrimTrailingSlashes(prov.baseUrl);
     const provType = String(prov.type);
 
     // SSRF protection: only allow http(s) URLs targeting known AI provider patterns

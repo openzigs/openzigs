@@ -113,13 +113,35 @@ export const createApp = (
           formAction: ["'self'"],
         },
       },
+      // PR #911 walkthrough regression: helmet's default CORP of `same-origin`
+      // blocks the UI (port 3001) from embedding `/api/queue/assets/file/*`
+      // images and videos served by the API (port 3000) — Chromium reports
+      // `net::ERR_BLOCKED_BY_RESPONSE.NotSameOrigin`. The CORS allow-list
+      // above is the actual cross-origin authorization mechanism for the API,
+      // so relaxing CORP to `cross-origin` does not weaken access control.
+      crossOriginResourcePolicy: { policy: "cross-origin" },
     }),
   );
-  // CORS: restrict to explicit allowed origins
+  // CORS: restrict to explicit allowed origins.
+  // Sub-issue #908 — previously this allowed *any* localhost port, which
+  // means any other tool listening on the same machine (or a DNS-rebinding
+  // page) could call the API with the user's credentials. We now require
+  // the port to appear on a configurable allowlist.
   const corsOrigins = (process.env.OPENZIGS_CORS_ORIGINS ?? "")
     .split(",")
     .map((s) => s.trim())
     .filter(Boolean);
+  // Default localhost ports we ship: API (3000), Next dev/prod (3001), and
+  // a few common alt-ports for Next dev (3101) and CDP (9222).
+  const defaultLocalhostPorts = ["3000", "3001", "3101", "9222"];
+  const extraLocalhostPorts = (process.env.OPENZIGS_LOCALHOST_PORTS ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const allowedLocalhostPorts = new Set([
+    ...defaultLocalhostPorts,
+    ...extraLocalhostPorts,
+  ]);
   const explicitOrigins = new Set([
     uiOrigin,
     "http://localhost:3000",
@@ -131,29 +153,47 @@ export const createApp = (
       origin: (origin, callback) => {
         // Allow requests with no origin (curl, mobile apps, server-to-server)
         if (!origin) return callback(null, true);
-        // Allow any localhost origin regardless of port (local dev servers
-        // may run on non-default ports like 3101, 5173, etc.)
+        if (explicitOrigins.has(origin)) {
+          return callback(null, true);
+        }
+        // Allow localhost origins only on the explicit port allowlist.
         try {
           const url = new URL(origin);
-          if (url.hostname === "localhost" || url.hostname === "127.0.0.1") {
+          const isLocalhost =
+            url.hostname === "localhost" || url.hostname === "127.0.0.1";
+          // URL.port is "" for the protocol's default port; treat that as
+          // 80/443 explicitly so it can be opted-in via env.
+          const port =
+            url.port ||
+            (url.protocol === "https:" ? "443" : "80");
+          if (isLocalhost && allowedLocalhostPorts.has(port)) {
             return callback(null, true);
           }
         } catch {
           /* not a valid URL, fall through */
         }
-        if (explicitOrigins.has(origin)) {
-          callback(null, true);
-        } else {
-          callback(new Error("Not allowed by CORS"));
-        }
+        return callback(new Error("Not allowed by CORS"));
       },
       credentials: true,
       methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
       allowedHeaders: ["Content-Type", "Authorization"],
     }),
   );
-  // Global rate limit: generous for local use, protects against runaway loops.
-  // Authenticated requests are exempt since they've already proven identity.
+  // Global rate limit: protects auth, admin POSTs, and outbound-network
+  // routes (web-search, fetcher) against runaway loops.
+  //
+  // PR #911 walkthrough regression: the dashboard + gallery poll 5+ GET
+  // endpoints every 1–2 seconds, which trips a 5000/15min ceiling within
+  // minutes. Two carve-outs are applied below:
+  //   1. Loopback callers (127.0.0.1, ::1, ::ffff:127.0.0.1) are exempt —
+  //      they are local development / desktop-app traffic and cannot be
+  //      attacker-controlled without already having local code execution.
+  //   2. GET requests to `/api/queue/*`, `/api/tasks/*`, and `/api/sessions/*`
+  //      are exempt — these are read-only polling endpoints. Mutating
+  //      verbs (POST/PUT/PATCH/DELETE) on the same prefixes are still
+  //      rate-limited.
+  const LOOPBACK_IPS = new Set(["127.0.0.1", "::1", "::ffff:127.0.0.1"]);
+  const POLLING_PREFIXES = ["/api/queue", "/api/tasks", "/api/sessions"];
   app.use(
     rateLimit({
       windowMs: 15 * 60 * 1000,
@@ -161,7 +201,17 @@ export const createApp = (
       standardHeaders: true,
       legacyHeaders: false,
       message: { error: "Too many requests, please try again later" },
-      skip: (req) => req.path === "/health",
+      skip: (req) => {
+        if (req.path === "/health") return true;
+        if (req.ip && LOOPBACK_IPS.has(req.ip)) return true;
+        if (
+          req.method === "GET" &&
+          POLLING_PREFIXES.some((prefix) => req.path.startsWith(prefix))
+        ) {
+          return true;
+        }
+        return false;
+      },
       // When trust proxy isn't configured, suppress the X-Forwarded-For
       // validation warning — the header is set by the Next.js dev proxy
       // but isn't security-relevant in local-only deployments.

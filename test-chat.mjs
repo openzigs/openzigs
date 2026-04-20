@@ -1,6 +1,13 @@
 import { io } from "./ui/node_modules/socket.io-client/build/esm/index.js";
 
-const token = "125285b1a6cf63dfef1a0c66cea0d179738220ccf6e8d4cdaad6a61f15aeaaeb";
+const token = process.env.OPENZIGS_TOKEN;
+if (!token) {
+  console.error(
+    "OPENZIGS_TOKEN is required. Read your token from ~/.openzigs/config.json " +
+      "and export it before running this script.",
+  );
+  process.exit(1);
+}
 const s = io("http://localhost:3000", {
   auth: { token },
   query: { clientId: "test-node-" + Date.now() },

@@ -26,7 +26,11 @@ export type AuthConfig = {
   workerSecret?: string;
 };
 
-export type AccessControlMode = "allowlist" | "blocklist" | "open";
+export type AccessControlMode =
+  | "allowlist"
+  | "blocklist"
+  | "open"
+  | "closed";
 
 export type AccessControlConfig = {
   mode: AccessControlMode;
@@ -365,7 +369,7 @@ const authSchema = z.object({
 });
 
 const accessControlSchema = z.object({
-  mode: z.enum(["allowlist", "blocklist", "open"]),
+  mode: z.enum(["allowlist", "blocklist", "open", "closed"]),
   allowedUsers: z.array(z.string()),
   blockedUsers: z.array(z.string()),
 });

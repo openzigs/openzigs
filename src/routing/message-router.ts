@@ -517,6 +517,8 @@ export class MessageRouter {
     switch (this.accessControl.mode) {
       case "open":
         return true;
+      case "closed":
+        return false;
       case "allowlist":
         return this.accessControl.allowedUsers.includes(key);
       case "blocklist":

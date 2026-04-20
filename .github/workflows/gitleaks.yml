@@ -1,0 +1,41 @@
+name: Gitleaks
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  gitleaks:
+    name: Scan for committed secrets
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      # Run the gitleaks binary directly. The official `gitleaks-action@v2`
+      # is now gated behind a commercial licence (GITLEAKS_LICENSE secret).
+      # Using the OSS binary keeps the scan free for public + private repos.
+      - name: Install gitleaks
+        run: |
+          GITLEAKS_VERSION=8.21.2
+          curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
+            | tar -xz -C /tmp gitleaks
+          sudo mv /tmp/gitleaks /usr/local/bin/gitleaks
+          gitleaks version
+      - name: Scan working tree
+        # Use `--no-git` to scan only the current working tree, not the full
+        # git history. Pre-existing historical secrets are tracked separately
+        # via #909 and will be removed via git filter-repo in a follow-up.
+        run: |
+          gitleaks detect \
+            --source . \
+            --config .gitleaks.toml \
+            --no-git \
+            --redact \
+            --no-banner \
+            --verbose \
+            --exit-code 1

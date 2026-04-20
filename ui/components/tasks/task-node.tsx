@@ -1,7 +1,21 @@
 "use client";
 
-import { memo, useEffect, useRef, useState } from "react";
+import DOMPurify, { type Config as DOMPurifyConfig } from "dompurify";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { Handle, Position, type NodeProps } from "@xyflow/react";
+
+/**
+ * DOMPurify config for the role icon SVG fragments. The icons in `ROLE_ICON`
+ * are hardcoded literals so the practical XSS risk is zero — but we still
+ * scrub each fragment as defence-in-depth so a future contributor can't
+ * accidentally introduce an `onerror=` attribute and ship XSS to production
+ * (sub-issue #901).
+ */
+const ICON_SANITIZER_CONFIG: DOMPurifyConfig = {
+  USE_PROFILES: { svg: true, svgFilters: true },
+  FORBID_TAGS: ["script", "iframe", "object", "embed", "form", "foreignObject"],
+  FORBID_ATTR: ["onerror", "onload", "onclick", "onmouseover", "onfocus"],
+};
 
 export type TaskNodeData = {
   id: string;
@@ -122,6 +136,10 @@ export const TaskNode = memo(({ data }: NodeProps) => {
   const style = STATUS_STYLES[task.status] ?? STATUS_STYLES.queued;
   const role = getRole(task);
   const icon = ROLE_ICON[role] ?? ROLE_ICON.worker;
+  const safeIconSvg = useMemo(
+    () => DOMPurify.sanitize(icon.svg, ICON_SANITIZER_CONFIG),
+    [icon.svg],
+  );
   const isRunning = task.status === "running";
   const isCompleted = task.status === "completed";
   const isFailed = task.status === "failed";
@@ -234,7 +252,7 @@ export const TaskNode = memo(({ data }: NodeProps) => {
             <svg
               viewBox="0 0 24 24"
               className={`h-6 w-6 transition-all duration-300 ${isRunning ? "opacity-80" : ""}`}
-              dangerouslySetInnerHTML={{ __html: icon.svg }}
+              dangerouslySetInnerHTML={{ __html: safeIconSvg }}
             />
 
             {/* Completion checkmark overlay */}

@@ -1,9 +1,23 @@
 "use client";
 
+import DOMPurify, { type Config as DOMPurifyConfig } from "dompurify";
 import { useEffect, useRef, useState } from "react";
 
 /** Monotonic counter so every render attempt gets a unique DOM id. */
 let renderCounter = 0;
+
+/**
+ * DOMPurify configuration for Mermaid SVG output. Allows the SVG element set
+ * Mermaid emits (paths, text, foreignObject for HTML labels) but strips any
+ * `<script>` tags or event handler attributes that an attacker-controlled
+ * Mermaid source could inject (sub-issue #901).
+ */
+const SANITIZER_CONFIG: DOMPurifyConfig = {
+  USE_PROFILES: { svg: true, svgFilters: true, html: true },
+  ADD_TAGS: ["foreignObject"],
+  FORBID_TAGS: ["script", "iframe", "object", "embed", "form"],
+  FORBID_ATTR: ["onerror", "onload", "onclick", "onmouseover", "onfocus"],
+};
 
 type MermaidDiagramProps = {
   /** Raw mermaid definition string (e.g. "graph TD\n  A-->B") */
@@ -34,7 +48,10 @@ export const MermaidDiagram = ({ chart }: MermaidDiagramProps) => {
         mermaid.initialize({
           startOnLoad: false,
           theme: "dark",
-          securityLevel: "loose",
+          // Sub-issue #901 — `loose` permits `<foreignObject>` HTML embedding
+          // and click handlers in diagrams sourced from LLM/chat output. Use
+          // `strict` and rely on DOMPurify (below) as a second layer.
+          securityLevel: "strict",
           fontFamily: "ui-sans-serif, system-ui, sans-serif",
         });
 
@@ -51,7 +68,11 @@ export const MermaidDiagram = ({ chart }: MermaidDiagramProps) => {
           const sanitized = sanitizeMermaidChart(chart.trim());
           const { svg: rendered } = await mermaid.render(renderId, sanitized);
           if (!cancelled) {
-            setSvg(rendered);
+            // Defence-in-depth: even with `securityLevel: 'strict'`, scrub the
+            // rendered SVG with DOMPurify before injecting it into the DOM
+            // (sub-issue #901).
+            const cleanSvg = DOMPurify.sanitize(rendered, SANITIZER_CONFIG);
+            setSvg(cleanSvg);
             setError(null);
           }
         } finally {

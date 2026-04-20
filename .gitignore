@@ -152,3 +152,17 @@ tmp-*
 # Pinterest / scheduler generated output (runtime data, not source)
 pinterest-daily-summary-*.md
 pinterest-pin-snapshots-*.json
+
+# Security audit / scan dumps (generated, do not commit)
+pnpm_audit_*.json
+code_scanning_alerts.json
+dependabot_alerts.json
+secret_scanning_alerts.json
+issues.json
+prs.json
+
+# Misc generated debug output
+_out_a.txt
+walk1-gpu-snapshot.md
+test-output.txt
+test_output.txt

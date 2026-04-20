@@ -5,7 +5,12 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import sharp from "sharp";
-import { createCreativeRouter } from "./creative.js";
+import {
+  createCreativeRouter,
+  validatePath,
+  resolveImagePath,
+  SAFE_BASE,
+} from "./creative.js";
 
 // Create a tiny test image in a temp directory
 let tmpDir: string;
@@ -362,5 +367,117 @@ describe("Creative — POST /inpaint model selection", () => {
     expect(mockMediaQueueRepo.createJob).toHaveBeenCalledWith(
       expect.objectContaining({ model: "flux-kontext" }),
     );
+  });
+});
+
+// ── Path-traversal regression suite (sub-issue #907) ───────────────────────
+//
+// These tests pin the contract of the JS-side path-resolution helpers used
+// throughout the Creative Studio routes.  Each case exercises a known
+// path-traversal vector and asserts the helper rejects it (or contains it
+// inside SAFE_BASE).  Running this suite against a build where the
+// startsWith(SAFE_BASE) check or the realpath() symlink resolution has been
+// reverted causes one or more cases to fail.
+describe("creative path-traversal helpers (sub-issue #907)", () => {
+  const galleryDir = path.join(os.homedir(), ".openzigs", "gallery");
+  let traversalTmpDir: string;
+
+  beforeEach(() => {
+    fs.mkdirSync(galleryDir, { recursive: true });
+    traversalTmpDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "creative-traversal-"),
+    );
+  });
+
+  afterEach(() => {
+    fs.rmSync(traversalTmpDir, { recursive: true, force: true });
+  });
+
+  describe("validatePath", () => {
+    it("rejects parent-directory traversal", () => {
+      expect(() => validatePath("../../etc/passwd")).toThrow(
+        /Path not allowed/,
+      );
+    });
+
+    it("rejects an absolute POSIX path outside SAFE_BASE", () => {
+      expect(() => validatePath("/etc/passwd")).toThrow(/Path not allowed/);
+    });
+
+    it("rejects a Windows drive-letter path outside SAFE_BASE", () => {
+      // path.resolve normalises this on both POSIX and Windows; on POSIX it
+      // becomes a relative-looking string that still resolves outside
+      // SAFE_BASE because the cwd of the test isn't ~/.openzigs.
+      expect(() => validatePath("C:\\Windows\\System32\\drivers\\etc\\hosts"))
+        .toThrow(/Path not allowed/);
+    });
+
+    it("rejects a path containing a NUL byte", () => {
+      expect(() => validatePath(`${SAFE_BASE}/foo\x00.png`)).toThrow(
+        /null bytes/,
+      );
+    });
+
+    it("rejects a non-string input", () => {
+      // A regression where typeof check is removed would let undefined / null
+      // / objects sneak past and crash deeper in path.resolve.
+      // @ts-expect-error — exercising the runtime guard.
+      expect(() => validatePath(undefined)).toThrow();
+    });
+
+    it("accepts a happy-path file inside SAFE_BASE", () => {
+      const target = path.join(SAFE_BASE, "gallery");
+      const out = validatePath(target);
+      // realpath() may rewrite the prefix on macOS (/var → /private/var) but
+      // the result must still resolve under the canonical SAFE_BASE.
+      expect(
+        out === fs.realpathSync(SAFE_BASE) ||
+          out.startsWith(fs.realpathSync(SAFE_BASE) + path.sep),
+      ).toBe(true);
+    });
+
+    it("rejects a symlink inside SAFE_BASE that escapes via realpath", () => {
+      // Plant a symlink under the gallery that points at a directory outside
+      // SAFE_BASE.  The helper must follow the link via realpath and refuse
+      // to return a path whose canonical form lives outside SAFE_BASE.
+      // Skipping on Windows when symlink creation requires elevation.
+      const linkPath = path.join(galleryDir, `escape-link-${Date.now()}`);
+      const targetOutside = traversalTmpDir; // outside ~/.openzigs
+      try {
+        fs.symlinkSync(targetOutside, linkPath, "dir");
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        // EPERM on Windows without Developer Mode / admin → skip case.
+        if (/EPERM|operation not permitted/i.test(message)) return;
+        throw err;
+      }
+      try {
+        expect(() => validatePath(linkPath)).toThrow(/Path not allowed/);
+      } finally {
+        fs.unlinkSync(linkPath);
+      }
+    });
+  });
+
+  describe("resolveImagePath", () => {
+    it("rejects a relative path that traverses out of the gallery", () => {
+      expect(() => resolveImagePath("../../etc/passwd")).toThrow(
+        /Path not allowed/,
+      );
+    });
+
+    it("rejects an absolute path outside SAFE_BASE", () => {
+      expect(() => resolveImagePath("/etc/passwd")).toThrow(/Path not allowed/);
+    });
+
+    it("rejects a NUL byte in the relative path", () => {
+      expect(() => resolveImagePath("foo\x00.png")).toThrow(/null bytes/);
+    });
+
+    it("resolves a relative gallery file inside SAFE_BASE", () => {
+      const out = resolveImagePath("legit.png");
+      const realBase = fs.realpathSync(SAFE_BASE);
+      expect(out.startsWith(realBase + path.sep)).toBe(true);
+    });
   });
 });

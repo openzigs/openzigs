@@ -43,6 +43,38 @@ logging.basicConfig(
 logger = logging.getLogger("lipsync-sidecar-cuda")
 
 
+# ── Error Sanitisation (sub-issue #905) ──────────────────────
+
+def _sanitize_runtime_error(exc: BaseException, max_len: int = 240) -> str:
+    """Return a client-safe error string.
+
+    Strips absolute file paths (POSIX + Windows), CUDA pointer addresses,
+    and traceback-style frame markers from the exception text. Preserves the
+    final, human-readable message line so callers still get useful debugging
+    output without leaking on-disk structure or internal state.
+    """
+    raw = str(exc) if exc is not None else ""
+    if not raw:
+        return f"{type(exc).__name__}"
+    # Take only the last non-empty line — exception messages with `__cause__`
+    # frequently include a stack-like prefix.
+    last_line = ""
+    for line in reversed(raw.strip().splitlines()):
+        if line.strip():
+            last_line = line.strip()
+            break
+    if not last_line:
+        last_line = raw.strip()
+    # Strip POSIX paths (`/foo/bar/baz`) and Windows paths (`C:\foo\bar\baz`)
+    # but keep the basename so error context is preserved.
+    last_line = re.sub(r"(/[^\s:]+/|[A-Za-z]:\\[^\s:]+\\)", "", last_line)
+    # Strip pointer addresses commonly emitted by CUDA / torch.
+    last_line = re.sub(r"0x[0-9a-fA-F]{6,}", "0x…", last_line)
+    if len(last_line) > max_len:
+        last_line = last_line[:max_len] + "…"
+    return last_line or type(exc).__name__
+
+
 # ── Security Utilities ───────────────────────────────────────
 
 # Job ID must be a UUID (hex + hyphens) — reject anything else.
@@ -520,16 +552,20 @@ async def process_lipsync_job(req: LipSyncRequest) -> None:
 
     except Exception as exc:
         tb = traceback.format_exc()
+        # Sub-issue #905 — log full traceback server-side, return only a
+        # sanitized message to the client. `str(exc)[:500]` previously leaked
+        # absolute file paths, model internals, and other on-disk structure.
         logger.error("Job %s failed: %s\n%s", job_id, exc, tb)
+        safe_error = _sanitize_runtime_error(exc)
         job_progress[job_id] = {
             "status": "failed",
-            "error": str(exc)[:500],
+            "error": safe_error,
             "completed_at": time.time(),
         }
         if CALLBACK_URL:
             try:
                 err_payload = json.dumps(
-                    {"job_id": job_id, "status": "failed", "error": str(exc)[:500]}
+                    {"job_id": job_id, "status": "failed", "error": safe_error}
                 ).encode()
                 _post_to_callback(CALLBACK_URL, data=err_payload)
             except Exception:

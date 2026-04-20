@@ -352,9 +352,15 @@ export class SocialRepository {
     }
     if (search) {
       conditions.push(
-        "(username LIKE ? OR display_name LIKE ? OR notes LIKE ?)",
+        "(username LIKE ? ESCAPE '\\' OR display_name LIKE ? ESCAPE '\\' OR notes LIKE ? ESCAPE '\\')",
       );
-      const like = `%${search}%`;
+      // Sub-issue #903 — escape LIKE metacharacters (`%`, `_`, `\`) and cap
+      // input length so attacker-controlled wildcards can't trigger expensive
+      // table scans or unintended matches.
+      const safeSearch = search
+        .slice(0, 200)
+        .replace(/[\\%_]/g, (c) => `\\${c}`);
+      const like = `%${safeSearch}%`;
       params.push(like, like, like);
     }
     if (tag) {
@@ -401,6 +407,10 @@ export class SocialRepository {
     if (!contact) return undefined;
 
     const now = this.clock().toISOString();
+    // Sub-issue #903 — every entry in `sets` is a hardcoded `column = ?`
+    // literal pulled from the closed `Partial<Pick<Contact, ...>>` type. No
+    // user-supplied key reaches the joined fragment, so the dynamic
+    // `UPDATE ... SET ${sets.join(", ")}` cannot be SQL-injected.
     const sets: string[] = ["updated_at = ?"];
     const params: unknown[] = [now];
 
@@ -897,6 +907,9 @@ export class SocialRepository {
     id: string,
     lead: { email?: string; phone?: string },
   ): Contact | undefined {
+    // Sub-issue #903 — `sets` only contains hardcoded `column = ?` string
+    // literals. The `lead` shape is restricted to `{email?, phone?}`; no
+    // user-controlled key flows into the dynamic SQL fragment below.
     const contact = this.getContact(id);
     if (!contact) return undefined;
     const now = this.clock().toISOString();

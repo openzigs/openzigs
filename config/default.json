@@ -16,7 +16,7 @@
   },
   "messaging": {
     "accessControl": {
-      "mode": "open",
+      "mode": "closed",
       "allowedUsers": [],
       "blockedUsers": []
     }

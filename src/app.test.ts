@@ -1112,3 +1112,123 @@ describe("/api/jobs", () => {
     }
   });
 });
+
+describe("PR #911 walkthrough regressions", () => {
+  const cleanupDirs: string[] = [];
+
+  afterEach(async () => {
+    await Promise.all(
+      cleanupDirs.splice(0).map((dir) => fs.rm(dir, { recursive: true, force: true })),
+    );
+  });
+
+  const makeApp = async () => {
+    const configDir = await createTempDir();
+    cleanupDirs.push(configDir);
+    const logDir = await createTempDir();
+    cleanupDirs.push(logDir);
+    const configPath = path.join(configDir, "config.json");
+    const config = await loadConfig({ configPath });
+    const auditLogger = new AuditLogger({ baseDir: logDir });
+    const app = createApp(config, { auditLogger });
+    return { app, config };
+  };
+
+  it("Bug #1: serves Cross-Origin-Resource-Policy: cross-origin globally so the UI on :3001 can embed assets from :3000", async () => {
+    const { app, config } = await makeApp();
+    const { server, baseUrl } = startServer(app);
+    try {
+      // /health is unauthenticated and always present — perfect probe for
+      // verifying the global CORP header that helmet emits.
+      const res = await fetch(`${baseUrl}/health`);
+      expect(res.headers.get("cross-origin-resource-policy")).toBe(
+        "cross-origin",
+      );
+
+      // Authenticated API responses must also emit cross-origin so that
+      // the Next.js UI on a different port can fetch them without
+      // ERR_BLOCKED_BY_RESPONSE.NotSameOrigin.
+      const apiRes = await fetch(`${baseUrl}/api/logs`, {
+        headers: { Authorization: `Bearer ${config.auth.token}` },
+      });
+      expect(apiRes.headers.get("cross-origin-resource-policy")).toBe(
+        "cross-origin",
+      );
+    } finally {
+      await closeServer(server);
+    }
+  });
+
+  it("Bug #2: rate limiter exempts loopback callers (no RateLimit-* headers on 127.0.0.1)", async () => {
+    const { app, config } = await makeApp();
+    const { server, baseUrl } = startServer(app);
+    try {
+      // baseUrl uses 127.0.0.1 so this request is from a loopback IP.
+      const res = await fetch(`${baseUrl}/api/logs`, {
+        headers: { Authorization: `Bearer ${config.auth.token}` },
+      });
+      expect(res.status).toBe(200);
+      // express-rate-limit emits RateLimit-* (RFC 9331) and the legacy
+      // X-RateLimit-* headers when the limiter runs. When `skip` returns
+      // true neither should appear.
+      expect(res.headers.get("ratelimit-policy")).toBeNull();
+      expect(res.headers.get("ratelimit-limit")).toBeNull();
+      expect(res.headers.get("x-ratelimit-limit")).toBeNull();
+    } finally {
+      await closeServer(server);
+    }
+  });
+
+  it("Bug #2: rate limiter skips GET polling endpoints (/api/queue, /api/tasks, /api/sessions)", async () => {
+    // Force a non-loopback client IP so the loopback skip doesn't mask the
+    // polling-endpoint skip we want to verify.
+    const { app, config } = await makeApp();
+    // Fake a remote IP via Express's trust-proxy so req.ip != 127.0.0.1.
+    app.set("trust proxy", true);
+    const { server, baseUrl } = startServer(app);
+    try {
+      for (const route of ["/api/tasks", "/api/sessions", "/api/queue/jobs"]) {
+        const res = await fetch(`${baseUrl}${route}`, {
+          headers: {
+            Authorization: `Bearer ${config.auth.token}`,
+            "X-Forwarded-For": "203.0.113.42",
+          },
+        });
+        // We don't care about the route's status (some return 404 in a
+        // freshly initialized app) — only that the rate limiter did not
+        // attach its headers, proving `skip` returned true.
+        expect(
+          res.headers.get("ratelimit-policy"),
+          `expected no rate-limit on GET ${route}`,
+        ).toBeNull();
+        expect(res.headers.get("ratelimit-limit")).toBeNull();
+      }
+    } finally {
+      await closeServer(server);
+    }
+  });
+
+  it("Bug #2: rate limiter still applies to mutating verbs from non-loopback callers", async () => {
+    const { app, config } = await makeApp();
+    app.set("trust proxy", true);
+    const { server, baseUrl } = startServer(app);
+    try {
+      // POST to /api/jobs from a non-loopback IP — limiter must run and
+      // emit the RateLimit-* headers (the request itself may 400/404
+      // depending on body validation; we only assert on headers).
+      const res = await fetch(`${baseUrl}/api/jobs`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${config.auth.token}`,
+          "Content-Type": "application/json",
+          "X-Forwarded-For": "203.0.113.42",
+        },
+        body: JSON.stringify({}),
+      });
+      expect(res.headers.get("ratelimit-policy")).not.toBeNull();
+      expect(res.headers.get("ratelimit-limit")).not.toBeNull();
+    } finally {
+      await closeServer(server);
+    }
+  });
+});
