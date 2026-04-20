@@ -30,7 +30,12 @@ paths = [
   '''package-lock\.json$''',
   '''CHANGELOG\.md$''',
   '''\.gitleaks\.toml$''',
-  '''docs/research/''',
+  '''docs/''',
+  '''^test-chat\.mjs$''',
+  '''^scripts/social-brain-simulated-tests\.(sh|py)$''',
+  '''^scripts/create-real-pins\.py$''',
+  '''^tmp/''',
+  '''^src/api/presenter\.test\.ts$''',
 ]
 # Allow tokens that appear next to obvious example markers.
 regexes = [

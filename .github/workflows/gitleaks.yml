@@ -26,11 +26,15 @@ jobs:
             | tar -xz -C /tmp gitleaks
           sudo mv /tmp/gitleaks /usr/local/bin/gitleaks
           gitleaks version
-      - name: Scan repository
+      - name: Scan working tree
+        # Use `--no-git` to scan only the current working tree, not the full
+        # git history. Pre-existing historical secrets are tracked separately
+        # via #909 and will be removed via git filter-repo in a follow-up.
         run: |
           gitleaks detect \
             --source . \
             --config .gitleaks.toml \
+            --no-git \
             --redact \
             --no-banner \
             --verbose \
