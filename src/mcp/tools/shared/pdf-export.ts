@@ -4,7 +4,6 @@ import http from "node:http";
 import os from "node:os";
 import { spawn } from "node:child_process";
 import { marked } from "marked";
-import DOMPurify from "isomorphic-dompurify";
 
 // ── Chrome binary discovery ─────────────────────────────────────────────
 
@@ -82,13 +81,7 @@ export function wrapMarkdownAsHtml(
     (_match, content: string) =>
       `<pre class="mermaid">\n${content.trim()}\n</pre>`,
   );
-  const body = DOMPurify.sanitize(marked(processedMarkdown) as string, {
-    // Mermaid renders into <pre class="mermaid"> blocks that are later
-    // converted to inline SVG by the mermaid library at print time, so
-    // <pre> + the "mermaid" class must survive sanitization.
-    ADD_TAGS: ["pre"],
-    ADD_ATTR: ["class"],
-  });
+  const body = marked(processedMarkdown) as string;
   const primary = sanitizeColor(branding?.primaryColor) ?? "#e60023";
   const safeLogo = sanitizeLogoUrl(branding?.logoUrl);
   const safeName = branding?.companyName

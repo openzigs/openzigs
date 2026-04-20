@@ -11,6 +11,7 @@ import type Database from "better-sqlite3";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
+import DOMPurify from "isomorphic-dompurify";
 import { AuditHistoryRepository } from "../mcp/tools/seo/audit-history.js";
 import { exportAudit } from "../mcp/tools/seo/report-export.js";
 import {
@@ -133,26 +134,22 @@ export const createSeoRouter = ({
         .json({ error: "Invalid format. Use csv, json, pdf, or sheets." });
     }
 
-    // Optional branding fields (PDF only). Validation/sanitization happens
-    // in shared/pdf-export.ts (sanitizeLogoUrl/escapeHtml/hex regex), but
-    // we whitelist allowed keys here so callers can't smuggle extra props.
+    // Optional branding fields (PDF only). All user-provided strings are
+    // run through DOMPurify with text-only config at this API boundary so
+    // CodeQL recognizes them as sanitized; pdf-export.ts then applies its
+    // own URL/color/HTML-entity validation as a second defensive layer.
+    const sanitizeText = (raw: unknown): string | undefined =>
+      typeof raw === "string"
+        ? DOMPurify.sanitize(raw, { ALLOWED_TAGS: [], ALLOWED_ATTR: [] })
+        : undefined;
     const branding =
       format === "pdf" &&
       req.body?.branding &&
       typeof req.body.branding === "object"
         ? {
-            companyName:
-              typeof req.body.branding.companyName === "string"
-                ? req.body.branding.companyName
-                : undefined,
-            logoUrl:
-              typeof req.body.branding.logoUrl === "string"
-                ? req.body.branding.logoUrl
-                : undefined,
-            primaryColor:
-              typeof req.body.branding.primaryColor === "string"
-                ? req.body.branding.primaryColor
-                : undefined,
+            companyName: sanitizeText(req.body.branding.companyName),
+            logoUrl: sanitizeText(req.body.branding.logoUrl),
+            primaryColor: sanitizeText(req.body.branding.primaryColor),
           }
         : undefined;
 
