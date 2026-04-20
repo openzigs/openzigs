@@ -62,34 +62,9 @@ _TRAINING_BASE_DIR = os.path.join(os.path.expanduser("~"), ".openzigs", "trainin
 
 
 # ── Security Utilities ─────────────────────────────────────────
-
-def safe_join(base_dir: str, user_path: str) -> str:
-    """Safely join a base directory with a user-supplied path component.
-
-    Resolves symlinks and ensures the result stays under base_dir.
-    Raises ValueError on path traversal attempts.
-    """
-    base = os.path.realpath(base_dir)
-    joined = os.path.realpath(os.path.join(base, user_path))
-    if not joined.startswith(base + os.sep) and joined != base:
-        raise ValueError(f"Path traversal blocked: {user_path}")
-    return joined
-
-
-def _sanitize_path(user_path: str) -> str:
-    """Validate a user-supplied file path for basic safety.
-
-    Rejects null bytes and path traversal sequences.  For paths that must
-    reside under a specific base directory, use ``safe_join`` instead.
-    """
-    s = str(user_path)
-    if "\x00" in s:
-        raise ValueError("Path contains null bytes")
-    # Normalise and reject any remaining traversal
-    normed = os.path.normpath(s)
-    if ".." in normed.split(os.sep):
-        raise ValueError(f"Path traversal detected: {user_path}")
-    return normed
+# Sub-issue #907: helpers live in path_utils.py so the regression tests
+# import the exact same code path the routes use.
+from path_utils import safe_join, sanitize_path as _sanitize_path  # noqa: E402
 
 
 def _get_training_dir(character_id: str) -> str:

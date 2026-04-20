@@ -20,23 +20,60 @@ import type { CopilotWrapperService, SdkAttachment } from "../copilot/index.js";
 const GALLERY_DIR = path.join(os.homedir(), ".openzigs", "gallery");
 
 /** Base directory for all creative studio file operations. */
-const SAFE_BASE = path.resolve(path.join(os.homedir(), ".openzigs"));
+export const SAFE_BASE = path.resolve(path.join(os.homedir(), ".openzigs"));
 
 /**
  * Sanitize and validate a user-supplied file path.
- * Ensures the resolved path lives under ~/.openzigs to prevent path traversal.
+ * Ensures the resolved path lives under ~/.openzigs to prevent path traversal,
+ * and resolves any symbolic links so a symlink that escapes SAFE_BASE is
+ * rejected (sub-issue #907).
+ *
+ * Exported so the regression suite in `creative.test.ts` exercises the exact
+ * helper used by the route handlers (no test-local re-implementation).
  */
-function validatePath(filePath: string): string {
-  const resolved = path.resolve(filePath);
-  if (!resolved.startsWith(SAFE_BASE + path.sep) && resolved !== SAFE_BASE) {
-    throw new Error(
-      "Path not allowed: must be under ~/.openzigs",
-    );
+export function validatePath(filePath: string): string {
+  if (typeof filePath !== "string") {
+    throw new Error("Path must be a string");
   }
-  return resolved;
+  if (filePath.includes("\0")) {
+    throw new Error("Path contains null bytes");
+  }
+  const resolved = path.resolve(filePath);
+
+  // Resolve symlinks if the target (or its closest existing ancestor) exists
+  // so a symlink under SAFE_BASE that points outside is rejected.  We can't
+  // just call realpathSync on the full path because it throws ENOENT for
+  // not-yet-created output files; walk up until we find an existing ancestor.
+  let real = resolved;
+  let probe = resolved;
+  for (;;) {
+    try {
+      const realProbe = fs.realpathSync(probe);
+      // Replace the existing prefix with its realpath, keep any non-existent
+      // suffix as-is.
+      const suffix = resolved.slice(probe.length);
+      real = realProbe + suffix;
+      break;
+    } catch {
+      const parent = path.dirname(probe);
+      if (parent === probe) break; // reached the root
+      probe = parent;
+    }
+  }
+
+  if (!real.startsWith(SAFE_BASE + path.sep) && real !== SAFE_BASE) {
+    throw new Error("Path not allowed: must be under ~/.openzigs");
+  }
+  return real;
 }
 
-function resolveImagePath(filePath: string): string {
+export function resolveImagePath(filePath: string): string {
+  if (typeof filePath !== "string") {
+    throw new Error("Path must be a string");
+  }
+  if (filePath.includes("\0")) {
+    throw new Error("Path contains null bytes");
+  }
   if (path.isAbsolute(filePath)) return validatePath(filePath);
   // Resolve relative paths against the gallery directory, then validate
   const galleryPath = path.join(GALLERY_DIR, filePath);

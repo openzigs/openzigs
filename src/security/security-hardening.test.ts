@@ -8,26 +8,24 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import express from "express";
 import request from "supertest";
 import { createAuthMiddleware } from "../auth/auth.js";
+import {
+  capAndTrimTrailingSlashes,
+  MAX_BASE_URL_LENGTH,
+} from "./url-trim.js";
 
 describe("security: ReDoS guard on baseUrl trim (sub-issue #900)", () => {
-  // The vulnerable pattern in admin.ts was `String(prov.baseUrl).replace(/\/+$/, "")`.
-  // Replicate the patched logic locally so the test stays isolated from the
-  // 1800-line admin router.
-  const trimTrailingSlash = (input: string): string => {
-    const capped = String(input).slice(0, 2048);
-    let s = capped;
-    while (s.endsWith("/")) s = s.slice(0, -1);
-    return s;
-  };
+  // Exercises the exact helper imported by `src/api/admin.ts` so a regression
+  // (e.g. someone reverting to `String(input).replace(/\/+$/, "")`) flips this
+  // test instead of silently re-introducing the polynomial-ReDoS sink.
 
   it("strips trailing slashes from a normal URL", () => {
-    expect(trimTrailingSlash("https://api.example.com/v1///")).toBe(
+    expect(capAndTrimTrailingSlashes("https://api.example.com/v1///")).toBe(
       "https://api.example.com/v1",
     );
   });
 
   it("returns the input unchanged when there are no trailing slashes", () => {
-    expect(trimTrailingSlash("https://api.example.com/v1")).toBe(
+    expect(capAndTrimTrailingSlashes("https://api.example.com/v1")).toBe(
       "https://api.example.com/v1",
     );
   });
@@ -35,16 +33,26 @@ describe("security: ReDoS guard on baseUrl trim (sub-issue #900)", () => {
   it("processes a 1MB trailing-slash payload in under 50ms", () => {
     const payload = "https://api.example.com" + "/".repeat(1_000_000);
     const start = performance.now();
-    const out = trimTrailingSlash(payload);
+    const out = capAndTrimTrailingSlashes(payload);
     const elapsed = performance.now() - start;
     expect(elapsed).toBeLessThan(50);
     // Length cap kicks in well before the 1MB suffix is processed.
-    expect(out.length).toBeLessThanOrEqual(2048);
+    expect(out.length).toBeLessThanOrEqual(MAX_BASE_URL_LENGTH);
   });
 
   it("never returns a string longer than the 2048 cap", () => {
     const huge = "x".repeat(10_000);
-    expect(trimTrailingSlash(huge).length).toBeLessThanOrEqual(2048);
+    expect(capAndTrimTrailingSlashes(huge).length).toBeLessThanOrEqual(
+      MAX_BASE_URL_LENGTH,
+    );
+  });
+
+  it("coerces non-string input via String() before slicing", () => {
+    // Defends against a regression where `prov.baseUrl` is an object whose
+    // `toString` blows up the string conversion. The helper must still cap.
+    expect(capAndTrimTrailingSlashes(12345).length).toBeLessThanOrEqual(
+      MAX_BASE_URL_LENGTH,
+    );
   });
 });
 
