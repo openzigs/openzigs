@@ -63,6 +63,8 @@ export interface CrawlOptions {
   includePaths?: string[];
   excludePaths?: string[];
   scrapeOptions?: ScrapeOptions;
+  /** Optional Socket.IO clientId to scope crawl progress events (#841). */
+  clientId?: string;
 }
 
 export interface CrawlPage {
@@ -317,10 +319,23 @@ export class FirecrawlClient {
     if (options?.excludePaths) body.excludePaths = options.excludePaths;
     if (options?.scrapeOptions) body.scrapeOptions = options.scrapeOptions;
 
-    // NOTE: No webhook for crawl operations. Firecrawl webhooks only deliver
-    // a final completion callback — no per-page progress. Polling gives the UI
-    // real-time page counts via crawl:progress events. Webhooks are still used
-    // for batchScrape where progress events aren't needed.
+    // ─── Polling vs webhook trade-off (#840) ───────────────────────────────
+    // Firecrawl's `/v1/crawl` API offers a single optional webhook URL but only
+    // delivers callbacks at terminal states (`completed` / `failed`). There is
+    // no per-page progress event over the webhook, so the UI cannot drive a
+    // live progress bar from webhooks alone.
+    //
+    // Until Firecrawl adds per-page webhook events (tracked upstream — see
+    // https://docs.firecrawl.dev/api-reference/endpoint/crawl-post and
+    // https://github.com/firecrawl/firecrawl/issues), we poll the crawl status
+    // endpoint at a 2 s interval and emit `crawl:progress` events to the
+    // UI room. The terminal completion + cancellation flow goes through the
+    // same FirecrawlWebhookHandler so the API surface stays consistent for
+    // both paths.
+    //
+    // Webhooks are still used for `/v1/batch/scrape` where per-page completion
+    // events ARE delivered and we don't need intermediate progress.
+    // ────────────────────────────────────────────────────────────────────────
 
     const startResp = await this.request("/v1/crawl", body);
     const jobId = (startResp.id ?? startResp.jobId) as string | undefined;
@@ -347,7 +362,12 @@ export class FirecrawlClient {
 
     // Register for UI progress tracking (CrawlProgressPanel)
     if (this._webhookHandler) {
-      this._webhookHandler.registerCrawl(jobId, url, options?.limit ?? 0);
+      this._webhookHandler.registerCrawl(
+        jobId,
+        url,
+        options?.limit ?? 0,
+        options?.clientId,
+      );
     }
 
     return this.pollCrawlJob(jobId, url, options?.limit);
@@ -726,6 +746,12 @@ export class FirecrawlClient {
     for (let i = 0; i < maxPolls; i++) {
       this.resetIdleTimer();
 
+      // Honor user-initiated cancellation (#841/#842)
+      if (this._webhookHandler?.getCrawlStats(jobId)?.status === "cancelled") {
+        logger.info("[FirecrawlClient] Crawl cancelled by user", { jobId });
+        throw new Error("Crawl cancelled");
+      }
+
       const resp = await this._fetch(`${this.config.url}/v1/crawl/${jobId}`, {
         signal: AbortSignal.timeout(10_000),
       });
@@ -753,9 +779,10 @@ export class FirecrawlClient {
           siteUrl: siteUrl ?? "",
           pagesScraped: completed,
           estimatedTotal: total,
-          errorCount: 0,
+          errorCount: stats?.errorCount ?? 0,
           lastUrl: `${completed}/${total} pages`,
           elapsedMs: i * pollInterval,
+          clientId: stats?.clientId,
         });
         lastLogged = completed;
       }

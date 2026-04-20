@@ -31,10 +31,13 @@ import {
 } from "../mcp/tools/seo/schema-generator.js";
 import { logger } from "../logging/logger.js";
 import type { Scheduler } from "../productivity/scheduler.js";
+import type { FirecrawlWebhookHandler } from "../browser/firecrawl-webhooks.js";
 
 export interface SeoRouterOptions {
   db: Database.Database;
   scheduler?: Scheduler;
+  /** Optional: enables /audit/:jobId/cancel + /audit/claim endpoints (#841/#842). */
+  firecrawlWebhookHandler?: FirecrawlWebhookHandler;
 }
 
 /** Clamp a numeric value to a positive integer within [1, max]. */
@@ -47,6 +50,7 @@ function clampLimit(raw: unknown, defaultVal: number, max: number): number {
 export const createSeoRouter = ({
   db,
   scheduler,
+  firecrawlWebhookHandler,
 }: SeoRouterOptions): Router => {
   const router = Router();
   const historyRepo = new AuditHistoryRepository(db);
@@ -177,6 +181,67 @@ export const createSeoRouter = ({
     // This endpoint validates the URL and provides a clean API contract.
     const normalizedUrl = url.startsWith("http") ? url : `https://${url}`;
     return res.json({ status: "accepted", url: normalizedUrl });
+  });
+
+  /**
+   * POST /api/seo/audit/claim — Claim future crawl events on a URL for a specific
+   * Socket.IO clientId. Used by the UI to scope progress events to one tab (#841).
+   * Body: { url: string, clientId: string }
+   */
+  router.post("/audit/claim", (req, res) => {
+    if (!firecrawlWebhookHandler) {
+      return res
+        .status(503)
+        .json({ error: "Crawl progress streaming disabled" });
+    }
+    const url = (req.body?.url as string)?.trim();
+    const clientId = (req.body?.clientId as string)?.trim();
+    if (!url || !clientId) {
+      return res
+        .status(400)
+        .json({ error: "Missing required fields: url, clientId" });
+    }
+    if (!/^[a-zA-Z0-9_-]{1,128}$/.test(clientId)) {
+      return res.status(400).json({ error: "Invalid clientId format" });
+    }
+    // Reject URLs with a non-http(s) scheme outright before normalization.
+    if (url.includes("://") && !/^https?:\/\//i.test(url)) {
+      return res.status(400).json({ error: "URL must use http or https" });
+    }
+    try {
+      const parsed = new URL(url.startsWith("http") ? url : `https://${url}`);
+      if (!/^https?:$/.test(parsed.protocol)) {
+        return res.status(400).json({ error: "URL must use http or https" });
+      }
+    } catch {
+      return res.status(400).json({ error: "Invalid URL" });
+    }
+    const normalizedUrl = url.startsWith("http") ? url : `https://${url}`;
+    firecrawlWebhookHandler.claimCrawlForClient(normalizedUrl, clientId);
+    return res.json({ status: "claimed", url: normalizedUrl, clientId });
+  });
+
+  /**
+   * POST /api/seo/audit/:jobId/cancel — Cancel an in-progress crawl (#842).
+   * Returns 404 if the job is unknown or already completed.
+   */
+  router.post("/audit/:jobId/cancel", (req, res) => {
+    if (!firecrawlWebhookHandler) {
+      return res
+        .status(503)
+        .json({ error: "Crawl progress streaming disabled" });
+    }
+    const jobId = req.params.jobId;
+    if (!/^[a-fA-F0-9]{1,64}$/.test(jobId)) {
+      return res.status(400).json({ error: "Invalid jobId format" });
+    }
+    const cancelled = firecrawlWebhookHandler.cancelCrawl(jobId);
+    if (!cancelled) {
+      return res
+        .status(404)
+        .json({ error: "Job not found or already completed" });
+    }
+    return res.json({ status: "cancelled", jobId });
   });
 
   /** GET /api/seo/trend/:siteUrl — Trend data for charting. */

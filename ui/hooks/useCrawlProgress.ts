@@ -3,13 +3,35 @@
 import { useEffect, useState, useCallback } from "react";
 import { useSocket } from "@/lib/socket-context";
 
+export interface CrawlPageError {
+  url: string;
+  statusCode?: number;
+  message?: string;
+}
+
 export interface CrawlStats {
   jobId: string;
   siteUrl: string;
   pagesCompleted: number;
   totalPages: number;
   startedAt: string;
-  status: "running" | "completed" | "failed";
+  status: "running" | "completed" | "failed" | "cancelled";
+  /** Most recent URL processed by the crawler. */
+  lastUrl: string;
+  /** Total error count for the crawl. */
+  errorCount: number;
+  /** Recent errors, capped client-side at 50. */
+  errors: CrawlPageError[];
+  /** Server clientId scope (#841). */
+  clientId?: string;
+}
+
+export interface CrawlStartedEvent {
+  jobId: string;
+  siteUrl: string;
+  estimatedTotal?: number;
+  startedAt?: string;
+  clientId?: string;
 }
 
 export interface CrawlProgressEvent {
@@ -20,6 +42,8 @@ export interface CrawlProgressEvent {
   lastUrl: string;
   errorCount: number;
   elapsedMs: number;
+  clientId?: string;
+  lastError?: CrawlPageError;
 }
 
 export interface CrawlCompletedEvent {
@@ -28,8 +52,12 @@ export interface CrawlCompletedEvent {
   pagesScraped: number;
   errorCount: number;
   elapsedMs: number;
-  status: "completed" | "failed";
+  status: "completed" | "failed" | "cancelled";
+  clientId?: string;
+  errors?: CrawlPageError[];
 }
+
+const MAX_RECENT_ERRORS = 50;
 
 export function useCrawlProgress() {
   const { socket } = useSocket();
@@ -37,35 +65,41 @@ export function useCrawlProgress() {
     new Map(),
   );
 
-  const handleStarted = useCallback(
-    (event: { jobId: string; siteUrl: string; estimatedTotal?: number }) => {
-      setActiveCrawls((prev) => {
-        const next = new Map(prev);
-        next.set(event.jobId, {
-          jobId: event.jobId,
-          siteUrl: event.siteUrl,
-          pagesCompleted: 0,
-          totalPages: event.estimatedTotal ?? 0,
-          startedAt: new Date().toISOString(),
-          status: "running",
-        });
-        return next;
+  const handleStarted = useCallback((event: CrawlStartedEvent) => {
+    setActiveCrawls((prev) => {
+      const next = new Map(prev);
+      next.set(event.jobId, {
+        jobId: event.jobId,
+        siteUrl: event.siteUrl,
+        pagesCompleted: 0,
+        totalPages: event.estimatedTotal ?? 0,
+        startedAt: event.startedAt ?? new Date().toISOString(),
+        status: "running",
+        lastUrl: event.siteUrl,
+        errorCount: 0,
+        errors: [],
+        clientId: event.clientId,
       });
-    },
-    [],
-  );
+      return next;
+    });
+  }, []);
 
   const handleProgress = useCallback((event: CrawlProgressEvent) => {
     setActiveCrawls((prev) => {
       const next = new Map(prev);
       const existing = next.get(event.jobId);
-      if (existing) {
-        next.set(event.jobId, {
-          ...existing,
-          pagesCompleted: event.pagesScraped,
-          totalPages: event.estimatedTotal || existing.totalPages,
-        });
-      }
+      if (!existing) return prev;
+      const errors = event.lastError
+        ? [...existing.errors, event.lastError].slice(-MAX_RECENT_ERRORS)
+        : existing.errors;
+      next.set(event.jobId, {
+        ...existing,
+        pagesCompleted: event.pagesScraped,
+        totalPages: event.estimatedTotal || existing.totalPages,
+        lastUrl: event.lastUrl || existing.lastUrl,
+        errorCount: event.errorCount,
+        errors,
+      });
       return next;
     });
   }, []);
@@ -74,14 +108,15 @@ export function useCrawlProgress() {
     setActiveCrawls((prev) => {
       const next = new Map(prev);
       const existing = next.get(event.jobId);
-      if (existing) {
-        next.set(event.jobId, {
-          ...existing,
-          pagesCompleted: event.pagesScraped,
-          totalPages: event.pagesScraped,
-          status: event.status === "failed" ? "failed" : "completed",
-        });
-      }
+      if (!existing) return prev;
+      next.set(event.jobId, {
+        ...existing,
+        pagesCompleted: event.pagesScraped,
+        totalPages: event.pagesScraped || existing.totalPages,
+        status: event.status,
+        errorCount: event.errorCount,
+        errors: event.errors ?? existing.errors,
+      });
       // Auto-remove after 10 seconds
       setTimeout(() => {
         setActiveCrawls((p) => {

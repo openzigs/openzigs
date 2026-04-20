@@ -40,7 +40,7 @@ function resolveSocketUrl(): string {
 const CLIENT_ID_KEY = "openzigs:client-id";
 
 /** Get or generate a stable client identity that persists across page navigations. */
-const getStableClientId = (): string => {
+export const getStableClientId = (): string => {
   if (typeof window === "undefined") return "ssr";
   try {
     let clientId = localStorage.getItem(CLIENT_ID_KEY);
