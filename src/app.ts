@@ -113,6 +113,13 @@ export const createApp = (
           formAction: ["'self'"],
         },
       },
+      // PR #911 walkthrough regression: helmet's default CORP of `same-origin`
+      // blocks the UI (port 3001) from embedding `/api/queue/assets/file/*`
+      // images and videos served by the API (port 3000) — Chromium reports
+      // `net::ERR_BLOCKED_BY_RESPONSE.NotSameOrigin`. The CORS allow-list
+      // above is the actual cross-origin authorization mechanism for the API,
+      // so relaxing CORP to `cross-origin` does not weaken access control.
+      crossOriginResourcePolicy: { policy: "cross-origin" },
     }),
   );
   // CORS: restrict to explicit allowed origins.
@@ -172,8 +179,21 @@ export const createApp = (
       allowedHeaders: ["Content-Type", "Authorization"],
     }),
   );
-  // Global rate limit: generous for local use, protects against runaway loops.
-  // Authenticated requests are exempt since they've already proven identity.
+  // Global rate limit: protects auth, admin POSTs, and outbound-network
+  // routes (web-search, fetcher) against runaway loops.
+  //
+  // PR #911 walkthrough regression: the dashboard + gallery poll 5+ GET
+  // endpoints every 1–2 seconds, which trips a 5000/15min ceiling within
+  // minutes. Two carve-outs are applied below:
+  //   1. Loopback callers (127.0.0.1, ::1, ::ffff:127.0.0.1) are exempt —
+  //      they are local development / desktop-app traffic and cannot be
+  //      attacker-controlled without already having local code execution.
+  //   2. GET requests to `/api/queue/*`, `/api/tasks/*`, and `/api/sessions/*`
+  //      are exempt — these are read-only polling endpoints. Mutating
+  //      verbs (POST/PUT/PATCH/DELETE) on the same prefixes are still
+  //      rate-limited.
+  const LOOPBACK_IPS = new Set(["127.0.0.1", "::1", "::ffff:127.0.0.1"]);
+  const POLLING_PREFIXES = ["/api/queue", "/api/tasks", "/api/sessions"];
   app.use(
     rateLimit({
       windowMs: 15 * 60 * 1000,
@@ -181,7 +201,17 @@ export const createApp = (
       standardHeaders: true,
       legacyHeaders: false,
       message: { error: "Too many requests, please try again later" },
-      skip: (req) => req.path === "/health",
+      skip: (req) => {
+        if (req.path === "/health") return true;
+        if (req.ip && LOOPBACK_IPS.has(req.ip)) return true;
+        if (
+          req.method === "GET" &&
+          POLLING_PREFIXES.some((prefix) => req.path.startsWith(prefix))
+        ) {
+          return true;
+        }
+        return false;
+      },
       // When trust proxy isn't configured, suppress the X-Forwarded-For
       // validation warning — the header is set by the Next.js dev proxy
       // but isn't security-relevant in local-only deployments.
