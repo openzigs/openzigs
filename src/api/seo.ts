@@ -258,6 +258,8 @@ export const createSeoRouter = ({
   /**
    * POST /api/seo/audit/:jobId/cancel — Cancel an in-progress crawl (#842).
    * Returns 404 if the job is unknown or already completed.
+   * Returns 403 if the requesting clientId doesn't own the crawl.
+   * Body: { clientId: string }
    */
   router.post("/audit/:jobId/cancel", (req, res) => {
     if (!firecrawlWebhookHandler) {
@@ -268,6 +270,14 @@ export const createSeoRouter = ({
     const jobId = req.params.jobId;
     if (!/^[a-fA-F0-9]{1,64}$/.test(jobId)) {
       return res.status(400).json({ error: "Invalid jobId format" });
+    }
+    // Verify the requesting client owns this crawl (#913 review fix)
+    const clientId = (req.body?.clientId as string)?.trim();
+    const stats = firecrawlWebhookHandler.getCrawlStats(jobId);
+    if (stats?.clientId && clientId !== stats.clientId) {
+      return res
+        .status(403)
+        .json({ error: "Not authorized to cancel this crawl" });
     }
     const cancelled = firecrawlWebhookHandler.cancelCrawl(jobId);
     if (!cancelled) {
