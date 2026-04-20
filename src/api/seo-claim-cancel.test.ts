@@ -158,18 +158,26 @@ describe("POST /api/seo/audit/:jobId/cancel (#842)", () => {
   });
 
   it("returns 403 when clientId does not match crawl owner", async () => {
-    handler.getCrawlStats = vi.fn().mockReturnValue({ clientId: "owner-123" });
-    const app = createAppWithHandler(handler);
+    const ownedHandler = {
+      claimCrawlForClient: vi.fn(),
+      cancelCrawl: vi.fn(),
+      getCrawlStats: vi.fn().mockReturnValue({ clientId: "owner-123" }),
+    };
+    const app = createAppWithHandler(ownedHandler as unknown as MockHandler);
     const res = await request(app)
       .post("/api/seo/audit/abc123def456/cancel")
       .send({ clientId: "intruder-999" });
     expect(res.status).toBe(403);
-    expect(handler.cancelCrawl).not.toHaveBeenCalled();
+    expect(ownedHandler.cancelCrawl).not.toHaveBeenCalled();
   });
 
   it("allows cancel when clientId matches crawl owner", async () => {
-    handler.getCrawlStats = vi.fn().mockReturnValue({ clientId: "owner-123" });
-    const app = createAppWithHandler(handler);
+    const ownedHandler = {
+      claimCrawlForClient: vi.fn(),
+      cancelCrawl: vi.fn().mockReturnValue(true),
+      getCrawlStats: vi.fn().mockReturnValue({ clientId: "owner-123" }),
+    };
+    const app = createAppWithHandler(ownedHandler as unknown as MockHandler);
     const res = await request(app)
       .post("/api/seo/audit/abc123def456/cancel")
       .send({ clientId: "owner-123" });
