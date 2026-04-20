@@ -4,6 +4,7 @@ import http from "node:http";
 import os from "node:os";
 import { spawn } from "node:child_process";
 import { marked } from "marked";
+import DOMPurify from "isomorphic-dompurify";
 
 // ── Chrome binary discovery ─────────────────────────────────────────────
 
@@ -56,7 +57,10 @@ function escapeHtml(value: string): string {
 function sanitizeLogoUrl(url: string | undefined): string | undefined {
   if (!url) return undefined;
   // Allow only https and data URIs to prevent XSS via javascript: / file: schemes.
-  if (/^https:\/\//i.test(url) || /^data:image\/[a-zA-Z0-9.+-]+;base64,/i.test(url)) {
+  if (
+    /^https:\/\//i.test(url) ||
+    /^data:image\/[a-zA-Z0-9.+-]+;base64,/i.test(url)
+  ) {
     return url;
   }
   return undefined;
@@ -78,7 +82,13 @@ export function wrapMarkdownAsHtml(
     (_match, content: string) =>
       `<pre class="mermaid">\n${content.trim()}\n</pre>`,
   );
-  const body = marked(processedMarkdown) as string;
+  const body = DOMPurify.sanitize(marked(processedMarkdown) as string, {
+    // Mermaid renders into <pre class="mermaid"> blocks that are later
+    // converted to inline SVG by the mermaid library at print time, so
+    // <pre> + the "mermaid" class must survive sanitization.
+    ADD_TAGS: ["pre"],
+    ADD_ATTR: ["class"],
+  });
   const primary = sanitizeColor(branding?.primaryColor) ?? "#e60023";
   const safeLogo = sanitizeLogoUrl(branding?.logoUrl);
   const safeName = branding?.companyName
