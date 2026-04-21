@@ -45,10 +45,7 @@ function StatusIcon({ status }: { status: CrawlStats["status"] }) {
     );
   if (status === "failed")
     return (
-      <XCircle
-        className="h-4 w-4 text-red-500 shrink-0"
-        aria-label="Failed"
-      />
+      <XCircle className="h-4 w-4 text-red-500 shrink-0" aria-label="Failed" />
     );
   if (status === "cancelled")
     return (
@@ -73,10 +70,15 @@ export interface CrawlItemProps {
 
 export function CrawlItem({ crawl, onCancel, onComplete }: CrawlItemProps) {
   const isComplete = crawl.status !== "running";
-  const elapsedMs = useElapsed(
-    crawl.startedAt,
-    isComplete ? undefined : undefined,
-  );
+  const frozenMs =
+    isComplete && crawl.completedAt
+      ? Math.max(
+          0,
+          new Date(crawl.completedAt).getTime() -
+            new Date(crawl.startedAt).getTime(),
+        )
+      : undefined;
+  const elapsedMs = useElapsed(crawl.startedAt, frozenMs);
   const pct =
     crawl.totalPages > 0
       ? Math.min(

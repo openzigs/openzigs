@@ -55,10 +55,7 @@ import { isAllowedNetworkNodeUrl } from "../security/url-validation.js";
 import { capAndTrimTrailingSlashes } from "../security/url-trim.js";
 import type { PipelineTemplateManager } from "../productivity/pipeline-template-manager.js";
 import type { Server as SocketIOServer } from "socket.io";
-import {
-  getGpuProfile,
-  _resetGpuProfileCache,
-} from "../system/gpu-profile.js";
+import { getGpuProfile, _resetGpuProfileCache } from "../system/gpu-profile.js";
 import { CronExpressionParser } from "cron-parser";
 
 let _adminIo: SocketIOServer | null = null;
@@ -6903,9 +6900,10 @@ export const createAdminRouter = ({
       });
       const parsed = schema.safeParse(req.body);
       if (!parsed.success) {
-        return res
-          .status(400)
-          .json({ error: "Invalid pooling mode", details: parsed.error.format() });
+        return res.status(400).json({
+          error: "Invalid pooling mode",
+          details: parsed.error.format(),
+        });
       }
       const configPath = defaultConfigPath();
       const userConfig = await readUserConfig(configPath);
@@ -6933,9 +6931,10 @@ export const createAdminRouter = ({
       });
       const parsed = schema.safeParse(req.body);
       if (!parsed.success) {
-        return res
-          .status(400)
-          .json({ error: "Invalid pinning map", details: parsed.error.format() });
+        return res.status(400).json({
+          error: "Invalid pinning map",
+          details: parsed.error.format(),
+        });
       }
       const configPath = defaultConfigPath();
       const userConfig = await readUserConfig(configPath);
@@ -6962,9 +6961,13 @@ export const createAdminRouter = ({
 
   router.get("/gpu/ollama/tags", async (_req, res) => {
     try {
-      const resp = await fetch(`${OLLAMA_BASE}/api/tags`, { signal: AbortSignal.timeout(5000) });
+      const resp = await fetch(`${OLLAMA_BASE}/api/tags`, {
+        signal: AbortSignal.timeout(5000),
+      });
       if (!resp.ok) {
-        return res.status(resp.status).json({ error: `Ollama responded ${resp.status}` });
+        return res
+          .status(resp.status)
+          .json({ error: `Ollama responded ${resp.status}` });
       }
       const data = await resp.json();
       return res.json(data);
@@ -6975,9 +6978,13 @@ export const createAdminRouter = ({
 
   router.get("/gpu/ollama/ps", async (_req, res) => {
     try {
-      const resp = await fetch(`${OLLAMA_BASE}/api/ps`, { signal: AbortSignal.timeout(5000) });
+      const resp = await fetch(`${OLLAMA_BASE}/api/ps`, {
+        signal: AbortSignal.timeout(5000),
+      });
       if (!resp.ok) {
-        return res.status(resp.status).json({ error: `Ollama responded ${resp.status}` });
+        return res
+          .status(resp.status)
+          .json({ error: `Ollama responded ${resp.status}` });
       }
       const data = await resp.json();
       return res.json(data);

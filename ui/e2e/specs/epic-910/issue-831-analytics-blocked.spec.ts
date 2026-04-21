@@ -22,7 +22,7 @@ test.describe("Epic #910 / Issue #831 — Analytics A/B compare, summary cards, 
     // analytics-dashboard.tsx; no entry point in the live UI.
   });
 
-  test.fixme("AC3: KPICard / StatCard are exported from a shared analytics-summary-cards module", async () => {
+  test.fixme("AC3: KPICard / StatCard are exported from a shared kpi-stat-cards module", async () => {
     // BLOCKED: KPICard and StatCard remain private functions inside their
     // respective files; no shared module added.
   });

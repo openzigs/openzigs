@@ -5001,6 +5001,44 @@ The Studio right sidebar contains several panels stacked vertically below the Sc
 
 All pipeline panels use the `draftId` from the current Studio session and communicate with the backend via REST and Socket.IO.
 
+### Studio: B-Roll Preview Strip
+
+The B-Roll panel now includes a **B-Roll Preview Strip** for each suggested insertion point. Each suggestion displays:
+
+- **Thumbnail** — A preview image of the proposed B-roll clip.
+- **Relevance score** — A percentage indicating how well the clip matches the narration context.
+- **Accept / Reject buttons** — Approve or dismiss each suggestion individually before applying to the timeline.
+
+### Studio: NLE Track Selector
+
+The NLE Export panel includes a **Track Selector** with checkboxes for each track type: Video, Audio, Captions, and B-Roll. Deselect tracks you don't need before exporting to FCP XML or EDL.
+
+### Studio: Audio Waveform Comparison
+
+The Audio Cleaner panel shows a **before/after waveform comparison** using WaveSurfer.js. After cleaning, view the original and cleaned audio waveforms side-by-side to verify the results before applying.
+
+### Studio: Caption Template Previews & Word Editor
+
+The Caption Style Panel now includes:
+
+- **Visual template previews** — Each caption template (Hormozi, Minimal, TikTok, etc.) renders a live preview card showing how captions will look with your chosen style.
+- **Per-word editor** — Click any word in the caption preview to edit its timing, styling, or text. Changes update the timeline manifest in real time.
+
+### Studio: AI Reframe Preview
+
+For 9:16 vertical video workflows, the **Framing Panel** includes an **AI Reframe Preview** with:
+
+- **Dual video players** — Side-by-side comparison of the original source video and the AI-reframed version.
+- **Subject overlay** — Tracking boxes highlight the detected subject position across frames, showing exactly where the AI crop will focus.
+
+### Director Analytics
+
+The **Analytics** tab on the Director page (`/director` → Analytics) provides cross-platform video performance insights:
+
+- **KPI cards** — Views, engagements, and engagement rate displayed as cards with trend indicators (up/down/neutral) and delta percentages.
+- **Period selector** — Switch between 7-day, 30-day, 90-day, and all-time views.
+- **Content comparison** — Select two posts side-by-side to compare views, likes, comments, engagement, and watch time with per-row winner badges.
+
 ### Blog-to-YouTube Pipeline
 
 The **Blog to YouTube** tab converts a blog post URL into a complete video:
@@ -8124,7 +8162,22 @@ When any Firecrawl-based mode is running, the **Crawl Progress Panel** appears a
 
 Progress is tracked via both webhook callbacks and polling. If Firecrawl webhooks are configured (default), page-by-page progress updates appear in real time. Otherwise, progress updates every few seconds as the poll loop reports Firecrawl's status.
 
+- **Elapsed time** — A live timer counts seconds since the crawl started and freezes at the final duration when the crawl finishes.
+- **Cancel button** — Stop a running crawl at any time. The cancel button sends a cancellation request scoped to the client that initiated the crawl (other users' crawls cannot be cancelled).
+- **Error accordion** — Expand the error section to see per-URL failure details (status codes and messages).
+
 > **Note:** The Run button is disabled with a warning banner if Firecrawl is unavailable. Start the sidecar with: `docker compose -f docker-compose.firecrawl.yml up -d`
+
+#### Site Structure Tree
+
+After a Site Audit completes, the Overview tab displays a **Site Structure Tree** — a collapsible, hierarchical visualization of the crawled site's URL paths. Each node shows its URL segment, and expanding a node reveals its children. This helps identify deep pages, orphan content, and structural issues at a glance.
+
+#### Export Enhancements
+
+The Export tab now includes:
+
+- **Google Sheets export** — Export audit data directly to a Google Sheet (requires Sheets API credentials).
+- **Branded PDF** — Customize PDF reports with your company logo, company name, and brand color. Set these in the Export dialog before generating.
 
 #### Dashboard Tabs
 

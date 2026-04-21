@@ -250,6 +250,18 @@ export interface TimelineEntry {
   title?: string;
   voiceover?: string;
   scriptText?: string;
+  /** URL for an AI-reframed video variant. */
+  reframedVideoUrl?: string;
+  /** Subject tracking boxes from AI reframe analysis. */
+  trackingBoxes?: Array<{
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    timestamp?: number;
+  }>;
+  /** Original source video URL before reframing. */
+  sourceVideoUrl?: string;
   [key: string]: unknown;
 }
 

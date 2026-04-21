@@ -5,7 +5,11 @@
  */
 
 // ── Template IDs ──────────────────────────────────────────────
-export type TemplateId = "Minimalist" | "ContentCreator" | "Corporate" | "TechDemo";
+export type TemplateId =
+  | "Minimalist"
+  | "ContentCreator"
+  | "Corporate"
+  | "TechDemo";
 
 // ── Composition ───────────────────────────────────────────────
 export interface CompositionConfig {
@@ -45,8 +49,16 @@ export interface AudioLayerConfig {
 }
 
 // ── Text Overlays ─────────────────────────────────────────────
-export type TextOverlayPosition = "center" | "bottom-third" | "top-third" | "custom";
-export type TextOverlayAnimation = "fade-in" | "slide-up" | "typewriter" | "none";
+export type TextOverlayPosition =
+  | "center"
+  | "bottom-third"
+  | "top-third"
+  | "custom";
+export type TextOverlayAnimation =
+  | "fade-in"
+  | "slide-up"
+  | "typewriter"
+  | "none";
 
 export interface TextOverlay {
   id: string;
@@ -106,7 +118,12 @@ export interface VideoClipEntry {
 export interface OverlayEntry {
   type: "overlay";
   /** Which shared component to render */
-  component: "SmartCaptions" | "LowerThird" | "LogoWatermark" | "ProgressBar" | "ImageOverlay";
+  component:
+    | "SmartCaptions"
+    | "LowerThird"
+    | "LogoWatermark"
+    | "ProgressBar"
+    | "ImageOverlay";
   /** Props passed to the component */
   props: Record<string, unknown>;
   /** Frame number where this overlay starts */
@@ -134,7 +151,15 @@ export interface TitleCardEntry {
 export interface TransitionEntry {
   type: "transition";
   /** Transition style */
-  style: "crossfade" | "wipe-left" | "wipe-right" | "dissolve" | "cut" | "slide" | "flip" | "clock-wipe";
+  style:
+    | "crossfade"
+    | "wipe-left"
+    | "wipe-right"
+    | "dissolve"
+    | "cut"
+    | "slide"
+    | "flip"
+    | "clock-wipe";
   /** Duration of transition in frames */
   duration: number;
   /** Frame number where transition starts (overlaps adjacent clips) */
@@ -208,7 +233,14 @@ export interface OutroCardEntry {
   animation?: "fade-out" | "slide-down" | "scale-out";
 }
 
-export type TimelineEntry = VideoClipEntry | OverlayEntry | TitleCardEntry | TransitionEntry | ImageSceneEntry | IntroCardEntry | OutroCardEntry;
+export type TimelineEntry =
+  | VideoClipEntry
+  | OverlayEntry
+  | TitleCardEntry
+  | TransitionEntry
+  | ImageSceneEntry
+  | IntroCardEntry
+  | OutroCardEntry;
 
 // ── Branding ──────────────────────────────────────────────────
 export interface BrandingConfig {

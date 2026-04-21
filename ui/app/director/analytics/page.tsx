@@ -24,7 +24,7 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from "recharts";
-import { KPICard } from "@/components/analytics/analytics-summary-cards";
+import { KPICard } from "@/components/analytics/kpi-stat-cards";
 import {
   AnalyticsContentCompare,
   type ContentMetrics,

@@ -15,6 +15,8 @@ export interface CrawlStats {
   pagesCompleted: number;
   totalPages: number;
   startedAt: string;
+  /** ISO timestamp when the crawl finished (set on crawl:completed). */
+  completedAt?: string;
   status: "running" | "completed" | "failed" | "cancelled";
   /** Most recent URL processed by the crawler. */
   lastUrl: string;
@@ -114,6 +116,7 @@ export function useCrawlProgress() {
         pagesCompleted: event.pagesScraped,
         totalPages: event.pagesScraped || existing.totalPages,
         status: event.status,
+        completedAt: new Date().toISOString(),
         errorCount: event.errorCount,
         errors: event.errors ?? existing.errors,
       });

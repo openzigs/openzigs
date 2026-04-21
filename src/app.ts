@@ -163,9 +163,7 @@ export const createApp = (
             url.hostname === "localhost" || url.hostname === "127.0.0.1";
           // URL.port is "" for the protocol's default port; treat that as
           // 80/443 explicitly so it can be opted-in via env.
-          const port =
-            url.port ||
-            (url.protocol === "https:" ? "443" : "80");
+          const port = url.port || (url.protocol === "https:" ? "443" : "80");
           if (isLocalhost && allowedLocalhostPorts.has(port)) {
             return callback(null, true);
           }
