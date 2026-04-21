@@ -48,6 +48,76 @@ function createTestApp(withCopilot = false) {
   return { app, mockMediaQueueRepo };
 }
 
+/**
+ * Variant of {@link createTestApp} that wires a mock CharacterRepository
+ * so the /inpaint endpoint exercises the epic #868 character-LoRA branch.
+ */
+function createTestAppWithCharacters(
+  characters: Array<{
+    id: string;
+    name: string;
+    triggerWord: string;
+    trainedLoraPath: string | null;
+    loraScale: number;
+    status: "pending" | "training" | "ready" | "failed";
+    description?: string;
+  }>,
+) {
+  const mockMediaQueueRepo = {
+    createJob: vi.fn(() => ({ id: "job-1", status: "pending" })),
+  };
+  const characterRepo = {
+    getById: vi.fn((id: string) => {
+      const c = characters.find((c) => c.id === id);
+      if (!c) return undefined;
+      return {
+        id: c.id,
+        name: c.name,
+        description: c.description ?? "",
+        triggerWord: c.triggerWord,
+        referencePhotos: [],
+        photoCaptions: {},
+        trainedLoraPath: c.trainedLoraPath,
+        loraScale: c.loraScale,
+        trainingConfig: null,
+        status: c.status,
+        errorMessage: null,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+    }),
+    getByStatus: vi.fn((status: string) =>
+      characters
+        .filter((c) => c.status === status)
+        .map((c) => ({
+          id: c.id,
+          name: c.name,
+          description: c.description ?? "",
+          triggerWord: c.triggerWord,
+          referencePhotos: [],
+          photoCaptions: {},
+          trainedLoraPath: c.trainedLoraPath,
+          loraScale: c.loraScale,
+          trainingConfig: null,
+          status: c.status,
+          errorMessage: null,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        })),
+    ),
+  };
+  const app = express();
+  app.use(express.json());
+  app.use(
+    "/creative",
+    createCreativeRouter({
+      mediaQueueRepo: mockMediaQueueRepo as never,
+      characterRepo: characterRepo as never,
+    }),
+  );
+  return { app, mockMediaQueueRepo, characterRepo };
+}
+
 describe("Creative Image Manipulation API (Issue #811)", () => {
   let app: express.Express;
 
@@ -369,6 +439,215 @@ describe("Creative — POST /inpaint model selection", () => {
     );
   });
 });
+
+// ── Epic #868 regression: /inpaint character_id wiring ──────────────────
+//
+// These tests pin the contract of the LoRA character-injection path on the
+// /inpaint endpoint. They cover (a) backward compatibility (no character →
+// no LoRA fields in the queued payload), (b) successful explicit injection
+// via character_id, (c) trigger-word auto-injection, (d) all the 400 error
+// paths (unknown id, training/failed status, kontext rejection), and
+// (e) mask oversize rejection. A breakage in any of these surfaces user-
+// visible LoRA failures, so they all need to be on a green CI run.
+
+describe("Creative — POST /inpaint character LoRA injection (epic #868)", () => {
+  async function buildSmallPng(): Promise<Buffer> {
+    return sharp({
+      create: {
+        width: 10,
+        height: 10,
+        channels: 3,
+        background: { r: 0, g: 0, b: 255 },
+      },
+    })
+      .png()
+      .toBuffer();
+  }
+
+  it("BACKWARD-COMPAT: no character_id, no characterRepo → no LoRA fields in payload", async () => {
+    const { app, mockMediaQueueRepo } = createTestApp();
+    const imgBuf = await buildSmallPng();
+    const res = await request(app)
+      .post("/creative/inpaint")
+      .attach("image", imgBuf, { filename: "x.png", contentType: "image/png" })
+      .field("prompt", "a cat")
+      .field("model", "flux-dev");
+    expect(res.status).toBe(202);
+    const calls = (mockMediaQueueRepo.createJob as unknown as { mock: { calls: unknown[][] } }).mock.calls;
+    const payload = (calls[0][0] as { payload: Record<string, unknown> }).payload;
+    expect(payload.lora_paths).toBeUndefined();
+    expect(payload.lora_scales).toBeUndefined();
+  });
+
+  it("BACKWARD-COMPAT: characterRepo present but no character_id and no trigger word → no LoRA fields", async () => {
+    const { app, mockMediaQueueRepo } = createTestAppWithCharacters([
+      {
+        id: "c1",
+        name: "Buddy",
+        triggerWord: "ohwx_dog",
+        trainedLoraPath: "/lora/buddy.safetensors",
+        loraScale: 0.85,
+        status: "ready",
+      },
+    ]);
+    const imgBuf = await buildSmallPng();
+    const res = await request(app)
+      .post("/creative/inpaint")
+      .attach("image", imgBuf, { filename: "x.png", contentType: "image/png" })
+      .field("prompt", "a generic cat")
+      .field("model", "flux-dev");
+    expect(res.status).toBe(202);
+    const calls = (mockMediaQueueRepo.createJob as unknown as { mock: { calls: unknown[][] } }).mock.calls;
+    const payload = (calls[0][0] as { payload: Record<string, unknown> }).payload;
+    expect(payload.lora_paths).toBeUndefined();
+  });
+
+  it("AUTO-INJECT: trigger word in prompt → LoRA paths populated", async () => {
+    const { app, mockMediaQueueRepo } = createTestAppWithCharacters([
+      {
+        id: "c1",
+        name: "Buddy",
+        triggerWord: "ohwx_dog",
+        trainedLoraPath: "/lora/buddy.safetensors",
+        loraScale: 0.85,
+        status: "ready",
+      },
+    ]);
+    const imgBuf = await buildSmallPng();
+    const res = await request(app)
+      .post("/creative/inpaint")
+      .attach("image", imgBuf, { filename: "x.png", contentType: "image/png" })
+      .field("prompt", "ohwx_dog running in a park")
+      .field("model", "flux-dev");
+    expect(res.status).toBe(202);
+    const calls = (mockMediaQueueRepo.createJob as unknown as { mock: { calls: unknown[][] } }).mock.calls;
+    const payload = (calls[0][0] as { payload: Record<string, unknown> }).payload;
+    expect(payload.lora_paths).toEqual(["/lora/buddy.safetensors"]);
+    expect(payload.lora_scales).toEqual([0.85]);
+  });
+
+  it("EXPLICIT: character_id → looks up character and applies LoRA", async () => {
+    const { app, mockMediaQueueRepo, characterRepo } =
+      createTestAppWithCharacters([
+        {
+          id: "c1",
+          name: "Buddy",
+          triggerWord: "ohwx_dog",
+          trainedLoraPath: "/lora/buddy.safetensors",
+          loraScale: 0.85,
+          status: "ready",
+        },
+      ]);
+    const imgBuf = await buildSmallPng();
+    const res = await request(app)
+      .post("/creative/inpaint")
+      .attach("image", imgBuf, { filename: "x.png", contentType: "image/png" })
+      .field("prompt", "standing in a field")
+      .field("model", "flux-dev")
+      .field("character_id", "c1");
+    expect(res.status).toBe(202);
+    expect(characterRepo.getById).toHaveBeenCalledWith("c1");
+    const calls = (mockMediaQueueRepo.createJob as unknown as { mock: { calls: unknown[][] } }).mock.calls;
+    const payload = (calls[0][0] as { payload: Record<string, unknown> }).payload;
+    expect(payload.lora_paths).toEqual(["/lora/buddy.safetensors"]);
+    expect(payload.lora_scales).toEqual([0.85]);
+    // Trigger word must be prepended so the activation token fires.
+    expect(payload.prompt).toMatch(/^ohwx_dog/);
+    expect(res.body.character).toBe("Buddy");
+  });
+
+  it("EXPLICIT: 400 when character_id does not exist", async () => {
+    const { app } = createTestAppWithCharacters([]);
+    const imgBuf = await buildSmallPng();
+    const res = await request(app)
+      .post("/creative/inpaint")
+      .attach("image", imgBuf, { filename: "x.png", contentType: "image/png" })
+      .field("prompt", "anything")
+      .field("model", "flux-dev")
+      .field("character_id", "missing");
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/not found/i);
+  });
+
+  it("EXPLICIT: 400 when character is not 'ready'", async () => {
+    const { app } = createTestAppWithCharacters([
+      {
+        id: "c1",
+        name: "Buddy",
+        triggerWord: "ohwx_dog",
+        trainedLoraPath: null,
+        loraScale: 0.85,
+        status: "training",
+      },
+    ]);
+    const imgBuf = await buildSmallPng();
+    const res = await request(app)
+      .post("/creative/inpaint")
+      .attach("image", imgBuf, { filename: "x.png", contentType: "image/png" })
+      .field("prompt", "anything")
+      .field("model", "flux-dev")
+      .field("character_id", "c1");
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/not ready/i);
+  });
+
+  it("EXPLICIT: 400 when model is flux-kontext (no LoRA support)", async () => {
+    const { app } = createTestAppWithCharacters([
+      {
+        id: "c1",
+        name: "Buddy",
+        triggerWord: "ohwx_dog",
+        trainedLoraPath: "/lora/buddy.safetensors",
+        loraScale: 0.85,
+        status: "ready",
+      },
+    ]);
+    const imgBuf = await buildSmallPng();
+    const res = await request(app)
+      .post("/creative/inpaint")
+      .attach("image", imgBuf, { filename: "x.png", contentType: "image/png" })
+      .field("prompt", "anything")
+      .field("model", "flux-kontext")
+      .field("character_id", "c1");
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/Flux-Kontext.*does not support/i);
+  });
+
+  it("EXPLICIT: 400 when character_id is sent but no characterRepo is configured", async () => {
+    const { app } = createTestApp(); // No characterRepo
+    const imgBuf = await buildSmallPng();
+    const res = await request(app)
+      .post("/creative/inpaint")
+      .attach("image", imgBuf, { filename: "x.png", contentType: "image/png" })
+      .field("prompt", "anything")
+      .field("model", "flux-dev")
+      .field("character_id", "anything");
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/Character library is not enabled/i);
+  });
+
+  it("BACKWARD-COMPAT: img2img model with mask still passes mask through (no LoRA path)", async () => {
+    const { app, mockMediaQueueRepo } = createTestApp();
+    const imgBuf = await buildSmallPng();
+    const maskBuf = await buildSmallPng();
+    const res = await request(app)
+      .post("/creative/inpaint")
+      .attach("image", imgBuf, { filename: "x.png", contentType: "image/png" })
+      .attach("mask", maskBuf, {
+        filename: "mask.png",
+        contentType: "image/png",
+      })
+      .field("prompt", "a cat")
+      .field("model", "flux-dev");
+    expect(res.status).toBe(202);
+    const calls = (mockMediaQueueRepo.createJob as unknown as { mock: { calls: unknown[][] } }).mock.calls;
+    const payload = (calls[0][0] as { payload: Record<string, unknown> }).payload;
+    expect(payload.mask).toBeDefined();
+    expect(payload.strength).toBe(0.75);
+    expect(payload.lora_paths).toBeUndefined();
+  });
+});
+
 
 // ── Path-traversal regression suite (sub-issue #907) ───────────────────────
 //

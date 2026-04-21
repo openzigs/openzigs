@@ -660,11 +660,95 @@ def _bg_generate(
         _generating = False
 
 
+def _build_inpaint_pipe(pipeline_type: str, base_pipe: Any) -> Any:
+    """Build an inpaint pipeline from an already-loaded base pipeline.
+
+    Uses ``from_pipe()`` so UNet/VAE/text-encoder components are shared by
+    reference — no extra VRAM is allocated and any pre-existing device
+    placement (e.g. the multi-GPU ``manual-flux`` pooling layout where
+    text encoders live on cuda:0 and the transformer on cuda:1) is
+    preserved automatically because the underlying tensors are the same.
+    """
+    if pipeline_type == "sdxl":
+        from diffusers import StableDiffusionXLInpaintPipeline
+        return StableDiffusionXLInpaintPipeline.from_pipe(base_pipe)
+    from diffusers import FluxInpaintPipeline
+    return FluxInpaintPipeline.from_pipe(base_pipe)
+
+
+def _decode_mask(mask_b64: str, width: int, height: int) -> Any:
+    """Decode a base64 PNG/JPEG mask into a PIL grayscale image at (width, height).
+
+    Mask format: white (255) = repaint region, black (0) = preserve region.
+    """
+    try:
+        raw = base64.b64decode(mask_b64, validate=True)
+    except Exception as exc:
+        raise ValueError(f"Invalid base64 mask: {exc}") from exc
+    if len(raw) > 20 * 1024 * 1024:
+        raise ValueError("Decoded mask exceeds 20 MB")
+    mask_img = Image.open(io.BytesIO(raw)).convert("L").resize((width, height))
+    return mask_img
+
+
+def _load_inpaint_loras(
+    inpaint_pipe: Any,
+    lora_paths: list[str],
+    lora_scales: Optional[list[float]],
+) -> None:
+    """Load LoRA adapters per-request on the inpaint pipeline.
+
+    Order: ``load_lora_weights()`` for each adapter, then a single
+    ``set_adapters()`` to activate all of them with their scales. The base
+    pipeline already has ``enable_model_cpu_offload`` (or pooled placement)
+    hooks installed via ``_load_model``; ``from_pipe()`` shared those
+    components so we do NOT re-install offload hooks here.
+    """
+    adapter_names: list[str] = []
+    adapter_scales: list[float] = []
+    for i, lp in enumerate(lora_paths):
+        if not isinstance(lp, str) or not lp:
+            raise ValueError(f"Invalid LoRA path at index {i}: {lp!r}")
+        if not os.path.isfile(lp):
+            raise ValueError(f"LoRA file not found: {lp}")
+        adapter_name = f"inpaint_lora_{i}"
+        scale = (
+            lora_scales[i]
+            if lora_scales is not None and i < len(lora_scales)
+            else 1.0
+        )
+        adapter_dir = os.path.dirname(lp)
+        inpaint_pipe.load_lora_weights(
+            adapter_dir,
+            weight_name=os.path.basename(lp),
+            adapter_name=adapter_name,
+        )
+        adapter_names.append(adapter_name)
+        adapter_scales.append(scale)
+        log.info(
+            f"[inpaint] Loaded LoRA adapter '{adapter_name}' from {lp} (scale={scale})"
+        )
+    if adapter_names:
+        try:
+            inpaint_pipe.set_adapters(adapter_names, adapter_weights=adapter_scales)
+            log.info(
+                f"[inpaint] Activated {len(adapter_names)} LoRA adapter(s): "
+                f"{list(zip(adapter_names, adapter_scales))}"
+            )
+        except Exception as exc:
+            log.warning(
+                f"[inpaint] set_adapters failed: {exc} — generation will proceed without LoRA"
+            )
+
+
 def _bg_img2img(
     job_id: str, callback_url: Optional[str],
     prompt: str, model_key: str, source_path: str,
     strength: float, width: int, height: int,
     steps: Optional[int], guidance: float, seed: int,
+    mask: Optional[str] = None,
+    lora_paths: Optional[list[str]] = None,
+    lora_scales: Optional[list[float]] = None,
 ) -> None:
     global _last_used, _generating
     _generating = True
@@ -683,6 +767,53 @@ def _bg_img2img(
         init_image = Image.open(source_path).convert("RGB").resize((w, h))
         generator = torch.Generator("cpu").manual_seed(seed)
 
+        # ── Inpaint branch (epic #868) ─────────────────────────────
+        # When `mask` is present, route to the inpaint pipeline. Components are
+        # shared with `_pipeline` via `from_pipe()` so multi-GPU pooled
+        # placement (text encoders on cuda:0, transformer on cuda:1) is
+        # preserved automatically — no re-binding required.
+        if mask:
+            mask_image = _decode_mask(mask, w, h)
+            inpaint_pipe = _build_inpaint_pipe(pipeline_type, _pipeline)
+            if lora_paths:
+                _load_inpaint_loras(inpaint_pipe, lora_paths, lora_scales)
+            start = time.monotonic()
+            with torch.inference_mode():
+                inpaint_kwargs: dict[str, Any] = {
+                    "prompt": prompt,
+                    "image": init_image,
+                    "mask_image": mask_image,
+                    "width": w,
+                    "height": h,
+                    "num_inference_steps": actual_steps,
+                    "guidance_scale": guidance,
+                    "generator": generator,
+                }
+                # SDXL inpaint accepts `strength`; Flux inpaint uses it too.
+                inpaint_kwargs["strength"] = strength
+                result = inpaint_pipe(**inpaint_kwargs)
+            elapsed = time.monotonic() - start
+            _last_used = time.monotonic()
+
+            buf = io.BytesIO()
+            result.images[0].save(buf, format="PNG", optimize=True)
+            media_b64 = base64.b64encode(buf.getvalue()).decode("ascii")
+            _post_callback(job_id, callback_url, {
+                "job_id": job_id,
+                "status": "complete",
+                "media_base64": media_b64,
+                "media_type": "image/png",
+                "metadata": {
+                    "model": _model_name or model_key,
+                    "generation_time": f"{elapsed:.2f}s",
+                    "seed": str(seed),
+                    "pipeline": "inpaint",
+                    "lora_count": str(len(lora_paths or [])),
+                },
+            })
+            return
+
+        # ── Standard img2img branch (unchanged) ────────────────────
         # Build an img2img pipeline from the loaded components (no re-download).
         # from_pipe() shares UNet/VAE/encoders — only the scheduler wrapper changes.
         if pipeline_type == "sdxl":
@@ -775,6 +906,26 @@ class Img2ImgRequest(BaseModel):
     steps: Optional[int] = Field(default=None, ge=1, le=50)
     guidance_scale: Optional[float] = Field(default=None, ge=0.0, le=20.0)
     seed: Optional[int] = None
+    # ── LoRA inpainting (epic #868) ─────────────────────────────
+    # When `mask` is present, `_bg_img2img` routes to the inpaint pipeline
+    # branch (FluxInpaintPipeline / StableDiffusionXLInpaintPipeline) via
+    # `from_pipe()` so it shares UNet/VAE/text-encoder components with the
+    # already-loaded base pipeline (no VRAM duplication).
+    # `lora_paths` / `lora_scales` are loaded per-request on the inpaint
+    # branch so a character LoRA can be injected without rebuilding the
+    # base pipeline.
+    mask: Optional[str] = Field(
+        default=None,
+        description="Base64-encoded B/W mask. White=repaint, black=preserve.",
+    )
+    lora_paths: Optional[list[str]] = Field(
+        default=None,
+        description="Per-request LoRA adapter .safetensors paths for the inpaint branch.",
+    )
+    lora_scales: Optional[list[float]] = Field(
+        default=None,
+        description="Scale factor per LoRA adapter (matches lora_paths order).",
+    )
 
     @field_validator("image_path", mode="before")
     @classmethod
@@ -787,6 +938,30 @@ class Img2ImgRequest(BaseModel):
         if ".." in normed.split(os.sep):
             raise ValueError("Path traversal detected in image_path")
         return normed
+
+    @field_validator("lora_paths", mode="before")
+    @classmethod
+    def _validate_inpaint_lora_paths(cls, v: Any) -> Any:
+        if v is None:
+            return v
+        for p in v:
+            if not isinstance(p, str):
+                raise ValueError("lora_paths entries must be strings")
+            if "\x00" in p or ".." in p:
+                raise ValueError(f"Invalid LoRA path: {p}")
+        return v
+
+    @field_validator("mask", mode="before")
+    @classmethod
+    def _validate_mask_size(cls, v: Any) -> Any:
+        if v is None:
+            return v
+        if not isinstance(v, str):
+            raise ValueError("mask must be a base64 string")
+        # Reject masks larger than 20 MB (decoded ~15 MB) to prevent DoS.
+        if len(v) > 28 * 1024 * 1024:
+            raise ValueError("mask exceeds maximum allowed size")
+        return v
 
 
 class AsyncImg2ImgRequest(Img2ImgRequest):
@@ -1176,6 +1351,7 @@ async def img2img_async(req: AsyncImg2ImgRequest, background_tasks: BackgroundTa
         req.job_id, req.callback_url,
         req.prompt, requested_model, tmp_path, strength,
         req.width, req.height, req.steps, guidance, seed,
+        req.mask, req.lora_paths, req.lora_scales,
     )
     return {"job_id": req.job_id, "status": "accepted"}
 

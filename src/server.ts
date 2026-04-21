@@ -2356,6 +2356,7 @@ const creativeRouter = createCreativeRouter({
     "IMAGE_PROCESSING_SIDECAR_URL",
     5010,
   ),
+  characterRepo,
 });
 // enhance-prompt accepts a base64 image in the JSON body — needs a higher limit
 app.use(

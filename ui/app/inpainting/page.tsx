@@ -48,6 +48,16 @@ interface GalleryAsset {
   file_path: string;
 }
 
+// Subset of CharacterProfile from src/characters/character-repository.ts.
+// Epic #868 — only the fields the picker needs.
+interface CharacterProfile {
+  id: string;
+  name: string;
+  triggerWord: string;
+  trainedLoraPath: string | null;
+  status: "pending" | "training" | "ready" | "failed";
+}
+
 type EditMode = "semantic" | "mask";
 
 // Models that do whole-image semantic editing via text prompt (no mask support)
@@ -71,6 +81,8 @@ export default function InpaintingPage() {
   const [selectedModel, setSelectedModel] = useState("flux-kontext");
   const [isEnhancing, setIsEnhancing] = useState(false);
   const [editMode, setEditMode] = useState<EditMode>("semantic");
+  // Epic #868 — selected character LoRA (empty string == none).
+  const [selectedCharacterId, setSelectedCharacterId] = useState("");
   // Undo: store mask snapshots (ImageData from maskCanvas)
   const maskHistory = useRef<ImageData[]>([]);
   const [maskHistoryLen, setMaskHistoryLen] = useState(0);
@@ -362,6 +374,63 @@ export default function InpaintingPage() {
     enabled: showGalleryPicker,
   });
 
+  // ── Character library (epic #868) ────────────────────────────
+  const charactersQuery = useQuery<{ characters: CharacterProfile[] }>({
+    queryKey: ["characters-inpainting"],
+    queryFn: () => fetchJson("/api/characters"),
+    staleTime: 30_000,
+  });
+  const readyCharacters = (charactersQuery.data?.characters ?? []).filter(
+    (c) => c.status === "ready" && c.trainedLoraPath,
+  );
+  // Selecting a character inserts its trigger word into the prompt so the
+  // trained activation token actually fires during sampling. Clearing the
+  // selection removes the trigger word so the prompt stays clean.
+  const handleCharacterChange = useCallback(
+    (newId: string) => {
+      const prevChar = readyCharacters.find(
+        (c) => c.id === selectedCharacterId,
+      );
+      const nextChar = readyCharacters.find((c) => c.id === newId);
+
+      let next = prompt;
+      if (prevChar?.triggerWord) {
+        const escaped = prevChar.triggerWord.replace(
+          /[.*+?^${}()|[\]\\]/g,
+          "\\$&",
+        );
+        next = next
+          .replace(new RegExp(`\\b${escaped}\\b\\s*`, "i"), "")
+          .trim();
+      }
+      if (nextChar?.triggerWord) {
+        const escaped = nextChar.triggerWord.replace(
+          /[.*+?^${}()|[\]\\]/g,
+          "\\$&",
+        );
+        if (!new RegExp(`\\b${escaped}\\b`, "i").test(next)) {
+          next = next ? `${nextChar.triggerWord} ${next}` : nextChar.triggerWord;
+        }
+      }
+      setPrompt(next);
+      setSelectedCharacterId(newId);
+    },
+    [prompt, readyCharacters, selectedCharacterId],
+  );
+
+  // Epic #868 — Flux Kontext does not respond to SDXL-trained character LoRAs,
+  // so the picker is disabled when Kontext is selected. The disabled picker
+  // must also reflect a cleared selection: if the user had a character chosen
+  // and then switched to Kontext, we must clear `selectedCharacterId` so the
+  // submit handler does NOT attach a `character_id` (the API rejects it for
+  // Kontext with a 400). We also strip the trigger word from the prompt to
+  // mirror the existing deselect behavior in `handleCharacterChange`.
+  useEffect(() => {
+    if (isSemanticModel && selectedCharacterId) {
+      handleCharacterChange("");
+    }
+  }, [isSemanticModel, selectedCharacterId, handleCharacterChange]);
+
   const loadFromGallery = useCallback(async (asset: GalleryAsset) => {
     try {
       const url = buildMediaUrl(`/api/queue/assets/${asset.id}/file`);
@@ -511,6 +580,8 @@ export default function InpaintingPage() {
       const formData = new FormData();
       formData.append("model", selectedModel);
       if (selectedStyle) formData.append("style_id", selectedStyle);
+      // Epic #868 — attach selected character so the API injects its trained LoRA.
+      if (selectedCharacterId) formData.append("character_id", selectedCharacterId);
 
       if (isSemanticModel && hasPaint) {
         // Kontext: bake annotation into the source image
@@ -970,6 +1041,57 @@ export default function InpaintingPage() {
                       </option>
                     ))}
                   </select>
+                </div>
+
+                {/* Character LoRA picker (epic #868) */}
+                <div>
+                  <label
+                    htmlFor="inpaint-character-picker"
+                    className="mb-1 block text-xs text-zinc-400"
+                  >
+                    Character
+                    {isSemanticModel && (
+                      <span className="ml-2 text-amber-400">
+                        (not available with Flux Kontext)
+                      </span>
+                    )}
+                  </label>
+                  <select
+                    id="inpaint-character-picker"
+                    value={selectedCharacterId}
+                    onChange={(e) => handleCharacterChange(e.target.value)}
+                    disabled={
+                      isSemanticModel ||
+                      charactersQuery.isLoading ||
+                      readyCharacters.length === 0
+                    }
+                    className="w-full rounded border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <option value="">No character</option>
+                    {readyCharacters.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name} ({c.triggerWord})
+                      </option>
+                    ))}
+                  </select>
+                  {charactersQuery.isLoading && (
+                    <p className="mt-1 text-xs text-zinc-500">
+                      Loading characters…
+                    </p>
+                  )}
+                  {charactersQuery.isError && (
+                    <p className="mt-1 text-xs text-red-400">
+                      Failed to load characters.
+                    </p>
+                  )}
+                  {!charactersQuery.isLoading &&
+                    !charactersQuery.isError &&
+                    readyCharacters.length === 0 && (
+                      <p className="mt-1 text-xs text-zinc-500">
+                        No trained characters yet — train one in the Character
+                        Library to inject it into edits.
+                      </p>
+                    )}
                 </div>
 
                 {/* Model Picker */}

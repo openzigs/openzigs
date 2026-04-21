@@ -37,6 +37,7 @@ import {
 import { createTalkingHeadPipeline } from "../queue/talking-head-pipeline.js";
 import type { CharacterRepository } from "../characters/character-repository.js";
 import type { KnowledgeIngestionService } from "../knowledge/index.js";
+import { injectCharacterLora as injectCharacterLoraShared } from "./inject-character-lora.js";
 
 // ── Helpers ─────────────────────────────────────────────────
 
@@ -440,105 +441,12 @@ export const createQueueRouter = ({
 
   /**
    * Auto-inject LoRA adapters when a prompt contains a trained character's trigger word.
-   * Only injects if the caller hasn't already set lora_paths (explicit wins over auto).
+   * Delegates to the shared helper in ``./inject-character-lora.ts`` so the
+   * Creative Studio inpaint endpoint and the queue API share one
+   * implementation (epic #868).
    */
   function injectCharacterLora(payload: MediaJobPayload): void {
-    if (!characterRepo) return;
-    if (payload.lora_paths && payload.lora_paths.length > 0) return;
-
-    const prompt = String(payload.prompt ?? "");
-    if (!prompt) return;
-
-    try {
-      const readyCharacters = characterRepo.getByStatus("ready");
-      const loraPaths: string[] = [];
-      const loraScales: number[] = [];
-
-      for (const char of readyCharacters) {
-        if (!char.trainedLoraPath || !char.triggerWord) continue;
-        // Check if the trigger word appears in the prompt (case-insensitive, word boundary)
-        const regex = new RegExp(
-          `\\b${char.triggerWord.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`,
-          "i",
-        );
-        if (regex.test(prompt)) {
-          // Note: the LoRA path is on the image-gen sidecar's filesystem (which may be
-          // a remote network node), so we cannot existsSync it here. The sidecar will
-          // error if the path is invalid. Only skip if the path looks obviously empty.
-          loraPaths.push(char.trainedLoraPath);
-          loraScales.push(char.loraScale);
-
-          // Inject the character's class description adjacent to the trigger word so
-          // SDXL generates in the correct domain (e.g. "dog" not "person").
-          // Only inject when the description's key noun isn't already in the prompt.
-          if (char.description) {
-            const promptLower = (
-              (payload.prompt as string) ?? ""
-            ).toLowerCase();
-            const descWords = char.description
-              .toLowerCase()
-              .split(/\s+/)
-              .filter((w) => w.length > 2);
-            const descAlreadyPresent = descWords.some((w) =>
-              promptLower.includes(w),
-            );
-            if (!descAlreadyPresent) {
-              const trigRegex = new RegExp(
-                `(\\b${char.triggerWord.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b)`,
-                "i",
-              );
-              payload.prompt = String(payload.prompt ?? "").replace(
-                trigRegex,
-                `$1 ${char.description}`,
-              );
-              logger.info(
-                `[QueueAPI] Injected class description "${char.description}" into prompt for character "${char.name}"`,
-              );
-            }
-          }
-
-          logger.info(
-            `[QueueAPI] Auto-injecting LoRA for character "${char.name}" (trigger: ${char.triggerWord}, scale: ${char.loraScale})`,
-          );
-        }
-      }
-
-      if (loraPaths.length > 0) {
-        payload.lora_paths = loraPaths;
-        payload.lora_scales = loraScales;
-
-        // Multi-subject prompt restructuring: when the prompt mentions additional
-        // subjects (another dog, two people, etc.), restructure for SDXL to allocate
-        // cross-attention capacity to both subjects. Techniques from research:
-        // 1. Prepend "N subjects:" enumeration cue
-        // 2. Lower guidance_scale slightly to increase compositional flexibility
-        const multiSubjectCues =
-          /\b(another|other|two|three|second|both|together with|alongside|chasing|playing with|next to|beside|with a|and a)\b/i;
-        const currentPrompt = String(payload.prompt ?? "");
-        if (multiSubjectCues.test(currentPrompt)) {
-          // Prepend an enumeration cue if not already present
-          if (
-            !/^\d+\s+(animal|subject|people|person|dog|cat|creature)/i.test(
-              currentPrompt,
-            )
-          ) {
-            payload.prompt = `2 subjects: ${currentPrompt}`;
-          }
-          // Lower guidance_scale for multi-subject (default SDXL 7.5 -> 6.5)
-          const currentGuidance = payload.guidance_scale;
-          if (currentGuidance === undefined || currentGuidance === null) {
-            payload.guidance_scale = 6.5;
-          }
-          logger.info(
-            `[QueueAPI] Multi-subject detected — added enumeration cue and guidance_scale=${payload.guidance_scale}`,
-          );
-        }
-      }
-    } catch (err) {
-      logger.warn(
-        `[QueueAPI] Character LoRA auto-injection failed: ${err instanceof Error ? err.message : String(err)}`,
-      );
-    }
+    injectCharacterLoraShared(payload, characterRepo);
   }
 
   // ── POST /jobs — Submit a new media generation job ──────
