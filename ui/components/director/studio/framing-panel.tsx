@@ -2,6 +2,8 @@
 
 import { useState, useCallback } from "react";
 import { Move, RotateCcw, Maximize2, Crop } from "lucide-react";
+import { ReframePreview, type ReframePreviewProps } from "./reframe-preview";
+import type { BoundingBox } from "./subject-overlay";
 
 interface FramingPanelProps {
   /** Current horizontal offset (0–100, 50 = center) */
@@ -12,6 +14,17 @@ interface FramingPanelProps {
   fitMode?: "cover" | "contain";
   /** Callback when fit mode changes */
   onFitModeChange?: (mode: "cover" | "contain") => void;
+  /** Optional source video URL for live reframe preview (#834). */
+  sourceVideoUrl?: string;
+  /** Optional rendered 9:16 reframed preview URL. */
+  reframedVideoUrl?: string;
+  /** AI subject tracking boxes for the source video. */
+  trackingBoxes?: BoundingBox[];
+  /** Customize ReframePreview behaviour. */
+  reframePreviewProps?: Omit<
+    ReframePreviewProps,
+    "sourceUrl" | "reframedUrl" | "boxes"
+  >;
 }
 
 /**
@@ -23,6 +36,10 @@ export function FramingPanel({
   onChange,
   fitMode = "cover",
   onFitModeChange,
+  sourceVideoUrl,
+  reframedVideoUrl,
+  trackingBoxes,
+  reframePreviewProps,
 }: FramingPanelProps) {
   const [localOffset, setLocalOffset] = useState(offset);
 
@@ -130,6 +147,18 @@ export function FramingPanel({
         <span>Center</span>
         <span>Right</span>
       </div>
+
+      {sourceVideoUrl && (
+        <div className="mt-3">
+          <ReframePreview
+            sourceUrl={sourceVideoUrl}
+            reframedUrl={reframedVideoUrl}
+            boxes={trackingBoxes}
+            caption="Reframe preview"
+            {...reframePreviewProps}
+          />
+        </div>
+      )}
     </div>
   );
 }

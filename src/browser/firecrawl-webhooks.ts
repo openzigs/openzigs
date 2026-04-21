@@ -19,7 +19,18 @@ import type {
   CrawlStartedEvent,
   CrawlProgressEvent,
   CrawlCompletedEvent,
+  CrawlPageError,
 } from "../types/crawl-events.js";
+
+/** Maximum errors to track per crawl (older entries are dropped). */
+const MAX_TRACKED_ERRORS = 50;
+/** TTL for unmatched client claims (60s). */
+const CLAIM_TTL_MS = 60_000;
+
+interface PendingClaim {
+  clientId: string;
+  expiresAt: number;
+}
 
 // ── Types ────────────────────────────────────────────────────────────────
 
@@ -76,6 +87,8 @@ export function validateWebhookSignature(
 export class FirecrawlWebhookHandler extends EventEmitter {
   private pending = new Map<string, PendingJob>();
   private crawlStats = new Map<string, CrawlStats>();
+  /** url → claim. Consumed by registerCrawl when a crawl starts. */
+  private pendingClaims = new Map<string, PendingClaim>();
   private config: FirecrawlWebhookConfig;
   private requestTimes: number[] = [];
   private readonly MAX_REQUESTS_PER_MINUTE = 100;
@@ -115,8 +128,37 @@ export class FirecrawlWebhookHandler extends EventEmitter {
     return Array.from(this.crawlStats.values());
   }
 
-  /** Register a new crawl for progress tracking */
-  registerCrawl(jobId: string, siteUrl: string, estimatedTotal: number): void {
+  /**
+   * Claim future crawl events on `siteUrl` for a given Socket.IO clientId.
+   * The claim expires after CLAIM_TTL_MS unless consumed by registerCrawl.
+   * Used to scope per-tab progress streaming (#841).
+   */
+  claimCrawlForClient(siteUrl: string, clientId: string): void {
+    const key = normalizeUrl(siteUrl);
+    this.pendingClaims.set(key, {
+      clientId,
+      expiresAt: Date.now() + CLAIM_TTL_MS,
+    });
+  }
+
+  /** Lookup the clientId for a URL and consume the claim if found and unexpired. */
+  private consumeClaim(siteUrl: string): string | undefined {
+    const key = normalizeUrl(siteUrl);
+    const claim = this.pendingClaims.get(key);
+    if (!claim) return undefined;
+    this.pendingClaims.delete(key);
+    if (Date.now() > claim.expiresAt) return undefined;
+    return claim.clientId;
+  }
+
+  /** Register a new crawl for progress tracking. Optionally scope to a clientId. */
+  registerCrawl(
+    jobId: string,
+    siteUrl: string,
+    estimatedTotal: number,
+    clientId?: string,
+  ): void {
+    const resolvedClientId = clientId ?? this.consumeClaim(siteUrl);
     const stats: CrawlStats = {
       jobId,
       siteUrl,
@@ -127,6 +169,8 @@ export class FirecrawlWebhookHandler extends EventEmitter {
       startedAt: new Date().toISOString(),
       completedAt: null,
       status: "running",
+      clientId: resolvedClientId,
+      errors: [],
     };
     this.crawlStats.set(jobId, stats);
 
@@ -135,22 +179,44 @@ export class FirecrawlWebhookHandler extends EventEmitter {
       siteUrl,
       estimatedTotal,
       startedAt: stats.startedAt,
+      clientId: resolvedClientId,
     };
     this.emit("crawl:started", event);
-    logger.info("[FirecrawlWebhook] Crawl registered", { jobId, siteUrl });
+    logger.info("[FirecrawlWebhook] Crawl registered", {
+      jobId,
+      siteUrl,
+      clientId: resolvedClientId,
+    });
   }
 
   /**
    * Handle a per-page crawl event. Updates stats and emits progress events.
    * Called for `crawl.page` webhook events from Firecrawl.
    */
-  handleCrawlPageEvent(jobId: string, pageUrl: string, isError: boolean): void {
+  handleCrawlPageEvent(
+    jobId: string,
+    pageUrl: string,
+    isError: boolean,
+    errorDetail?: { statusCode?: number; message?: string },
+  ): void {
     const stats = this.crawlStats.get(jobId);
     if (!stats) return;
 
     stats.pagesScraped++;
     stats.lastUrl = pageUrl;
-    if (isError) stats.errorCount++;
+    let lastError: CrawlPageError | undefined;
+    if (isError) {
+      stats.errorCount++;
+      lastError = {
+        url: pageUrl,
+        statusCode: errorDetail?.statusCode,
+        message: errorDetail?.message,
+      };
+      stats.errors.push(lastError);
+      if (stats.errors.length > MAX_TRACKED_ERRORS) {
+        stats.errors.shift();
+      }
+    }
 
     const elapsedMs = Date.now() - new Date(stats.startedAt).getTime();
     const event: CrawlProgressEvent = {
@@ -161,6 +227,8 @@ export class FirecrawlWebhookHandler extends EventEmitter {
       errorCount: stats.errorCount,
       lastUrl: pageUrl,
       elapsedMs,
+      clientId: stats.clientId,
+      lastError,
     };
     this.emit("crawl:progress", event);
   }
@@ -170,7 +238,7 @@ export class FirecrawlWebhookHandler extends EventEmitter {
    */
   completeCrawl(
     jobId: string,
-    status: "completed" | "failed" = "completed",
+    status: "completed" | "failed" | "cancelled" = "completed",
   ): void {
     const stats = this.crawlStats.get(jobId);
     if (!stats) return;
@@ -186,6 +254,8 @@ export class FirecrawlWebhookHandler extends EventEmitter {
       errorCount: stats.errorCount,
       elapsedMs,
       status,
+      clientId: stats.clientId,
+      errors: stats.errors.slice(),
     };
     this.emit("crawl:completed", event);
     logger.info("[FirecrawlWebhook] Crawl completed", {
@@ -196,6 +266,14 @@ export class FirecrawlWebhookHandler extends EventEmitter {
 
     // Clean up stats after 5 minutes
     setTimeout(() => this.crawlStats.delete(jobId), 300_000).unref?.();
+  }
+
+  /** Cancel an in-progress crawl. Emits `crawl:completed` with status="cancelled". */
+  cancelCrawl(jobId: string): boolean {
+    const stats = this.crawlStats.get(jobId);
+    if (!stats || stats.status !== "running") return false;
+    this.completeCrawl(jobId, "cancelled");
+    return true;
   }
 
   /**
@@ -304,6 +382,29 @@ export class FirecrawlWebhookHandler extends EventEmitter {
     }
     this.requestTimes.push(now);
     return true;
+  }
+}
+
+// ── URL Normalization ────────────────────────────────────────────────────
+
+/**
+ * Normalize a URL for claim lookup. Strips trailing slash, lowercases scheme/host,
+ * removes default ports. Returns the input on parse failure (so claims still match
+ * exact strings).
+ */
+function normalizeUrl(url: string): string {
+  try {
+    const u = new URL(url);
+    const port =
+      (u.protocol === "http:" && u.port === "80") ||
+      (u.protocol === "https:" && u.port === "443")
+        ? ""
+        : u.port;
+    const host = `${u.hostname.toLowerCase()}${port ? `:${port}` : ""}`;
+    const pathname = u.pathname.replace(/\/+$/, "") || "/";
+    return `${u.protocol.toLowerCase()}//${host}${pathname}${u.search}`;
+  } catch {
+    return url.trim().toLowerCase();
   }
 }
 

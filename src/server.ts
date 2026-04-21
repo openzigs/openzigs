@@ -2253,14 +2253,26 @@ if (firecrawlUseWebhooks) {
   logger.info("[Firecrawl] Webhook handler initialized");
 
   // ── Wire crawl progress events to Socket.IO (#841) ────────────────────
+  // When a clientId is present on the event, scope it to that client's room
+  // so crawls in one tab don't leak progress into other browser sessions.
+  const emitCrawl = (
+    eventName: "crawl:started" | "crawl:progress" | "crawl:completed",
+    event: { clientId?: string },
+  ) => {
+    if (event.clientId) {
+      io.to(event.clientId).emit(eventName, event);
+    } else {
+      io.emit(eventName, event);
+    }
+  };
   firecrawlWebhookHandler.on("crawl:started", (event) => {
-    io.emit("crawl:started", event);
+    emitCrawl("crawl:started", event);
   });
   firecrawlWebhookHandler.on("crawl:progress", (event) => {
-    io.emit("crawl:progress", event);
+    emitCrawl("crawl:progress", event);
   });
   firecrawlWebhookHandler.on("crawl:completed", (event) => {
-    io.emit("crawl:completed", event);
+    emitCrawl("crawl:completed", event);
   });
 }
 
@@ -2269,7 +2281,11 @@ const tasksRouter = createTasksRouter({ taskEngine, taskRepository });
 app.use("/api/tasks", authMiddleware, tasksRouter);
 
 // SEO Suite API routes (#838)
-const seoRouter = createSeoRouter({ db, scheduler });
+const seoRouter = createSeoRouter({
+  db,
+  scheduler,
+  firecrawlWebhookHandler: firecrawlWebhookHandler ?? undefined,
+});
 app.use("/api/seo", authMiddleware, seoRouter);
 
 // Media Queue API routes (push-based distributed queue + gallery)
@@ -2506,6 +2522,14 @@ app.use(peerServer);
 
 io.on("connection", (socket) => {
   socket.emit("status:update", { connected: true });
+
+  // Join a per-client room so server-emitted events (e.g. SEO crawl progress)
+  // can be scoped to a single browser tab via `io.to(clientId).emit(...)`.
+  // The clientId is generated client-side and passed via `query.clientId`.
+  const rawClientId = socket.handshake.query?.clientId;
+  if (typeof rawClientId === "string" && rawClientId.length > 0) {
+    socket.join(rawClientId);
+  }
 
   // ── Presenter Mode: Teacher Agent Q&A (Issue #279, #285) ──
   // Refactored into a named function so it can be called from both

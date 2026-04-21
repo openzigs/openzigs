@@ -210,4 +210,15 @@ describe("buildFullReportMarkdown", () => {
     expect(md).not.toContain("## Link Analysis");
     expect(md).not.toContain("## Core Web Vitals");
   });
+
+  it("includes audit metadata when provided", () => {
+    const md = buildFullReportMarkdown(makeAuditData(), {
+      pageCount: 42,
+      durationMs: 65_000,
+      crawledBy: "OpenZigs",
+    });
+    expect(md).toContain("**Pages crawled:** 42");
+    expect(md).toContain("**Duration:** 65s");
+    expect(md).toContain("OpenZigs");
+  });
 });

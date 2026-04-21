@@ -9,6 +9,12 @@
 
 // ── Per-crawl stats tracked in the webhook handler ──────────────────────
 
+export interface CrawlPageError {
+  url: string;
+  statusCode?: number;
+  message?: string;
+}
+
 export interface CrawlStats {
   jobId: string;
   siteUrl: string;
@@ -18,7 +24,11 @@ export interface CrawlStats {
   lastUrl: string;
   startedAt: string; // ISO-8601
   completedAt: string | null;
-  status: "running" | "completed" | "failed";
+  status: "running" | "completed" | "failed" | "cancelled";
+  /** Socket.IO room id (clientId) to scope progress events to a single browser tab. */
+  clientId?: string;
+  /** Recent per-page errors (capped at 50, oldest dropped). */
+  errors: CrawlPageError[];
 }
 
 // ── Socket.IO event payloads ────────────────────────────────────────────
@@ -28,6 +38,7 @@ export interface CrawlStartedEvent {
   siteUrl: string;
   estimatedTotal: number;
   startedAt: string;
+  clientId?: string;
 }
 
 export interface CrawlProgressEvent {
@@ -38,6 +49,9 @@ export interface CrawlProgressEvent {
   errorCount: number;
   lastUrl: string;
   elapsedMs: number;
+  clientId?: string;
+  /** Most recent error, if any. Useful for surfacing live error info. */
+  lastError?: CrawlPageError;
 }
 
 export interface CrawlCompletedEvent {
@@ -46,7 +60,9 @@ export interface CrawlCompletedEvent {
   pagesScraped: number;
   errorCount: number;
   elapsedMs: number;
-  status: "completed" | "failed";
+  status: "completed" | "failed" | "cancelled";
+  clientId?: string;
+  errors?: CrawlPageError[];
 }
 
 // ── Event name constants ────────────────────────────────────────────────

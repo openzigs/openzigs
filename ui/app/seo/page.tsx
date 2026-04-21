@@ -11,6 +11,10 @@ import { CrawlProgressPanel } from "@/components/seo/crawl-progress-panel";
 import { SiteHealthScore } from "@/components/seo/site-health-score";
 import { AuditTrends } from "@/components/seo/audit-trends";
 import { ExportDialog } from "@/components/seo/export-dialog";
+import {
+  SiteStructureTree,
+  type SiteStructurePage,
+} from "@/components/seo/site-structure-tree";
 import { LinkGraph } from "@/components/seo/link-graph";
 import { ActivityLog } from "@/components/seo/activity-log";
 import { DatasetResultCard } from "@/components/seo/dataset-result-card";
@@ -59,6 +63,7 @@ import {
   ExternalLink,
   Wand2,
   Code2,
+  FolderTree,
 } from "lucide-react";
 
 // ── Types ────────────────────────────────────────────────────────────────
@@ -2114,6 +2119,34 @@ export default function SeoPage() {
                       </div>
                     );
                   })}
+
+                {/* Site structure tree (#847) — derived from audit pages */}
+                {latestData.pages && latestData.pages.length > 0 && (
+                  <div className="rounded-xl border bg-card p-4">
+                    <h4 className="text-xs font-semibold uppercase tracking-wide mb-3 flex items-center gap-2">
+                      <FolderTree className="h-3.5 w-3.5" /> Site Structure (
+                      {latestData.pages.length})
+                    </h4>
+                    <SiteStructureTree
+                      pages={latestData.pages.map((p): SiteStructurePage => {
+                        const errs = p.issues.filter(
+                          (i) => i.severity === "error",
+                        ).length;
+                        const warns = p.issues.filter(
+                          (i) => i.severity === "warning",
+                        ).length;
+                        const severity: SiteStructurePage["severity"] =
+                          errs > 0 ? "error" : warns > 0 ? "warning" : "ok";
+                        return {
+                          url: p.url,
+                          severity,
+                          issueCount: p.issues.length,
+                        };
+                      })}
+                      defaultExpanded={latestData.pages.length <= 50}
+                    />
+                  </div>
+                )}
               </div>
             ) : (
               <EmptyState message="No audit results yet. Run an audit to see detailed findings." />

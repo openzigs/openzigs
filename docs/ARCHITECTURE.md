@@ -888,6 +888,7 @@ Self-hosted Firecrawl sidecar for deep website crawling with browser rendering. 
 - **HMAC-SHA256 validation:** Every payload is verified against a per-session random secret (`generateWebhookSecret()`). Raw body bytes are captured via `express.json({ verify })` middleware and verified with timing-safe comparison.
 - **Localhost enforcement:** Only requests from loopback addresses (`127.0.0.1`, `::1`, `::ffff:127.0.0.1`) are accepted, validated via `req.socket.remoteAddress` (not the `Host` header).
 - **Polling fallback:** When `firecrawl.useWebhooks` is `false` (or the webhook handler is unavailable), the `FirecrawlClient` falls back to polling the Firecrawl status API on a 2-second interval.
+- **Per-page progress is poll-only (#840):** Firecrawl webhooks deliver only terminal `completed`/`failed` events for crawl jobs — there is no per-page event stream upstream. As a result the live `crawl:progress` Socket.IO events that drive the UI progress bar are sourced from polling regardless of the webhook setting. Webhooks remain authoritative for terminal states and for `batch/scrape` per-page completion events.
 - **Source:** `src/browser/firecrawl-webhooks.ts` (handler + router), `src/server.ts` (mount + raw-body middleware).
 
 #### Airtable & Google Sheets Integration (Epic #738)

@@ -35,7 +35,45 @@ export function findChromeBinaryForPdf(): string | undefined {
 
 // ── HTML wrapper ────────────────────────────────────────────────────────
 
-export function wrapMarkdownAsHtml(markdownContent: string): string {
+export interface PdfBranding {
+  /** Display name shown in the header. Will be HTML-escaped. */
+  companyName?: string;
+  /** Logo URL. Must be https:// or data: URI; otherwise ignored. */
+  logoUrl?: string;
+  /** Hex primary color (e.g. "#0066ff"). Falls back to default red. */
+  primaryColor?: string;
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function sanitizeLogoUrl(url: string | undefined): string | undefined {
+  if (!url) return undefined;
+  // Allow only https and data URIs to prevent XSS via javascript: / file: schemes.
+  if (
+    /^https:\/\//i.test(url) ||
+    /^data:image\/[a-zA-Z0-9.+-]+;base64,/i.test(url)
+  ) {
+    return url;
+  }
+  return undefined;
+}
+
+function sanitizeColor(color: string | undefined): string | undefined {
+  if (!color) return undefined;
+  return /^#[0-9a-fA-F]{3,8}$/.test(color) ? color : undefined;
+}
+
+export function wrapMarkdownAsHtml(
+  markdownContent: string,
+  branding?: PdfBranding,
+): string {
   // Convert mermaid code blocks into <pre class="mermaid"> elements so
   // the mermaid.js library (loaded below) renders them as inline SVGs.
   const processedMarkdown = markdownContent.replace(
@@ -44,6 +82,19 @@ export function wrapMarkdownAsHtml(markdownContent: string): string {
       `<pre class="mermaid">\n${content.trim()}\n</pre>`,
   );
   const body = marked(processedMarkdown) as string;
+  const primary = sanitizeColor(branding?.primaryColor) ?? "#e60023";
+  const safeLogo = sanitizeLogoUrl(branding?.logoUrl);
+  const safeName = branding?.companyName
+    ? escapeHtml(branding.companyName)
+    : undefined;
+  const headerHtml =
+    safeLogo || safeName
+      ? `<header style="display:flex;align-items:center;gap:12px;border-bottom:2px solid ${primary};padding-bottom:8px;margin-bottom:16px;">${
+          safeLogo
+            ? `<img src="${safeLogo}" alt="" style="height:32px;" />`
+            : ""
+        }${safeName ? `<strong style="font-size:14px;color:${primary};">${safeName}</strong>` : ""}</header>`
+      : "";
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -51,7 +102,7 @@ export function wrapMarkdownAsHtml(markdownContent: string): string {
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <style>
   body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif; font-size: 13px; line-height: 1.5; color: #1a1a1a; max-width: 900px; margin: 0 auto; padding: 24px 32px; }
-  h1 { font-size: 22px; color: #e60023; border-bottom: 2px solid #e60023; padding-bottom: 8px; margin-bottom: 16px; }
+  h1 { font-size: 22px; color: ${primary}; border-bottom: 2px solid ${primary}; padding-bottom: 8px; margin-bottom: 16px; }
   h2 { font-size: 16px; color: #333; border-bottom: 1px solid #ddd; padding-bottom: 4px; margin-top: 24px; }
   h3 { font-size: 14px; color: #444; margin-top: 16px; }
   table { border-collapse: collapse; width: 100%; margin: 12px 0; font-size: 12px; }
@@ -62,7 +113,7 @@ export function wrapMarkdownAsHtml(markdownContent: string): string {
   li { margin: 3px 0; }
   code { background: #f4f4f4; padding: 1px 4px; border-radius: 3px; font-size: 11px; }
   pre { background: #f4f4f4; padding: 12px; border-radius: 4px; overflow-x: auto; font-size: 11px; }
-  blockquote { border-left: 3px solid #e60023; margin: 8px 0; padding: 4px 12px; color: #555; background: #fff5f5; }
+  blockquote { border-left: 3px solid ${primary}; margin: 8px 0; padding: 4px 12px; color: #555; background: #fff5f5; }
   details { display: none; }
   strong { font-weight: 600; }
   em { color: #555; }
@@ -75,6 +126,7 @@ export function wrapMarkdownAsHtml(markdownContent: string): string {
 <script>mermaid.initialize({ startOnLoad: true, theme: "default" });</script>
 </head>
 <body>
+${headerHtml}
 ${body}
 </body>
 </html>`;
@@ -93,6 +145,7 @@ export async function saveReportPdf(
   basename: string,
   markdownContent: string,
   outputDir: string,
+  branding?: PdfBranding,
 ): Promise<string | null> {
   const chrome = findChromeBinaryForPdf();
   if (!chrome) return null;
@@ -102,7 +155,7 @@ export async function saveReportPdf(
 
   try {
     // Serve via a local HTTP server so Chrome can fetch the mermaid CDN script.
-    const htmlContent = wrapMarkdownAsHtml(markdownContent);
+    const htmlContent = wrapMarkdownAsHtml(markdownContent, branding);
     const server = http.createServer((_req, res) => {
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
       res.end(htmlContent);

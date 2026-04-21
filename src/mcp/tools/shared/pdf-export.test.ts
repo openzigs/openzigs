@@ -2,7 +2,11 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { findChromeBinaryForPdf, wrapMarkdownAsHtml, saveReportPdf } from "./pdf-export.js";
+import {
+  findChromeBinaryForPdf,
+  wrapMarkdownAsHtml,
+  saveReportPdf,
+} from "./pdf-export.js";
 
 describe("pdf-export", () => {
   afterEach(() => {
@@ -32,7 +36,7 @@ describe("pdf-export", () => {
       const md = "# Test\n\nHello **world**.";
       const html = wrapMarkdownAsHtml(md);
       expect(html).toContain("<!DOCTYPE html>");
-      expect(html).toContain("<html lang=\"en\">");
+      expect(html).toContain('<html lang="en">');
       expect(html).toContain("</html>");
       expect(html).toContain("<h1>");
       expect(html).toContain("Test");
@@ -61,7 +65,11 @@ describe("pdf-export", () => {
   describe("saveReportPdf", () => {
     it("returns null when chrome is not found", async () => {
       vi.spyOn(fs, "existsSync").mockReturnValue(false);
-      const result = await saveReportPdf("test-report", "# Test", "/tmp/test-output");
+      const result = await saveReportPdf(
+        "test-report",
+        "# Test",
+        "/tmp/test-output",
+      );
       expect(result).toBeNull();
     });
 
@@ -69,7 +77,11 @@ describe("pdf-export", () => {
       // Mock Chrome as found, but the spawn will fail (no real binary)
       // We just want to verify the directory creation happens
       const existsSyncSpy = vi.spyOn(fs, "existsSync").mockReturnValue(false);
-      const result = await saveReportPdf("test", "# Hello", "/tmp/pdf-test-dir");
+      const result = await saveReportPdf(
+        "test",
+        "# Hello",
+        "/tmp/pdf-test-dir",
+      );
       // No Chrome found → returns null immediately without calling mkdirSync
       expect(result).toBeNull();
       existsSyncSpy.mockRestore();
@@ -81,6 +93,46 @@ describe("pdf-export", () => {
       const result = await saveReportPdf("report", "# MD", customDir);
       // No Chrome → null, but the function should have been callable with custom dir
       expect(result).toBeNull();
+    });
+  });
+
+  describe("branding", () => {
+    it("escapes HTML in companyName to prevent injection", () => {
+      const html = wrapMarkdownAsHtml("body", {
+        companyName: "<script>alert(1)</script>",
+      });
+      expect(html).not.toContain("<script>alert(1)</script>");
+      expect(html).toContain("&lt;script&gt;alert(1)&lt;/script&gt;");
+    });
+
+    it("rejects unsafe logo URL schemes", () => {
+      const html = wrapMarkdownAsHtml("body", {
+        logoUrl: "javascript:alert(1)",
+      });
+      expect(html).not.toContain("javascript:");
+    });
+
+    it("accepts https logo URLs", () => {
+      const html = wrapMarkdownAsHtml("body", {
+        logoUrl: "https://cdn.example.com/logo.png",
+      });
+      expect(html).toContain("https://cdn.example.com/logo.png");
+    });
+
+    it("uses sanitized hex primary color and falls back when invalid", () => {
+      const ok = wrapMarkdownAsHtml("body", { primaryColor: "#0066ff" });
+      expect(ok).toContain("#0066ff");
+      const bad = wrapMarkdownAsHtml("body", {
+        primaryColor: "url(javascript:alert(1))",
+      });
+      expect(bad).toContain("#e60023");
+      expect(bad).not.toContain("javascript");
+    });
+
+    it("renders branding header when companyName provided", () => {
+      const html = wrapMarkdownAsHtml("body", { companyName: "Acme" });
+      expect(html).toContain("<header");
+      expect(html).toContain("Acme");
     });
   });
 });

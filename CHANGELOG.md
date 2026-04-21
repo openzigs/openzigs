@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (Epic #910 — UI completion suite)
+
+- **Director Studio: AI reframing preview (#834):** New `<ReframePreview>` (16:9 source + 9:16 reframed dual-player with synced playback) and `<SubjectOverlay>` (SVG bounding-box overlay driven by AI tracking samples, `findBoxAt` binary-search lookup) components mountable inside the Framing panel.
+- **Director Studio: Caption visual previews + word editor (#830):** New `<CaptionTemplatePreview>` (mini SVG/canvas thumbnails of each caption template with brand-kit support badge) and `<CaptionWordEditor>` (per-word timing nudges, color, emphasis, size overrides) components.
+- **Director Studio: B-Roll thumbnails + scoring + accept/reject (#835):** New `<BRollCard>` shows a thumbnail, query, source, relevance score badge, and explicit accept/reject buttons; new `<BRollPreviewStrip>` renders timeline markers at insertion points.
+- **Director Studio: Audio waveform comparison (#832):** New `<AudioWaveformCompare>` component renders original + cleaned waveforms side-by-side via `wavesurfer.js`.
+- **Director Studio: NLE export track selection + browser download (#833):** New `<NleTrackSelector>` (video/audio/captions/B-roll checkboxes), `downloadFile()` helper, and `<NleDownloadButton>` for one-click browser downloads of completed exports.
+- **Analytics: Comparison cards + content compare (#831):** Extracted shared `<KPICard>` and `<StatCard>` into `analytics-summary-cards.tsx`; new `<AnalyticsContentCompare>` lets users pick two posts and see views/likes/comments/engagement/watch-time side-by-side with per-row winner badges.
+- **SEO: Site structure tree + branded reports + Sheets export (#847):** New `<SiteStructureTree>` (URL → expandable tree with status icons + issue badges, exported `buildSiteTree()` helper); SEO `exportAudit()` now supports a `"sheets"` format that writes to a new Google Spreadsheet via `SheetsClient`, plus optional `branding` (sanitized logo URL, escaped company name, validated hex primary color) and audit metadata (page count, duration, crawler) in PDF reports.
+
+### Changed (Epic #910)
+
+- **SEO: Live crawl progress is client-scoped (#841):** Backend `firecrawl-webhooks` now tracks per-job `clientId` (via explicit param or short-lived `claimCrawlForClient` mechanism with TTL + URL normalization), the server emits `crawl:*` events to the matching Socket.IO room when a clientId is present (broadcast otherwise), and the client establishes a stable `clientId` query param on connect. New endpoints: `POST /api/seo/audit/claim`, `POST /api/seo/audit/:jobId/cancel`.
+- **SEO: Crawl progress UI overhaul (#842):** Rewrote `<CrawlProgressPanel>` with elapsed-time ticker, accessible progressbar (`aria-valuenow`/`aria-valuemin`/`aria-valuemax`), last-URL display, expandable error list (capped at 50), per-status icons (running/completed/failed/cancelled), and a cancel button that calls the new cancel endpoint. `useCrawlProgress` now tracks `lastUrl`, `errorCount`, `errors[]`, and the `cancelled` status.
+- **PDF export: Optional branding (#847):** `wrapMarkdownAsHtml()` and `saveReportPdf()` accept an optional `PdfBranding` object. `companyName` is HTML-escaped, `logoUrl` is restricted to `https://` and `data:image/*;base64,…` URIs, and `primaryColor` is validated against a strict hex pattern before being injected into CSS.
+- **Firecrawl crawl progress: Documented poll-vs-webhook trade-off (#840):** Added in-source comment in `firecrawl-client.ts` and architecture note in `docs/ARCHITECTURE.md` explaining that Firecrawl's webhooks deliver only terminal events for crawl jobs, so per-page progress remains poll-driven until upstream adds per-page webhook events.
+
+
 ### Added
 
 - **Admin GPU Info Panel** (Epic #889):

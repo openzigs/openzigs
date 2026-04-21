@@ -2,8 +2,13 @@
 
 import { useState, useCallback } from "react";
 import { FileDown, Loader2, Film, FileText } from "lucide-react";
-import { fetchJson } from "@/lib/api";
+import { fetchJson, buildMediaUrl } from "@/lib/api";
 import { showToast } from "@/components/toast";
+import {
+  NleTrackSelector,
+  NleDownloadButton,
+  type ExportTrack,
+} from "./nle-track-selector";
 
 interface NLEExportPanelProps {
   draftId: string;
@@ -36,6 +41,9 @@ export function NLEExportPanel({
 }: NLEExportPanelProps) {
   const [format, setFormat] = useState<ExportFormat>("fcpxml");
   const [loading, setLoading] = useState(false);
+  const [tracks, setTracks] = useState<Set<ExportTrack>>(
+    () => new Set<ExportTrack>(["video", "audio", "captions", "broll"]),
+  );
   const [exportResult, setExportResult] = useState<{
     outputPath: string;
     clips: number;
@@ -53,7 +61,12 @@ export function NLEExportPanel({
         transitions: number;
       }>("/api/studio/pipeline/export", {
         method: "POST",
-        body: JSON.stringify({ manifest, format, title }),
+        body: JSON.stringify({
+          manifest,
+          format,
+          title,
+          tracks: Array.from(tracks),
+        }),
       });
 
       setExportResult({
@@ -70,7 +83,7 @@ export function NLEExportPanel({
     } finally {
       setLoading(false);
     }
-  }, [manifest, format, title]);
+  }, [manifest, format, title, tracks]);
 
   return (
     <div className="space-y-3">
@@ -103,9 +116,12 @@ export function NLEExportPanel({
         ))}
       </div>
 
+      {/* Track selector (#837 wiring) */}
+      <NleTrackSelector value={tracks} onChange={setTracks} />
+
       <button
         onClick={handleExport}
-        disabled={loading}
+        disabled={loading || tracks.size === 0}
         className="flex w-full items-center justify-center gap-2 rounded-md bg-primary px-3 py-2 text-sm text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
       >
         {loading ? (
@@ -128,6 +144,13 @@ export function NLEExportPanel({
             <p>{exportResult.clips} video clips</p>
             <p>{exportResult.transitions} transitions</p>
             <p className="truncate font-mono">{exportResult.outputPath}</p>
+          </div>
+          <div className="mt-2">
+            <NleDownloadButton
+              url={buildMediaUrl(exportResult.outputPath)}
+              filename={`${title ?? "timeline"}.${format}`}
+              label={`Download .${format}`}
+            />
           </div>
         </div>
       )}
