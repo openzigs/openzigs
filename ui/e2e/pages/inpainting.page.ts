@@ -87,7 +87,7 @@ export class InpaintingPage {
     await this.characterSelect.selectOption(characterId);
   }
 
-  async selectCharacterByLabel(label: string | RegExp) {
+  async selectCharacterByLabel(label: string) {
     await this.characterSelect.selectOption({ label });
   }
 

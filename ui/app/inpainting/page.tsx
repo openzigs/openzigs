@@ -418,6 +418,19 @@ export default function InpaintingPage() {
     [prompt, readyCharacters, selectedCharacterId],
   );
 
+  // Epic #868 — Flux Kontext does not respond to SDXL-trained character LoRAs,
+  // so the picker is disabled when Kontext is selected. The disabled picker
+  // must also reflect a cleared selection: if the user had a character chosen
+  // and then switched to Kontext, we must clear `selectedCharacterId` so the
+  // submit handler does NOT attach a `character_id` (the API rejects it for
+  // Kontext with a 400). We also strip the trigger word from the prompt to
+  // mirror the existing deselect behavior in `handleCharacterChange`.
+  useEffect(() => {
+    if (isSemanticModel && selectedCharacterId) {
+      handleCharacterChange("");
+    }
+  }, [isSemanticModel, selectedCharacterId, handleCharacterChange]);
+
   const loadFromGallery = useCallback(async (asset: GalleryAsset) => {
     try {
       const url = buildMediaUrl(`/api/queue/assets/${asset.id}/file`);

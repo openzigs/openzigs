@@ -24,6 +24,7 @@ import { InpaintingPage } from "./pages/inpainting.page";
  * | 9  | Loading state shown while fetching                              | "shows a loading state while fetching characters" |
  * | 10 | Error state shown on fetch failure (non-blocking)               | "shows an error state without blocking inpaint submission" |
  * | -- | Kontext model disables picker (epic #868 risk mitigation)       | "disables picker for Flux Kontext model"      |
+ * | -- | Switching to Kontext clears selection + trigger word (bug fix)  | "clears selected character and strips trigger word when switching to Kontext" |
  * | -- | Existing no-character flow still works (#868 epic AC)           | "submits without character_id when none selected" |
  */
 
@@ -272,6 +273,69 @@ test.describe("Inpainting Studio — Character LoRA Picker (#868 / #871)", () =>
     // Switching back to Kontext disables it again.
     await studio.selectModel("flux-kontext");
     await expect(studio.characterSelect).toBeDisabled();
+  });
+
+  // Bug fix: previously, selecting a character then switching to Kontext left
+  // `selectedCharacterId` populated. Submit then attached `character_id` to
+  // FormData and the backend rejected with 400. The fix auto-clears the
+  // selection (and strips the trigger word) when Kontext becomes active.
+  test("clears selected character and strips trigger word when switching to Kontext", async ({
+    page,
+  }) => {
+    await mockCharacters(page, [ALICE]);
+
+    let capturedBody: string | null = null;
+    await page.route("**/api/admin/creative/inpaint", async (route: Route) => {
+      capturedBody = route.request().postData();
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          jobId: "job-test-clear",
+          status: "queued",
+          message: "ok",
+        }),
+      });
+    });
+    await page.route("**/api/queue/jobs/**", (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          id: "job-test-clear",
+          status: "complete",
+          result: {},
+        }),
+      }),
+    );
+
+    const studio = new InpaintingPage(page);
+    await studio.goto();
+
+    // Pick a non-Kontext model so the picker is enabled, then select Alice.
+    await studio.selectModel("flux-dev");
+    await studio.uploadSampleImage();
+    await expect(studio.characterSelect).toBeEnabled();
+    await studio.selectCharacter(ALICE.id);
+    await expect(studio.promptTextarea).toHaveValue(/alicetok/);
+    await expect(studio.characterSelect).toHaveValue(ALICE.id);
+
+    // Switch to Kontext — selection must clear and trigger word must be stripped.
+    await studio.selectModel("flux-kontext");
+    await expect(studio.characterSelect).toBeDisabled();
+    await expect(studio.characterSelect).toHaveValue("");
+    await expect(studio.promptTextarea).not.toHaveValue(/alicetok/);
+
+    // Add a real prompt and submit — character_id must NOT be in the payload.
+    await studio.setPrompt("a serene mountain at sunrise");
+    const inpaintRequest = page.waitForRequest(
+      "**/api/admin/creative/inpaint",
+    );
+    await studio.submit();
+    await inpaintRequest;
+
+    expect(capturedBody ?? "").not.toContain('name="character_id"');
+    expect(capturedBody ?? "").not.toContain(ALICE.id);
   });
 
   // AC7: character_id is attached as FormData when the user submits /inpaint
