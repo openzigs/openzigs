@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (Epic #868 — LoRA-trained character injection in Inpainting Studio)
+
+- **Creative Studio: character picker in Inpainting UI (#871):** `/inpainting` page now lists trained "ready" characters from `/api/characters` in a dedicated picker. Selecting a character inserts its trigger word into the prompt (and removes it on deselect) and attaches `character_id` to the submitted FormData. The picker is disabled for Flux Kontext (no LoRA support) and shows clear empty/loading/error states.
+- **Creative Studio API: `/inpaint` accepts `character_id` (#870):** The inpainting endpoint now looks up the selected character via `CharacterRepository.getById`, rejects non-ready / untrained / nonexistent ids with a 400, and force-injects the trained LoRA path and scale into the queued job. Falls back to shared trigger-word auto-injection when no `character_id` is supplied. Enforces a 20 MB decoded-mask size cap.
+- **Shared `injectCharacterLora` helper (#870):** Extracted the trigger-word matching + multi-subject prompt restructuring + class-description injection into `src/api/inject-character-lora.ts` so the queue API and the Creative Studio `/inpaint` endpoint share a single implementation. Adds `injectExplicitCharacterLora` for the UI picker flow.
+- **CUDA sidecar: inpainting pipeline branch with LoRA support (#869):** `_bg_img2img` now routes to `StableDiffusionXLInpaintPipeline.from_pipe` or `FluxInpaintPipeline.from_pipe` when a `mask` is present, and applies any caller-supplied `lora_paths` / `lora_scales` as named adapters via `set_adapters()`. `from_pipe()` preserves dual-GPU pooling (text encoders + VAE on cuda:0, transformer on cuda:1) via component-reference sharing — no re-bind, no OOM.
+- **Sidecar request model additions (#869):** `Img2ImgRequest` (and `AsyncImg2ImgRequest`) now accept optional `mask`, `lora_paths`, `lora_scales` fields with path-traversal and null-byte validation plus a 28 MB mask-payload cap. Backward compatible — pre-epic payloads continue to validate.
+- **Regression tests (#872, #873):** Added `src/api/inject-character-lora.test.ts` (trigger-word matching, multi-subject restructuring, explicit lookup, error paths) and extended `src/api/creative.test.ts` with a full `/inpaint` character-LoRA suite (backward-compat, explicit injection, trigger-word auto-injection, all 400 paths, mask+strength regression). Added `sidecars/image-gen/test_models.py` pinning the Pydantic model contract and the `_build_inpaint_pipe` / `_load_inpaint_loras` helpers, including a dual-GPU pooling preservation test.
+
 ### Added (Epic #910 — UI completion suite)
 
 - **Director Studio: AI reframing preview (#834):** New `<ReframePreview>` (16:9 source + 9:16 reframed dual-player with synced playback) and `<SubjectOverlay>` (SVG bounding-box overlay driven by AI tracking samples, `findBoxAt` binary-search lookup) components mountable inside the Framing panel.

@@ -158,6 +158,8 @@ pnpm_audit_*.json
 code_scanning_alerts.json
 dependabot_alerts.json
 secret_scanning_alerts.json
+leaks.txt
+leaks_clean.txt
 issues.json
 prs.json
 

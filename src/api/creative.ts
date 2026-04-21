@@ -16,6 +16,12 @@ import fsPromises from "node:fs/promises";
 import { logger } from "../logging/logger.js";
 import type { MediaQueueRepository } from "../queue/media-queue-repository.js";
 import type { CopilotWrapperService, SdkAttachment } from "../copilot/index.js";
+import type { CharacterRepository } from "../characters/character-repository.js";
+import type { MediaJobPayload } from "../queue/types.js";
+import {
+  injectCharacterLora,
+  injectExplicitCharacterLora,
+} from "./inject-character-lora.js";
 
 const GALLERY_DIR = path.join(os.homedir(), ".openzigs", "gallery");
 
@@ -121,6 +127,10 @@ export interface CreativeRouterOptions {
   mediaQueueRepo: MediaQueueRepository;
   copilotWrapper?: CopilotWrapperService;
   imageProcessingSidecarUrl?: string;
+  /** Optional character repository — when provided, /inpaint accepts a
+   *  ``character_id`` form field and injects the matching trained LoRA
+   *  adapter into the queued job. Epic #868. */
+  characterRepo?: CharacterRepository;
 }
 
 // Multer: accept image + mask files, 20 MB each
@@ -176,6 +186,7 @@ export function createCreativeRouter({
   mediaQueueRepo,
   copilotWrapper,
   imageProcessingSidecarUrl,
+  characterRepo,
 }: CreativeRouterOptions): Router {
   const router = Router();
 
@@ -227,8 +238,18 @@ export function createCreativeRouter({
         // Convert uploaded image to base64
         const imageBase64 = imageFile.buffer.toString("base64");
 
-        // Convert mask to base64 if provided
+        // Convert mask to base64 if provided. Reject masks that decode to
+        // more than 20 MB of base64 — the multer per-file cap is 20 MB but
+        // we re-check here so a multipart parser change can't silently
+        // forward an oversized payload to the sidecar (epic #868).
         const maskFile = files?.["mask"]?.[0];
+        const MAX_MASK_BYTES = 20 * 1024 * 1024;
+        if (maskFile && maskFile.buffer.length > MAX_MASK_BYTES) {
+          res.status(400).json({
+            error: `mask exceeds ${MAX_MASK_BYTES} bytes`,
+          });
+          return;
+        }
         const maskBase64 = maskFile
           ? maskFile.buffer.toString("base64")
           : undefined;
@@ -240,25 +261,71 @@ export function createCreativeRouter({
         // Other models use img2img with a strength parameter.
         const isKontext = selectedModel === "flux-kontext";
 
+        // ── Character LoRA injection (epic #868) ───────────────────
+        // Build the payload first so the shared injector can mutate it.
+        const payload: MediaJobPayload = {
+          prompt: styledPrompt,
+          init_image: imageBase64,
+          ...(maskBase64 && !isKontext ? { mask: maskBase64 } : {}),
+          ...(!isKontext ? { strength: 0.75 } : {}),
+        };
+
+        const characterId = (
+          req.body as Record<string, string>
+        ).character_id?.trim();
+        let appliedCharacterName: string | undefined;
+
+        if (characterId) {
+          if (!characterRepo) {
+            res.status(400).json({
+              error: "Character library is not enabled on this server",
+            });
+            return;
+          }
+          if (isKontext) {
+            res.status(400).json({
+              error:
+                "Flux-Kontext does not support LoRA character injection — select a different model (e.g. SDXL or Flux) when using a character.",
+            });
+            return;
+          }
+          try {
+            const char = injectExplicitCharacterLora(
+              payload,
+              characterRepo,
+              characterId,
+            );
+            appliedCharacterName = char.name;
+          } catch (err) {
+            const status =
+              (err as Error & { statusCode?: number }).statusCode ?? 400;
+            res
+              .status(status)
+              .json({ error: err instanceof Error ? err.message : String(err) });
+            return;
+          }
+        } else if (!isKontext && characterRepo) {
+          // No explicit character — fall back to trigger-word auto-injection so
+          // an inpaint prompt that mentions a trained character (e.g. "ohwx_dog")
+          // still picks up the LoRA, matching the queue API behaviour.
+          injectCharacterLora(payload, characterRepo);
+        }
+
         const job = mediaQueueRepo.createJob({
           type: "img2img",
-          payload: {
-            prompt: styledPrompt,
-            init_image: imageBase64,
-            ...(maskBase64 && !isKontext ? { mask: maskBase64 } : {}),
-            ...(!isKontext ? { strength: 0.75 } : {}),
-          },
+          payload,
           model: selectedModel,
           priority: 1,
         });
 
         logger.info(
-          `[CreativeRouter] Inpaint job queued: ${job.id} (prompt="${prompt.slice(0, 80)}")`,
+          `[CreativeRouter] Inpaint job queued: ${job.id} (prompt="${prompt.slice(0, 80)}"${appliedCharacterName ? `, character="${appliedCharacterName}"` : ""})`,
         );
 
         res.status(202).json({
           jobId: job.id,
           status: job.status,
+          ...(appliedCharacterName ? { character: appliedCharacterName } : {}),
           message:
             "Inpainting job queued. Poll /api/queue/jobs/:id for status, or wait for the result in the Gallery.",
         });
