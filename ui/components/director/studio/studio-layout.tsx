@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
-import { fetchJson } from "@/lib/api";
+import { fetchJson, buildMediaUrl } from "@/lib/api";
 import { useSocket } from "@/lib/socket-context";
 import { showToast } from "@/components/toast";
 import { StudioToolbar } from "./studio-toolbar";
@@ -539,7 +539,9 @@ function QuickModeStudio({ initialAssetId }: { initialAssetId?: string }) {
               </div>
               <VideoTrimmer
                 assetId={selectedAsset.id}
-                videoUrl={`/api/queue/assets/${selectedAsset.id}/file`}
+                videoUrl={buildMediaUrl(
+                  `/api/queue/assets/${selectedAsset.id}/file`,
+                )}
                 duration={selectedAsset.duration_seconds ?? 60}
                 onTrimComplete={handleTrimComplete}
                 onDirtyChange={setHasUnsavedWork}

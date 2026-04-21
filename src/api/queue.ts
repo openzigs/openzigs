@@ -34,9 +34,7 @@ import {
   isSegmentJob as isSegmentJobCheck,
   formatSegmentProgress,
 } from "../queue/multi-segment.js";
-import {
-  createTalkingHeadPipeline,
-} from "../queue/talking-head-pipeline.js";
+import { createTalkingHeadPipeline } from "../queue/talking-head-pipeline.js";
 import type { CharacterRepository } from "../characters/character-repository.js";
 import type { KnowledgeIngestionService } from "../knowledge/index.js";
 
@@ -474,9 +472,16 @@ export const createQueueRouter = ({
           // SDXL generates in the correct domain (e.g. "dog" not "person").
           // Only inject when the description's key noun isn't already in the prompt.
           if (char.description) {
-            const promptLower = (payload.prompt as string ?? "").toLowerCase();
-            const descWords = char.description.toLowerCase().split(/\s+/).filter(w => w.length > 2);
-            const descAlreadyPresent = descWords.some(w => promptLower.includes(w));
+            const promptLower = (
+              (payload.prompt as string) ?? ""
+            ).toLowerCase();
+            const descWords = char.description
+              .toLowerCase()
+              .split(/\s+/)
+              .filter((w) => w.length > 2);
+            const descAlreadyPresent = descWords.some((w) =>
+              promptLower.includes(w),
+            );
             if (!descAlreadyPresent) {
               const trigRegex = new RegExp(
                 `(\\b${char.triggerWord.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b)`,
@@ -512,7 +517,11 @@ export const createQueueRouter = ({
         const currentPrompt = String(payload.prompt ?? "");
         if (multiSubjectCues.test(currentPrompt)) {
           // Prepend an enumeration cue if not already present
-          if (!/^\d+\s+(animal|subject|people|person|dog|cat|creature)/i.test(currentPrompt)) {
+          if (
+            !/^\d+\s+(animal|subject|people|person|dog|cat|creature)/i.test(
+              currentPrompt,
+            )
+          ) {
             payload.prompt = `2 subjects: ${currentPrompt}`;
           }
           // Lower guidance_scale for multi-subject (default SDXL 7.5 -> 6.5)
@@ -745,14 +754,24 @@ export const createQueueRouter = ({
       }
 
       // Resolve F5-TTS profile clips from DB if a profile ID was provided
-      let f5ttsClips: Array<{ emotion: string; ref_audio_path: string; ref_text: string }> | undefined;
+      let f5ttsClips:
+        | Array<{ emotion: string; ref_audio_path: string; ref_text: string }>
+        | undefined;
       if (f5ttsProfileId && typeof f5ttsProfileId === "string") {
         const db = getDatabase();
         const clips = db
-          .prepare(`SELECT emotion, ref_audio_path, ref_text FROM f5tts_clips WHERE profile_id = ? ORDER BY sort_order ASC`)
-          .all(f5ttsProfileId) as Array<{ emotion: string; ref_audio_path: string; ref_text: string }>;
+          .prepare(
+            `SELECT emotion, ref_audio_path, ref_text FROM f5tts_clips WHERE profile_id = ? ORDER BY sort_order ASC`,
+          )
+          .all(f5ttsProfileId) as Array<{
+          emotion: string;
+          ref_audio_path: string;
+          ref_text: string;
+        }>;
         if (clips.length === 0) {
-          res.status(400).json({ error: `F5-TTS profile ${f5ttsProfileId} has no clips` });
+          res
+            .status(400)
+            .json({ error: `F5-TTS profile ${f5ttsProfileId} has no clips` });
           return;
         }
         f5ttsClips = clips;
@@ -802,10 +821,7 @@ export const createQueueRouter = ({
   router.get("/sidecars/lipsync/health", async (_req, res) => {
     try {
       // Try known lipsync sidecar URLs: MPS (5008) then CUDA (5010)
-      const candidates = [
-        "http://127.0.0.1:5008",
-        "http://127.0.0.1:5010",
-      ];
+      const candidates = ["http://127.0.0.1:5008", "http://127.0.0.1:5010"];
       for (const url of candidates) {
         try {
           const resp = await fetch(`${url}/health`, {

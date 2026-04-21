@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
-import { KPICard, StatCard } from "./analytics-summary-cards";
+import { KPICard, StatCard } from "./kpi-stat-cards";
 import {
   AnalyticsContentCompare,
   type ContentMetrics,
