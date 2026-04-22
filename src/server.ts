@@ -1204,8 +1204,12 @@ const webhookManager = new WebhookManager(webhookRepo);
 const modelsRouter = createModelsRouter({ copilot });
 app.use("/api/models", authMiddleware, modelsRouter);
 
-// System info routes (GPU profile, recommended model tier)
-app.use("/api/system", authMiddleware, createSystemRouter());
+// System info routes (GPU profile, recommended model tier, coordinator state)
+app.use(
+  "/api/system",
+  authMiddleware,
+  createSystemRouter({ coordinator: gpuCoordinator }),
+);
 
 // Setup API routes — no auth required (needed before auth is configured)
 app.use("/api/setup", setupRouter);

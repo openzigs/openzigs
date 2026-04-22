@@ -7,7 +7,7 @@ REPO="/mnt/c/Users/mgbre/Development/openzigs"
 DEST="$HOME/openzigs-sidecars"
 
 echo "=== Deploying fresh sidecar code ==="
-for name in image-gen audio worker lipsync; do
+for name in image-gen audio worker lipsync sadtalker; do
     src="$REPO/sidecars/$name/server_cuda.py"
     dst="$DEST/$name/server_cuda.py"
     if [ ! -f "$src" ]; then

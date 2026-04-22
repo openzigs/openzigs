@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed (UI Vision walkthrough — PR #923)
+
+- **`/api/system/gpu` now reports `serving_mode` and `conflicts[]` (Epic #888 / #917):** The route was returning `getGpuProfile()` raw, ignoring the existing `summariseClaims()` helper. The router now accepts an optional `GpuCoordinator` and merges its `currentClaims()` summary into the JSON response, surfacing `serving_mode: "idle" | "diffusion" | "vllm-tp2" | "mixed"` and a `conflicts: string[]` list so the admin GPU panel can render mutual-exclusion state. `server.ts` wires the singleton coordinator in.
+- **vLLM admin panel toast no longer dumps raw JSON bodies (Epic #888 / #922):** `fetchJson` rejects with `new Error(responseBodyText)`, so rate-limit errors surfaced as `vLLM start failed: {"error":"rate_limited","message":"..."}`. New `extractErrorMessage()` helper unwraps `body.message` when the payload is JSON and falls back gracefully for plain-text and malformed inputs. Applied to both start and stop mutations.
+- **`scripts/deploy-restart-sidecars.sh` now deploys the sadtalker sidecar (Epic #883 / #919):** The deploy loop was missing `sadtalker`, so freshly-built `server_cuda.py` (including the new `/gpu-info` endpoint) was never copied to the runtime directory.
+
 ### Added (Epic #888 — Local LLM serving via vLLM TP=2)
 
 - **`/gpu-info` endpoint on sadtalker sidecar (#919, Epic #883 follow-up):** Adds the same `nvidia-smi`-backed `/gpu-info` JSON contract the other CUDA sidecars expose (image-gen, worker, lipsync). Reports device index, name, free/total MB, and `cuda_visible`. Pytest covers the success and "no GPU detected" paths.

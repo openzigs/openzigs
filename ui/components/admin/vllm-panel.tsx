@@ -48,6 +48,39 @@ const findMetric = (metrics: VllmMetric[], name: string): number | null => {
   return m ? m.value : null;
 };
 
+/**
+ * Pull a human-readable message out of an Error thrown by `fetchJson`.
+ *
+ * `fetchJson` rejects with `new Error(responseBodyText)` when the server
+ * returns a non-2xx — so for our JSON error envelope (`{error,message}`),
+ * `err.message` is the *raw JSON string*. Unwrap it so toasts read like
+ * "vLLM start is rate-limited; try again in 15s" instead of dumping
+ * "{"error":"rate_limited","message":"..."}" into the user's face.
+ */
+export const extractErrorMessage = (err: unknown): string => {
+  if (!(err instanceof Error)) return String(err);
+  const raw = err.message;
+  if (!raw) return "Unknown error";
+  // Heuristic: only attempt JSON parse on payloads that look like objects.
+  // Avoids spending cycles on plain text or HTML error pages.
+  const trimmed = raw.trim();
+  if (!trimmed.startsWith("{")) return raw;
+  try {
+    const parsed: unknown = JSON.parse(trimmed);
+    if (
+      parsed &&
+      typeof parsed === "object" &&
+      "message" in parsed &&
+      typeof (parsed as { message: unknown }).message === "string"
+    ) {
+      return (parsed as { message: string }).message;
+    }
+  } catch {
+    /* fall through to raw */
+  }
+  return raw;
+};
+
 const KvCacheBar = ({ percent }: { percent: number }) => {
   const pct = Math.max(0, Math.min(100, percent));
   const color =
@@ -97,7 +130,7 @@ export const VllmPanel = () => {
       void queryClient.invalidateQueries({ queryKey: ["vllm-status"] });
     },
     onError: (err: Error) => {
-      showToast(`vLLM start failed: ${err.message}`, "error");
+      showToast(`vLLM start failed: ${extractErrorMessage(err)}`, "error");
     },
   });
 
@@ -112,7 +145,7 @@ export const VllmPanel = () => {
       void queryClient.invalidateQueries({ queryKey: ["vllm-status"] });
     },
     onError: (err: Error) => {
-      showToast(`vLLM stop failed: ${err.message}`, "error");
+      showToast(`vLLM stop failed: ${extractErrorMessage(err)}`, "error");
     },
   });
 
