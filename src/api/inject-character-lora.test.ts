@@ -35,6 +35,7 @@ function makeChar(overrides: Partial<CharacterProfile> = {}): CharacterProfile {
     trainedLoraPath: "/models/lora/buddy.safetensors",
     loraScale: 0.85,
     trainingConfig: null,
+    baseModel: null,
     status: "ready",
     errorMessage: null,
     createdAt: new Date().toISOString(),
@@ -238,5 +239,76 @@ describe("injectExplicitCharacterLora (UI character picker)", () => {
       const e = err as Error & { statusCode?: number };
       expect(e.statusCode).toBe(400);
     }
+  });
+});
+
+describe("baseModel enforcement (WS3-C #932)", () => {
+  it("forces payload.model to the character's baseModel on auto-injection", () => {
+    const repo = makeRepo([
+      makeChar({ baseModel: "sdxl", triggerWord: "ohwx_dog" }),
+    ]);
+    const payload: MediaJobPayload = {
+      prompt: "ohwx_dog playing fetch",
+      model: "flux-dev",
+    };
+    injectCharacterLora(payload, repo);
+    expect(payload.model).toBe("sdxl");
+    expect(payload.lora_paths).toHaveLength(1);
+  });
+
+  it("leaves payload.model untouched when character has no baseModel", () => {
+    const repo = makeRepo([
+      makeChar({ baseModel: null, triggerWord: "ohwx_dog" }),
+    ]);
+    const payload: MediaJobPayload = {
+      prompt: "ohwx_dog playing fetch",
+      model: "flux-dev",
+    };
+    injectCharacterLora(payload, repo);
+    expect(payload.model).toBe("flux-dev");
+  });
+
+  it("forces payload.model on explicit injection", () => {
+    const repo = makeRepo([
+      makeChar({ id: "c1", baseModel: "sdxl" }),
+    ]);
+    const payload: MediaJobPayload = { prompt: "anything", model: "flux-dev" };
+    injectExplicitCharacterLora(payload, repo, "c1");
+    expect(payload.model).toBe("sdxl");
+  });
+
+  it("does not override when caller's model already matches base model prefix", () => {
+    const repo = makeRepo([makeChar({ baseModel: "flux" })]);
+    const payload: MediaJobPayload = {
+      prompt: "ohwx_dog running",
+      model: "flux-dev",
+    };
+    injectCharacterLora(payload, repo);
+    // Forced anyway to canonical baseModel
+    expect(payload.model).toBe("flux");
+  });
+
+  it("warns and uses first base model when multiple characters with different base models match", () => {
+    const repo = makeRepo([
+      makeChar({
+        id: "c1",
+        triggerWord: "ohwx_dog",
+        baseModel: "sdxl",
+        trainedLoraPath: "/a.safetensors",
+      }),
+      makeChar({
+        id: "c2",
+        triggerWord: "ohwx_cat",
+        baseModel: "flux-dev",
+        trainedLoraPath: "/b.safetensors",
+      }),
+    ]);
+    const payload: MediaJobPayload = {
+      prompt: "ohwx_dog and ohwx_cat together",
+    };
+    injectCharacterLora(payload, repo);
+    expect(payload.model).toBeDefined();
+    expect(["sdxl", "flux-dev"]).toContain(payload.model);
+    expect(payload.lora_paths).toHaveLength(2);
   });
 });

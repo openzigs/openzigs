@@ -123,4 +123,38 @@ describe("CharacterRepository", () => {
     repo.migrate();
     expect(repo.getAll()).toHaveLength(0);
   });
+
+  // ── WS3-C (#932): base_model column ─────────────────────
+  it("should default baseModel to null", () => {
+    const char = repo.create({ name: "NoBase", triggerWord: "sks nb" });
+    expect(char.baseModel).toBeNull();
+  });
+
+  it("should persist baseModel on create", () => {
+    const char = repo.create({
+      name: "WithBase",
+      triggerWord: "sks wb",
+      baseModel: "sdxl",
+    });
+    expect(char.baseModel).toBe("sdxl");
+    expect(repo.getById(char.id)!.baseModel).toBe("sdxl");
+  });
+
+  it("should update baseModel via update()", () => {
+    const char = repo.create({ name: "Updatable", triggerWord: "sks u" });
+    const updated = repo.update(char.id, { baseModel: "flux-dev" });
+    expect(updated!.baseModel).toBe("flux-dev");
+    const cleared = repo.update(char.id, { baseModel: null });
+    expect(cleared!.baseModel).toBeNull();
+  });
+
+  it("should not clobber baseModel on partial update", () => {
+    const char = repo.create({
+      name: "Sticky",
+      triggerWord: "sks s",
+      baseModel: "sdxl",
+    });
+    const updated = repo.update(char.id, { name: "Renamed" });
+    expect(updated!.baseModel).toBe("sdxl");
+  });
 });
