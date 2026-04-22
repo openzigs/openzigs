@@ -34,6 +34,7 @@ import { TikTokPanel } from "@/components/admin/tiktok-panel";
 import { SocialBrainPanel } from "@/components/admin/social-brain-panel";
 import { OrchestrationTemplatesPanel } from "@/components/admin/orchestration-templates-panel";
 import { GpuPanel } from "@/components/admin/gpu-panel";
+import { VllmPanel } from "@/components/admin/vllm-panel";
 import { ToastContainer, showToast } from "@/components/toast";
 import { PlatformBadge } from "@/components/platform-badge";
 import { usePlatform } from "@/lib/hooks/use-platform";
@@ -194,6 +195,10 @@ export default function AdminPage() {
 
         <SectionCard title="GPU & VRAM" defaultOpen={false}>
           <GpuPanel />
+        </SectionCard>
+
+        <SectionCard title="Local vLLM (TP=2)" defaultOpen={false}>
+          <VllmPanel />
         </SectionCard>
 
         <SectionCard title="Pinterest SEO" defaultOpen={false}>

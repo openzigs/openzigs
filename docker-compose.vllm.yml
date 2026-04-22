@@ -1,0 +1,78 @@
+# docker-compose.vllm.yml
+# vLLM TP=2 dual-GPU OpenAI-compatible server (Epic #888, Issue #916).
+#
+# When this compose stack is running, it expects to OWN both GPUs. The other
+# GPU sidecars (worker, lipsync, sadtalker, image-gen FLUX-pool) MUST be
+# stopped first — see docs/MULTI_GPU.md "Conflict policy". The backend's GPU
+# coordinator will refuse to register conflicting workloads at runtime, but
+# this compose file does NOT enforce it from the OS side.
+#
+# Quick start:
+#   export VLLM_API_KEY="$(openssl rand -base64 32 | tr -d '=' | tr '+/' '-_')"
+#   docker compose -f docker-compose.vllm.yml up -d
+#   curl http://127.0.0.1:8000/v1/models -H "Authorization: Bearer $VLLM_API_KEY"
+#
+# BYOK auto-config: if the openzigs backend boots and detects vLLM at
+# http://127.0.0.1:8000, it will write a `copilot.provider` block into
+# ~/.openzigs/config.json automatically (see Issue #920). To opt out, set
+# `llm.localVllm.autoRegister=false` in your config.
+#
+# Image is pinned. Bump after manual smoke testing — never use `:latest`
+# for an inference server.
+
+services:
+  vllm:
+    image: vllm/vllm-openai:v0.6.4
+    container_name: vllm
+    restart: unless-stopped
+    # Loopback only — never expose vLLM to LAN/WAN. The container has no
+    # auth by default; the API key is enforced inside vLLM itself.
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - vllm_hf_cache:/root/.cache/huggingface
+    environment:
+      - HF_TOKEN=${HF_TOKEN:-}
+      - VLLM_API_KEY=${VLLM_API_KEY:?VLLM_API_KEY must be set; generate with: openssl rand -base64 32 | tr -d '=' | tr '+/' '-_'}
+      - VLLM_MODEL=${VLLM_MODEL:-Qwen/Qwen2.5-14B-Instruct-AWQ}
+      - VLLM_QUANTIZATION=${VLLM_QUANTIZATION:-awq}
+      - VLLM_MAX_MODEL_LEN=${VLLM_MAX_MODEL_LEN:-4096}
+      - VLLM_GPU_MEMORY_UTILIZATION=${VLLM_GPU_MEMORY_UTILIZATION:-0.85}
+      - VLLM_TENSOR_PARALLEL_SIZE=${VLLM_TENSOR_PARALLEL_SIZE:-2}
+    command:
+      - --model
+      - ${VLLM_MODEL:-Qwen/Qwen2.5-14B-Instruct-AWQ}
+      - --quantization
+      - ${VLLM_QUANTIZATION:-awq}
+      - --tensor-parallel-size
+      - "${VLLM_TENSOR_PARALLEL_SIZE:-2}"
+      - --gpu-memory-utilization
+      - "${VLLM_GPU_MEMORY_UTILIZATION:-0.85}"
+      - --max-model-len
+      - "${VLLM_MAX_MODEL_LEN:-4096}"
+      - --api-key
+      - ${VLLM_API_KEY}
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+    healthcheck:
+      # /v1/models returns 200 once the model finished loading. Use --silent
+      # so logs aren't spammed by curl progress bars.
+      test: ["CMD-SHELL", "curl -fsS -H \"Authorization: Bearer $${VLLM_API_KEY}\" http://localhost:8000/v1/models || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      # 14B AWQ on 2× 12 GB takes ~3-5 min on first cold start (download +
+      # weight shard). Increase for 32B / Mixtral.
+      start_period: 300s
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+volumes:
+  vllm_hf_cache:

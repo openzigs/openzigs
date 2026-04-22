@@ -8,7 +8,7 @@
     env var). Issue #887 (Epic #883).
 
 .PARAMETER Scenario
-    Test scenario: smoke (default), full, or oom.
+    Test scenario: smoke (default), full, oom, pooled, ollama, or vllm.
 
 .EXAMPLE
     pwsh ./scripts/gpu-stress-test.ps1 -Scenario smoke
@@ -17,7 +17,7 @@
     pwsh ./scripts/gpu-stress-test.ps1 -Scenario full
 #>
 param(
-    [ValidateSet("smoke", "full", "oom")]
+    [ValidateSet("smoke", "full", "oom", "pooled", "ollama", "vllm")]
     [string]$Scenario = "smoke",
     [string]$Token,
     [double]$PollInterval = 2.0

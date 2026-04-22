@@ -40,6 +40,7 @@ sees exactly one device (`cuda:0` from the sidecar's perspective).
 curl http://localhost:5005/gpu-info  # image-gen
 curl http://localhost:5007/gpu-info  # video worker
 curl http://localhost:5010/gpu-info  # lipsync
+curl http://localhost:5012/gpu-info  # sadtalker (Issue #919)
 ```
 
 The backend exposes a consolidated view at `GET /api/system/gpu` (auth
@@ -121,7 +122,7 @@ To revert, unset the env var (or set to `off`) and restart the sidecars.
 | --- | --- |
 | 1× 8 GB | Stick to `low` tier; expect occasional OOM on larger payloads |
 | 1× 12 GB (RTX 3060) | `medium` tier with CPU offload; LTX-13B distilled is the sweet spot |
-| 2× 12 GB | All sidecars in parallel; `medium` tier per card; opt into balanced sharding for `high` tier at the cost of speed |
+| 2× 12 GB | All sidecars in parallel; `medium` tier per card; opt into balanced sharding for `high` tier at the cost of speed; **vLLM TP=2** can replace FLUX on these cards (one-or-the-other, never both — see [Conflict policy](#conflict-policy-vllm-vs-flux)) |
 | 1× 24 GB (RTX 4090, A6000) | `high` tier; FLUX-dev + LTX-13B-dev unloaded |
 | > 24 GB | `ultra` tier; ship-it-all |
 
@@ -135,6 +136,7 @@ python scripts/gpu-stress-test.py --scenario smoke    # 2 image-gen + 1 TTS
 python scripts/gpu-stress-test.py --scenario full     # 5 image-gen + 1 video + 1 TTS
 python scripts/gpu-stress-test.py --scenario oom      # Same as full with oversized payloads
 python scripts/gpu-stress-test.py --scenario ollama   # Ollama inference latency
+python scripts/gpu-stress-test.py --scenario vllm     # 8 concurrent vLLM completions (TPS ≥ 8 SLO)
 ```
 
 Reports land in `~/.openzigs/stress-tests/<timestamp>-<scenario>.md` with
@@ -235,3 +237,46 @@ pin a specific model name.
 
 For most OpenZigs users with consumer hardware (2× 12 GB), Ollama is the
 recommended starting point due to simplicity and automatic layer splitting.
+
+## vLLM Dual-GPU (TP=2)
+
+For users who want production-grade LLM throughput on 2x 12 GB consumer cards, the optional vLLM sidecar serves an OpenAI-compatible chat-completions endpoint at `127.0.0.1:8000/v1` with tensor-parallel inference across both GPUs.
+
+**Default model:** `Qwen/Qwen2.5-14B-Instruct-AWQ` (~9 GB weights, AWQ 4-bit). Other allow-listed models (Gemma 2 9B AWQ, Mistral Nemo 12B AWQ, Qwen 32B AWQ, Mixtral 8x7B AWQ) are selectable from the admin UI.
+
+### Setup
+
+```sh
+# 1. One-time install (pulls vllm/vllm-openai:v0.6.4, generates API key in ~/.openzigs/vllm-api-key, mode 0600)
+bash sidecars/vllm/install.sh
+
+# 2. Opt in (cannot run alongside FLUX image-gen)
+echo 'OPENZIGS_ENABLE_VLLM=1' >> ~/.openzigs/.env.cuda
+
+# 3. Start via admin UI (Admin -> Local vLLM (TP=2) -> Start) OR directly:
+VLLM_API_KEY=$(cat ~/.openzigs/vllm-api-key) docker compose -f docker-compose.vllm.yml up -d
+```
+
+### Auto-detection
+
+On server boot, if `llm.localVllm.enabled = true` and `llm.localVllm.autoRegister != false` in `~/.openzigs/config.json`, the server will probe `http://127.0.0.1:8000/v1/models` and (if reachable and not already configured) write a `copilot.provider` block pointing at the local vLLM with the generated key. The key is **never logged** and is read from `~/.openzigs/vllm-api-key` (mode 0600).
+
+### Conflict policy: vLLM vs FLUX
+
+vLLM TP=2 claims **both GPUs** (indices 0 and 1). FLUX image-gen \u2014 whether single-GPU or pooled (`IMAGE_GEN_POOLING_MODE=manual-flux`) \u2014 also wants those GPUs. **They cannot coexist.** The `GpuCoordinator` enforces this two ways:
+
+1. **Boot guard:** `sidecars/start-cuda-sidecars.sh` checks `OPENZIGS_ENABLE_VLLM`. When set it skips `image-gen`, `lipsync`, and `sadtalker` sidecars, and forces `IMAGE_GEN_POOLING_MODE=off`.
+2. **Runtime guard:** `POST /api/admin/gpu/vllm/start` calls `coordinator.register('vllm', [0, 1])` and returns `409 Conflict` if FLUX has an active claim. The response body lists `conflictWith` and the GPU indices \u2014 no host paths or PIDs \u2014 so the operator can stop the conflicting workload first.
+
+To switch from FLUX -> vLLM: stop the existing image-gen container, set `OPENZIGS_ENABLE_VLLM=1`, then start vLLM. To switch back: stop vLLM via the admin panel, unset the env, restart sidecars.
+
+### Backpressure
+
+The `VllmClient` (`src/llm/vllm-client.ts`) enforces a per-process queue cap (`llm.localVllm.maxQueueDepth`, default 8). Beyond that, calls fail synchronously with code `VLLM_BACKPRESSURE` so the orchestrator can shed load instead of letting requests pile up in the OS socket buffer.
+
+### Observability
+
+- **Admin UI:** Admin -> Local vLLM (TP=2) shows reachability, current model, KV-cache utilisation (green <70%, amber 70-90%, red >90%), running and queued request counts. Polls every 5 seconds.
+- **Prometheus metrics:** `curl http://127.0.0.1:8000/metrics` (key series: `vllm:gpu_cache_usage_perc`, `vllm:num_requests_running`, `vllm:num_requests_waiting`).
+- **Audit log:** every completion / stream / error is appended to `~/.openzigs/logs/` under category `tool`, subcategory `llm.vllm.*`. The API key is auto-redacted by `AuditLogger`.
+

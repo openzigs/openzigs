@@ -50,6 +50,23 @@ fi
 
 echo "=== Starting CUDA Sidecars ==="
 
+# ── vLLM coexistence guard (Epic #888, Issue #916) ──────────
+# When OPENZIGS_ENABLE_VLLM=1, vLLM owns BOTH GPUs (TP=2). The video worker,
+# lipsync, sadtalker, and the FLUX manual-pool image-gen mode all conflict
+# with vLLM and must be skipped. The backend's GPU coordinator (Issue #917)
+# enforces the same rule at runtime; this is the OS-level companion.
+if [ "${OPENZIGS_ENABLE_VLLM:-0}" = "1" ]; then
+    echo "OPENZIGS_ENABLE_VLLM=1 \u2192 vLLM mode active; skipping worker, lipsync, sadtalker, FLUX-pool"
+    SKIP_WORKER=1
+    SKIP_LIPSYNC=1
+    SKIP_SADTALKER=1
+    # Force image-gen out of FLUX pooling mode so it stays on a single GPU.
+    if [ "${IMAGE_GEN_POOLING_MODE:-off}" = "manual-flux" ]; then
+        echo "  forcing IMAGE_GEN_POOLING_MODE=off (was manual-flux)"
+        IMAGE_GEN_POOLING_MODE=off
+    fi
+fi
+
 # ── Multi-GPU device pinning (Epic #883, Issue #884) ─────────
 # Auto-detect GPU count via nvidia-smi. When ≥2 GPUs are present, split the
 # workload so the talking-head pipeline (TTS → video → lipsync) can overlap:
@@ -112,11 +129,16 @@ echo "$AUD_PID" > "$PID_DIR/audio.pid"
 echo "  PID: $AUD_PID"
 
 # ── Video Worker (port 5007) ────────────────────────────────
-echo "Starting Video Worker sidecar (port 5007, GPU $WORKER_GPU_INDEX)..."
-setsid bash -c "cd '$SIDECARS_DIR/worker' && source venv/bin/activate && CUDA_VISIBLE_DEVICES='$WORKER_GPU_INDEX' HF_TOKEN='${HF_TOKEN:-}' CALLBACK_SECRET='${CALLBACK_SECRET:-}' LTX_MODEL_KEY='${LTX_MODEL_KEY:-ltxv-13b-097-distilled}' exec python server_cuda.py --port 5007 >> '$LOG_DIR/worker-cuda.log' 2>&1" &
-VID_PID=$!
-echo "$VID_PID" > "$PID_DIR/worker.pid"
-echo "  PID: $VID_PID"
+if [ "${SKIP_WORKER:-0}" = "1" ]; then
+    echo "Skipping Video Worker sidecar (SKIP_WORKER=1)"
+    VID_PID=""
+else
+    echo "Starting Video Worker sidecar (port 5007, GPU $WORKER_GPU_INDEX)..."
+    setsid bash -c "cd '$SIDECARS_DIR/worker' && source venv/bin/activate && CUDA_VISIBLE_DEVICES='$WORKER_GPU_INDEX' HF_TOKEN='${HF_TOKEN:-}' CALLBACK_SECRET='${CALLBACK_SECRET:-}' LTX_MODEL_KEY='${LTX_MODEL_KEY:-ltxv-13b-097-distilled}' exec python server_cuda.py --port 5007 >> '$LOG_DIR/worker-cuda.log' 2>&1" &
+    VID_PID=$!
+    echo "$VID_PID" > "$PID_DIR/worker.pid"
+    echo "  PID: $VID_PID"
+fi
 
 # ── Music / ACE-Step (port 5009) ──────────────────────────
 if [ -d "$SIDECARS_DIR/music" ]; then
@@ -142,7 +164,10 @@ else
 fi
 
 # ── Lip Sync / LatentSync (port 5010) ───────────────────────
-if [ -d "$SIDECARS_DIR/lipsync" ]; then
+if [ "${SKIP_LIPSYNC:-0}" = "1" ]; then
+    echo "Skipping Lip Sync sidecar (SKIP_LIPSYNC=1)"
+    LIP_PID=""
+elif [ -d "$SIDECARS_DIR/lipsync" ]; then
     echo "Starting Lip Sync sidecar (port 5010, GPU $LIPSYNC_GPU_INDEX)..."
     setsid bash -c "cd '$SIDECARS_DIR/lipsync' && source venv/bin/activate && CUDA_VISIBLE_DEVICES='$LIPSYNC_GPU_INDEX' CALLBACK_SECRET='${CALLBACK_SECRET:-}' CALLBACK_URL='${CALLBACK_BASE_URL}/complete' PROGRESS_URL='${CALLBACK_BASE_URL}/progress' exec python server_cuda.py --port 5010 >> '$LOG_DIR/lipsync-cuda.log' 2>&1" &
     LIP_PID=$!
@@ -154,7 +179,10 @@ else
 fi
 
 # ── SadTalker / Talking Head (port 5011) ────────────────────
-if [ -d "$SIDECARS_DIR/sadtalker" ]; then
+if [ "${SKIP_SADTALKER:-0}" = "1" ]; then
+    echo "Skipping SadTalker sidecar (SKIP_SADTALKER=1)"
+    SAD_PID=""
+elif [ -d "$SIDECARS_DIR/sadtalker" ]; then
     echo "Starting SadTalker sidecar (port 5011, GPU $SADTALKER_GPU_INDEX)..."
     setsid bash -c "cd '$SIDECARS_DIR/sadtalker' && source venv/bin/activate && CUDA_VISIBLE_DEVICES='$SADTALKER_GPU_INDEX' SADTALKER_DIR='$HOME/.openzigs/models/SadTalker' GALLERY_DIR='$HOME/.openzigs/gallery' CALLBACK_SECRET='${CALLBACK_SECRET:-}' CALLBACK_URL='${CALLBACK_BASE_URL}/complete' PROGRESS_URL='${CALLBACK_BASE_URL}/progress' exec python server_cuda.py --port 5011 >> '$LOG_DIR/sadtalker-cuda.log' 2>&1" &
     SAD_PID=$!

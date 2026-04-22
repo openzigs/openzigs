@@ -86,6 +86,7 @@ Open **http://localhost:3001** for the UI. The API server runs on **http://local
 - **Channels:** Web Chat (Socket.IO), Telegram (grammY), Discord (discord.js)
 - **Social MCPs:** Facebook, Instagram, LinkedIn, Reddit, TikTok, Twitter/X, YouTube (git submodules in `external/`)
 - **Sidecars:** Audio/TTS (`sidecars/audio`), Image Gen (`sidecars/image-gen`), Music (`sidecars/music`), Music Studio (`sidecars/music-studio`), Worker (`sidecars/worker`)
+- **Local LLM (opt-in, CUDA):** vLLM TP=2 sidecar (`sidecars/vllm`, `docker-compose.vllm.yml`) for OpenAI-compatible chat completions across two consumer GPUs (e.g., 2× RTX 3060). Mutually exclusive with FLUX image-gen on the same host. See [docs/MULTI_GPU.md](docs/MULTI_GPU.md#vllm-dual-gpu-tp2).
 - **Infra:** Docker Compose, Cloudflare Tunnel
 - **Testing:** Vitest (4,850+ unit tests), Playwright (E2E)
 - **Package Manager:** pnpm (workspaces)
