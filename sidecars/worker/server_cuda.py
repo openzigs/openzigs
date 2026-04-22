@@ -252,14 +252,15 @@ def _get_pooled_vram_gb() -> int:
         try:
             _, total = torch.cuda.mem_get_info(i)
             total_bytes += total
-        except Exception:
+        except Exception as exc:
             # mem_get_info per-device requires fairly recent torch; on older
             # builds, fall back to props.
+            logger.debug("mem_get_info failed for device %d: %s; falling back to get_device_properties", i, exc)
             try:
                 props = torch.cuda.get_device_properties(i)
                 total_bytes += getattr(props, "total_memory", 0)
-            except Exception:
-                pass
+            except Exception as inner_exc:
+                logger.debug("get_device_properties also failed for device %d: %s; skipping", i, inner_exc)
     return int(total_bytes / 1024**3)
 
 
