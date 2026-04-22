@@ -424,6 +424,41 @@ def _is_safe_callback_url(url: str) -> bool:
         return False
 
 
+# ── WS2-B (#928) hardening: containment for subprocess paths ──
+
+import re as _re
+
+_DEFAULT_RENDER_ROOT = os.path.expanduser("~/.openzigs/renders")
+_ALLOWED_SUBPROCESS_ROOTS: tuple[str, ...] = tuple(
+    os.path.realpath(p)
+    for p in (
+        os.getenv("WORKER_RENDER_ROOT", _DEFAULT_RENDER_ROOT),
+        tempfile.gettempdir(),
+    )
+)
+_JOB_ID_RE = _re.compile(r"^[A-Za-z0-9_-]{1,128}$")
+
+
+def _safe_subprocess_path(p: str) -> str:
+    """Confine a path that will be passed as an ffmpeg/ffprobe argv to one
+    of our render or temp roots (CodeQL py/path-injection sanitizer)."""
+    if not isinstance(p, str) or not p:
+        raise ValueError("Path must be a non-empty string")
+    resolved = os.path.realpath(p)
+    if not any(
+        resolved == root or resolved.startswith(root + os.sep)
+        for root in _ALLOWED_SUBPROCESS_ROOTS
+    ):
+        raise ValueError("Subprocess path is outside the allowed roots")
+    return resolved
+
+
+def _safe_job_id(jid: str) -> str:
+    if not isinstance(jid, str) or not _JOB_ID_RE.match(jid):
+        raise ValueError("job_id must match ^[A-Za-z0-9_-]{1,128}$")
+    return jid
+
+
 # ── Worker State ─────────────────────────────────────────────
 
 class WorkerState:
@@ -1152,7 +1187,10 @@ async def capabilities():
                     "free_gb": int(free / 1024**3),
                 })
             except Exception as exc:
-                per_device.append({"index": i, "error": str(exc)})
+                # Avoid leaking stack traces to external callers
+                # (CodeQL py/stack-trace-exposure). Log internally instead.
+                logger.warning(f"[capabilities] mem_get_info({i}) failed: {exc}")
+                per_device.append({"index": i, "error": "device_query_failed"})
 
     audio_modes = ["off"]
     # Post-processing v2a path is always available when the v2a sidecar is
@@ -1376,8 +1414,9 @@ async def run_extended_generation_job(
                 last_frame_b64 = _extract_last_frame_b64(result["video_path"])
 
         # Concatenate the produced clips.
+        safe_jid = _safe_job_id(request.job_id)
         final_path = os.path.join(
-            tempfile.gettempdir(), f"extended_{request.job_id}.mp4"
+            tempfile.gettempdir(), f"extended_{safe_jid}.mp4"
         )
         _concat_clips(output_paths, final_path, crossfade=request.crossfade, fps=request.fps)
         _store_result(request.job_id, {
@@ -1388,12 +1427,13 @@ async def run_extended_generation_job(
         })
         # Notify orchestrator
         try:
-            if _is_safe_callback_url(request.callback_url):
+            if request.callback_url:
+                safe_url = validate_callback_url(request.callback_url)
                 async with httpx.AsyncClient(timeout=30.0) as client:
                     await client.post(
-                        request.callback_url,
+                        safe_url,
                         json={
-                            "job_id": request.job_id,
+                            "job_id": safe_jid,
                             "status": "completed",
                             "video_path": final_path,
                             "extended": True,
@@ -1403,16 +1443,19 @@ async def run_extended_generation_job(
             logger.warning(f"[ws2b] Callback POST failed: {exc}")
     except Exception as exc:
         logger.exception(f"[ws2b] Extended job {request.job_id} failed")
-        _store_result(request.job_id, {"status": "failed", "error": str(exc)})
+        # Generic message to external callers; full trace stays in the log
+        # (CodeQL py/stack-trace-exposure).
+        _store_result(request.job_id, {"status": "failed", "error": "job failed; see worker logs"})
         try:
-            if _is_safe_callback_url(request.callback_url):
+            if request.callback_url:
+                safe_url = validate_callback_url(request.callback_url)
                 async with httpx.AsyncClient(timeout=30.0) as client:
                     await client.post(
-                        request.callback_url,
+                        safe_url,
                         json={
                             "job_id": request.job_id,
                             "status": "failed",
-                            "error": str(exc),
+                            "error": "job failed; see worker logs",
                         },
                     )
         except Exception:
@@ -1423,9 +1466,10 @@ async def run_extended_generation_job(
 
 def _extract_last_frame_b64(video_path: str) -> str:
     """Use ffmpeg to grab the last frame as base64-encoded PNG bytes."""
+    safe_in = _safe_subprocess_path(video_path)
     out_png = os.path.join(tempfile.gettempdir(), f"lastframe_{int(time.time()*1000)}.png")
     cmd = [
-        "ffmpeg", "-y", "-sseof", "-0.1", "-i", video_path,
+        "ffmpeg", "-y", "-sseof", "-0.1", "-i", safe_in,
         "-update", "1", "-q:v", "1", out_png,
     ]
     subprocess.run(cmd, check=True, capture_output=True)
@@ -1448,16 +1492,22 @@ def _concat_clips(input_paths: list[str], output_path: str, *, crossfade: bool, 
     """
     if not input_paths:
         raise ValueError("input_paths cannot be empty")
-    if len(input_paths) == 1 or not crossfade:
-        list_path = output_path + ".concat.txt"
+    # Confine every input path to an allowed root before passing to ffmpeg
+    # (CodeQL py/path-injection + py/command-line-injection sanitizer).
+    safe_inputs = [_safe_subprocess_path(p) for p in input_paths]
+    safe_output = _safe_subprocess_path(os.path.dirname(output_path) or ".")
+    # Re-join filename onto the validated directory so the output stays inside.
+    safe_out_path = os.path.join(safe_output, os.path.basename(output_path))
+    if len(safe_inputs) == 1 or not crossfade:
+        list_path = safe_out_path + ".concat.txt"
         with open(list_path, "w", encoding="utf-8") as f:
-            for p in input_paths:
+            for p in safe_inputs:
                 # ffmpeg concat list format: posix forward slashes, escaped quotes.
                 safe = p.replace("'", "\\'")
                 f.write(f"file '{safe}'\n")
         cmd = [
             "ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", list_path,
-            "-c", "copy", output_path,
+            "-c", "copy", safe_out_path,
         ]
         try:
             subprocess.run(cmd, check=True, capture_output=True)
@@ -1471,16 +1521,16 @@ def _concat_clips(input_paths: list[str], output_path: str, *, crossfade: bool, 
     # Crossfade variant: chain xfade filters. Duration = 4 frames in seconds.
     xfade_dur = 4.0 / float(max(fps, 1))
     inputs: list[str] = []
-    for p in input_paths:
+    for p in safe_inputs:
         inputs.extend(["-i", p])
     # Build filter graph.
-    n = len(input_paths)
+    n = len(safe_inputs)
     parts: list[str] = []
     last_label = "[0:v]"
     cumulative_offset = 0.0
     for i in range(1, n):
         # Need clip duration to set xfade offset.
-        clip_dur = _probe_duration(input_paths[i - 1])
+        clip_dur = _probe_duration(safe_inputs[i - 1])
         cumulative_offset += clip_dur - xfade_dur
         out_label = f"[v{i}]"
         parts.append(
@@ -1493,16 +1543,17 @@ def _concat_clips(input_paths: list[str], output_path: str, *, crossfade: bool, 
         "-filter_complex", filter_graph,
         "-map", last_label,
         "-pix_fmt", "yuv420p",
-        output_path,
+        safe_out_path,
     ]
     subprocess.run(cmd, check=True, capture_output=True)
 
 
 def _probe_duration(video_path: str) -> float:
     """Return clip duration in seconds via ffprobe."""
+    safe_in = _safe_subprocess_path(video_path)
     cmd = [
         "ffprobe", "-v", "error", "-show_entries", "format=duration",
-        "-of", "default=noprint_wrappers=1:nokey=1", video_path,
+        "-of", "default=noprint_wrappers=1:nokey=1", safe_in,
     ]
     out = subprocess.run(cmd, check=True, capture_output=True, text=True)
     return float(out.stdout.strip())

@@ -30,6 +30,7 @@ import ipaddress
 import json
 import logging
 import os
+import re
 import sys
 import tempfile
 import time
@@ -57,6 +58,19 @@ DEFAULT_DURATION_SEC = float(os.getenv("V2A_DEFAULT_DURATION", "8.0"))
 MAX_DURATION_SEC = float(os.getenv("V2A_MAX_DURATION", "30.0"))
 IDLE_TIMEOUT_SEC = int(os.getenv("V2A_IDLE_TIMEOUT", "300"))
 SECRET_TOKEN = os.getenv("WORKER_SECRET_TOKEN") or os.getenv("V2A_SECRET_TOKEN")
+
+# Containment roots for user-supplied video paths and tempfile outputs.
+# Any path that does not resolve under one of these roots is rejected with
+# HTTP 400 to defeat path-traversal (CodeQL py/path-injection sanitizer).
+_DEFAULT_RENDER_ROOT = os.path.expanduser("~/.openzigs/renders")
+ALLOWED_VIDEO_ROOTS: tuple[str, ...] = tuple(
+    os.path.realpath(p)
+    for p in (
+        os.getenv("V2A_VIDEO_ROOT", _DEFAULT_RENDER_ROOT),
+        tempfile.gettempdir(),
+    )
+)
+_JOB_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 
 # Lazy imports — torch/diffusers are huge and only needed at inference time.
 torch = None
@@ -106,11 +120,24 @@ def validate_callback_url(url: str) -> str:
 
 
 def safe_video_path(p: str) -> str:
-    """Validate that ``p`` resolves to an existing file with no traversal."""
+    """Validate that ``p`` resolves to an existing file under an allow-listed
+    root (CodeQL py/path-injection sanitizer)."""
     resolved = os.path.realpath(p)
+    if not any(
+        resolved == root or resolved.startswith(root + os.sep)
+        for root in ALLOWED_VIDEO_ROOTS
+    ):
+        raise ValueError("Video path is outside the allowed roots")
     if not os.path.isfile(resolved):
-        raise ValueError(f"Video path does not exist: {p}")
+        raise ValueError("Video path does not exist")
     return resolved
+
+
+def safe_job_id(jid: str) -> str:
+    """Reject job ids containing characters that could escape filename context."""
+    if not _JOB_ID_RE.match(jid):
+        raise ValueError("job_id must match ^[A-Za-z0-9_-]{1,128}$")
+    return jid
 
 
 # ── Lazy torch + pipeline loader ────────────────────────────
@@ -255,7 +282,8 @@ def _resolve_video_input(request: GenerateRequest) -> str:
 
 
 async def _run_job(request: GenerateRequest) -> None:
-    out_audio = os.path.join(tempfile.gettempdir(), f"v2a_{request.job_id}.wav")
+    safe_jid = safe_job_id(request.job_id)
+    out_audio = os.path.join(tempfile.gettempdir(), f"v2a_{safe_jid}.wav")
     in_video: Optional[str] = None
     try:
         in_video = _resolve_video_input(request)
@@ -293,19 +321,23 @@ async def _run_job(request: GenerateRequest) -> None:
             arr = audio.audios[0]
             _write_wav(arr, out_audio, sample_rate=16000)
         elif isinstance(audio, str) and os.path.isfile(audio):
-            os.replace(audio, out_audio)
+            # Confine the source path under tempdir before moving it.
+            src = os.path.realpath(audio)
+            if not src.startswith(os.path.realpath(tempfile.gettempdir()) + os.sep):
+                raise RuntimeError("Pipeline returned a path outside tempdir")
+            os.replace(src, out_audio)
         else:
             raise RuntimeError("Unsupported pipeline output type from MMAudio")
 
-        _store(request.job_id, {"status": "completed", "audio_path": out_audio})
+        _store(safe_jid, {"status": "completed", "audio_path": out_audio})
         if request.callback_url:
             try:
-                validate_callback_url(request.callback_url)
+                safe_url = validate_callback_url(request.callback_url)
                 async with httpx.AsyncClient(timeout=30.0) as client:
                     await client.post(
-                        request.callback_url,
+                        safe_url,
                         json={
-                            "job_id": request.job_id,
+                            "job_id": safe_jid,
                             "status": "completed",
                             "audio_path": out_audio,
                         },
@@ -313,18 +345,20 @@ async def _run_job(request: GenerateRequest) -> None:
             except Exception as cb_exc:
                 logger.warning(f"[v2a] callback failed: {cb_exc}")
     except Exception as exc:
-        logger.exception(f"[v2a] job {request.job_id} failed")
-        _store(request.job_id, {"status": "failed", "error": str(exc)})
+        logger.exception(f"[v2a] job {safe_jid} failed")
+        # Do not leak stack traces or internal details to external callers
+        # (CodeQL py/stack-trace-exposure). Persist a generic message.
+        _store(safe_jid, {"status": "failed", "error": "job failed; see worker logs"})
         if request.callback_url:
             try:
-                validate_callback_url(request.callback_url)
+                safe_url = validate_callback_url(request.callback_url)
                 async with httpx.AsyncClient(timeout=30.0) as client:
                     await client.post(
-                        request.callback_url,
+                        safe_url,
                         json={
-                            "job_id": request.job_id,
+                            "job_id": safe_jid,
                             "status": "failed",
-                            "error": str(exc),
+                            "error": "job failed; see worker logs",
                         },
                     )
             except Exception:
@@ -333,7 +367,10 @@ async def _run_job(request: GenerateRequest) -> None:
         # Clean up the temporary input only if we materialised it from b64.
         if in_video and request.video_b64:
             try:
-                os.remove(in_video)
+                # Re-validate path containment before unlinking (defence in depth).
+                cleanup = os.path.realpath(in_video)
+                if cleanup.startswith(os.path.realpath(tempfile.gettempdir()) + os.sep):
+                    os.remove(cleanup)
             except OSError:
                 pass
 
