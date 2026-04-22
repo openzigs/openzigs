@@ -2163,12 +2163,16 @@ interface StudioFormState {
   // Phase 1: Gallery Studio Feature Parity (#781)
   pipeline: string;
   audio: boolean;
+  // WS1-A/WS2-C (#925, #929) — audio mode selector replaces boolean
+  audioMode: "off" | "auto" | "music" | "sync";
   tiling: string;
   enhance_prompt: boolean;
   model_repo: string;
   preset_id: string;
   // Phase 2: Multi-Segment Video (#782)
   video_duration: number;
+  // WS2-B (#928) — single-shot vs extended (multi-shot) duration mode
+  durationMode: "single" | "extended";
   // Phase 3: Talking Head Pipeline (#803)
   speechText: string;
   videoPrompt: string;
@@ -2210,11 +2214,13 @@ const DEFAULT_FORM: StudioFormState = {
   loraScale: 0.8,
   pipeline: "distilled",
   audio: false,
+  audioMode: "off",
   tiling: "auto",
   enhance_prompt: false,
   model_repo: "",
   preset_id: "",
   video_duration: 4,
+  durationMode: "single",
   speechText: "",
   videoPrompt: "",
   voice: "af_heart",
@@ -2279,6 +2285,21 @@ function GalleryStudio({
         networkNodeUrl: string;
         hasToken: boolean;
       }>("/api/admin/image-gen/config"),
+  });
+
+  // WS2-C (#929) — LTX worker capabilities. Drives the audio-mode selector
+  // (sync only when synchronized_audio + 24GB+ pooled VRAM available) and
+  // the extended-duration cap.
+  const capabilitiesQuery = useQuery({
+    queryKey: ["admin-capabilities"],
+    queryFn: () =>
+      fetchJson<{
+        pooled_vram_gb?: number;
+        max_frames?: Record<string, number>;
+        audio_modes?: string[];
+      }>("/api/admin/capabilities"),
+    staleTime: 30_000,
+    retry: 0,
   });
 
   // Fetch ready characters for the character dropdown
@@ -2451,9 +2472,28 @@ function GalleryStudio({
     form.num_frames * Math.max(1, Math.ceil(form.video_duration / 4));
   const audioDisabledByFrames =
     isVideo && effectiveFrames > AUDIO_SAFE_FRAME_LIMIT;
-  if (audioDisabledByFrames && form.audio) {
-    setForm((prev) => ({ ...prev, audio: false }));
+  if (audioDisabledByFrames && form.audioMode !== "off") {
+    setForm((prev) => ({ ...prev, audioMode: "off", audio: false }));
   }
+
+  // WS2-C (#929) — sync audio gate: only the LTX-2 22B model + 24GB+ pooled
+  // VRAM enables the "sync" option in the audio-mode selector.
+  const pooledVram = capabilitiesQuery.data?.pooled_vram_gb ?? 0;
+  const syncAudioModelSelected =
+    form.model_repo.includes("LTX-Video-2") ||
+    form.model_repo.includes("ltxv-2-22b");
+  const syncAudioAvailable =
+    syncAudioModelSelected &&
+    pooledVram >= 24 &&
+    (capabilitiesQuery.data?.audio_modes ?? []).includes("native");
+
+  // WS2-B (#928) — extended duration cap. Pull from capabilities if known,
+  // else fall back to a conservative 60s.
+  const maxExtendedSeconds = (() => {
+    const frames = Object.values(capabilitiesQuery.data?.max_frames ?? {});
+    if (frames.length === 0) return 60;
+    return Math.max(...frames.map((f) => Math.floor(f / 24)), 8);
+  })();
 
   const fluxQLabel =
     imageGenMode === "network"
@@ -2812,14 +2852,19 @@ function GalleryStudio({
         }
         // Phase 1: Gallery Studio Feature Parity fields (#783-#787)
         payload.pipeline = form.pipeline;
-        payload.audio = form.audio;
+        // WS1-A/WS2-C (#925, #929): audio_mode is the new field; keep
+        // back-compat boolean `audio` for any backend not yet switched over.
+        payload.audio_mode = form.audioMode;
+        payload.audio = form.audioMode !== "off";
         payload.tiling = form.tiling;
         payload.enhance_prompt = form.enhance_prompt;
         if (form.model_repo) {
           payload.model_repo = form.model_repo;
         }
-        // Phase 2: Multi-Segment Video (#794)
-        if (form.video_duration > 4) {
+        // Phase 2 / WS2-B (#928): Multi-Segment Video. Send video_duration
+        // whenever extended mode is active; the queue API decomposes it into
+        // chained 4s segment jobs which the worker stitches via /generate-extended.
+        if (form.durationMode === "extended" || form.video_duration > 4) {
           payload.video_duration = form.video_duration;
         }
       }
@@ -3618,25 +3663,83 @@ function GalleryStudio({
             </div>
             <div>
               <label className="mb-1 block text-[11px] font-medium text-muted-foreground">
-                Duration
+                Duration Mode
               </label>
-              <select
-                value={form.video_duration}
-                onChange={(e) =>
-                  update("video_duration", parseInt(e.target.value))
-                }
-                className="w-full rounded-lg border border-border bg-card px-2 py-1.5 text-sm text-foreground"
+              <div
+                className="inline-flex rounded-lg border border-border bg-card text-xs"
+                data-testid="duration-mode-toggle"
               >
-                {validDurations.map((d) => (
-                  <option key={d.value} value={d.value}>
-                    {d.label}
-                  </option>
-                ))}
-              </select>
-              {form.video_duration > 4 && (
-                <p className="mt-0.5 text-[10px] text-amber-600 dark:text-amber-400">
-                  {Math.ceil(form.video_duration / 4)} segments × 4s
-                </p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    update("durationMode", "single");
+                    if (form.video_duration > 4) update("video_duration", 4);
+                  }}
+                  className={`px-3 py-1.5 ${
+                    form.durationMode === "single"
+                      ? "bg-primary text-primary-foreground"
+                      : "text-muted-foreground hover:bg-muted/40"
+                  }`}
+                  data-testid="duration-single-button"
+                >
+                  Single shot
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    update("durationMode", "extended");
+                    if (form.video_duration < 5) update("video_duration", 8);
+                  }}
+                  className={`px-3 py-1.5 ${
+                    form.durationMode === "extended"
+                      ? "bg-primary text-primary-foreground"
+                      : "text-muted-foreground hover:bg-muted/40"
+                  }`}
+                  data-testid="duration-extended-button"
+                >
+                  Extended (multi-shot)
+                </button>
+              </div>
+              {form.durationMode === "single" ? (
+                <select
+                  data-testid="duration-single-select"
+                  value={form.video_duration}
+                  onChange={(e) =>
+                    update("video_duration", parseInt(e.target.value))
+                  }
+                  className="mt-2 w-full rounded-lg border border-border bg-card px-2 py-1.5 text-sm text-foreground"
+                >
+                  {validDurations
+                    .filter((d) => d.value <= 4)
+                    .map((d) => (
+                      <option key={d.value} value={d.value}>
+                        {d.label}
+                      </option>
+                    ))}
+                </select>
+              ) : (
+                <>
+                  <input
+                    type="number"
+                    data-testid="duration-extended-input"
+                    min={5}
+                    max={Math.max(60, maxExtendedSeconds)}
+                    step={1}
+                    value={form.video_duration}
+                    onChange={(e) =>
+                      update("video_duration", parseInt(e.target.value) || 5)
+                    }
+                    className="mt-2 w-full rounded-lg border border-border bg-card px-2 py-1.5 text-sm text-foreground"
+                  />
+                  <p
+                    className="mt-1 inline-block rounded bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-400"
+                    data-testid="extended-warning"
+                  >
+                    ⚠ Will be generated as{" "}
+                    {Math.ceil(form.video_duration / 4)} stitched shots. Some
+                    drift may occur after 3+ shots.
+                  </p>
+                </>
               )}
             </div>
           </div>
@@ -3694,39 +3797,64 @@ function GalleryStudio({
             </div>
           </div>
 
-          {/* Audio & AI Enhance toggles (#784, #786) */}
-          <div className="mb-4 flex items-center gap-4">
-            <div className="relative group">
-              <label
-                className={`flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-1.5 text-sm transition ${
-                  audioDisabledByFrames
-                    ? "opacity-50 cursor-not-allowed"
-                    : "cursor-pointer hover:bg-muted/50"
-                }`}
-              >
-                <input
-                  type="checkbox"
-                  checked={form.audio}
-                  onChange={(e) => update("audio", e.target.checked)}
-                  className="rounded"
-                  disabled={audioDisabledByFrames}
-                />
-                <span className="text-foreground">Audio</span>
+          {/* Audio Mode & AI Enhance (#925, #784, #786) */}
+          <div className="mb-4 flex flex-wrap items-end gap-4">
+            <div className="flex-1 min-w-[180px]">
+              <label className="mb-1 block text-[11px] font-medium text-muted-foreground">
+                Audio
               </label>
+              <select
+                data-testid="audio-mode-select"
+                value={form.audioMode}
+                onChange={(e) => {
+                  const value = e.target.value as
+                    | "off"
+                    | "auto"
+                    | "music"
+                    | "sync";
+                  update("audioMode", value);
+                  update("audio", value !== "off");
+                }}
+                disabled={audioDisabledByFrames}
+                className="w-full rounded-lg border border-border bg-card px-2 py-1.5 text-sm text-foreground disabled:opacity-50"
+                title={
+                  audioDisabledByFrames
+                    ? `Audio disabled — effective frame count ${effectiveFrames} exceeds safe limit ${AUDIO_SAFE_FRAME_LIMIT}.`
+                    : undefined
+                }
+              >
+                <option value="off">Off — Silent (default)</option>
+                <option value="auto">
+                  Auto — Generate sound effects (MMAudio v2a)
+                </option>
+                <option value="music">
+                  Music — Background music (ACE-Step)
+                </option>
+                <option
+                  value="sync"
+                  disabled={!syncAudioAvailable}
+                  title={
+                    syncAudioAvailable
+                      ? "Native LTX-2 synchronized audio"
+                      : `Requires LTX-2 model + 24GB+ pooled VRAM. Currently ${syncAudioModelSelected ? "unavailable" : "select an LTX-2 model"} (pooled ${pooledVram}GB).`
+                  }
+                >
+                  Sync — Native sync audio (LTX-2 only)
+                  {!syncAudioAvailable ? " — unavailable" : ""}
+                </option>
+              </select>
+              {form.audioMode !== "off" && !audioDisabledByFrames && (
+                <p className="mt-0.5 text-[10px] text-amber-600 dark:text-amber-400">
+                  Adds ~30% generation time
+                </p>
+              )}
               {audioDisabledByFrames && (
-                <div className="absolute bottom-full left-0 mb-1 hidden group-hover:block z-50 w-56 rounded-lg bg-popover border border-border px-3 py-2 text-[11px] text-muted-foreground shadow-lg">
-                  Audio is disabled because the effective frame count (
-                  {effectiveFrames}) exceeds the safe limit of{" "}
-                  {AUDIO_SAFE_FRAME_LIMIT} for audio+video on 32GB systems.
-                  Reduce duration or frame count to enable audio.
-                </div>
+                <p className="mt-0.5 text-[10px] text-muted-foreground">
+                  Audio disabled — effective frame count {effectiveFrames}{" "}
+                  exceeds safe limit {AUDIO_SAFE_FRAME_LIMIT} on 32GB systems.
+                </p>
               )}
             </div>
-            {form.audio && (
-              <p className="text-[10px] text-amber-600 dark:text-amber-400">
-                Adds ~30% generation time
-              </p>
-            )}
             <label className="flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-1.5 text-sm cursor-pointer hover:bg-muted/50 transition">
               <input
                 type="checkbox"

@@ -7007,5 +7007,50 @@ export const createAdminRouter = ({
     }
   });
 
+  // ── WS2-C (#929) — LTX worker capabilities proxy ──
+  // The /capabilities endpoint lives on the LTX worker sidecar (port 5007 by
+  // default). The admin UI cannot reach the sidecar directly because of CORS
+  // and because the auth token belongs to OpenZigs, not the sidecar. This
+  // route resolves the worker URL the same way the queue master does, then
+  // forwards the request and surfaces the sidecar response.
+  async function videoGenWorkerBaseUrl(): Promise<{
+    url: string;
+    token?: string;
+  }> {
+    const userConfig = await readUserConfig(defaultConfigPath());
+    const vg = (userConfig.videoGen ?? {}) as Record<string, unknown>;
+    const url =
+      vg.mode === "network" && typeof vg.networkNodeUrl === "string" && vg.networkNodeUrl
+        ? vg.networkNodeUrl
+        : (process.env.M2_PRO_WORKER_URL ?? "http://localhost:5007");
+    const token =
+      typeof vg.networkNodeToken === "string" && vg.networkNodeToken
+        ? vg.networkNodeToken
+        : process.env.M2_PRO_WORKER_TOKEN;
+    return { url: url.replace(/\/$/, ""), token };
+  }
+
+  router.get("/capabilities", async (_req, res) => {
+    try {
+      const { url, token } = await videoGenWorkerBaseUrl();
+      const headers: Record<string, string> = {};
+      if (token) headers.Authorization = `Bearer ${token}`;
+      const response = await fetch(`${url}/capabilities`, {
+        headers,
+        signal: AbortSignal.timeout(5000),
+      });
+      if (!response.ok) {
+        return res
+          .status(502)
+          .json({ error: `Sidecar returned HTTP ${response.status}` });
+      }
+      const data = (await response.json()) as Record<string, unknown>;
+      return res.json(data);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return res.status(502).json({ error: message });
+    }
+  });
+
   return router;
 };
