@@ -30,6 +30,7 @@ import ipaddress
 import json
 import logging
 import os
+import pathlib
 import re
 import sys
 import tempfile
@@ -63,14 +64,17 @@ SECRET_TOKEN = os.getenv("WORKER_SECRET_TOKEN") or os.getenv("V2A_SECRET_TOKEN")
 # Any path that does not resolve under one of these roots is rejected with
 # HTTP 400 to defeat path-traversal (CodeQL py/path-injection sanitizer).
 _DEFAULT_RENDER_ROOT = os.path.expanduser("~/.openzigs/renders")
-ALLOWED_VIDEO_ROOTS: tuple[str, ...] = tuple(
-    os.path.realpath(p)
+ALLOWED_VIDEO_ROOTS: tuple[Path, ...] = tuple(
+    Path(p).resolve()
     for p in (
         os.getenv("V2A_VIDEO_ROOT", _DEFAULT_RENDER_ROOT),
         tempfile.gettempdir(),
     )
 )
 _JOB_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
+# Hard-coded loopback hostnames are an explicit allow-list for callback URLs
+# (CodeQL py/full-ssrf sanitizer pattern).
+_ALLOWED_CALLBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
 
 # Lazy imports — torch/diffusers are huge and only needed at inference time.
 torch = None
@@ -99,38 +103,41 @@ def verify_token(authorization: Optional[str] = Header(None)) -> None:
 
 
 def validate_callback_url(url: str) -> str:
-    """Loopback-only callback validator (SSRF defence)."""
+    """Loopback-only callback validator (SSRF defence).
+
+    Returns a URL string that is **reconstructed** from the validated
+    components rather than the original tainted input, so CodeQL's
+    py/full-ssrf flow analysis recognises the function as a sanitizer.
+    """
     parsed = urlparse(url)
     if parsed.scheme not in ("http", "https"):
-        raise ValueError(f"URL scheme must be http or https, got: {parsed.scheme}")
+        raise ValueError("URL scheme must be http or https")
     host = (parsed.hostname or "").strip("[]")
     if not host:
         raise ValueError("URL must have a hostname")
-    if host in ("localhost", "127.0.0.1", "::1"):
-        return url
-    try:
-        addr = ipaddress.ip_address(host)
-        if addr.is_loopback or addr.is_private:
-            return url
-        raise ValueError(f"Callback host not allowed: {host}")
-    except ValueError as exc:
-        if host.endswith(".local"):
-            return url
-        raise ValueError(f"Callback host not allowed: {host}") from exc
+    if host not in _ALLOWED_CALLBACK_HOSTS:
+        raise ValueError("Callback host not in allow-list")
+    # Reconstruct from validated parts (breaks the dataflow taint chain).
+    port = f":{parsed.port}" if parsed.port else ""
+    path = parsed.path or "/"
+    query = f"?{parsed.query}" if parsed.query else ""
+    return f"{parsed.scheme}://{host}{port}{path}{query}"
 
 
 def safe_video_path(p: str) -> str:
-    """Validate that ``p`` resolves to an existing file under an allow-listed
-    root (CodeQL py/path-injection sanitizer)."""
-    resolved = os.path.realpath(p)
-    if not any(
-        resolved == root or resolved.startswith(root + os.sep)
-        for root in ALLOWED_VIDEO_ROOTS
-    ):
-        raise ValueError("Video path is outside the allowed roots")
-    if not os.path.isfile(resolved):
-        raise ValueError("Video path does not exist")
-    return resolved
+    """Validate that ``p`` resolves to an existing file under one of the
+    allow-listed roots (CodeQL py/path-injection sanitizer using
+    ``pathlib.Path.resolve()`` + ``relative_to()`` containment)."""
+    candidate = pathlib.Path(p).resolve(strict=True)
+    for root in ALLOWED_VIDEO_ROOTS:
+        try:
+            candidate.relative_to(root)
+        except ValueError:
+            continue
+        if not candidate.is_file():
+            raise ValueError("Video path is not a regular file")
+        return str(candidate)
+    raise ValueError("Video path is outside the allowed roots")
 
 
 def safe_job_id(jid: str) -> str:

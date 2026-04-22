@@ -346,22 +346,25 @@ def verify_token(authorization: Optional[str] = Header(None)) -> None:
 
 
 def validate_callback_url(url: str) -> str:
-    """Validate a sidecar callback URL.
+    """Validate a sidecar callback URL and return a reconstructed safe URL.
 
     The worker sidecar only ever calls back to the OpenZigs orchestrator on the
     same host, so the allowlist is intentionally narrow:
 
     * Only ``http`` / ``https`` schemes are accepted.
     * Only loopback hosts (``localhost``, ``127.0.0.0/8``, ``::1``) and
-      ``*.local`` mDNS names are accepted.
+      ``*.local`` mDNS names are accepted, plus RFC1918 private ranges for
+      Docker-bridge call-backs.
     * Cloud metadata endpoints (``169.254.169.254``, ``fd00:ec2::254``),
-      RFC 1918 ranges, link-local ranges and IPv4-mapped-IPv6 addresses are
-      rejected outright. This closes the SSRF class CodeQL flagged
-      (``py/full-ssrf``, sub-issue #904).
+      link-local ranges and IPv4-mapped-IPv6 addresses are rejected outright.
+
+    The returned URL is **reconstructed** from the validated components rather
+    than the original tainted input, so CodeQL's ``py/full-ssrf`` flow
+    analysis recognises the function as a sanitizer (#904 / #935).
     """
     parsed = urlparse(url)
     if parsed.scheme not in ("http", "https"):
-        raise ValueError(f"URL scheme must be http or https, got: {parsed.scheme}")
+        raise ValueError("URL scheme must be http or https")
     host = (parsed.hostname or "").strip("[]")
     if not host:
         raise ValueError("URL must have a hostname")
@@ -376,44 +379,39 @@ def validate_callback_url(url: str) -> str:
         "metadata.goog",
     }
     if host.lower() in METADATA_HOSTS:
-        raise ValueError(f"Callback URL host blocked (metadata endpoint): {host}")
+        raise ValueError("Callback URL host blocked (metadata endpoint)")
 
-    # Loopback hostnames are always safe.
+    accepted = False
     if host in ("localhost", "127.0.0.1", "::1"):
-        return url
+        accepted = True
+    else:
+        try:
+            addr = ipaddress.ip_address(host)
+        except ValueError:
+            # Hostname (not an IP literal). Allow only mDNS `.local` names.
+            if host.endswith(".local"):
+                accepted = True
+            else:
+                raise ValueError("Callback URL host not allowed")
+        else:
+            # Unwrap IPv4-mapped IPv6.
+            if isinstance(addr, ipaddress.IPv6Address) and addr.ipv4_mapped is not None:
+                addr = addr.ipv4_mapped
+                if str(addr) in METADATA_HOSTS:
+                    raise ValueError("Callback URL host blocked (mapped metadata endpoint)")
+            if addr.is_link_local or addr.is_multicast or addr.is_unspecified:
+                raise ValueError("Callback URL host not allowed")
+            if addr.is_loopback or addr.is_private:
+                accepted = True
 
-    try:
-        addr = ipaddress.ip_address(host)
-    except ValueError:
-        # Hostname (not an IP literal). Allow only mDNS `.local` names; deny
-        # everything else so a public DNS name can't be used to pivot.
-        if host.endswith(".local"):
-            return url
-        raise ValueError(f"Callback URL host not allowed: {host}")
+    if not accepted:
+        raise ValueError("Callback URL host not allowed")
 
-    # Unwrap IPv4-mapped IPv6 (e.g. ::ffff:169.254.169.254) so the metadata
-    # check above also catches the mapped form.
-    if isinstance(addr, ipaddress.IPv6Address) and addr.ipv4_mapped is not None:
-        addr = addr.ipv4_mapped
-        if str(addr) in METADATA_HOSTS:
-            raise ValueError(
-                f"Callback URL host blocked (mapped metadata endpoint): {host}"
-            )
-
-    if addr.is_loopback:
-        return url
-
-    # RFC1918 private addresses (10/8, 172.16/12, 192.168/16) are allowed so
-    # the worker can post back to the orchestrator across Docker bridge
-    # networks. We deliberately exclude link-local (``is_link_local`` —
-    # 169.254/16, fe80::/10) since that's where cloud metadata lives.
-    if addr.is_link_local or addr.is_multicast or addr.is_unspecified:
-        raise ValueError(f"Callback URL host not allowed: {host}")
-    if addr.is_private:
-        return url
-
-    # Anything else — public IPs, reserved ranges — is rejected.
-    raise ValueError(f"Callback URL host not allowed: {host}")
+    # Reconstruct the URL from validated parts (breaks CodeQL taint chain).
+    port = f":{parsed.port}" if parsed.port else ""
+    path = parsed.path or "/"
+    query = f"?{parsed.query}" if parsed.query else ""
+    return f"{parsed.scheme}://{host}{port}{path}{query}"
 
 
 def _is_safe_callback_url(url: str) -> bool:
@@ -427,10 +425,11 @@ def _is_safe_callback_url(url: str) -> bool:
 # ── WS2-B (#928) hardening: containment for subprocess paths ──
 
 import re as _re
+import pathlib as _pathlib
 
 _DEFAULT_RENDER_ROOT = os.path.expanduser("~/.openzigs/renders")
-_ALLOWED_SUBPROCESS_ROOTS: tuple[str, ...] = tuple(
-    os.path.realpath(p)
+_ALLOWED_SUBPROCESS_ROOTS: tuple[_pathlib.Path, ...] = tuple(
+    _pathlib.Path(p).resolve()
     for p in (
         os.getenv("WORKER_RENDER_ROOT", _DEFAULT_RENDER_ROOT),
         tempfile.gettempdir(),
@@ -441,16 +440,18 @@ _JOB_ID_RE = _re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 
 def _safe_subprocess_path(p: str) -> str:
     """Confine a path that will be passed as an ffmpeg/ffprobe argv to one
-    of our render or temp roots (CodeQL py/path-injection sanitizer)."""
+    of our render or temp roots (CodeQL py/path-injection +
+    py/command-line-injection sanitizer using pathlib + relative_to())."""
     if not isinstance(p, str) or not p:
         raise ValueError("Path must be a non-empty string")
-    resolved = os.path.realpath(p)
-    if not any(
-        resolved == root or resolved.startswith(root + os.sep)
-        for root in _ALLOWED_SUBPROCESS_ROOTS
-    ):
-        raise ValueError("Subprocess path is outside the allowed roots")
-    return resolved
+    candidate = _pathlib.Path(p).resolve()
+    for root in _ALLOWED_SUBPROCESS_ROOTS:
+        try:
+            candidate.relative_to(root)
+            return str(candidate)
+        except ValueError:
+            continue
+    raise ValueError("Subprocess path is outside the allowed roots")
 
 
 def _safe_job_id(jid: str) -> str:
