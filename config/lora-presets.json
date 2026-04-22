@@ -1,0 +1,58 @@
+{
+  "$schema": "./lora-presets.schema.json",
+  "_doc": "WS3-D (#933) — LoRA training presets per base diffusion model. Edit values to tune defaults globally; users can override any field per training run via the UI.",
+  "presets": {
+    "sdxl": {
+      "label": "SDXL 1.0 (1024×1024)",
+      "description": "Stable Diffusion XL — best for portraits and characters at 1024px. Fits 12 GB VRAM with gradient checkpointing.",
+      "baseModel": "sdxl",
+      "rank": 16,
+      "loraAlpha": 32,
+      "learningRate": 1e-4,
+      "steps": 700,
+      "batchSize": 1,
+      "gradientAccumulationSteps": 1,
+      "mixedPrecision": "fp16",
+      "resolution": 1024
+    },
+    "flux-dev": {
+      "label": "FLUX.1 dev (768×768)",
+      "description": "FLUX.1 dev — highest quality face fidelity. Requires 4-bit QLoRA on 12 GB cards; bf16 mixed precision.",
+      "baseModel": "flux-dev",
+      "rank": 16,
+      "loraAlpha": 32,
+      "learningRate": 1e-4,
+      "steps": 1000,
+      "batchSize": 1,
+      "gradientAccumulationSteps": 4,
+      "mixedPrecision": "bf16",
+      "resolution": 768
+    },
+    "flux-schnell": {
+      "label": "FLUX.1 schnell (768×768, 4-step)",
+      "description": "FLUX.1 schnell — distilled 4-step variant. Faster training but slightly lower fidelity than dev.",
+      "baseModel": "flux-schnell",
+      "rank": 16,
+      "loraAlpha": 32,
+      "learningRate": 1e-4,
+      "steps": 800,
+      "batchSize": 1,
+      "gradientAccumulationSteps": 4,
+      "mixedPrecision": "bf16",
+      "resolution": 768
+    },
+    "sd15": {
+      "label": "Stable Diffusion 1.5 (512×512)",
+      "description": "SD 1.5 — fastest training, lowest VRAM. Use for quick character iterations or low-end GPUs.",
+      "baseModel": "sd15",
+      "rank": 8,
+      "loraAlpha": 16,
+      "learningRate": 1e-4,
+      "steps": 500,
+      "batchSize": 1,
+      "gradientAccumulationSteps": 1,
+      "mixedPrecision": "fp16",
+      "resolution": 512
+    }
+  }
+}

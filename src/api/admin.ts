@@ -57,6 +57,7 @@ import type { PipelineTemplateManager } from "../productivity/pipeline-template-
 import type { Server as SocketIOServer } from "socket.io";
 import { getGpuProfile, _resetGpuProfileCache } from "../system/gpu-profile.js";
 import { CronExpressionParser } from "cron-parser";
+import { loadLoraPresets } from "../config/lora-presets.js";
 
 let _adminIo: SocketIOServer | null = null;
 export function setAdminIO(io: SocketIOServer): void {
@@ -6990,6 +6991,19 @@ export const createAdminRouter = ({
       return res.json(data);
     } catch {
       return res.status(503).json({ error: "Ollama not reachable" });
+    }
+  });
+
+  // ── WS3-D (#933) — LoRA training presets ──
+  // Returns the bundled SDXL/FLUX/SD1.5 preset blocks so the UI training panel
+  // can populate its dropdown with rank/alpha/lr/steps/batch defaults.
+  router.get("/lora-presets", async (_req, res) => {
+    try {
+      const presets = loadLoraPresets();
+      return res.json(presets);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return res.status(500).json({ error: message });
     }
   });
 
