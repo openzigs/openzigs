@@ -9568,3 +9568,49 @@ Navigate to **Admin → Music Generation Node** to configure:
 |---|---|---|---|
 | `acestep-v15-turbo` | 8 | ~45 seconds | Good (fast iteration) |
 | `acestep-v15-sft` | 32 | ~3 minutes | High (final output) |
+
+## Running a local LLM with vLLM (Epic #888)
+
+For users with **2x 12 GB consumer NVIDIA GPUs** (e.g., 2x RTX 3060) who want production-grade local LLM throughput at ~12-20 tokens/sec, OpenZigs ships an opt-in vLLM tensor-parallel sidecar.
+
+### What you get
+
+- **OpenAI-compatible** `/v1/chat/completions` endpoint at `http://127.0.0.1:8000`.
+- **Default model:** Qwen 2.5 14B Instruct (AWQ 4-bit, ~9 GB on disk).
+- **Allow-list of 5 vetted models** selectable from Admin -> Local vLLM (TP=2): Qwen 14B / Gemma 2 9B / Mistral Nemo 12B / Qwen 32B / Mixtral 8x7B (all AWQ-quantised).
+- **Auto-BYOK:** on next server boot, the agent will detect the running vLLM, generate an API key, and configure itself to use it. No manual config edits.
+- **Backpressure protection:** the in-process queue caps at 8 in-flight requests so the orchestrator can shed load instead of OOM-ing.
+
+### Setup (one-time)
+
+```sh
+# 1. Install (pulls Docker image, generates API key in ~/.openzigs/vllm-api-key with mode 0600)
+bash sidecars/vllm/install.sh
+
+# 2. Tell start-cuda-sidecars to make room for vLLM (this DISABLES image-gen / lipsync / sadtalker)
+echo 'OPENZIGS_ENABLE_VLLM=1' >> ~/.openzigs/.env.cuda
+
+# 3. Enable auto-detect in your config
+cat >> ~/.openzigs/config.json <<'EOF'
+{ \"llm\": { \"localVllm\": { \"enabled\": true } } }
+EOF
+
+# 4. Start it from the admin UI: Admin -> Local vLLM (TP=2) -> Start
+```
+
+### Important: vLLM and FLUX cannot coexist
+
+The vLLM sidecar claims **both GPUs (indices 0 and 1)**. FLUX image generation also wants those GPUs. The system enforces this both at boot (`start-cuda-sidecars.sh` skips image-gen / lipsync / sadtalker when `OPENZIGS_ENABLE_VLLM=1`) and at runtime (`GpuCoordinator` returns HTTP 409 if you try to start one while the other holds the lock).
+
+To switch from FLUX to vLLM: stop image-gen, set the env var, start vLLM. To switch back: stop vLLM via the admin panel, unset the env var, restart sidecars.
+
+### Stress-test the SLO
+
+```sh
+python scripts/gpu-stress-test.py --scenario vllm
+```
+
+Fires 8 concurrent chat completions (mixed 256 / 1024 / 2048-token contexts). Exits non-zero if any request returns below 8 tokens/sec, which on 2x 12 GB usually means the wrong model size or a paging-thrash situation.
+
+See [docs/MULTI_GPU.md](MULTI_GPU.md#vllm-dual-gpu-tp2) for the full operational guide, conflict policy, and Ollama-vs-vLLM comparison.
+

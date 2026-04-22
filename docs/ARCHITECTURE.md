@@ -472,6 +472,7 @@ Sidecars are selected at install time and can be added later by re-running `inst
 | **music-studio** | 5010 | PyTorch (MPS), Demucs v4, Seed-VC, matchering | ~5 GB | 3.10+ | Stem separation, Voice-to-Voice, AI Remix Lab, mastering |
 | **worker** | 5007 | mlx, mlx-video (GitHub), LTX-2 Q4 (audio+video) | ~19–41 GB | 3.10+ | LTX-Video generation with audio, 4 pipeline modes, tiling (M2 Pro+ recommended, 32+ GB RAM) |
 | **GPT-SoVITS** | dynamic | GPT-SoVITS (via `scripts/setup-gptsovits.sh`) | ~4 GB | bundled | Voice cloning Engine B — custom voice models from short clips |
+| **vLLM (TP=2)** ⚡ | 8000 (loopback) | `vllm/vllm-openai:v0.6.4`, Qwen 2.5 14B AWQ default (allow-list of 5) | ~9–28 GB per model | bundled | Local OpenAI-compatible chat completions across **2× CUDA GPUs**. Mutually exclusive with FLUX (Epic #888). See [MULTI_GPU.md](MULTI_GPU.md#vllm-dual-gpu-tp2). |
 
 > **Note:** `music` requires Python **3.11.x exactly** plus the `uv` package manager and a separate clone of [`clockworksquirrel/ace-step-apple-silicon`](https://github.com/clockworksquirrel/ace-step-apple-silicon). `music-studio` requires system packages `ffmpeg` and `fluidsynth` (`brew install ffmpeg fluidsynth`).
 

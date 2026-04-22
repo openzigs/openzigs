@@ -1,3 +1,16 @@
+# examples/multi-gpu
+
+The reference vLLM TP=2 launcher and async client that previously lived
+here have been promoted into the main tree as part of Epic #888:
+
+| Old path | New canonical location |
+| --- | --- |
+| `examples/multi-gpu/vllm-dual-gpu.py` | [`sidecars/vllm/launch.py`](../../sidecars/vllm/launch.py) (host-Python launcher) and [`docker-compose.vllm.yml`](../../docker-compose.vllm.yml) (production) |
+| `examples/multi-gpu/vllm-client.ts` | [`src/llm/vllm-client.ts`](../../src/llm/vllm-client.ts) — wired into the BYOK provider path with audit logging, single-flight, and backpressure |
+
+See [`docs/MULTI_GPU.md`](../../docs/MULTI_GPU.md) for the dual-GPU
+serving guide, hardware reality check, and the conflict policy enforced
+by the GPU coordinator (`src/gpu/gpu-coordinator.ts`).
 # Multi-GPU LLM Serving — vLLM Reference
 
 Companion to `docs/MULTI_GPU.md`. This directory holds **reference**

@@ -59,6 +59,9 @@ import {
 import { createTasksRouter } from "./api/tasks.js";
 import { createSeoRouter } from "./api/seo.js";
 import { createFilesRouter } from "./api/files.js";
+import { createVllmAdminRouter } from "./api/admin/vllm.js";
+import { GpuCoordinator } from "./gpu/gpu-coordinator.js";
+import { autoRegisterIfDetected } from "./llm/vllm-detect.js";
 import { launchChrome, killChrome } from "./browser/chrome-launcher.js";
 import {
   TaskRepository,
@@ -209,6 +212,30 @@ await customPostActionManager.initialize();
 
 const config = await loadConfig();
 
+// vLLM BYOK auto-config (Epic #888 / Issue #920) — if a local vLLM server
+// is reachable and the user hasn't configured a provider for that base URL,
+// generate an API key and write a `copilot.provider` block to config.json.
+// Disabled by default; opt in via llm.localVllm.enabled=true.
+try {
+  const vllmCfg = (config as unknown as {
+    llm?: { localVllm?: { enabled?: boolean; baseUrl?: string; autoRegister?: boolean } };
+  }).llm?.localVllm;
+  if (vllmCfg?.enabled && vllmCfg.autoRegister !== false) {
+    const result = await autoRegisterIfDetected({
+      baseUrl: vllmCfg.baseUrl,
+      logger: {
+        info: (msg, details) => logger.info(msg, details ?? {}),
+        warn: (msg, details) => logger.warn(msg, details ?? {}),
+      },
+    });
+    logger.info("vLLM auto-register check complete", { status: result.status });
+  }
+} catch (err) {
+  logger.warn("vLLM auto-register failed (non-fatal)", {
+    error: err instanceof Error ? err.message : String(err),
+  });
+}
+
 // ── Load default agent archetypes from config/agents.json ──
 let defaultAgents: CustomAgentConfig[] = [];
 try {
@@ -268,6 +295,10 @@ if (chromeAutoLaunch && process.env.CHROME_DEBUG_HOST) {
 
 // ── Productivity: SQLite + Prompts + Scheduler + Tasks ──
 const db = getDatabase();
+const gpuCoordinator = new GpuCoordinator({
+  db,
+  warn: (msg, details) => logger.warn(msg, details ?? {}),
+});
 const promptManager = new PromptManager({ db });
 const personalityManager = new PersonalityManager({ db });
 const brandVoiceRepo = new BrandVoiceRepository(db);
@@ -1173,8 +1204,12 @@ const webhookManager = new WebhookManager(webhookRepo);
 const modelsRouter = createModelsRouter({ copilot });
 app.use("/api/models", authMiddleware, modelsRouter);
 
-// System info routes (GPU profile, recommended model tier)
-app.use("/api/system", authMiddleware, createSystemRouter());
+// System info routes (GPU profile, recommended model tier, coordinator state)
+app.use(
+  "/api/system",
+  authMiddleware,
+  createSystemRouter({ coordinator: gpuCoordinator }),
+);
 
 // Setup API routes — no auth required (needed before auth is configured)
 app.use("/api/setup", setupRouter);
@@ -1207,6 +1242,10 @@ const adminRouter = createAdminRouter({
   videoPresetsRepo,
 });
 app.use("/api/admin", authMiddleware, adminRouter);
+
+// vLLM admin routes (Epic #888 / Issue #922) — kept out of admin.ts.
+const vllmAdminRouter = createVllmAdminRouter({ coordinator: gpuCoordinator });
+app.use("/api/admin/gpu/vllm", authMiddleware, vllmAdminRouter);
 
 // Knowledge Base API routes
 const knowledgeRouter = createKnowledgeRouter({ knowledgeService });

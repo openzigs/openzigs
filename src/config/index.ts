@@ -597,6 +597,35 @@ const appConfigSchema = z.object({
       memoryLimitGB: z.number().min(1).max(128).optional().default(24),
     })
     .optional(),
+  llm: z
+    .object({
+      localVllm: z
+        .object({
+          enabled: z.boolean().optional().default(false),
+          model: z
+            .string()
+            .optional()
+            .default("Qwen/Qwen2.5-14B-Instruct-AWQ"),
+          baseUrl: z.string().optional().default("http://127.0.0.1:8000"),
+          maxQueueDepth: z
+            .number()
+            .int()
+            .min(1)
+            .max(64)
+            .optional()
+            .default(8),
+          timeoutMs: z
+            .number()
+            .int()
+            .min(1000)
+            .max(600_000)
+            .optional()
+            .default(120_000),
+          autoRegister: z.boolean().optional().default(true),
+        })
+        .optional(),
+    })
+    .optional(),
   socialBrain: z
     .object({
       enabled: z.boolean().optional(),

@@ -401,6 +401,33 @@ async def unload():
     return {"status": "unloaded"}
 
 
+@app.get("/gpu-info")
+async def gpu_info_endpoint():
+    """Report which CUDA device this sidecar is bound to (Issue #919).
+
+    Mirrors the audio sidecar's /gpu-info shape so the GPU coordinator
+    (#917) and /api/system/gpu have full visibility into the talking-head
+    pipeline. Returns 503 when CUDA is not initialized.
+    """
+    try:
+        import torch
+    except ImportError:
+        raise HTTPException(status_code=503, detail="torch not available")
+    if not torch.cuda.is_available():
+        raise HTTPException(status_code=503, detail="CUDA not available")
+    idx = torch.cuda.current_device()
+    free, total = torch.cuda.mem_get_info(idx)
+    return {
+        "available": True,
+        "device_index": idx,
+        "device_name": torch.cuda.get_device_name(idx),
+        "device_count": torch.cuda.device_count(),
+        "total_mb": int(total / 1024**2),
+        "free_mb": int(free / 1024**2),
+        "cuda_visible": os.environ.get("CUDA_VISIBLE_DEVICES", ""),
+    }
+
+
 @app.post("/generate", status_code=202)
 async def generate_async(req: TalkingHeadRequest):
     """Submit an async talking-head job. Result delivered via callback."""

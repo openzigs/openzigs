@@ -362,12 +362,97 @@ def scenario_ollama(token: Optional[str]) -> list[concurrent.futures.Future]:
     return futures
 
 
+def submit_vllm(prompt: str, *, max_tokens: int = 256, api_key: Optional[str] = None) -> JobResult:
+    """Send one chat completion to local vLLM and measure latency.
+
+    The minimum SLO defined in Issue #921: end-to-end TPS \u2265 8 (output
+    tokens per second per request). Below that vLLM is either CPU-bound,
+    paging weights, or the wrong model size for 2\u00d7 12 GB.
+    """
+    job_id = uuid.uuid4().hex[:12]
+    started = time.time()
+    body = {
+        "model": os.environ.get("VLLM_MODEL", "Qwen/Qwen2.5-14B-Instruct-AWQ"),
+        "messages": [{"role": "user", "content": prompt}],
+        "max_tokens": max_tokens,
+        "temperature": 0.7,
+        "stream": False,
+    }
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    req = urllib_request.Request(
+        "http://127.0.0.1:8000/v1/chat/completions",
+        data=json.dumps(body).encode("utf-8"),
+        method="POST",
+        headers=headers,
+    )
+    status = 0
+    response_text = ""
+    try:
+        with urllib_request.urlopen(req, timeout=120) as r:
+            status = r.status
+            response_text = r.read().decode("utf-8", errors="replace")
+    except urllib_error.HTTPError as e:
+        status = e.code
+        response_text = e.read().decode("utf-8", errors="replace") if hasattr(e, "read") else str(e)
+    except Exception as e:  # noqa: BLE001
+        response_text = str(e)
+    elapsed = time.time() - started
+    success = 200 <= status < 300
+    # Best-effort token count for SLO calc.
+    completion_tokens = 0
+    if success:
+        try:
+            completion_tokens = json.loads(response_text).get("usage", {}).get("completion_tokens", 0)
+        except (ValueError, KeyError):
+            pass
+    tps = completion_tokens / elapsed if elapsed > 0 else 0.0
+    error = ""
+    if not success:
+        error = response_text[:200]
+    elif tps < 8.0 and completion_tokens > 0:
+        error = f"SLO violation: TPS={tps:.2f} (<8)"
+    return JobResult(
+        sidecar="vllm",
+        job_id=job_id,
+        started_at=started,
+        finished_at=time.time(),
+        success=success and (completion_tokens == 0 or tps >= 8.0),
+        http_status=status,
+        error=error,
+    )
+
+
+def scenario_vllm(token: Optional[str]) -> list[concurrent.futures.Future]:
+    """vLLM TP=2 stress: 8 concurrent chat completions across 256/1024/2048 ctx.
+
+    Issue #921. Exercises the queue + KV cache. Reads VLLM_API_KEY from env
+    or ~/.openzigs/vllm-api-key. Exit code is non-zero if any request fails
+    or any TPS is below 8.
+    """
+    api_key = os.environ.get("VLLM_API_KEY", "").strip()
+    if not api_key:
+        key_path = Path.home() / ".openzigs" / "vllm-api-key"
+        if key_path.exists():
+            api_key = key_path.read_text(encoding="utf-8").strip()
+    short = "Summarise the difference between TCP and UDP in two sentences."
+    medium = ("Explain in detail how an L1 CPU cache works, covering "
+              "associativity, line size, and the MESI protocol. ") * 4
+    long = ("Write a comprehensive technical comparison of bare-metal "
+            "Kubernetes versus managed services like EKS and GKE. ") * 12
+    prompts = [short, short, medium, medium, medium, long, long, long]
+    pool = concurrent.futures.ThreadPoolExecutor(max_workers=8)
+    return [pool.submit(submit_vllm, p, api_key=api_key or None) for p in prompts]
+
+
 SCENARIO_RUNNERS = {
     "smoke": scenario_smoke,
     "full": scenario_full,
     "oom": scenario_oom,
     "pooled": scenario_pooled,
     "ollama": scenario_ollama,
+    "vllm": scenario_vllm,
 }
 
 

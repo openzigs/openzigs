@@ -1,9 +1,11 @@
 import { describe, it, expect } from "vitest";
 import express from "express";
 import request from "supertest";
+import Database from "better-sqlite3";
 
 import { createSystemRouter } from "./system.js";
 import type { GpuProfile } from "../system/gpu-profile.js";
+import { GpuCoordinator } from "../gpu/gpu-coordinator.js";
 
 const fakeProfile: GpuProfile = {
   detected: true,
@@ -51,5 +53,76 @@ describe("system router", () => {
     const res = await request(app).get("/api/system/gpu");
     expect(res.status).toBe(500);
     expect(res.body.error).toMatch(/GPU profile/i);
+  });
+
+  // Issue #917 (Epic #888): coordinator state must be merged into the
+  // /api/system/gpu response so the UI can render conflicts + serving_mode.
+  describe("coordinator state merge", () => {
+    const buildApp = (coordinator: GpuCoordinator) => {
+      const app = express();
+      app.use(
+        "/api/system",
+        createSystemRouter({
+          loadProfile: async () => fakeProfile,
+          coordinator,
+        }),
+      );
+      return app;
+    };
+
+    it("returns serving_mode=idle and empty conflicts when no claims", async () => {
+      const db = new Database(":memory:");
+      const coord = new GpuCoordinator({ db });
+      const res = await request(buildApp(coord)).get("/api/system/gpu");
+      expect(res.status).toBe(200);
+      expect(res.body.serving_mode).toBe("idle");
+      expect(res.body.conflicts).toEqual([]);
+      // Original profile fields still present.
+      expect(res.body.detected).toBe(true);
+      expect(res.body.gpus).toHaveLength(2);
+    });
+
+    it("returns serving_mode=vllm-tp2 when only vLLM is claimed", async () => {
+      const db = new Database(":memory:");
+      const coord = new GpuCoordinator({ db });
+      const result = coord.register("vllm", [0, 1]);
+      expect(result.ok).toBe(true);
+      const res = await request(buildApp(coord)).get("/api/system/gpu");
+      expect(res.status).toBe(200);
+      expect(res.body.serving_mode).toBe("vllm-tp2");
+      expect(res.body.conflicts).toEqual([]);
+    });
+
+    it("returns serving_mode=mixed and conflicts when vLLM + diffusion overlap", async () => {
+      // vLLM holds [0,1] (exclusive), then non-exclusive sadtalker claims [1].
+      // The coordinator rejects the second claim, so to *exercise* the
+      // conflict-summary path we register a non-exclusive workload first
+      // and then promote vLLM — which is also rejected. Instead, test by
+      // injecting two claims directly via separate exclusive workloads on
+      // disjoint GPUs is meaningless; the realistic conflict the UI cares
+      // about is exclusive ↔ non-exclusive overlap that slipped through
+      // (e.g. stale claim races). Use a fake coordinator that returns
+      // pre-built claims to cover the summarisation contract.
+      const fakeCoordinator = {
+        currentClaims: () => [
+          { workload: "vllm" as const, gpus: [0, 1], startedAt: 0 },
+          { workload: "sadtalker" as const, gpus: [1], startedAt: 0 },
+        ],
+      };
+      const app = express();
+      app.use(
+        "/api/system",
+        createSystemRouter({
+          loadProfile: async () => fakeProfile,
+          coordinator: fakeCoordinator,
+        }),
+      );
+      const res = await request(app).get("/api/system/gpu");
+      expect(res.status).toBe(200);
+      expect(res.body.serving_mode).toBe("mixed");
+      expect(res.body.conflicts.length).toBeGreaterThan(0);
+      expect(res.body.conflicts[0]).toMatch(/vllm/);
+      expect(res.body.conflicts[0]).toMatch(/sadtalker/);
+    });
   });
 });

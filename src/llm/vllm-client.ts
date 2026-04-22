@@ -1,8 +1,8 @@
 /**
- * Async vLLM client — dual-GPU OpenAI-compatible endpoint (Epic #883 follow-up).
+ * Async vLLM client — dual-GPU OpenAI-compatible endpoint.
  *
- * Pairs with examples/multi-gpu/vllm-dual-gpu.py. Designed so the agent layer
- * NEVER blocks while a 15s+ FLUX generation or 30s+ vLLM completion is running.
+ * Promoted from `examples/multi-gpu/vllm-client.ts` for Issue #918
+ * (Epic #888 — Local LLM serving via vLLM TP=2).
  *
  * Three rules baked in:
  *   1. Streaming is the default. Non-streaming is opt-in.
@@ -11,21 +11,27 @@
  *   3. Backpressure: if the queue exceeds maxQueueDepth, new calls reject
  *      immediately rather than letting Windows page-out to system RAM.
  *
- * NOT yet wired into the openzigs Express server. To integrate:
- *   - Add a `llm.localVllm` block to config/default.json (baseUrl, apiKey, model)
- *   - Mount as a CopilotProvider alternative in src/copilot/
- *   - Surface health via /api/system/gpu (extend src/api/system.ts)
+ * Audit logging: each call records token counts, latency, and queue wait under
+ * the `tool` audit category, subcategory `llm.vllm`. The API key value is NEVER
+ * logged — only the presence/length of an Authorization header.
  */
 
+import type { AuditLogger } from "../logging/audit-logger.js";
+
 interface VllmClientOptions {
-  baseUrl: string;          // e.g. "http://127.0.0.1:8000"
+  baseUrl: string; // e.g. "http://127.0.0.1:8000"
   apiKey?: string;
-  model: string;            // model id loaded by the server
+  model: string; // model id loaded by the server
   /** Reject new calls when this many are already queued. Default 8. */
   maxQueueDepth?: number;
   /** Per-call timeout in ms. Default 120_000. */
   timeoutMs?: number;
+  /** Optional fetch override (tests). Defaults to the global fetch. */
   fetchImpl?: typeof fetch;
+  /** Optional audit logger. When set, each call emits a `llm.vllm.*` event. */
+  auditLogger?: Pick<AuditLogger, "log">;
+  /** Optional clock for deterministic latency tests. Defaults to performance.now. */
+  now?: () => number;
 }
 
 interface ChatMessage {
@@ -53,9 +59,34 @@ export interface CompletionResult {
   queueWaitMs: number;
 }
 
-export class VllmBackpressureError extends Error {
-  readonly code = "VLLM_BACKPRESSURE";
+export interface VllmClientMetrics {
+  queueDepth: number;
+  totalCompleted: number;
+  totalFailed: number;
+  totalBackpressure: number;
+  p50LatencyMs: number;
+  p99LatencyMs: number;
 }
+
+export class VllmBackpressureError extends Error {
+  readonly code = "VLLM_BACKPRESSURE" as const;
+  constructor(message: string) {
+    super(message);
+    this.name = "VllmBackpressureError";
+  }
+}
+
+/** Type guard for the backpressure error class. */
+export function isBackpressureError(err: unknown): err is VllmBackpressureError {
+  return (
+    err instanceof VllmBackpressureError ||
+    (typeof err === "object" &&
+      err !== null &&
+      (err as { code?: string }).code === "VLLM_BACKPRESSURE")
+  );
+}
+
+const ROLLING_WINDOW = 200;
 
 export class VllmClient {
   private readonly baseUrl: string;
@@ -64,12 +95,20 @@ export class VllmClient {
   private readonly maxQueueDepth: number;
   private readonly timeoutMs: number;
   private readonly fetch: typeof fetch;
+  private readonly audit?: Pick<AuditLogger, "log">;
+  private readonly now: () => number;
 
   // Single-flight queue. We hold a tail promise; each call awaits the previous
   // tail before issuing its own fetch. This serialises requests to vLLM
   // without busy-waiting and without a third-party queue lib.
   private tail: Promise<unknown> = Promise.resolve();
   private pending = 0;
+
+  // Rolling latency window for p50/p99.
+  private readonly latencies: number[] = [];
+  private completed = 0;
+  private failed = 0;
+  private backpressure = 0;
 
   constructor(opts: VllmClientOptions) {
     this.baseUrl = opts.baseUrl.replace(/\/+$/, "");
@@ -78,10 +117,60 @@ export class VllmClient {
     this.maxQueueDepth = opts.maxQueueDepth ?? 8;
     this.timeoutMs = opts.timeoutMs ?? 120_000;
     this.fetch = opts.fetchImpl ?? fetch;
+    this.audit = opts.auditLogger;
+    this.now = opts.now ?? (() => performance.now());
   }
 
   get queueDepth(): number {
     return this.pending;
+  }
+
+  /** Returns rolling-window metrics for the Admin UI / health checks. */
+  getMetrics(): VllmClientMetrics {
+    return {
+      queueDepth: this.pending,
+      totalCompleted: this.completed,
+      totalFailed: this.failed,
+      totalBackpressure: this.backpressure,
+      p50LatencyMs: percentile(this.latencies, 0.5),
+      p99LatencyMs: percentile(this.latencies, 0.99),
+    };
+  }
+
+  /** Reject immediately when the queue is at capacity. Synchronous check
+   *  so callers can convert to HTTP 429 without consuming a queue slot. */
+  private checkBackpressure(): void {
+    if (this.pending >= this.maxQueueDepth) {
+      this.backpressure += 1;
+      throw new VllmBackpressureError(
+        `vLLM queue full (${this.pending}/${this.maxQueueDepth}); rejecting to prevent VRAM->RAM spillover`,
+      );
+    }
+  }
+
+  private recordLatency(ms: number): void {
+    this.latencies.push(ms);
+    if (this.latencies.length > ROLLING_WINDOW) {
+      this.latencies.shift();
+    }
+  }
+
+  private auditEvent(
+    event: string,
+    details: Record<string, unknown>,
+    level: "info" | "warn" | "error" = "info",
+  ): void {
+    if (!this.audit) return;
+    try {
+      this.audit.log({
+        level,
+        category: "tool",
+        event: `llm.vllm.${event}`,
+        details,
+      });
+    } catch {
+      // Audit failures must never break inference.
+    }
   }
 
   /**
@@ -89,16 +178,10 @@ export class VllmClient {
    * the await yields to other handlers between queue slots.
    */
   async complete(req: CompletionRequest): Promise<CompletionResult> {
-    if (this.pending >= this.maxQueueDepth) {
-      throw new VllmBackpressureError(
-        `vLLM queue full (${this.pending}/${this.maxQueueDepth}); rejecting to prevent VRAM->RAM spillover`,
-      );
-    }
+    this.checkBackpressure();
     this.pending += 1;
-    const queuedAt = performance.now();
+    const queuedAt = this.now();
 
-    // Chain onto the tail so calls run one-at-a-time. The cast keeps TS happy
-    // about awaiting an `unknown`.
     const prev = this.tail;
     let release!: () => void;
     this.tail = new Promise<void>((r) => {
@@ -106,16 +189,15 @@ export class VllmClient {
     });
 
     try {
-      await prev.catch(() => {
-        /* swallow upstream errors; each call gets its own outcome */
-      });
-      const dispatchedAt = performance.now();
+      await prev.catch(() => undefined);
+      const dispatchedAt = this.now();
       const queueWaitMs = dispatchedAt - queuedAt;
 
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), this.timeoutMs);
-      // Forward caller's signal too.
-      req.signal?.addEventListener("abort", () => controller.abort(), { once: true });
+      req.signal?.addEventListener("abort", () => controller.abort(), {
+        once: true,
+      });
 
       try {
         const body = {
@@ -141,17 +223,37 @@ export class VllmClient {
         }
         const json = (await resp.json()) as VllmChatResponse;
         const choice = json.choices?.[0];
-        return {
+        const totalMs = this.now() - queuedAt;
+        const result: CompletionResult = {
           text: choice?.message?.content ?? "",
           promptTokens: json.usage?.prompt_tokens ?? 0,
           completionTokens: json.usage?.completion_tokens ?? 0,
           finishReason: choice?.finish_reason ?? null,
-          totalMs: performance.now() - queuedAt,
+          totalMs,
           queueWaitMs,
         };
+        this.completed += 1;
+        this.recordLatency(totalMs);
+        this.auditEvent("complete", {
+          model: this.model,
+          promptTokens: result.promptTokens,
+          completionTokens: result.completionTokens,
+          totalMs: Math.round(totalMs),
+          queueWaitMs: Math.round(queueWaitMs),
+          finishReason: result.finishReason,
+        });
+        return result;
       } finally {
         clearTimeout(timer);
       }
+    } catch (err) {
+      this.failed += 1;
+      this.auditEvent(
+        "error",
+        { model: this.model, error: errorString(err) },
+        "error",
+      );
+      throw err;
     } finally {
       this.pending -= 1;
       release();
@@ -162,14 +264,12 @@ export class VllmClient {
    * Streaming completion — yields chunks as they arrive. Same single-flight
    * + backpressure semantics as `complete()`.
    */
-  async *stream(req: CompletionRequest): AsyncGenerator<string, CompletionResult> {
-    if (this.pending >= this.maxQueueDepth) {
-      throw new VllmBackpressureError(
-        `vLLM queue full (${this.pending}/${this.maxQueueDepth})`,
-      );
-    }
+  async *stream(
+    req: CompletionRequest,
+  ): AsyncGenerator<string, CompletionResult> {
+    this.checkBackpressure();
     this.pending += 1;
-    const queuedAt = performance.now();
+    const queuedAt = this.now();
 
     const prev = this.tail;
     let release!: () => void;
@@ -179,12 +279,14 @@ export class VllmClient {
 
     try {
       await prev.catch(() => undefined);
-      const dispatchedAt = performance.now();
+      const dispatchedAt = this.now();
       const queueWaitMs = dispatchedAt - queuedAt;
 
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), this.timeoutMs);
-      req.signal?.addEventListener("abort", () => controller.abort(), { once: true });
+      req.signal?.addEventListener("abort", () => controller.abort(), {
+        once: true,
+      });
 
       let promptTokens = 0;
       let completionTokens = 0;
@@ -244,22 +346,54 @@ export class VllmClient {
             }
           }
         }
-        return {
+        const totalMs = this.now() - queuedAt;
+        const result: CompletionResult = {
           text: fullText,
           promptTokens,
           completionTokens,
           finishReason,
-          totalMs: performance.now() - queuedAt,
+          totalMs,
           queueWaitMs,
         };
+        this.completed += 1;
+        this.recordLatency(totalMs);
+        this.auditEvent("stream", {
+          model: this.model,
+          promptTokens,
+          completionTokens,
+          totalMs: Math.round(totalMs),
+          queueWaitMs: Math.round(queueWaitMs),
+          finishReason,
+        });
+        return result;
       } finally {
         clearTimeout(timer);
       }
+    } catch (err) {
+      this.failed += 1;
+      this.auditEvent(
+        "error",
+        { model: this.model, error: errorString(err) },
+        "error",
+      );
+      throw err;
     } finally {
       this.pending -= 1;
       release();
     }
   }
+}
+
+function percentile(values: number[], p: number): number {
+  if (values.length === 0) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const idx = Math.min(sorted.length - 1, Math.floor(p * sorted.length));
+  return Math.round(sorted[idx]);
+}
+
+function errorString(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  return String(err);
 }
 
 // ── OpenAI-compatible response shapes (subset) ────────────────
@@ -269,7 +403,11 @@ interface VllmChatResponse {
     message?: { role: string; content: string };
     finish_reason?: string;
   }>;
-  usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
+  usage?: {
+    prompt_tokens?: number;
+    completion_tokens?: number;
+    total_tokens?: number;
+  };
 }
 
 interface VllmStreamChunk {
