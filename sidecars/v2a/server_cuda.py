@@ -426,7 +426,8 @@ async def gpu_info():
             "loaded": _pipeline is not None,
         }
     except Exception as exc:
-        return {"cuda_available": True, "error": str(exc)}
+        logger.exception("[v2a] gpu-info query failed")
+        return {"cuda_available": True, "error": "gpu_info_unavailable"}
 
 
 @app.post("/unload", dependencies=[Depends(verify_token)])
