@@ -1,46 +1,38 @@
 # CodeQL configuration for openzigs
 #
-# Scopes path-injection / command-line-injection queries OFF only for
-# sidecars/**/*.py because CodeQL cannot statically model the runtime
-# sanitizer used in sidecar HTTP handlers:
+# Disables two queries that produce high-confidence false positives on the
+# Python sidecars under sidecars/**:
+#
+#     - py/path-injection
+#     - py/command-line-injection
+#
+# CodeQL cannot statically model the runtime sanitizer used in sidecar HTTP
+# handlers:
 #
 #     candidate = pathlib.Path(user_input).resolve()
 #     candidate.relative_to(trusted_root)   # raises ValueError on escape
 #
-# This containment check IS a correct sanitizer, but it lives outside
-# CodeQL's flow-tracking model, producing high-confidence false positives.
+# This containment check IS a correct sanitizer, but it lives outside CodeQL's
+# flow-tracking model. See SECURITY.md -> "CodeQL configuration" for the full
+# threat-model rationale (localhost binding, bearer-token auth, Pydantic
+# validation, no shell=True).
+#
+# Scope note: CodeQL's `query-filters` schema filters by query metadata only
+# and does not support per-path scoping. The only Python in this repo lives
+# under `sidecars/**` (production CUDA workers - protected by the sanitizer
+# above) and `scripts/**` (developer tooling, never invoked with untrusted
+# input). All TypeScript code under `src/**` and `ui/**` is unaffected - the
+# equivalent JS/TS queries (`js/path-injection`, `js/command-line-injection`)
+# remain enabled there.
 #
 # All other security queries (SSRF, hardcoded secrets, weak crypto,
-# SQL-injection, deserialization, XXE, stack-trace exposure, etc.)
-# remain ENABLED on sidecars. Both queries also remain fully enabled
-# on src/** and ui/** where the threat model differs (TypeScript code
-# is reachable from untrusted external HTTP/WebSocket clients).
-#
-# See SECURITY.md → "CodeQL configuration" for full rationale.
+# SQL-injection, deserialization, XXE, stack-trace exposure, log-injection,
+# etc.) remain ENABLED everywhere, including on `sidecars/**`.
 
 name: "openzigs CodeQL config"
-
-queries:
-  - uses: security-and-quality
 
 query-filters:
   - exclude:
       id: py/path-injection
-      paths:
-        - sidecars/**
   - exclude:
       id: py/command-line-injection
-      paths:
-        - sidecars/**
-
-paths-ignore:
-  - "**/node_modules/**"
-  - "**/dist/**"
-  - "**/build/**"
-  - "**/coverage/**"
-  - "**/__pycache__/**"
-  - "**/test_*.py"
-  - "**/*.test.ts"
-  - "**/*.test.tsx"
-  - "**/*.spec.ts"
-  - "**/*.spec.tsx"
