@@ -86,6 +86,11 @@ def main() -> int:
         )
         return 1
 
+    # Build the command WITHOUT the API key. The key is passed to the child
+    # exclusively via the VLLM_API_KEY environment variable so it never
+    # appears in argv (avoids leaking via /proc/<pid>/cmdline) and never
+    # touches any logging path. vLLM's OpenAI server reads VLLM_API_KEY
+    # natively when --api-key is not supplied.
     cmd = [
         "vllm",
         "serve",
@@ -100,16 +105,22 @@ def main() -> int:
         args.host,
         "--port",
         str(args.port),
-        "--api-key",
-        api_key,
     ]
     if args.quantization != "none":
         cmd.extend(["--quantization", args.quantization])
 
-    # Never echo the API key in the launcher banner.
-    safe_cmd = [arg if arg != api_key else "<redacted>" for arg in cmd]
-    print(f"Launching: {' '.join(shlex.quote(a) for a in safe_cmd)}", flush=True)
-    return subprocess.call(cmd)
+    # Safe to log: the api_key is not in cmd at all.
+    print(
+        f"Launching: {' '.join(shlex.quote(a) for a in cmd)} "
+        "(VLLM_API_KEY=<redacted> in env)",
+        flush=True,
+    )
+
+    child_env = os.environ.copy()
+    child_env["VLLM_API_KEY"] = api_key
+    # Drop the local reference; we want it readable only by the child process.
+    del api_key
+    return subprocess.call(cmd, env=child_env)
 
 
 if __name__ == "__main__":
