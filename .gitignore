@@ -168,3 +168,9 @@ _out_a.txt
 walk1-gpu-snapshot.md
 test-output.txt
 test_output.txt
+
+# Local snapshot/scratch artifacts
+*-snap.yml
+post-start-snapshot.yml
+summary.txt
+

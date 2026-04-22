@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (Epic #924 — LTX video audio, longer durations & correct LoRA training params)
+
+- **LTX-Video VRAM pooling across two GPUs (#927, WS2-A):** New env-var matrix (`LTX_POOLING_MODE`, `LTX_TRANSFORMER_DEVICE=cuda:1`, `LTX_ENCODER_DEVICE=cuda:0`, `LTX_VAE_DEVICE=cuda:0`, `LTX_POOLING_MIN_VRAM_GB=18`, `LTX_MAX_FRAMES_OVERRIDE`, `LTX_ALLOW_AUDIO`) auto-detects `torch.cuda.device_count()` + per-device `mem_get_info(i)` and shards the LTX-Video pipeline (transformer on `cuda:1`, T5 encoder + VAE on `cuda:0`) when summed VRAM is ≥ threshold. Falls back gracefully to `enable_model_cpu_offload()` on any placement error. Introduces a pooled VRAM-tier table that lifts max frames from 57 (1×12 GB) to 161 (2×12 GB) and 257 (2×24 GB). Citation in the source code points to the diffusers "Working with big models" doc (Tavily verified 2026-04-22).
+- **LTX-2 22B distilled model with native synchronized audio (#926, WS1-B):** Registry entry `ltxv-2-22b-distilled` with `synchronized_audio: true, min_vram_gb: 24`. Triple-gated audio path (model supports it AND `LTX_ALLOW_AUDIO=1` AND pooled VRAM ≥ 24 GB) returns precise HTTP 400 errors per failed precondition. `/models` endpoint now exposes a dynamic `audio_supported` flag.
+- **`POST /generate-extended` for long-form video (#928, WS2-B):** Accepts a target duration in seconds, fans out to repeated `run_generation_job()` calls with last-frame conditioning (extracted via `ffmpeg -sseof -0.1`), and stitches with the ffmpeg concat demuxer or xfade filter (cumulative offset computed via `ffprobe`). Returns 202 immediately and exposes a poll-able job id.
+- **`GET /capabilities` runtime introspection endpoint (#929, WS2-C):** Reports `cuda_available`, per-device VRAM, `pooled_vram_gb`, `pooling.{mode,active,…}`, `max_frames` map per registered model, and `audio_modes` available. Drives the Admin → Models UI panel.
+- **`v2a` (MMAudio) sidecar on port 5012 (#925, WS1-A):** New FastAPI sidecar (`sidecars/v2a/server_cuda.py`) wraps MMAudio for video-conditioned audio generation. Lazy-loads the ~6 GB checkpoint on first request, idle-unloads after 5 minutes, exposes `/health`, `/gpu-info`, `/generate` (202 + job id), `/status/{id}`, `/unload`. Auth via Bearer token + URL-allowlist callback validation + safe video path containment.
+- **`audio_mode` field on `MediaJobPayload` + `dispatchV2aJob` queue hook (#925, WS1-A):** New `audio_mode?: "off" | "auto" | "music" | "native"` and `audio_prompt?: string` on `MediaJobPayload` (preserves the existing `audio: boolean` for backward compat). `QueueMaster` fires a non-blocking `dispatchV2aJob()` after every `markComplete` for video jobs that requested `audio_mode: "auto"`. New `src/queue/v2a-client.ts` HTTP wrapper with input validation, Bearer-token support, and `v2aHealthCheck()` probe.
+- **LoRA training presets registry (#933, WS3-D):** New `config/lora-presets.json` (`character`, `style`, `concept`, `outfit`) with rank, `loraAlpha=2*rank`, learning rate, steps, batch size, gradient accumulation, mixed precision, resolution. Loader (`src/config/lora-presets.ts`) caches by absolute config-dir path and provides 3-level fallback (file missing → JSON malformed → missing key). Exposed via `GET /api/admin/lora-presets`.
+- **Multi-GPU LoRA training opt-in (#934, WS3-E, optional):** When `LORA_MULTI_GPU=1` and `device_count >= 2`, `_bg_train()` launches DreamBooth via `accelerate launch --multi_gpu --num_processes=N`. Single-GPU path unchanged when env var is unset.
+
+### Changed (Epic #924)
+
+- **Trainer dispatch in `_bg_train()` (#931, WS3-B):** Replaced the hard-coded SDXL-only path with a `TRAINER_MAP` dispatch (`sdxl`, `flux-dev`, `flux-schnell`, `sd15`). The matching trainer for each base model is selected at runtime from the LoRA preset.
+- **`lora_alpha` derivation (#930, WS3-A):** Both trainer scripts now compute `lora_alpha = 2 * rank` instead of the previous fixed value, matching the Kohya / PEFT default that produces correctly-scaled adapter weights.
+- **Character LoRA `base_model` enforcement (#932, WS3-C):** New `base_model` column on the characters SQLite table; injection into a generation pipeline now refuses adapters whose recorded `base_model` mismatches the active pipeline's model id (rather than silently producing garbage outputs).
+
+### Documentation
+
+- New "LTX-Video VRAM pooling" and "LoRA training across two GPUs" sections in [docs/MULTI_GPU.md](docs/MULTI_GPU.md), including the topology matrix, env var reference, capabilities-endpoint sample, troubleshooting, and Tavily-verified sources.
+
 ### Fixed (UI Vision walkthrough — PR #923)
 
 - **`/api/system/gpu` now reports `serving_mode` and `conflicts[]` (Epic #888 / #917):** The route was returning `getGpuProfile()` raw, ignoring the existing `summariseClaims()` helper. The router now accepts an optional `GpuCoordinator` and merges its `currentClaims()` summary into the JSON response, surfacing `serving_mode: "idle" | "diffusion" | "vllm-tp2" | "mixed"` and a `conflicts: string[]` list so the admin GPU panel can render mutual-exclusion state. `server.ts` wires the singleton coordinator in.

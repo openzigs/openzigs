@@ -280,3 +280,273 @@ The `VllmClient` (`src/llm/vllm-client.ts`) enforces a per-process queue cap (`l
 - **Prometheus metrics:** `curl http://127.0.0.1:8000/metrics` (key series: `vllm:gpu_cache_usage_perc`, `vllm:num_requests_running`, `vllm:num_requests_waiting`).
 - **Audit log:** every completion / stream / error is appended to `~/.openzigs/logs/` under category `tool`, subcategory `llm.vllm.*`. The API key is auto-redacted by `AuditLogger`.
 
+
+
+---
+
+## LTX-Video VRAM pooling (WS2-A #927)
+
+Drop a second NVIDIA card in and the LTX-Video worker will automatically pool
+VRAM, shard the transformer onto `cuda:1`, and unlock longer clips, higher
+resolutions, and the LTX-2 22B synchronized-audio model.
+
+### What "pooling" means
+
+The LTX-Video pipeline (`LTXConditionPipeline` / `LTXPipeline` in
+[diffusers](https://github.com/huggingface/diffusers)) decomposes into three
+heavy modules: a T5-XXL **text encoder** (~9 GB FP16), a **DiT transformer**
+(13B for distilled, 22B for LTX-2), and a **VAE** decoder. On a single 12 GB
+card the worker has historically used `enable_model_cpu_offload()` to swap
+modules to host RAM between forward passes — correct, but slow. With two
+visible CUDA devices the worker can **shard** the modules across them in a
+single resident set:
+
+| Component         | Default device | Why                                                |
+| ----------------- | -------------- | -------------------------------------------------- |
+| `transformer`     | `cuda:1`       | Largest; gets the secondary card to itself         |
+| `text_encoder`    | `cuda:0`       | Co-located with VAE; only runs once per generation |
+| `vae`             | `cuda:0`       | Tiled decode keeps peak low                        |
+
+### Topology matrix
+
+| Topology       | `device_count` | per-card VRAM | Pooling | Pooled VRAM tier | LTX-13B max frames | LTX-2 22B max frames | Native sync audio |
+| -------------- | -------------- | ------------- | ------- | ---------------- | ------------------ | -------------------- | ----------------- |
+| 1 x 12 GB      | 1              | 12 GB         | off     | 10 GB            | 57                 | n/a                  | no                |
+| 1 x 24 GB      | 1              | 24 GB         | off     | 22 GB            | 161                | 121                  | yes (LTX-2)       |
+| **2 x 12 GB**  | 2              | 12 GB         | **on**  | 24 GB            | **161**            | **161**              | **yes**           |
+| 2 x 16 GB      | 2              | 16 GB         | on      | 32 GB            | 201                | 201                  | yes               |
+| 2 x 24 GB      | 2              | 24 GB         | on      | 48 GB            | 257                | 257                  | yes               |
+| Mixed 12+24    | 2              | 12+24 GB      | on      | 32+ GB           | 201                | 201                  | yes               |
+
+Pooled tiers are only enabled when total VRAM >= `LTX_POOLING_MIN_VRAM_GB`
+(default 18 GB). Below that, the worker falls back silently to single-GPU
+mode regardless of how many cards are present.
+
+### LTX env variables
+
+| Variable                     | Default     | Purpose                                                                                   |
+| ---------------------------- | ----------- | ----------------------------------------------------------------------------------------- |
+| `LTX_POOLING_MODE`           | `auto`      | `off` / `manual` / `auto`. `manual` skips VRAM gating; `off` disables sharding entirely.  |
+| `LTX_TRANSFORMER_DEVICE`     | `cuda:1`    | Where the DiT lives                                                                       |
+| `LTX_ENCODER_DEVICE`         | `cuda:0`    | Where the T5-XXL text encoder lives                                                       |
+| `LTX_VAE_DEVICE`             | `cuda:0`    | Where the VAE lives                                                                       |
+| `LTX_POOLING_MIN_VRAM_GB`    | `18`        | `auto` only enables sharding when summed VRAM >= this                                     |
+| `LTX_MAX_FRAMES_OVERRIDE`    | `0` (off)   | Hard cap on per-clip frames; useful for OOM debugging                                     |
+| `LTX_ALLOW_AUDIO`            | `0`         | Set to `1` to allow the LTX-2 22B model's native synchronized audio path                  |
+
+Audio gating logic (`POST /generate` with `audio: true`):
+
+```
+audio: true requires
+   model.synchronized_audio == true   (currently only ltxv-2-22b-distilled)
+   AND LTX_ALLOW_AUDIO == 1
+   AND pooled_vram_gb >= 24
+otherwise the request is rejected with HTTP 400 and a precise error message.
+```
+
+For everything else, request `audio_mode: "auto"` on the queue payload and
+the orchestrator dispatches a follow-up job to the v2a (MMAudio) sidecar
+after the silent video completes.
+
+### Verifying pooling
+
+```bash
+curl -s http://localhost:5007/capabilities | jq
+```
+
+```jsonc
+{
+  "cuda_available": true,
+  "device_count": 2,
+  "pooled_vram_gb": 24,
+  "pooling": {
+    "mode": "auto",
+    "active": true,
+    "transformer_device": "cuda:1",
+    "encoder_device": "cuda:0",
+    "vae_device": "cuda:0",
+    "min_vram_gb": 18
+  },
+  "max_frames": { "ltxv-13b-097-distilled": 161, "ltxv-2-22b-distilled": 161 },
+  "audio_modes": ["off", "auto", "native"]
+}
+```
+
+When sharding activates the worker logs:
+
+```
+[ws2a] Dual-GPU sharding active: transformer=cuda:1 encoder=cuda:0 vae=cuda:0 pooled_vram=24GB
+```
+
+### Troubleshooting
+
+**"Sharding placement failed (...); falling back to model_cpu_offload."**
+Common cause: the secondary card already has a process holding most of its
+VRAM (browser GPU acceleration, gnome-shell, etc.). Free it, then `POST
+/unload` and the next job re-loads with sharding.
+
+**"LTX-2 synchronized audio is disabled. Set LTX_ALLOW_AUDIO=1 to enable."**
+Self-explanatory. Make sure pooled VRAM >= 24 GB or the request will still
+be rejected with the VRAM error variant.
+
+**`device_map="auto"` doesn't work on LTX.**
+Correct - diffusers' Accelerate-backed `device_map` integration is documented
+as experimental and is incompatible with `.to()` / `enable_model_cpu_offload`
+without an explicit `reset_device_map()`. Manual per-component placement
+(what this code does) is the supported path on LTX 0.9.x through current
+main.
+
+### Sources
+
+Tavily research **2026-04-22**:
+
+- HuggingFace diffusers - *Working with big models*
+  <https://huggingface.co/docs/diffusers/main/tutorials/inference_with_big_models>
+- HuggingFace forums - *Using second GPU?*
+  <https://discuss.huggingface.co/t/using-second-gpu/23453>
+
+## LoRA training across two GPUs (WS3-E #934, optional)
+
+When `LORA_MULTI_GPU=1` is set and the host has two CUDA devices, the
+`image-gen` sidecar's `_bg_train` will launch DreamBooth via `accelerate
+launch --multi_gpu --num_processes=N` instead of plain `python`. This
+typically halves wall time for SDXL/FLUX runs at the cost of doubled VRAM
+draw - safe on 2x16 GB or higher, marginal on 2x12 GB.
+
+When the env var is unset (default) or only one CUDA device is visible, the
+trainer runs single-GPU exactly as before.
+
+
+---
+
+## LTX-Video VRAM pooling (WS2-A #927)
+
+Drop a second NVIDIA card in and the LTX-Video worker will automatically pool
+VRAM, shard the transformer onto `cuda:1`, and unlock longer clips, higher
+resolutions, and the LTX-2 22B synchronized-audio model.
+
+### What "pooling" means
+
+The LTX-Video pipeline (`LTXConditionPipeline` / `LTXPipeline` in
+[diffusers](https://github.com/huggingface/diffusers)) decomposes into three
+heavy modules: a T5-XXL **text encoder** (~9 GB FP16), a **DiT transformer**
+(13B for distilled, 22B for LTX-2), and a **VAE** decoder. On a single 12 GB
+card the worker has historically used `enable_model_cpu_offload()` to swap
+modules to host RAM between forward passes — correct, but slow. With two
+visible CUDA devices the worker can **shard** the modules across them in a
+single resident set:
+
+| Component         | Default device | Why                                                |
+| ----------------- | -------------- | -------------------------------------------------- |
+| `transformer`     | `cuda:1`       | Largest; gets the secondary card to itself         |
+| `text_encoder`    | `cuda:0`       | Co-located with VAE; only runs once per generation |
+| `vae`             | `cuda:0`       | Tiled decode keeps peak low                        |
+
+### Topology matrix
+
+| Topology       | `device_count` | per-card VRAM | Pooling | Pooled VRAM tier | LTX-13B max frames | LTX-2 22B max frames | Native sync audio |
+| -------------- | -------------- | ------------- | ------- | ---------------- | ------------------ | -------------------- | ----------------- |
+| 1 x 12 GB      | 1              | 12 GB         | off     | 10 GB            | 57                 | n/a                  | no                |
+| 1 x 24 GB      | 1              | 24 GB         | off     | 22 GB            | 161                | 121                  | yes (LTX-2)       |
+| **2 x 12 GB**  | 2              | 12 GB         | **on**  | 24 GB            | **161**            | **161**              | **yes**           |
+| 2 x 16 GB      | 2              | 16 GB         | on      | 32 GB            | 201                | 201                  | yes               |
+| 2 x 24 GB      | 2              | 24 GB         | on      | 48 GB            | 257                | 257                  | yes               |
+| Mixed 12+24    | 2              | 12+24 GB      | on      | 32+ GB           | 201                | 201                  | yes               |
+
+Pooled tiers are only enabled when total VRAM >= `LTX_POOLING_MIN_VRAM_GB`
+(default 18 GB). Below that, the worker falls back silently to single-GPU
+mode regardless of how many cards are present.
+
+### LTX env variables
+
+| Variable                     | Default     | Purpose                                                                                   |
+| ---------------------------- | ----------- | ----------------------------------------------------------------------------------------- |
+| `LTX_POOLING_MODE`           | `auto`      | `off` / `manual` / `auto`. `manual` skips VRAM gating; `off` disables sharding entirely.  |
+| `LTX_TRANSFORMER_DEVICE`     | `cuda:1`    | Where the DiT lives                                                                       |
+| `LTX_ENCODER_DEVICE`         | `cuda:0`    | Where the T5-XXL text encoder lives                                                       |
+| `LTX_VAE_DEVICE`             | `cuda:0`    | Where the VAE lives                                                                       |
+| `LTX_POOLING_MIN_VRAM_GB`    | `18`        | `auto` only enables sharding when summed VRAM >= this                                     |
+| `LTX_MAX_FRAMES_OVERRIDE`    | `0` (off)   | Hard cap on per-clip frames; useful for OOM debugging                                     |
+| `LTX_ALLOW_AUDIO`            | `0`         | Set to `1` to allow the LTX-2 22B model's native synchronized audio path                  |
+
+Audio gating logic (`POST /generate` with `audio: true`):
+
+```
+audio: true requires
+   model.synchronized_audio == true   (currently only ltxv-2-22b-distilled)
+   AND LTX_ALLOW_AUDIO == 1
+   AND pooled_vram_gb >= 24
+otherwise the request is rejected with HTTP 400 and a precise error message.
+```
+
+For everything else, request `audio_mode: "auto"` on the queue payload and
+the orchestrator dispatches a follow-up job to the v2a (MMAudio) sidecar
+after the silent video completes.
+
+### Verifying pooling
+
+```bash
+curl -s http://localhost:5007/capabilities | jq
+```
+
+```jsonc
+{
+  "cuda_available": true,
+  "device_count": 2,
+  "pooled_vram_gb": 24,
+  "pooling": {
+    "mode": "auto",
+    "active": true,
+    "transformer_device": "cuda:1",
+    "encoder_device": "cuda:0",
+    "vae_device": "cuda:0",
+    "min_vram_gb": 18
+  },
+  "max_frames": { "ltxv-13b-097-distilled": 161, "ltxv-2-22b-distilled": 161 },
+  "audio_modes": ["off", "auto", "native"]
+}
+```
+
+When sharding activates the worker logs:
+
+```
+[ws2a] Dual-GPU sharding active: transformer=cuda:1 encoder=cuda:0 vae=cuda:0 pooled_vram=24GB
+```
+
+### Troubleshooting
+
+**"Sharding placement failed (...); falling back to model_cpu_offload."**
+Common cause: the secondary card already has a process holding most of its
+VRAM (browser GPU acceleration, gnome-shell, etc.). Free it, then `POST
+/unload` and the next job re-loads with sharding.
+
+**"LTX-2 synchronized audio is disabled. Set LTX_ALLOW_AUDIO=1 to enable."**
+Self-explanatory. Make sure pooled VRAM >= 24 GB or the request will still
+be rejected with the VRAM error variant.
+
+**`device_map="auto"` doesn't work on LTX.**
+Correct - diffusers' Accelerate-backed `device_map` integration is documented
+as experimental and is incompatible with `.to()` / `enable_model_cpu_offload`
+without an explicit `reset_device_map()`. Manual per-component placement
+(what this code does) is the supported path on LTX 0.9.x through current
+main.
+
+### Sources
+
+Tavily research **2026-04-22**:
+
+- HuggingFace diffusers - *Working with big models*
+  <https://huggingface.co/docs/diffusers/main/tutorials/inference_with_big_models>
+- HuggingFace forums - *Using second GPU?*
+  <https://discuss.huggingface.co/t/using-second-gpu/23453>
+
+## LoRA training across two GPUs (WS3-E #934, optional)
+
+When `LORA_MULTI_GPU=1` is set and the host has two CUDA devices, the
+`image-gen` sidecar's `_bg_train` will launch DreamBooth via `accelerate
+launch --multi_gpu --num_processes=N` instead of plain `python`. This
+typically halves wall time for SDXL/FLUX runs at the cost of doubled VRAM
+draw - safe on 2x16 GB or higher, marginal on 2x12 GB.
+
+When the env var is unset (default) or only one CUDA device is visible, the
+trainer runs single-GPU exactly as before.
