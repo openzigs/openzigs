@@ -26,13 +26,10 @@ import asyncio
 import base64
 import gc
 import hmac
-import ipaddress
-import json
 import logging
 import os
 import pathlib
 import re
-import sys
 import tempfile
 import time
 import threading
@@ -60,6 +57,21 @@ MAX_DURATION_SEC = float(os.getenv("V2A_MAX_DURATION", "30.0"))
 IDLE_TIMEOUT_SEC = int(os.getenv("V2A_IDLE_TIMEOUT", "300"))
 SECRET_TOKEN = os.getenv("WORKER_SECRET_TOKEN") or os.getenv("V2A_SECRET_TOKEN")
 
+# ── GPU placement (mirrors `sidecars/worker/server_cuda.py`) ──────────
+# V2A_DEVICE      — explicit override (e.g. "cuda:0", "cuda:1"). Empty = auto.
+# V2A_PREFER_LARGER_GPU — when 1 (default) and >1 GPUs are visible, place the
+#                          model on the device with the most total VRAM.
+# V2A_FALLBACK_TO_CPU   — kept for parity with worker; the v2a sidecar is
+#                          CUDA-only by design and will RuntimeError if no
+#                          CUDA is available regardless of this flag.
+V2A_DEVICE_OVERRIDE: str = os.getenv("V2A_DEVICE", "").strip()
+V2A_PREFER_LARGER_GPU: bool = os.getenv("V2A_PREFER_LARGER_GPU", "1").strip() in (
+    "1", "true", "True",
+)
+V2A_FALLBACK_TO_CPU: bool = os.getenv("V2A_FALLBACK_TO_CPU", "0").strip() in (
+    "1", "true", "True",
+)
+
 # Containment roots for user-supplied video paths and tempfile outputs.
 # Any path that does not resolve under one of these roots is rejected with
 # HTTP 400 to defeat path-traversal (CodeQL py/path-injection sanitizer).
@@ -81,6 +93,94 @@ torch = None
 _pipeline = None
 _pipeline_load_lock = threading.Lock()
 _last_used_at: float = 0.0
+
+# Resolved device + reason are populated lazily by `_get_selected_device()`
+# the first time torch is loaded. Tests reset these via the helper below.
+_selected_device: Optional[str] = None
+_selected_device_reason: str = "unset"
+
+
+def _reset_selected_device_for_tests() -> None:
+    """Test-only helper to clear cached device selection between cases."""
+    global _selected_device, _selected_device_reason
+    _selected_device = None
+    _selected_device_reason = "unset"
+
+
+def _select_device() -> tuple[str, str]:
+    """Pick the CUDA device this sidecar should run on.
+
+    Resolution order (mirrors `sidecars/worker/server_cuda.py`):
+      1. ``V2A_DEVICE`` env override → returned verbatim, reason ``env-override``.
+      2. No CUDA available → :class:`RuntimeError` (no silent CPU fallback).
+      3. Single GPU → ``cuda:0`` with reason ``auto``.
+      4. Multiple GPUs and ``V2A_PREFER_LARGER_GPU=1`` → device with the most
+         total VRAM, reason ``auto``.
+      5. Multiple GPUs and ``V2A_PREFER_LARGER_GPU=0`` → ``cuda:0``, reason
+         ``auto``.
+
+    Returns the ``(device, reason)`` pair. ``reason`` is included so the
+    `/gpu-info` endpoint can explain why a device was picked.
+    """
+    _ensure_torch()
+    env_override = os.getenv("V2A_DEVICE", "").strip()
+    if env_override:
+        return env_override, "env-override"
+    if torch is None or not torch.cuda.is_available():
+        raise RuntimeError(
+            "V2A sidecar requires CUDA. Set V2A_DEVICE=cuda:0 manually if "
+            "running in a container with passthrough, or run on a CUDA-enabled "
+            "host. CPU fallback is not supported because MMAudio inference is "
+            "impractically slow without a GPU."
+        )
+    device_count = torch.cuda.device_count()
+    if device_count <= 0:
+        raise RuntimeError(
+            "V2A sidecar requires CUDA. torch.cuda.device_count() returned 0."
+        )
+    prefer_larger = os.getenv("V2A_PREFER_LARGER_GPU", "1").strip() in (
+        "1", "true", "True",
+    )
+    if device_count == 1 or not prefer_larger:
+        return "cuda:0", "auto"
+    best_idx = 0
+    best_total = -1
+    for i in range(device_count):
+        try:
+            _, total = torch.cuda.mem_get_info(i)
+        except Exception as exc:
+            # Older torch builds lack per-device mem_get_info; fall back to
+            # device properties so selection still works.
+            logger.debug("[v2a] mem_get_info(%d) failed: %s", i, exc, exc_info=True)
+            try:
+                props = torch.cuda.get_device_properties(i)
+                total = int(getattr(props, "total_memory", 0))
+            except Exception as exc2:
+                logger.debug(
+                    "[v2a] get_device_properties(%d) failed: %s",
+                    i, exc2, exc_info=True,
+                )
+                total = 0
+        if total > best_total:
+            best_total = total
+            best_idx = i
+    return f"cuda:{best_idx}", "auto"
+
+
+def _get_selected_device() -> str:
+    """Return the cached selected device, computing it on first call."""
+    global _selected_device, _selected_device_reason
+    if _selected_device is None:
+        _selected_device, _selected_device_reason = _select_device()
+        logger.info(
+            "[v2a] Selected device %s (reason=%s)",
+            _selected_device, _selected_device_reason,
+        )
+    return _selected_device
+
+
+def _get_selected_device_reason() -> str:
+    return _selected_device_reason
 
 # Job results: in-memory ring buffer.
 _MAX_RESULTS = 64
@@ -180,8 +280,8 @@ def _load_pipeline():
                 torch_dtype=torch.float16,
                 trust_remote_code=True,
             )
-            if torch.cuda.is_available():
-                pipe = pipe.to("cuda")
+            device = _get_selected_device()
+            pipe = pipe.to(device)
         except Exception as exc:
             raise RuntimeError(
                 f"Failed to load MMAudio model '{DEFAULT_MODEL}': {exc}. "
@@ -207,8 +307,10 @@ def _unload_pipeline() -> None:
             _ensure_torch()
             if torch is not None and torch.cuda.is_available():
                 torch.cuda.empty_cache()
-        except Exception:
-            pass
+        except Exception as exc:
+            # empty_cache() can fail on driver/init edge cases — log and move on
+            # since unload is best-effort.
+            logger.debug("[v2a] torch.cuda.empty_cache() failed: %s", exc, exc_info=True)
         logger.info("[v2a] Pipeline unloaded; VRAM freed")
 
 
@@ -246,7 +348,9 @@ async def _lifespan(app: FastAPI):
         try:
             await task
         except asyncio.CancelledError:
-            pass
+            # Expected during graceful shutdown — the watchdog raises this
+            # when its sleep is cancelled.
+            logger.debug("[v2a] watchdog cancelled during lifespan shutdown")
 
 
 app = FastAPI(title="OpenZigs v2a Sidecar", version="1.0.0", lifespan=_lifespan)
@@ -298,7 +402,8 @@ async def _run_job(request: GenerateRequest) -> None:
         pipe = _load_pipeline()
         generator = None
         if request.seed is not None and torch is not None:
-            generator = torch.Generator(device="cuda" if torch.cuda.is_available() else "cpu")
+            gen_device = _get_selected_device() if torch.cuda.is_available() else "cpu"
+            generator = torch.Generator(device=gen_device)
             generator.manual_seed(int(request.seed))
 
         # NOTE: We invoke the pipeline through a generic call signature because
@@ -368,8 +473,11 @@ async def _run_job(request: GenerateRequest) -> None:
                             "error": "job failed; see worker logs",
                         },
                     )
-            except Exception:
-                pass
+            except Exception as cb_exc:
+                # Best-effort failure callback; if it can't be delivered we
+                # surface it in logs but do not raise (the job is already
+                # recorded as failed in the in-memory ring buffer).
+                logger.warning("[v2a] failure callback failed: %s", cb_exc)
     finally:
         # Clean up the temporary input only if we materialised it from b64.
         if in_video and request.video_b64:
@@ -378,8 +486,10 @@ async def _run_job(request: GenerateRequest) -> None:
                 cleanup = os.path.realpath(in_video)
                 if cleanup.startswith(os.path.realpath(tempfile.gettempdir()) + os.sep):
                     os.remove(cleanup)
-            except OSError:
-                pass
+            except OSError as exc:
+                # Tempfile cleanup is best-effort — the OS will reap it on
+                # reboot — but we log so users can spot leakage in long runs.
+                logger.debug("[v2a] temp input cleanup failed: %s", exc, exc_info=True)
 
 
 def _write_wav(arr, out_path: str, *, sample_rate: int) -> None:
@@ -417,16 +527,30 @@ async def gpu_info():
     if torch is None or not torch.cuda.is_available():
         return {"cuda_available": False}
     try:
-        free, total = torch.cuda.mem_get_info(0)
+        device = _get_selected_device()
+        # Parse the index out of "cuda:N" so mem_get_info reports on the
+        # selected GPU rather than always cuda:0.
+        try:
+            device_index = int(device.split(":", 1)[1]) if ":" in device else 0
+        except (ValueError, IndexError):
+            device_index = 0
+        free, total = torch.cuda.mem_get_info(device_index)
         return {
             "cuda_available": True,
+            "device": device,
+            "device_reason": _get_selected_device_reason(),
             "device_count": torch.cuda.device_count(),
             "total_gb": int(total / 1024**3),
             "free_gb": int(free / 1024**3),
             "loaded": _pipeline is not None,
         }
+    except RuntimeError as exc:
+        # _select_device() raises RuntimeError when CUDA is missing despite
+        # is_available() initially returning true (e.g. driver gone away).
+        logger.warning("[v2a] gpu-info: device selection failed: %s", exc)
+        return {"cuda_available": False, "error": str(exc)}
     except Exception as exc:
-        logger.exception("[v2a] gpu-info query failed")
+        logger.exception("[v2a] gpu-info query failed: %s", exc)
         return {"cuda_available": True, "error": "gpu_info_unavailable"}
 
 
