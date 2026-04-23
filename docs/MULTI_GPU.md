@@ -605,3 +605,55 @@ draw - safe on 2x16 GB or higher, marginal on 2x12 GB.
 
 When the env var is unset (default) or only one CUDA device is visible, the
 trainer runs single-GPU exactly as before.
+
+
+## LTX Performance Notes (Issue #939)
+
+Real measurements from the integration pass on a 2x RTX 3060 (12 GB each)
+WSL2 Ubuntu host. **Per-step** is wall-clock time per LTX denoising step.
+
+| Configuration                                              | Per-step | Notes                                          |
+| ---------------------------------------------------------- | -------- | ---------------------------------------------- |
+| 2B distilled, single 12 GB, cpu_offload                    | ~0.4 s   | 4-step distilled -> ~1.6 s total denoise        |
+| 13B distilled, single 12 GB, cpu_offload                   | **~14 min** | **Unusable.** RAM<->VRAM weight swap dominates. |
+| 13B distilled, 2x 12 GB pooled, T5_LIFECYCLE=transient     | ~3.5 s   | 7-step distilled -> ~25 s total denoise         |
+| 13B dev (30 steps), 2x 12 GB pooled, T5_LIFECYCLE=transient| ~3.6 s   | OOM-prone above 97 frames; use 2x 16 GB+        |
+
+**The big takeaway:** **never** run the 13B model on a single 12 GB card with
+`enable_model_cpu_offload()` -- the cpu<->gpu weight ping-pong each step
+makes each step take **~14 minutes**. The path is technically functional (no
+OOM) but operationally unusable. Use the 2B model OR enable
+`LTX_POOLING_MODE=auto` on a dual-GPU host.
+
+### Recommendation matrix (single user, <=6 s clip)
+
+| GPU topology         | Recommended model        | Pooling          | T5 lifecycle |
+| -------------------- | ------------------------ | ---------------- | ------------ |
+| 1x 8 GB              | `ltxv-2b-096-distilled`* | n/a              | n/a          |
+| 1x 12 GB             | `ltxv-2b-096-distilled`* | off              | n/a          |
+| 1x 16 GB             | `ltxv-13b-097-distilled` | off              | keep         |
+| 1x 24 GB             | `ltxv-13b-097-dev`       | off              | keep         |
+| 2x 12 GB             | `ltxv-13b-097-distilled` | auto             | transient    |
+| 2x 16 GB             | `ltxv-13b-097-dev`       | auto             | transient    |
+| 2x 24 GB             | `ltxv-2-22b-distilled`   | auto + audio     | keep         |
+
+\* `ltxv-2b-096-distilled` is a **gated** HF repo: set `HF_TOKEN` after
+accepting the license at
+`https://huggingface.co/Lightricks/LTX-Video-0.9.6-distilled`. Without a
+token the worker fails the load with a clear actionable error and the 13B
+distilled remains the auto-selected default. (Issue #939 gap B.)
+
+### `LTX_T5_LIFECYCLE` env var
+
+Controls when the T5-XXL prompt encoder is freed from VRAM during a
+generation pass. T5-XXL is ~9.5 GB, which alone fills most of a 12 GB card --
+so on tight VRAM rigs we encode the prompt once, move T5 to CPU, and only
+then run the transformer pass.
+
+| Value       | Behaviour                                                                  |
+| ----------- | -------------------------------------------------------------------------- |
+| `auto`    | Default. Picks `transient` if any visible card has <= 16 GB, else `keep`. |
+| `transient` | Always pre-encode then offload T5. ~+0.5 s overhead per generation.       |
+| `keep`    | Leave T5 resident on the encoder device. Fastest on 24 GB+ cards.          |
+
+Tune the auto threshold via `LTX_T5_TRANSIENT_MAX_VRAM_GB` (default `16`).

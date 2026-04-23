@@ -7,14 +7,23 @@ httpx>=0.27
 pydantic>=2.6
 
 # Heavy ML deps. Install with the CUDA index appropriate for your card.
-# torch>=2.3 is required for the 0.9.x diffusers pipelines; bf16 needs >=2.4.
-torch>=2.3
-diffusers>=0.30
-transformers>=4.41
-accelerate>=0.30
-safetensors>=0.4
+# torch>=2.5 is required by upstream MMAudio (per their README).
+torch>=2.5
+torchvision>=0.20
+torchaudio>=2.5
 
-# MMAudio publishes its weights through HuggingFace; the package itself
-# sometimes ships as `mmaudio`. If your install of diffusers cannot resolve
-# it via DiffusionPipeline.from_pretrained, install the standalone package:
-#   pip install mmaudio
+# MMAudio is published as a source package only. Install directly from the
+# upstream repo. This pulls its own deps (open_clip, einops, librosa,
+# colorlog, av, hydra-core, etc.). Pin to a known-good commit if you need
+# reproducibility; HEAD is fine for dev.
+#
+# NOTE (Issue #939 gap D, 2026-04-23): The previous attempt to load via
+# `diffusers.DiffusionPipeline.from_pretrained("hkchengrex/MMAudio")` was
+# fundamentally broken — that HF repo has no `model_index.json`, so the
+# diffusers loader cannot resolve it. The server now uses the upstream
+# package's documented `eval_utils` API. If this `git+` install fails on
+# your platform (e.g. flash-attn build issues on Windows), the v2a sidecar
+# still starts; /generate returns HTTP 503 with an actionable hint and the
+# orchestrator persists `audio_status: "failed"`.
+mmaudio @ git+https://github.com/hkchengrex/MMAudio.git
+

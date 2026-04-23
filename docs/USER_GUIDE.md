@@ -9615,3 +9615,15 @@ Fires 8 concurrent chat completions (mixed 256 / 1024 / 2048-token contexts). Ex
 
 See [docs/MULTI_GPU.md](MULTI_GPU.md#vllm-dual-gpu-tp2) for the full operational guide, conflict policy, and Ollama-vs-vLLM comparison.
 
+### LTX video performance & VRAM matrix
+
+Real-world per-step timings, the **`LTX_T5_LIFECYCLE`** env var (controls
+when T5-XXL is offloaded so it doesn't OOM 12 GB cards), and the
+recommended (model × pooling × T5 lifecycle) matrix per GPU topology live
+in [docs/MULTI_GPU.md → LTX Performance Notes](MULTI_GPU.md#ltx-performance-notes-issue-939).
+
+The headline rule: **never** select the 13B model on a single 12 GB card —
+each denoising step takes ~14 minutes due to cpu↔gpu weight swap. Use the
+2B distilled model (gated; needs `HF_TOKEN`) on a single small card, or
+enable `LTX_POOLING_MODE=auto` on a 2-GPU host.
+

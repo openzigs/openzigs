@@ -101,6 +101,15 @@ VIDEO_MODEL_REGISTRY: dict[str, dict] = {
         "vram_gb": 8,
         "tier": "low",
         "min_vram_gb": 8,
+        # NOTE (Issue #939, gap B, verified 2026-04-23): the upstream HF repo
+        # `Lightricks/LTX-Video-0.9.6-distilled` returns 401 (gated) without
+        # a logged-in HF token. Selecting this entry without `HF_TOKEN` /
+        # `HUGGING_FACE_HUB_TOKEN` set will fail at load time with a clear
+        # error from `_check_model_access()`. The 0.9.6 distilled weights
+        # are also published as raw safetensors inside the public
+        # `Lightricks/LTX-Video` umbrella repo (ComfyUI workflow), but the
+        # diffusers-style snapshot only lives in the gated repo.
+        "requires_hf_token": True,
     },
     "ltxv-2b-legacy": {
         "hf_id": "Lightricks/LTX-Video",
@@ -181,9 +190,28 @@ if LTX_POOLING_MODE not in ("off", "manual", "auto"):
 # the OS / display.
 LTX_TRANSFORMER_DEVICE: str = os.getenv("LTX_TRANSFORMER_DEVICE", "cuda:1").strip()
 LTX_ENCODER_DEVICE: str = os.getenv("LTX_ENCODER_DEVICE", "cuda:0").strip()
-LTX_VAE_DEVICE: str = os.getenv("LTX_VAE_DEVICE", "cuda:0").strip()
+# VAE colocates with the transformer by default — VAE decode activations need
+# to live next to the transformer output to avoid a cross-device copy of a
+# multi-GB latent tensor. (Issue #939 gap A: with VAE on cuda:0 next to
+# T5-XXL the VAE decode buffers OOM'd a 12 GB card.)
+LTX_VAE_DEVICE: str = os.getenv("LTX_VAE_DEVICE", "cuda:1").strip()
 # Minimum pooled VRAM in GB to enable auto-pooling (sum of all visible cards).
 LTX_POOLING_MIN_VRAM_GB: int = int(os.getenv("LTX_POOLING_MIN_VRAM_GB", "18"))
+# T5-XXL lifecycle on pooled / low-VRAM rigs (Issue #939 gap A):
+#   "keep"      -> leave T5 on the encoder device for the whole pipeline call.
+#                  Fastest when VRAM is plentiful (>=24 GB per card).
+#   "transient" -> manually run encode_prompt(), then move T5 to CPU and
+#                  empty_cache() before the transformer pass. Frees ~9.5 GB
+#                  on the encoder device so VAE decode buffers fit on 12 GB.
+#   "auto"      -> pick "transient" when ANY visible CUDA device has
+#                  <= LTX_T5_TRANSIENT_MAX_VRAM_GB total VRAM, else "keep".
+LTX_T5_LIFECYCLE: str = os.getenv("LTX_T5_LIFECYCLE", "auto").strip().lower()
+if LTX_T5_LIFECYCLE not in ("auto", "keep", "transient"):
+    logger.warning(
+        f"LTX_T5_LIFECYCLE='{LTX_T5_LIFECYCLE}' is not recognised; falling back to 'auto'"
+    )
+    LTX_T5_LIFECYCLE = "auto"
+LTX_T5_TRANSIENT_MAX_VRAM_GB: int = int(os.getenv("LTX_T5_TRANSIENT_MAX_VRAM_GB", "16"))
 # Hard override on max frames regardless of VRAM tier (escape hatch).
 LTX_MAX_FRAMES_OVERRIDE: int = int(os.getenv("LTX_MAX_FRAMES_OVERRIDE", "0"))
 # Allow LTX-2 / LTX-2.3 native synchronized audio. Off by default because the
@@ -277,6 +305,36 @@ def _get_vram_gb() -> int:
         _, total = torch.cuda.mem_get_info()
         return int(total / 1024**3)
     return 12  # Assume 12GB if detection fails
+
+
+def _resolve_t5_lifecycle() -> str:
+    """Return the effective LTX_T5_LIFECYCLE value (`keep` or `transient`).
+
+    "auto" expands to "transient" when **any** visible CUDA device has
+    total VRAM <= LTX_T5_TRANSIENT_MAX_VRAM_GB (default 16). The intent is
+    that on 12 GB cards (RTX 3060) we always free T5-XXL between encode and
+    transformer passes, while on 24 GB+ cards we keep it resident for speed.
+    """
+    if LTX_T5_LIFECYCLE in ("keep", "transient"):
+        return LTX_T5_LIFECYCLE
+    _ensure_torch()
+    if not torch.cuda.is_available():
+        return "transient"
+    try:
+        for i in range(torch.cuda.device_count()):
+            try:
+                _, total = torch.cuda.mem_get_info(i)
+                if int(total / 1024**3) <= LTX_T5_TRANSIENT_MAX_VRAM_GB:
+                    return "transient"
+            except Exception:
+                # Fall back to device props on older torch builds.
+                props = torch.cuda.get_device_properties(i)
+                if int(getattr(props, "total_memory", 0) / 1024**3) <= LTX_T5_TRANSIENT_MAX_VRAM_GB:
+                    return "transient"
+    except Exception as exc:
+        logger.debug("[t5-lifecycle] auto-detection failed: %s; defaulting to 'transient'", exc)
+        return "transient"
+    return "keep"
 
 
 def _get_max_frames_for_model(model_key: str) -> int:
@@ -641,6 +699,20 @@ def generate_video_ltx2(request: "GenerateRequest") -> bytes:
     hf_id = spec["hf_id"]
     pipeline_class_name = spec["pipeline_class"]
 
+    # Issue #939 gap B: gated HF repos require a token. Fail early with an
+    # actionable error rather than letting `from_pretrained()` raise a
+    # cryptic 401 deep inside diffusers.
+    if spec.get("requires_hf_token") and not (
+        os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN")
+    ):
+        raise RuntimeError(
+            f"Model '{model_key}' ({hf_id}) is a gated HuggingFace repo and "
+            "requires a logged-in HF token. Either set HF_TOKEN / "
+            "HUGGING_FACE_HUB_TOKEN in your environment after accepting the "
+            f"license at https://huggingface.co/{hf_id}, or pick a public "
+            "model (e.g. LTX_MODEL_KEY=ltxv-13b-097-distilled)."
+        )
+
     # Determine whether we need the img2video variant for legacy 2B models
     need_i2v = (
         pipeline_class_name == "LTXPipeline"
@@ -743,6 +815,66 @@ def generate_video_ltx2(request: "GenerateRequest") -> bytes:
             "generator": generator,
             "output_type": "pil",
         }
+
+        # Issue #939 gap A: when pooling is active and the T5 lifecycle resolves
+        # to "transient", manually run encode_prompt() on the encoder device,
+        # move T5 to CPU and free its VRAM before the transformer pass. This
+        # is what makes 13B distilled fit on 2× 12 GB pooled.
+        pooling_active = _is_pooling_active()
+        t5_lifecycle = _resolve_t5_lifecycle() if pooling_active else "keep"
+        if pooling_active and t5_lifecycle == "transient" and hasattr(state._pipeline, "encode_prompt"):
+            try:
+                pipe = state._pipeline
+                with torch.inference_mode():
+                    encode_out = pipe.encode_prompt(
+                        prompt=kwargs["prompt"],
+                        negative_prompt=kwargs["negative_prompt"],
+                        do_classifier_free_guidance=guidance > 1.0,
+                        device=LTX_ENCODER_DEVICE,
+                    )
+                # encode_prompt returns either a 4-tuple (LTXConditionPipeline)
+                # or a 2-tuple (LTXPipeline). Handle both.
+                if isinstance(encode_out, tuple) and len(encode_out) >= 2:
+                    prompt_embeds = encode_out[0]
+                    prompt_attention_mask = encode_out[1] if len(encode_out) > 1 else None
+                    negative_prompt_embeds = encode_out[2] if len(encode_out) > 2 else None
+                    negative_prompt_attention_mask = encode_out[3] if len(encode_out) > 3 else None
+                else:
+                    raise RuntimeError(f"Unexpected encode_prompt return shape: {type(encode_out)}")
+                # Move T5 off the encoder GPU and reclaim VRAM.
+                try:
+                    if hasattr(pipe, "text_encoder") and pipe.text_encoder is not None:
+                        pipe.text_encoder.to("cpu")
+                    gc.collect()
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                    logger.info("[t5-lifecycle] T5 encoded; moved to CPU and freed encoder VRAM")
+                except Exception as off_exc:
+                    logger.warning(f"[t5-lifecycle] T5 offload failed: {off_exc}; continuing")
+                # Move embeds to the transformer device for the diffusion pass.
+                target_dev = LTX_TRANSFORMER_DEVICE
+                prompt_embeds = prompt_embeds.to(target_dev)
+                if prompt_attention_mask is not None:
+                    prompt_attention_mask = prompt_attention_mask.to(target_dev)
+                if negative_prompt_embeds is not None:
+                    negative_prompt_embeds = negative_prompt_embeds.to(target_dev)
+                if negative_prompt_attention_mask is not None:
+                    negative_prompt_attention_mask = negative_prompt_attention_mask.to(target_dev)
+                # Swap prompt= for prompt_embeds=.
+                kwargs.pop("prompt", None)
+                kwargs.pop("negative_prompt", None)
+                kwargs["prompt_embeds"] = prompt_embeds
+                if prompt_attention_mask is not None:
+                    kwargs["prompt_attention_mask"] = prompt_attention_mask
+                if negative_prompt_embeds is not None:
+                    kwargs["negative_prompt_embeds"] = negative_prompt_embeds
+                if negative_prompt_attention_mask is not None:
+                    kwargs["negative_prompt_attention_mask"] = negative_prompt_attention_mask
+            except Exception as enc_exc:
+                logger.warning(
+                    f"[t5-lifecycle] transient encode path failed ({enc_exc}); "
+                    "falling back to in-pipeline encoding (T5 stays resident)"
+                )
 
         # img2video conditioning
         if request.init_image and request.type == "img2video":
@@ -1010,6 +1142,19 @@ async def lifespan(app: FastAPI):
         f"vae={LTX_VAE_DEVICE} min_vram_gb={LTX_POOLING_MIN_VRAM_GB} "
         f"allow_audio={LTX_ALLOW_AUDIO}"
     )
+    # Issue #939 gap A: surface the resolved T5 lifecycle alongside the
+    # chosen device layout so operators can confirm at a glance that the
+    # 12 GB-friendly path is active.
+    try:
+        t5_resolved = _resolve_t5_lifecycle()
+    except Exception as exc:
+        logger.debug("[t5-lifecycle] startup resolution failed: %s", exc)
+        t5_resolved = "unknown"
+    logger.info(
+        f"[t5-lifecycle] LTX_T5_LIFECYCLE={LTX_T5_LIFECYCLE} resolved={t5_resolved} "
+        f"transient_max_vram_gb={LTX_T5_TRANSIENT_MAX_VRAM_GB} "
+        f"layout: encode_on={LTX_ENCODER_DEVICE} -> transformer_on={LTX_TRANSFORMER_DEVICE} (vae_on={LTX_VAE_DEVICE})"
+    )
     reaper = asyncio.create_task(_idle_model_reaper())
     yield
     reaper.cancel()
@@ -1104,6 +1249,8 @@ async def gpu_info_endpoint():
         "encoder_device": LTX_ENCODER_DEVICE if pooling_active else f"cuda:{idx}",
         "vae_device": LTX_VAE_DEVICE if pooling_active else f"cuda:{idx}",
         "pooled_vram_gb": pooled_vram,
+        "t5_lifecycle": LTX_T5_LIFECYCLE,
+        "t5_lifecycle_resolved": _resolve_t5_lifecycle(),
         "gpus": gpus,
     }
 
@@ -1196,6 +1343,7 @@ async def list_models():
             "vram_gb": spec["vram_gb"],
             "is_default": key == DEFAULT_MODEL_KEY,
             "synchronized_audio": bool(spec.get("synchronized_audio", False)),
+            "requires_hf_token": bool(spec.get("requires_hf_token", False)),
         })
     return {
         "models": models,
@@ -1253,6 +1401,10 @@ async def capabilities():
             "max_frames": max_frames,
             "max_seconds_at_24fps": round(max_frames / 24.0, 2),
             "synchronized_audio": bool(spec.get("synchronized_audio", False)),
+            "requires_hf_token": bool(spec.get("requires_hf_token", False)),
+            "hf_token_present": bool(
+                os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN")
+            ),
         })
 
     # Best-effort sidecar probes. ``httpx.get`` is sync-friendly here because
@@ -1289,6 +1441,8 @@ async def capabilities():
         "transformer_device": LTX_TRANSFORMER_DEVICE,
         "encoder_device": LTX_ENCODER_DEVICE,
         "vae_device": LTX_VAE_DEVICE,
+        "t5_lifecycle": LTX_T5_LIFECYCLE,
+        "t5_lifecycle_resolved": _resolve_t5_lifecycle() if cuda_available else "transient",
         "models": models,
         "audio_modes": audio_modes,
     }

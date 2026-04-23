@@ -140,9 +140,18 @@ def test_capabilities_models_array_shape(monkeypatch, server_module):
     out = _run(server_module.capabilities())
     assert isinstance(out["models"], list) and len(out["models"]) > 0
     m0 = out["models"][0]
-    assert set(m0.keys()) == {"key", "max_frames", "max_seconds_at_24fps", "synchronized_audio"}
+    # Issue #939 gap B: capabilities now exposes `requires_hf_token` (registry
+    # flag for gated HF repos like Lightricks/LTX-Video-0.9.6-distilled, which
+    # returns 401 without a token) and `hf_token_present` (live env check) so
+    # the UI can warn before the user tries to load a gated model.
+    assert set(m0.keys()) == {
+        "key", "max_frames", "max_seconds_at_24fps", "synchronized_audio",
+        "requires_hf_token", "hf_token_present",
+    }
     assert isinstance(m0["max_frames"], int)
     assert isinstance(m0["max_seconds_at_24fps"], float)
+    assert isinstance(m0["requires_hf_token"], bool)
+    assert isinstance(m0["hf_token_present"], bool)
 
 
 # ── audio_modes gating ────────────────────────────────────────────────
