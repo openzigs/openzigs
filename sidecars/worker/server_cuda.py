@@ -93,6 +93,16 @@ VIDEO_MODEL_REGISTRY: dict[str, dict] = {
         "min_vram_gb": 16,
     },
     "ltxv-2b-096-distilled": {
+        # CORRECTION (Issue #939 follow-up, verified 2026-04-23):
+        # The previously-listed `Lightricks/LTX-Video-0.9.6-distilled` HF
+        # repo does NOT exist (HTTP 404 even with a valid token). Lightricks
+        # only publishes the 0.9.6-distilled weights as a raw `.safetensors`
+        # file inside the umbrella `Lightricks/LTX-Video` repo (intended for
+        # ComfyUI), with NO diffusers-layout snapshot. We therefore mark
+        # this entry as `unavailable` so the UI/capabilities/generate paths
+        # never attempt to load it. Use `ltxv-2b-legacy` (0.9 weights via the
+        # umbrella repo) or `ltxv-13b-097-distilled` (real diffusers v0.9.7)
+        # instead.
         "hf_id": "Lightricks/LTX-Video-0.9.6-distilled",
         "pipeline_class": "LTXPipeline",
         "default_steps": 4,
@@ -101,15 +111,12 @@ VIDEO_MODEL_REGISTRY: dict[str, dict] = {
         "vram_gb": 8,
         "tier": "low",
         "min_vram_gb": 8,
-        # NOTE (Issue #939, gap B, verified 2026-04-23): the upstream HF repo
-        # `Lightricks/LTX-Video-0.9.6-distilled` returns 401 (gated) without
-        # a logged-in HF token. Selecting this entry without `HF_TOKEN` /
-        # `HUGGING_FACE_HUB_TOKEN` set will fail at load time with a clear
-        # error from `_check_model_access()`. The 0.9.6 distilled weights
-        # are also published as raw safetensors inside the public
-        # `Lightricks/LTX-Video` umbrella repo (ComfyUI workflow), but the
-        # diffusers-style snapshot only lives in the gated repo.
-        "requires_hf_token": True,
+        "unavailable": True,
+        "unavailable_reason": (
+            "Upstream gap: Lightricks does not publish a diffusers-layout HF "
+            "repo for 0.9.6-distilled (verified 2026-04-23). Use "
+            "`ltxv-2b-legacy` or `ltxv-13b-097-distilled` instead."
+        ),
     },
     "ltxv-2b-legacy": {
         "hf_id": "Lightricks/LTX-Video",
@@ -121,18 +128,39 @@ VIDEO_MODEL_REGISTRY: dict[str, dict] = {
         "tier": "low",
         "min_vram_gb": 8,
     },
-    # WS1-B (#926): LTX-2 22B distilled with native synchronized audio.
-    # Requires LTX_ALLOW_AUDIO=1 and pooled VRAM >= 24 GB to load.
+    # WS1-B (#926): LTX-2 distilled with native synchronized audio.
+    # CORRECTION (verified 2026-04-23): the real public repo is
+    # `Lightricks/LTX-2` (19B parameters, NOT 22B). The previously-listed
+    # `Lightricks/LTX-Video-2-22B-distilled` HF id does not exist (HTTP 404).
+    # The registry KEY `ltxv-2-22b-distilled` is preserved for backwards
+    # compatibility with existing UI/test/doc references (#940 leaves it in
+    # place so this fix is registry-internal). However the model is still
+    # NOT loadable via diffusers as-is: `Lightricks/LTX-2/model_index.json`
+    # references `from ltx2 import LTX2TextConnectors` and `from ltx2 import
+    # LTX2Vocoder`, but the `ltx2` Python package is not published to PyPI
+    # nor in the Lightricks/LTX-2 GitHub monorepo (only `ltx-core` and
+    # `ltx-pipelines` exist, with import names `ltx_core`/`ltx_pipelines`).
+    # diffusers 0.38.0.dev0 has all the LTX-2 classes (`LTX2Pipeline` etc.)
+    # and the weights are public/ungated, but `from_pretrained` cannot
+    # complete until Lightricks publishes the `ltx2` shim package (or fixes
+    # the model_index references). Marked `unavailable` until then.
     "ltxv-2-22b-distilled": {
-        "hf_id": "Lightricks/LTX-Video-2-22B-distilled",
-        "pipeline_class": "LTXConditionPipeline",
+        "hf_id": "Lightricks/LTX-2",
+        "pipeline_class": "LTX2Pipeline",
         "default_steps": 8,
         "default_guidance": 1.0,
-        "description": "LTX-Video 2 22B distilled — synchronized audio, dual-GPU recommended",
-        "vram_gb": 24,
+        "description": "LTX-2 19B distilled — synchronized audio (key preserved as `ltxv-2-22b-distilled` for backwards compat; real repo is `Lightricks/LTX-2`, 19B not 22B)",
+        "vram_gb": 20,
         "tier": "ultra",
-        "min_vram_gb": 24,
+        "min_vram_gb": 20,
         "synchronized_audio": True,
+        "unavailable": True,
+        "unavailable_reason": (
+            "Upstream gap: Lightricks/LTX-2 model_index references the `ltx2` "
+            "Python package which is not yet published (verified 2026-04-23). "
+            "Will become loadable once Lightricks ships the shim or updates "
+            "model_index to reference `ltx_core` instead."
+        ),
     },
 }
 
@@ -1344,16 +1372,26 @@ async def list_models():
             "is_default": key == DEFAULT_MODEL_KEY,
             "synchronized_audio": bool(spec.get("synchronized_audio", False)),
             "requires_hf_token": bool(spec.get("requires_hf_token", False)),
+            # #939 follow-up (2026-04-23): some entries have known upstream
+            # gaps (broken HF repo IDs, missing helper packages). They
+            # remain in the registry for documentation/traceability but
+            # `unavailable=true` tells the UI to grey them out and 
+            # `/generate` will reject them with HTTP 503.
+            "unavailable": bool(spec.get("unavailable", False)),
+            "unavailable_reason": spec.get("unavailable_reason"),
         })
     return {
         "models": models,
         "default_key": DEFAULT_MODEL_KEY,
         "default_repo": DEFAULT_MODEL_REPO,
-        # Audio is supported on CUDA only when the active model carries
+        # Audio is supported on CUDA only when an *available* model carries
         # synchronized audio weights AND the runtime allows it.
         "audio_supported": (
             LTX_ALLOW_AUDIO
-            and any(spec.get("synchronized_audio") for spec in VIDEO_MODEL_REGISTRY.values())
+            and any(
+                spec.get("synchronized_audio") and not spec.get("unavailable")
+                for spec in VIDEO_MODEL_REGISTRY.values()
+            )
             and _get_pooled_vram_gb() >= 24
         ),
     }
@@ -1405,6 +1443,9 @@ async def capabilities():
             "hf_token_present": bool(
                 os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN")
             ),
+            # #939 follow-up: see /models for rationale
+            "unavailable": bool(spec.get("unavailable", False)),
+            "unavailable_reason": spec.get("unavailable_reason"),
         })
 
     # Best-effort sidecar probes. ``httpx.get`` is sync-friendly here because
@@ -1426,7 +1467,10 @@ async def capabilities():
     if (
         LTX_ALLOW_AUDIO
         and pooled_vram >= 24
-        and any(spec.get("synchronized_audio") for spec in VIDEO_MODEL_REGISTRY.values())
+        and any(
+            spec.get("synchronized_audio") and not spec.get("unavailable")
+            for spec in VIDEO_MODEL_REGISTRY.values()
+        )
     ):
         audio_modes.append("native")
 
@@ -1466,6 +1510,19 @@ async def unload():
 async def generate(request: GenerateRequest):
     if state.is_busy:
         raise HTTPException(status_code=409, detail="Worker is busy with another job")
+
+    # #939 follow-up (2026-04-23): reject `unavailable` registry entries
+    # before any work begins so callers get a precise actionable reason
+    # instead of a cryptic from_pretrained() failure inside diffusers.
+    requested_spec = VIDEO_MODEL_REGISTRY.get(request.model, {})
+    if requested_spec.get("unavailable"):
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                f"Model '{request.model}' is currently unavailable: "
+                f"{requested_spec.get('unavailable_reason', 'no reason recorded')}"
+            ),
+        )
 
     # Audio gating (#926, #927):
     #

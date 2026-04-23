@@ -494,13 +494,35 @@ def _generate_audio_sync(
     # / sync sequence lengths so the network can be `update_seq_lengths`'d
     # in a single call.
     seq_cfg.duration = duration
-    net.update_seq_lengths(
-        seq_cfg.latent_seq_len, seq_cfg.clip_seq_len, seq_cfg.sync_seq_len,
-    )
 
     video_info = load_video(Path(in_video), duration)
     clip_frames = video_info.clip_frames.unsqueeze(0)
     sync_frames = video_info.sync_frames.unsqueeze(0)
+
+    # The user's video may be shorter than `duration` (e.g. 3.96s when 4.0s
+    # was requested), in which case `load_video` returns fewer CLIP/sync
+    # frames than `seq_cfg` expects, and the network's
+    # `preprocess_conditions` assertion fires. Re-derive the network's
+    # expected sequence lengths from the *actual* frame counts so they
+    # always match. The latent length scales linearly with CLIP length.
+    actual_clip_len = int(clip_frames.shape[1])
+    actual_sync_len = int(sync_frames.shape[1])
+    expected_clip_len = int(seq_cfg.clip_seq_len)
+    if actual_clip_len != expected_clip_len:
+        ratio = actual_clip_len / max(expected_clip_len, 1)
+        actual_latent_len = max(1, int(round(int(seq_cfg.latent_seq_len) * ratio)))
+        logger.info(
+            "[v2a] Adjusting seq lengths to actual video frames: "
+            "clip %d->%d, sync %d->%d, latent %d->%d",
+            expected_clip_len, actual_clip_len,
+            int(seq_cfg.sync_seq_len), actual_sync_len,
+            int(seq_cfg.latent_seq_len), actual_latent_len,
+        )
+        net.update_seq_lengths(actual_latent_len, actual_clip_len, actual_sync_len)
+    else:
+        net.update_seq_lengths(
+            seq_cfg.latent_seq_len, seq_cfg.clip_seq_len, seq_cfg.sync_seq_len,
+        )
 
     prompt_text = request.prompt or ""
     negative_text = request.negative_prompt or ""
@@ -706,3 +728,7 @@ if __name__ == "__main__":
     parser.add_argument("--port", type=int, default=int(os.environ.get("PORT", "5012")))
     parser.add_argument("--host", default="0.0.0.0")
     args = parser.parse_args()
+
+    logger.info("[v2a] Starting uvicorn on %s:%d (mmaudio_available=%s)",
+                args.host, args.port, _MMAUDIO_AVAILABLE)
+    uvicorn.run(app, host=args.host, port=args.port, log_level="info")

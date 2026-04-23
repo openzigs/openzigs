@@ -224,7 +224,16 @@ def test_ltxv2_22b_falls_back_on_unknown_topology(monkeypatch, server_module):
 
 
 def test_ltxv2_22b_distilled_registered_with_audio_flag(server_module):
+    # NOTE (#940 follow-up, 2026-04-23): registry KEY preserved as
+    # `ltxv-2-22b-distilled` for backwards compat, but the underlying
+    # spec has been corrected to point at the real public repo
+    # `Lightricks/LTX-2` (19B params, NOT 22B; pipeline is `LTX2Pipeline`,
+    # NOT `LTXConditionPipeline`). Marked `unavailable=True` until the
+    # upstream `ltx2` Python package is published.
     spec = server_module.VIDEO_MODEL_REGISTRY["ltxv-2-22b-distilled"]
     assert spec["synchronized_audio"] is True
-    assert spec["min_vram_gb"] == 24
-    assert spec["pipeline_class"] == "LTXConditionPipeline"
+    assert spec["min_vram_gb"] == 20
+    assert spec["pipeline_class"] == "LTX2Pipeline"
+    assert spec["hf_id"] == "Lightricks/LTX-2"
+    assert spec.get("unavailable") is True
+    assert "ltx2" in spec.get("unavailable_reason", "").lower()
