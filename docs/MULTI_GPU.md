@@ -62,6 +62,61 @@ The recommended tier is bound by the **largest single GPU** in the host. Two
 12 GB cards = `medium` tier — aggregating VRAM across cards requires model
 parallelism, see below.
 
+## LTX-Video pooling: `WORKER_POOLING_MODE` × `LTX_POOLING_MODE` (Issue #939)
+
+Two env vars cooperate to make dual-GPU sharding work end-to-end. They live
+on different sides of the boundary:
+
+| Var                   | Set in                              | What it controls                                                        |
+| --------------------- | ----------------------------------- | ----------------------------------------------------------------------- |
+| `WORKER_POOLING_MODE` | `~/.openzigs/.env.cuda` (host-side) | Which GPUs the **launcher exposes** to the worker via `CUDA_VISIBLE_DEVICES` |
+| `LTX_POOLING_MODE`    | `~/.openzigs/.env.cuda` (worker-side) | Whether the worker **shards** the pipeline (off / manual / auto)        |
+
+### The interaction
+
+`start-cuda-sidecars.sh` (and `scripts/dev-clean.ps1` by transitive call into
+WSL) reads `WORKER_POOLING_MODE` (default `auto`):
+
+- **`auto` + `GPU_COUNT ≥ 2`** → exports `CUDA_VISIBLE_DEVICES=0,1` to the
+  worker, so `torch.cuda.device_count()` returns 2 inside the process and
+  `_is_pooling_active()` can place `transformer` on `cuda:1` and
+  `encoder + vae` on `cuda:0`.
+- **`off`** (or single-GPU host) → exports `CUDA_VISIBLE_DEVICES=$WORKER_GPU_INDEX`
+  (pin to one card). The worker can never pool because it cannot see the
+  second card. `LTX_POOLING_MODE=manual` becomes a no-op in this state.
+
+Inside the process, `LTX_POOLING_MODE` then decides what to *do* with the
+visible cards:
+
+- `auto` (default) — pool when pooled VRAM ≥ `LTX_POOLING_MIN_VRAM_GB` (default 18).
+- `manual` — always pool, regardless of VRAM heuristic. Use when you know your
+  hardware fits.
+- `off` — never pool. Falls back to `enable_model_cpu_offload()` on the
+  visible card.
+
+The startup banner now logs the resolved state:
+
+```
+[pooling] CUDA_VISIBLE_DEVICES=0,1 LTX_POOLING_MODE=auto
+          transformer=cuda:1 encoder=cuda:0 vae=cuda:0
+          min_vram_gb=18 allow_audio=False
+```
+
+### Quick verification
+
+```sh
+# Worker can see both cards:
+curl -H "Authorization: Bearer $WORKER_SECRET_TOKEN" http://localhost:5007/gpu-info | jq '.gpus | length'
+# Should print 2 on a multi-GPU host with WORKER_POOLING_MODE=auto.
+
+# Pooling decision:
+curl -H "Authorization: Bearer $WORKER_SECRET_TOKEN" http://localhost:5007/capabilities | jq '.pooling_active'
+# true when pooling is actually engaged.
+```
+
+Set `WORKER_POOLING_MODE=off` if you want to deliberately keep the worker on
+a single card (e.g. so the other card stays free for FLUX or vLLM).
+
 ## Optional: VRAM pooling for FLUX (`IMAGE_GEN_POOLING_MODE=manual-flux`)
 
 By default each sidecar runs on a single GPU and uses
@@ -297,7 +352,7 @@ The LTX-Video pipeline (`LTXConditionPipeline` / `LTXPipeline` in
 heavy modules: a T5-XXL **text encoder** (~9 GB FP16), a **DiT transformer**
 (13B for distilled, 22B for LTX-2), and a **VAE** decoder. On a single 12 GB
 card the worker has historically used `enable_model_cpu_offload()` to swap
-modules to host RAM between forward passes � correct, but slow. With two
+modules to host RAM between forward passes � correct, but slow. With two
 visible CUDA devices the worker can **shard** the modules across them in a
 single resident set:
 
@@ -432,7 +487,7 @@ The LTX-Video pipeline (`LTXConditionPipeline` / `LTXPipeline` in
 heavy modules: a T5-XXL **text encoder** (~9 GB FP16), a **DiT transformer**
 (13B for distilled, 22B for LTX-2), and a **VAE** decoder. On a single 12 GB
 card the worker has historically used `enable_model_cpu_offload()` to swap
-modules to host RAM between forward passes � correct, but slow. With two
+modules to host RAM between forward passes � correct, but slow. With two
 visible CUDA devices the worker can **shard** the modules across them in a
 single resident set:
 

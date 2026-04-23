@@ -5,7 +5,8 @@
 .DESCRIPTION
     Kills existing OpenZigs processes and starts the backend + UI development servers,
     and launches the WSL CUDA sidecars (Flux/5005, Audio/5006, LTX/5007, Music/5009,
-    Lipsync/5010, SadTalker/5011). This is the Windows equivalent of dev-clean.sh.
+    Lipsync/5010, SadTalker/5011, v2a/MMAudio/5012). This is the Windows equivalent
+    of dev-clean.sh.
 
 .EXAMPLE
     .\scripts\dev-clean.ps1
@@ -73,7 +74,7 @@ if ($openzigsBats) {
 
 # Also kill WSL sidecar ports and orphaned sleep-infinity anchors in Ubuntu
 if (Get-Command wsl -ErrorAction SilentlyContinue) {
-    $wslKillCmd = 'for p in 5005 5006 5007 5009 5010 5011; do lsof -ti :$p 2>/dev/null | xargs -r kill -9 2>/dev/null; done; pkill -f "sleep infinity" 2>/dev/null; true'
+    $wslKillCmd = 'for p in 5005 5006 5007 5009 5010 5011 5012; do lsof -ti :$p 2>/dev/null | xargs -r kill -9 2>/dev/null; done; pkill -f "sleep infinity" 2>/dev/null; true'
     wsl -d Ubuntu -e bash -c $wslKillCmd 2>&1 | Out-Null
 }
 
@@ -149,7 +150,7 @@ if ((Test-Path $FirecrawlCompose) -and (Get-Command docker -ErrorAction Silently
 
 # ---- Start WSL CUDA sidecars -----------------------------------------------
 if (Get-Command wsl -ErrorAction SilentlyContinue) {
-    Write-Info "Starting WSL CUDA sidecars (Flux/5005, Audio/5006, LTX/5007, Music/5009, Lipsync/5010, SadTalker/5011)..."
+    Write-Info "Starting WSL CUDA sidecars (Flux/5005, Audio/5006, LTX/5007, Music/5009, Lipsync/5010, SadTalker/5011, v2a/5012)..."
 
     # Fire-and-forget: sidecars load models lazily on first request, logs at ~/.openzigs/logs/*-cuda.log
     $wslScriptPath = ($ProjectRoot -replace '\\','/') -replace '^([A-Za-z]):','/mnt/$1'
@@ -163,7 +164,7 @@ if (Get-Command wsl -ErrorAction SilentlyContinue) {
     $null = New-Item -ItemType Directory -Force -Path (Join-Path $env:USERPROFILE ".openzigs\logs") -ErrorAction SilentlyContinue
     $startArgs = "-d Ubuntu -- bash -c `"tr -d '\r' < '$wslScriptPath/sidecars/start-cuda-sidecars.sh' > /tmp/openzigs-start-sidecars.sh && chmod +x /tmp/openzigs-start-sidecars.sh && bash /tmp/openzigs-start-sidecars.sh >> `$HOME/.openzigs/logs/sidecar-start.log 2>&1; exec sleep infinity`""
     Start-Process -FilePath "wsl" -ArgumentList $startArgs -WindowStyle Hidden
-    Write-Ok "WSL CUDA sidecars launched (Flux/5005, Audio/5006, LTX/5007, Music/5009, Lipsync/5010, SadTalker/5011)"
+    Write-Ok "WSL CUDA sidecars launched (Flux/5005, Audio/5006, LTX/5007, Music/5009, Lipsync/5010, SadTalker/5011, v2a/5012)"
     Write-Info "Sidecar startup log: wsl -d Ubuntu bash -c 'cat ~/.openzigs/logs/sidecar-start.log'"
 } else {
     Write-Warn "WSL not found - skipping CUDA sidecar startup (start manually in WSL via start-cuda-sidecars.sh)"
@@ -227,12 +228,12 @@ Write-Ok "OpenZigs dev servers started!"
 Write-Host ""
 Write-Host "  Backend:          http://localhost:3000"
 Write-Host "  UI:               http://localhost:3001"
-Write-Host "  Sidecars (WSL):   5005 (Flux), 5006 (Audio), 5007 (LTX), 5009 (Music), 5010 (Lipsync), 5011 (SadTalker) - loading in background"
+Write-Host "  Sidecars (WSL):   5005 (Flux), 5006 (Audio), 5007 (LTX), 5009 (Music), 5010 (Lipsync), 5011 (SadTalker), 5012 (v2a/MMAudio) - loading in background"
 Write-Host ""
 Write-Host "  Logs:"
 Write-Host "    Backend: $backendLogFile"
 Write-Host "    UI:      $uiLogFile"
-Write-Host "    Sidecars (WSL): ~/.openzigs/logs/{image-gen,audio,worker,music,lipsync,sadtalker}-cuda.log"
+Write-Host "    Sidecars (WSL): ~/.openzigs/logs/{image-gen,audio,worker,music,lipsync,sadtalker,v2a}-cuda.log"
 Write-Host ""
 Write-Host "  To stop: Close this window or press Ctrl+C"
 Write-Host ""
@@ -283,7 +284,7 @@ try {
     # Stop WSL CUDA sidecars in Ubuntu
     if (Get-Command wsl -ErrorAction SilentlyContinue) {
         Write-Info "Stopping WSL CUDA sidecars..."
-        $wslKillCmd = 'for p in 5005 5006 5007 5009 5010 5011; do lsof -ti :$p 2>/dev/null | xargs -r kill -9 2>/dev/null; done; true'
+        $wslKillCmd = 'for p in 5005 5006 5007 5009 5010 5011 5012; do lsof -ti :$p 2>/dev/null | xargs -r kill -9 2>/dev/null; done; true'
         wsl -d Ubuntu -e bash -c $wslKillCmd 2>&1 | Out-Null
     }
 

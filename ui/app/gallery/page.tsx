@@ -37,6 +37,7 @@ import {
   FolderPlus,
   Send,
   Mic,
+  AlertTriangle,
 } from "lucide-react";
 import { InlineModelPicker } from "@/components/model-picker-select";
 import { AskAiPanel, AskAiButton, PAGE_CONTEXTS } from "@/components/ask-ai";
@@ -1223,6 +1224,22 @@ function AssetCard({
                 <Video className="h-6 w-6 text-white" />
               </div>
             </div>
+            {/* Issue #939: degraded-asset chip — shown when v2a (auto audio)
+                failed for this video. The video itself is fine; only the
+                audio layer is missing. */}
+            {asset.generation_params?.audio_status === "failed" && (
+              <div
+                className="absolute left-2 top-2 flex items-center gap-1 rounded-md bg-yellow-500/90 px-2 py-0.5 text-[10px] font-semibold text-yellow-950 shadow"
+                title={
+                  typeof asset.generation_params?.audio_error === "string"
+                    ? `Audio generation failed: ${asset.generation_params.audio_error}`
+                    : "Audio generation failed"
+                }
+              >
+                <AlertTriangle className="h-3 w-3" />
+                <span>No audio</span>
+              </div>
+            )}
           </div>
         ) : asset.type === "scene" ? (
           scenePreviewUrl ? (
@@ -2862,8 +2879,12 @@ function GalleryStudio({
           payload.model_repo = form.model_repo;
         }
         // Phase 2 / WS2-B (#928): Multi-Segment Video. Send video_duration
-        // whenever extended mode is active; the queue API decomposes it into
-        // chained 4s segment jobs which the worker stitches via /generate-extended.
+        // whenever extended mode is active; the orchestrator decomposes it
+        // into chained 4s segment jobs (each fed via /generate with the prior
+        // clip's last frame from /last-frame) and stitches with ffmpeg
+        // client-side. The worker-side /generate-extended endpoint was
+        // removed in Issue #939 — orchestrator-side decomposition is the
+        // canonical path.
         if (form.durationMode === "extended" || form.video_duration > 4) {
           payload.video_duration = form.video_duration;
         }

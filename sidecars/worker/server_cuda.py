@@ -41,7 +41,6 @@ import hmac
 import io
 import json
 import logging
-import math
 import os
 import subprocess
 import sys
@@ -1000,6 +999,17 @@ async def lifespan(app: FastAPI):
     # linker state is fragile during process init.  CUDA info will be logged
     # on first generation request instead.
     logger.info("Video Worker (CUDA) starting up (torch import deferred)")
+    # Pooling visibility (Issue #939): log which GPU indices the worker can
+    # see and what pooling mode is configured. This makes it obvious in the
+    # log whether `WORKER_POOLING_MODE=auto` actually exposed both cards.
+    visible = os.environ.get("CUDA_VISIBLE_DEVICES", "<unset>")
+    logger.info(
+        f"[pooling] CUDA_VISIBLE_DEVICES={visible} "
+        f"LTX_POOLING_MODE={LTX_POOLING_MODE} "
+        f"transformer={LTX_TRANSFORMER_DEVICE} encoder={LTX_ENCODER_DEVICE} "
+        f"vae={LTX_VAE_DEVICE} min_vram_gb={LTX_POOLING_MIN_VRAM_GB} "
+        f"allow_audio={LTX_ALLOW_AUDIO}"
+    )
     reaper = asyncio.create_task(_idle_model_reaper())
     yield
     reaper.cancel()
@@ -1043,20 +1053,58 @@ async def memory_endpoint():
 
 @app.get("/gpu-info")
 async def gpu_info_endpoint():
-    """Report which CUDA device this sidecar is bound to (Issue #884)."""
+    """Report CUDA bindings and pooling state (Issue #884, #939).
+
+    Includes per-GPU detail (index/name/vram/free) so the admin UI can
+    render a real dual-GPU panel without scraping logs.
+    """
     _ensure_torch()
+    cuda_visible = os.environ.get("CUDA_VISIBLE_DEVICES", "")
     if not torch.cuda.is_available():
-        return {"available": False, "cuda_visible": os.environ.get("CUDA_VISIBLE_DEVICES", "")}
+        return {
+            "available": False,
+            "cuda_visible": cuda_visible,
+            "pooling_mode": LTX_POOLING_MODE,
+            "pooling_active": False,
+            "transformer_device": LTX_TRANSFORMER_DEVICE,
+            "encoder_device": LTX_ENCODER_DEVICE,
+            "vae_device": LTX_VAE_DEVICE,
+            "pooled_vram_gb": 0,
+            "gpus": [],
+        }
     idx = torch.cuda.current_device()
     free, total = torch.cuda.mem_get_info(idx)
+    device_count = torch.cuda.device_count()
+    pooling_active = _is_pooling_active()
+    pooled_vram = _get_pooled_vram_gb()
+    gpus = []
+    for i in range(device_count):
+        try:
+            g_free, g_total = torch.cuda.mem_get_info(i)
+            gpus.append({
+                "index": i,
+                "name": torch.cuda.get_device_name(i),
+                "vram_gb": round(g_total / 1024**3, 1),
+                "free_gb": round(g_free / 1024**3, 1),
+            })
+        except Exception as exc:
+            logger.warning(f"[gpu-info] mem_get_info({i}) failed: {exc}")
+            gpus.append({"index": i, "name": "unknown", "vram_gb": 0, "free_gb": 0})
     return {
         "available": True,
         "device_index": idx,
         "device_name": torch.cuda.get_device_name(idx),
-        "device_count": torch.cuda.device_count(),
+        "device_count": device_count,
         "total_mb": int(total / 1024**2),
         "free_mb": int(free / 1024**2),
-        "cuda_visible": os.environ.get("CUDA_VISIBLE_DEVICES", ""),
+        "cuda_visible": cuda_visible,
+        "pooling_mode": LTX_POOLING_MODE,
+        "pooling_active": pooling_active,
+        "transformer_device": LTX_TRANSFORMER_DEVICE if pooling_active else f"cuda:{idx}",
+        "encoder_device": LTX_ENCODER_DEVICE if pooling_active else f"cuda:{idx}",
+        "vae_device": LTX_VAE_DEVICE if pooling_active else f"cuda:{idx}",
+        "pooled_vram_gb": pooled_vram,
+        "gpus": gpus,
     }
 
 
@@ -1165,39 +1213,64 @@ async def list_models():
 
 @app.get("/capabilities")
 async def capabilities():
-    """WS2-C (#929) — Runtime capability report.
+    """Runtime capability report (Issues #929 / #939).
 
-    Surfaces detected dual-GPU sharding state, max-frame tier, available
-    audio modes, and the env-var configuration that drove the decisions.
-    Consumed by the admin UI (`ui/app/admin/models/`) so users can see
-    what their hardware is actually capable of without reading logs.
+    Flat schema consumed by the admin UI to render a hardware-aware
+    capabilities panel and pre-flight validate generation requests.
+    `audio_modes` reflects what the *runtime* supports right now:
+
+    * ``off``   — always present.
+    * ``auto``  — only when the v2a sidecar (port 5012) responds to /health.
+    * ``music`` — only when the music sidecar (port 5009) responds to /health.
+    * ``native`` — only when LTX-2 weights are in the registry, LTX_ALLOW_AUDIO=1,
+      and pooled VRAM ≥ 24 GB.
     """
     _ensure_torch()
     cuda_available = bool(torch.cuda.is_available())
     device_count = torch.cuda.device_count() if cuda_available else 0
     pooled_vram = _get_pooled_vram_gb() if cuda_available else 0
-    pooling_active = _is_pooling_active()
-    per_device = []
+    pooling_active = _is_pooling_active() if cuda_available else False
+
+    gpus = []
     if cuda_available:
         for i in range(device_count):
             try:
-                free, total = torch.cuda.mem_get_info(i)
-                per_device.append({
+                _free, total = torch.cuda.mem_get_info(i)
+                gpus.append({
                     "index": i,
                     "name": torch.cuda.get_device_name(i),
-                    "total_gb": int(total / 1024**3),
-                    "free_gb": int(free / 1024**3),
+                    "vram_gb": round(total / 1024**3, 1),
                 })
             except Exception as exc:
-                # Avoid leaking stack traces to external callers
-                # (CodeQL py/stack-trace-exposure). Log internally instead.
                 logger.warning(f"[capabilities] mem_get_info({i}) failed: {exc}")
-                per_device.append({"index": i, "error": "device_query_failed"})
+                gpus.append({"index": i, "name": "unknown", "vram_gb": 0})
 
+    models = []
+    for key, spec in VIDEO_MODEL_REGISTRY.items():
+        max_frames = _get_max_frames_for_model(key)
+        models.append({
+            "key": key,
+            "max_frames": max_frames,
+            "max_seconds_at_24fps": round(max_frames / 24.0, 2),
+            "synchronized_audio": bool(spec.get("synchronized_audio", False)),
+        })
+
+    # Best-effort sidecar probes. ``httpx.get`` is sync-friendly here because
+    # we wrap it in a tight timeout; we never want this endpoint to block on
+    # a slow neighbour.
     audio_modes = ["off"]
-    # Post-processing v2a path is always available when the v2a sidecar is
-    # configured; the sidecar URL is owned by the orchestrator, not us.
-    audio_modes.append("auto")
+    try:
+        r = httpx.get("http://localhost:5012/health", timeout=0.5)
+        if r.status_code == 200:
+            audio_modes.append("auto")
+    except Exception:
+        pass  # v2a not reachable — omit "auto"
+    try:
+        r = httpx.get("http://localhost:5009/health", timeout=0.5)
+        if r.status_code == 200:
+            audio_modes.append("music")
+    except Exception:
+        pass  # music sidecar not reachable — omit "music"
     if (
         LTX_ALLOW_AUDIO
         and pooled_vram >= 24
@@ -1205,33 +1278,19 @@ async def capabilities():
     ):
         audio_modes.append("native")
 
+    pooling_mode_out = LTX_POOLING_MODE if LTX_POOLING_MODE in ("off", "manual", "auto") else "auto"
+
     return {
-        "cuda_available": cuda_available,
-        "device_count": device_count,
+        "gpu_count": device_count,
+        "gpus": gpus,
         "pooled_vram_gb": pooled_vram,
-        "per_device": per_device,
-        "pooling": {
-            "mode": LTX_POOLING_MODE,
-            "active": pooling_active,
-            "transformer_device": LTX_TRANSFORMER_DEVICE if pooling_active else None,
-            "encoder_device": LTX_ENCODER_DEVICE if pooling_active else None,
-            "vae_device": LTX_VAE_DEVICE if pooling_active else None,
-            "min_vram_gb": LTX_POOLING_MIN_VRAM_GB,
-        },
-        "max_frames": {
-            key: _get_max_frames_for_model(key)
-            for key in VIDEO_MODEL_REGISTRY.keys()
-        },
+        "pooling_active": pooling_active,
+        "pooling_mode": pooling_mode_out,
+        "transformer_device": LTX_TRANSFORMER_DEVICE,
+        "encoder_device": LTX_ENCODER_DEVICE,
+        "vae_device": LTX_VAE_DEVICE,
+        "models": models,
         "audio_modes": audio_modes,
-        "env": {
-            "LTX_POOLING_MODE": LTX_POOLING_MODE,
-            "LTX_TRANSFORMER_DEVICE": LTX_TRANSFORMER_DEVICE,
-            "LTX_ENCODER_DEVICE": LTX_ENCODER_DEVICE,
-            "LTX_VAE_DEVICE": LTX_VAE_DEVICE,
-            "LTX_POOLING_MIN_VRAM_GB": LTX_POOLING_MIN_VRAM_GB,
-            "LTX_MAX_FRAMES_OVERRIDE": LTX_MAX_FRAMES_OVERRIDE,
-            "LTX_ALLOW_AUDIO": LTX_ALLOW_AUDIO,
-        },
     }
 
 
@@ -1298,267 +1357,22 @@ async def generate(request: GenerateRequest):
     return {"status": "accepted", "job_id": request.job_id}
 
 
-# ── WS2-B (#928): Extended duration via last-frame conditioning ──
-
-class GenerateExtendedRequest(BaseModel):
-    """Generate a video longer than the model's per-clip frame ceiling.
-
-    The worker computes ``ceil(target_duration_sec * fps / max_clip_frames)``
-    sub-clips, generates them sequentially with the **last frame of clip N**
-    used as the ``init_image`` for clip N+1, then concatenates with ffmpeg.
-    Optional 4-frame crossfade between clips smooths the seams.
-    """
-
-    job_id: str
-    prompt: str
-    target_duration_sec: float = Field(gt=0.0, le=120.0)
-    width: int = DEFAULT_WIDTH
-    height: int = DEFAULT_HEIGHT
-    fps: int = DEFAULT_FPS
-    model: str = DEFAULT_MODEL_KEY
-    callback_url: str
-    seed: Optional[int] = None
-    negative_prompt: Optional[str] = None
-    cfg_scale: Optional[float] = None
-    num_inference_steps: Optional[int] = None
-    crossfade: bool = True
-    init_image: Optional[str] = None  # base64 — seeds the first clip
-
-
-@app.post("/generate-extended", status_code=202, dependencies=[Depends(verify_token)])
-async def generate_extended(request: GenerateExtendedRequest):
-    """Accept an extended-duration job and dispatch it asynchronously.
-
-    The actual stitching loop lives in ``run_extended_generation_job`` which
-    reuses ``run_generation_job`` for each sub-clip; that keeps memory
-    behaviour identical to the single-clip path and avoids a parallel
-    generation code-path that would drift out of sync with #927 sharding.
-    """
-    if state.is_busy:
-        raise HTTPException(status_code=409, detail="Worker is busy with another job")
-
-    # Validate model exists and pick its per-clip ceiling.
-    if request.model not in VIDEO_MODEL_REGISTRY:
-        raise HTTPException(status_code=400, detail=f"Unknown model: {request.model}")
-    max_clip_frames = _get_max_frames_for_model(request.model)
-    target_frames = int(request.target_duration_sec * request.fps)
-    num_clips = max(1, math.ceil(target_frames / max_clip_frames))
-    if num_clips > 16:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                f"Requested {request.target_duration_sec}s would need "
-                f"{num_clips} sub-clips (>16). Reduce duration or use a "
-                "model with a higher per-clip frame ceiling."
-            ),
-        )
-
-    asyncio.create_task(run_extended_generation_job(request, max_clip_frames, num_clips))
-    logger.info(
-        f"[ws2b] Extended job {request.job_id} accepted "
-        f"({request.target_duration_sec}s -> {num_clips} sub-clips of "
-        f"{max_clip_frames} frames each)"
-    )
-    return {
-        "status": "accepted",
-        "job_id": request.job_id,
-        "num_clips": num_clips,
-        "max_clip_frames": max_clip_frames,
-        "target_frames": target_frames,
-    }
-
-
-async def run_extended_generation_job(
-    request: GenerateExtendedRequest,
-    max_clip_frames: int,
-    num_clips: int,
-) -> None:
-    """Sequentially generate sub-clips and stitch them with ffmpeg.
-
-    Implementation note: this function intentionally invokes the existing
-    ``run_generation_job`` per clip rather than re-entering the diffusion
-    pipeline directly. That preserves all the OOM, sharding, and progress
-    callback behaviour from the single-clip path. The trade-off is that
-    we incur per-clip async overhead, but for jobs measured in seconds-
-    of-video this is negligible.
-    """
-    output_paths: list[str] = []
-    last_frame_b64: Optional[str] = request.init_image
-    try:
-        await state.set_busy(True)
-        for clip_idx in range(num_clips):
-            clip_job_id = f"{request.job_id}__clip{clip_idx}"
-            sub_request = GenerateRequest(
-                job_id=clip_job_id,
-                type="img2video" if last_frame_b64 else "txt2video",
-                prompt=request.prompt,
-                width=request.width,
-                height=request.height,
-                num_frames=max_clip_frames,
-                fps=request.fps,
-                model=request.model,
-                callback_url=request.callback_url,
-                init_image=last_frame_b64,
-                seed=(request.seed + clip_idx) if request.seed is not None else None,
-                negative_prompt=request.negative_prompt,
-                cfg_scale=request.cfg_scale,
-                num_inference_steps=request.num_inference_steps,
-            )
-            await run_generation_job(sub_request)
-            result = _job_results.get(clip_job_id)
-            if not result or "video_path" not in result:
-                raise RuntimeError(
-                    f"Sub-clip {clip_idx} produced no output (job_id={clip_job_id})"
-                )
-            output_paths.append(result["video_path"])
-            # Extract the final frame for the next clip's seed image.
-            if clip_idx < num_clips - 1:
-                last_frame_b64 = _extract_last_frame_b64(result["video_path"])
-
-        # Concatenate the produced clips.
-        safe_jid = _safe_job_id(request.job_id)
-        final_path = os.path.join(
-            tempfile.gettempdir(), f"extended_{safe_jid}.mp4"
-        )
-        _concat_clips(output_paths, final_path, crossfade=request.crossfade, fps=request.fps)
-        _store_result(request.job_id, {
-            "status": "completed",
-            "video_path": final_path,
-            "num_clips": num_clips,
-            "duration_sec": request.target_duration_sec,
-        })
-        # Notify orchestrator
-        try:
-            if request.callback_url:
-                safe_url = validate_callback_url(request.callback_url)
-                async with httpx.AsyncClient(timeout=30.0) as client:
-                    await client.post(
-                        safe_url,
-                        json={
-                            "job_id": safe_jid,
-                            "status": "completed",
-                            "video_path": final_path,
-                            "extended": True,
-                        },
-                    )
-        except Exception as exc:
-            logger.warning(f"[ws2b] Callback POST failed: {exc}")
-    except Exception as exc:
-        logger.exception(f"[ws2b] Extended job {request.job_id} failed")
-        # Generic message to external callers; full trace stays in the log
-        # (CodeQL py/stack-trace-exposure).
-        _store_result(request.job_id, {"status": "failed", "error": "job failed; see worker logs"})
-        try:
-            if request.callback_url:
-                safe_url = validate_callback_url(request.callback_url)
-                async with httpx.AsyncClient(timeout=30.0) as client:
-                    await client.post(
-                        safe_url,
-                        json={
-                            "job_id": request.job_id,
-                            "status": "failed",
-                            "error": "job failed; see worker logs",
-                        },
-                    )
-        except Exception:
-            pass
-    finally:
-        await state.set_busy(False)
-
-
-def _extract_last_frame_b64(video_path: str) -> str:
-    """Use ffmpeg to grab the last frame as base64-encoded PNG bytes."""
-    safe_in = _safe_subprocess_path(video_path)
-    out_png = os.path.join(tempfile.gettempdir(), f"lastframe_{int(time.time()*1000)}.png")
-    cmd = [
-        "ffmpeg", "-y", "-sseof", "-0.1", "-i", safe_in,
-        "-update", "1", "-q:v", "1", out_png,
-    ]
-    subprocess.run(cmd, check=True, capture_output=True)
-    with open(out_png, "rb") as f:
-        data = f.read()
-    try:
-        os.remove(out_png)
-    except OSError:
-        pass
-    return base64.b64encode(data).decode("ascii")
-
-
-def _concat_clips(input_paths: list[str], output_path: str, *, crossfade: bool, fps: int) -> None:
-    """Concatenate ``input_paths`` into ``output_path``.
-
-    With ``crossfade=False`` we use the lossless concat demuxer. With
-    ``crossfade=True`` we apply a 4-frame xfade between successive clips
-    using the filter graph; this re-encodes but smooths discontinuities at
-    the seams (#928 acceptance criterion).
-    """
-    if not input_paths:
-        raise ValueError("input_paths cannot be empty")
-    # Confine every input path to an allowed root before passing to ffmpeg
-    # (CodeQL py/path-injection + py/command-line-injection sanitizer).
-    safe_inputs = [_safe_subprocess_path(p) for p in input_paths]
-    safe_output = _safe_subprocess_path(os.path.dirname(output_path) or ".")
-    # Re-join filename onto the validated directory so the output stays inside.
-    safe_out_path = os.path.join(safe_output, os.path.basename(output_path))
-    if len(safe_inputs) == 1 or not crossfade:
-        list_path = safe_out_path + ".concat.txt"
-        with open(list_path, "w", encoding="utf-8") as f:
-            for p in safe_inputs:
-                # ffmpeg concat list format: posix forward slashes, escaped quotes.
-                safe = p.replace("'", "\\'")
-                f.write(f"file '{safe}'\n")
-        cmd = [
-            "ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", list_path,
-            "-c", "copy", safe_out_path,
-        ]
-        try:
-            subprocess.run(cmd, check=True, capture_output=True)
-        finally:
-            try:
-                os.remove(list_path)
-            except OSError:
-                pass
-        return
-
-    # Crossfade variant: chain xfade filters. Duration = 4 frames in seconds.
-    xfade_dur = 4.0 / float(max(fps, 1))
-    inputs: list[str] = []
-    for p in safe_inputs:
-        inputs.extend(["-i", p])
-    # Build filter graph.
-    n = len(safe_inputs)
-    parts: list[str] = []
-    last_label = "[0:v]"
-    cumulative_offset = 0.0
-    for i in range(1, n):
-        # Need clip duration to set xfade offset.
-        clip_dur = _probe_duration(safe_inputs[i - 1])
-        cumulative_offset += clip_dur - xfade_dur
-        out_label = f"[v{i}]"
-        parts.append(
-            f"{last_label}[{i}:v]xfade=transition=fade:duration={xfade_dur}:offset={cumulative_offset}{out_label}"
-        )
-        last_label = out_label
-    filter_graph = ";".join(parts)
-    cmd = [
-        "ffmpeg", "-y", *inputs,
-        "-filter_complex", filter_graph,
-        "-map", last_label,
-        "-pix_fmt", "yuv420p",
-        safe_out_path,
-    ]
-    subprocess.run(cmd, check=True, capture_output=True)
-
-
-def _probe_duration(video_path: str) -> float:
-    """Return clip duration in seconds via ffprobe."""
-    safe_in = _safe_subprocess_path(video_path)
-    cmd = [
-        "ffprobe", "-v", "error", "-show_entries", "format=duration",
-        "-of", "default=noprint_wrappers=1:nokey=1", safe_in,
-    ]
-    out = subprocess.run(cmd, check=True, capture_output=True, text=True)
-    return float(out.stdout.strip())
+# ── Removed: /generate-extended (Issue #939) ──────────────────────
+# The orchestrator (`src/queue/queue-master.ts`) handles extended-duration
+# decomposition by submitting a sequence of standard /generate jobs with
+# `init_image` chained to the prior clip's last frame, then stitching with
+# ffmpeg client-side. Worker-side stitching has been removed because it
+# duplicated the orchestrator path and was never invoked.
+# A follow-up issue tracks moving stitching back into the worker for lower
+# IPC overhead if profiling justifies it.
+#
+# ── Removed: /generate-extended (Issue #939) ──────────────────────
+# Worker-side stitching has been removed. The orchestrator
+# (`src/queue/queue-master.ts`) decomposes extended-duration jobs into a
+# sequence of standard /generate calls, chains the prior clip's last frame
+# via the existing /last-frame endpoint, and stitches with ffmpeg client-
+# side. The server-side path duplicated that work and was never wired.
+# Follow-up: track lower-IPC worker-side stitching as a future enhancement.
 
 
 # ── Entrypoint ─────────────────────────────────────────────────
