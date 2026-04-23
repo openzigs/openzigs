@@ -19,6 +19,9 @@ __pycache__/
 *$py.class
 .venv/
 venv/
+# Sidecar venvs may be symlinks on Windows (not caught by `venv/` directory rule)
+sidecars/**/venv
+sidecars/**/.venv
 .env
 .env.*
 !.env.example

@@ -21,27 +21,54 @@ import { ToastContainer, showToast } from "@/components/toast";
 type PerDevice = {
   index: number;
   name?: string;
+  vram_gb?: number;
   total_gb?: number;
   free_gb?: number;
   error?: string;
 };
 
-type PoolingInfo = {
-  mode?: string;
-  active?: boolean;
+type ModelEntry = {
+  key: string;
+  max_frames: number;
+  max_seconds_at_24fps?: number;
+  synchronized_audio?: boolean;
+};
+
+/**
+ * Capability response shape — flat fields as emitted by the LTX worker's
+ * /capabilities endpoint (sidecars/worker/server_cuda.py). The admin proxy
+ * (src/api/admin.ts route /api/admin/capabilities) forwards this verbatim.
+ *
+ * NOTE: We keep `device_count`, `per_device`, `pooling.{...}`, and
+ * `max_frames` as fallbacks for older worker builds and for the test
+ * fixtures, but the canonical fields read by the live worker are at the
+ * top level (gpu_count, gpus, pooling_active, pooling_mode, models[]).
+ */
+type CapabilitiesResponse = {
+  cuda_available?: boolean;
+  // New-style flat fields (live worker)
+  gpu_count?: number;
+  gpus?: PerDevice[];
+  pooling_active?: boolean;
+  pooling_mode?: string;
   transformer_device?: string | null;
   encoder_device?: string | null;
   vae_device?: string | null;
-  min_vram_gb?: number;
-};
-
-type CapabilitiesResponse = {
-  cuda_available?: boolean;
+  models?: ModelEntry[];
+  // Legacy/nested fields (older worker builds & test fixtures)
   device_count?: number;
-  pooled_vram_gb?: number;
   per_device?: PerDevice[];
-  pooling?: PoolingInfo;
+  pooling?: {
+    mode?: string;
+    active?: boolean;
+    transformer_device?: string | null;
+    encoder_device?: string | null;
+    vae_device?: string | null;
+    min_vram_gb?: number;
+  };
   max_frames?: Record<string, number>;
+  // Common fields
+  pooled_vram_gb?: number;
   audio_modes?: string[];
   env?: Record<string, unknown>;
   error?: string;
@@ -105,11 +132,29 @@ export default function AdminModelsPage() {
 }
 
 function CapabilitiesView({ data }: { data: CapabilitiesResponse }) {
-  const deviceCount = data.device_count ?? 0;
+  // Accept both the flat (live worker) shape and the older nested shape.
+  const deviceCount = data.gpu_count ?? data.device_count ?? 0;
   const pooledVram = data.pooled_vram_gb ?? 0;
-  const poolingActive = Boolean(data.pooling?.active);
-  const perDevice = data.per_device ?? [];
-  const maxFrames = data.max_frames ?? {};
+  const poolingActive = Boolean(data.pooling_active ?? data.pooling?.active);
+  const poolingMode = data.pooling_mode ?? data.pooling?.mode;
+  const transformerDevice =
+    data.transformer_device ?? data.pooling?.transformer_device;
+  const encoderDevice = data.encoder_device ?? data.pooling?.encoder_device;
+  const vaeDevice = data.vae_device ?? data.pooling?.vae_device;
+  // Per-device list: prefer flat `gpus` (live worker) over legacy `per_device`.
+  const perDevice: PerDevice[] = (data.gpus ?? data.per_device ?? []).map((d) => ({
+    ...d,
+    total_gb: d.total_gb ?? d.vram_gb,
+  }));
+  // Models: prefer flat `models[]` (live worker) over legacy `max_frames` map.
+  const maxFrames: Record<string, number> = data.models
+    ? Object.fromEntries(data.models.map((m) => [m.key, m.max_frames]))
+    : (data.max_frames ?? {});
+  // Track which models report sync audio capability natively (live worker)
+  // so we don't need a hard-coded allowlist when the worker tells us.
+  const syncAudioByKey = new Map<string, boolean>(
+    (data.models ?? []).map((m) => [m.key, Boolean(m.synchronized_audio)]),
+  );
 
   return (
     <div className="space-y-6">
@@ -173,14 +218,14 @@ function CapabilitiesView({ data }: { data: CapabilitiesResponse }) {
           </div>
         )}
 
-        {poolingActive && data.pooling && (
+        {poolingActive && (transformerDevice || encoderDevice || vaeDevice) && (
           <p className="mt-3 text-xs text-muted-foreground">
-            Pooling mode <code className="font-mono">{data.pooling.mode}</code>:
+            Pooling mode <code className="font-mono">{poolingMode}</code>:
             transformer →{" "}
-            <code className="font-mono">{data.pooling.transformer_device}</code>,
+            <code className="font-mono">{transformerDevice}</code>,
             encoder →{" "}
-            <code className="font-mono">{data.pooling.encoder_device}</code>,
-            VAE → <code className="font-mono">{data.pooling.vae_device}</code>.
+            <code className="font-mono">{encoderDevice}</code>,
+            VAE → <code className="font-mono">{vaeDevice}</code>.
           </p>
         )}
       </SectionCard>
@@ -209,7 +254,8 @@ function CapabilitiesView({ data }: { data: CapabilitiesResponse }) {
               <tbody>
                 {Object.entries(maxFrames).map(([key, frames]) => {
                   const seconds = frames / DEFAULT_FPS;
-                  const syncCapable = SYNC_AUDIO_MODELS.has(key);
+                  const syncCapable =
+                    syncAudioByKey.get(key) ?? SYNC_AUDIO_MODELS.has(key);
                   return (
                     <tr
                       key={key}
