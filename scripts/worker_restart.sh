@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
 # Restart the LTX video worker on port 5007.
-# NOTE: Pooling is forced OFF here. The current pooling implementation places
-# the whole 13B transformer on cuda:1 (it does not actually shard layers
-# across devices), which OOMs a single 12 GB card during inference. With
-# pooling disabled, the worker falls back to enable_model_cpu_offload() which
-# IS the supported single-GPU path on this hardware tier. See follow-up bug
-# tracking the pooling rework before re-enabling.
+#
+# LTX_POOLING_MODE defaults to `auto` so the diffusers
+# `device_map="balanced"` sharding path (#949 fix landed 2026-04-24) is
+# exercised on multi-GPU hosts. Override per-invocation, e.g.:
+#   LTX_POOLING_MODE=off bash scripts/worker_restart.sh   # single-GPU only
+#   LTX_POOLING_MODE=manual bash scripts/worker_restart.sh # force pooling
 fuser -k 5007/tcp 2>/dev/null || true
 sleep 2
 cd ~/openzigs-sidecars/worker
 source venv/bin/activate
-export LTX_POOLING_MODE=off
+export LTX_POOLING_MODE="${LTX_POOLING_MODE:-auto}"
 nohup python server_cuda.py --port 5007 --host 0.0.0.0 > /tmp/worker.log 2>&1 &
 echo "PID=$!"
 sleep 6

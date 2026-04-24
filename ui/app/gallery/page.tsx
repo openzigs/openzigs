@@ -2217,7 +2217,10 @@ const DEFAULT_FORM: StudioFormState = {
   audioMode: "off",
   tiling: "auto",
   enhance_prompt: false,
-  model_repo: "",
+  // Default to the legacy 2B CUDA model: publicly downloadable (no HF auth
+  // required) and fits comfortably on a 12 GB GPU. Users on Apple Silicon
+  // or larger CUDA cards can switch via the model dropdown.
+  model_repo: "Lightricks/LTX-Video",
   preset_id: "",
   video_duration: 4,
   durationMode: "single",
@@ -2382,18 +2385,49 @@ function GalleryStudio({
   });
   const presets = presetsQuery.data?.presets ?? [];
 
-  // LTX model catalog constants
+  // LTX model catalog. CUDA-side entries (matching the backend's
+  // VIDEO_MODEL_REGISTRY in sidecars/worker/server_cuda.py) are listed
+  // first because they are what the Windows / Linux worker actually loads.
+  // The MLX-quantized LTX-2 entries are kept for Apple Silicon hosts that
+  // route through the MLX worker. The default `model_repo` (DEFAULT_FORM)
+  // points at the legacy 2B CUDA model because it is publicly downloadable
+  // (no HF license-acceptance gate) and fits comfortably on the most common
+  // 12 GB consumer GPU without needing the dual-GPU sharding path.
   const ltxModelCatalog = [
+    {
+      id: "ltxv-2b-legacy",
+      repo: "Lightricks/LTX-Video",
+      name: "LTX-Video 2B (CUDA, 12 GB, public)",
+      memoryGB: 8,
+    },
+    {
+      id: "ltxv-2b-096-distilled",
+      repo: "Lightricks/LTX-Video-0.9.6-distilled",
+      name: "LTX-Video 2B 0.9.6 Distilled (CUDA, requires HF auth)",
+      memoryGB: 8,
+    },
+    {
+      id: "ltxv-13b-097-distilled",
+      repo: "Lightricks/LTX-Video-0.9.7-distilled",
+      name: "LTX-Video 13B Distilled (CUDA, ≥16 GB or pooled)",
+      memoryGB: 16,
+    },
+    {
+      id: "ltxv-13b-097-dev",
+      repo: "Lightricks/LTX-Video-0.9.7-dev",
+      name: "LTX-Video 13B Dev (CUDA, ≥16 GB or pooled)",
+      memoryGB: 16,
+    },
     {
       id: "ltx-2-distilled-q4",
       repo: "AITRADER/ltx2-distilled-4bit-mlx",
-      name: "LTX-2 Distilled Q4",
+      name: "LTX-2 Distilled Q4 (MLX, Apple Silicon)",
       memoryGB: 19,
     },
     {
       id: "ltx-2.3-distilled-q4",
       repo: "dgrauet/ltx-2.3-mlx-distilled-q4",
-      name: "LTX-2.3 Distilled Q4",
+      name: "LTX-2.3 Distilled Q4 (MLX, Apple Silicon)",
       memoryGB: 20,
     },
   ];

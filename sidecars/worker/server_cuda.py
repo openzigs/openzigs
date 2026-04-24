@@ -129,7 +129,13 @@ VIDEO_MODEL_REGISTRY: dict[str, dict] = {
 }
 
 # ── Constants ──────────────────────────────────────────────────
-DEFAULT_MODEL_KEY = os.getenv("LTX_MODEL_KEY") or "ltxv-13b-097-distilled"
+# Default to the legacy 2B model (`Lightricks/LTX-Video`): it is publicly
+# downloadable (no HF license-acceptance required, unlike the 0.9.6 variants
+# which return HTTP 401), already in the standard HF cache on most installs,
+# and fits comfortably on a single 12 GB consumer card. The 13B 0.9.7 variants
+# remain available via explicit model_repo selection but require ≥16 GB single-
+# card or working pooled-VRAM sharding (#949) to run end-to-end without OOM.
+DEFAULT_MODEL_KEY = os.getenv("LTX_MODEL_KEY") or "ltxv-2b-legacy"
 # Legacy env var support: if LTX_MODEL_REPO is set but LTX_MODEL_KEY is not,
 # look up the repo in the registry or use it as a raw HF ID.
 _legacy_repo = os.getenv("LTX_MODEL_REPO")
@@ -671,63 +677,98 @@ def generate_video_ltx2(request: "GenerateRequest") -> bytes:
     # Load model if needed
     if state._pipeline is None or state._model_name != effective_key:
         unload_model()
-        logger.info(f"Loading video model '{effective_key}' ({hf_id}) on CUDA with model_cpu_offload...")
+        logger.info(f"Loading video model '{effective_key}' ({hf_id}) on CUDA...")
 
-        if pipeline_class_name == "LTXConditionPipeline":
-            from diffusers import LTXConditionPipeline
-            pipe = LTXConditionPipeline.from_pretrained(
-                hf_id,
-                torch_dtype=torch.bfloat16,
-            )
-        elif need_i2v:
-            from diffusers import LTXImageToVideoPipeline
-            pipe = LTXImageToVideoPipeline.from_pretrained(
-                hf_id,
-                torch_dtype=torch.float16,
-            )
-        else:
-            from diffusers import LTXPipeline
-            pipe = LTXPipeline.from_pretrained(
-                hf_id,
-                torch_dtype=torch.float16,
-            )
-
+        # ── Pooling decision ─────────────────────────────────────
+        # Prior implementation called `pipe.transformer.to("cuda:1")` which
+        # placed the WHOLE 13B transformer (~26 GB in bf16) onto a single
+        # 12 GB card → guaranteed OOM. There was no actual layer sharding.
+        #
+        # Fix (#949, 2026-04-24): use diffusers' `device_map="balanced"` with
+        # an explicit per-device `max_memory` budget. Accelerate then
+        # distributes transformer layers across cuda:0 + cuda:1 (and spills
+        # any remainder to CPU) without exceeding the per-card cap. This is
+        # the documented pattern from the diffusers "Working with big models"
+        # tutorial (Tavily verified 2026-04-24, https://huggingface.co/docs/
+        # diffusers/main/tutorials/inference_with_big_models).
+        #
+        # We pass `max_memory` at from_pretrained time so accelerate does
+        # the placement during weight load — there is no second .to() pass.
         pooling_active = _is_pooling_active()
+        load_kwargs: dict[str, Any] = {}
         if pooling_active:
-            # WS2-A (#927): manual dual-GPU sharding.
-            #
-            # Tavily research 2026-04-22 confirms diffusers `LTXConditionPipeline`
-            # and `LTXPipeline` continue to support per-component `.to(device)`
-            # placement on releases 0.30.x through current main, and that this
-            # is the recommended pattern over `device_map="auto"` (which is
-            # documented as experimental and incompatible with `.to()` /
-            # `enable_model_cpu_offload` mode-switching without an explicit
-            # `reset_device_map()` call).
-            #
-            # Sources:
-            #   https://huggingface.co/docs/diffusers/main/tutorials/inference_with_big_models
-            #   https://discuss.huggingface.co/t/using-second-gpu/23453
-            #
-            # The pipeline `__call__` keeps activations on the transformer's
-            # device and tolerates encoder/VAE living on a different CUDA index.
+            # Reserve ~1 GiB per card for activations / KV cache / attention.
+            per_gpu_budget_gib = max(int(_get_vram_gb()) - 1, 6)
+            cpu_budget_gib = int(os.getenv("LTX_POOLING_CPU_BUDGET_GIB", "64"))
+            max_memory: dict[Any, str] = {
+                i: f"{per_gpu_budget_gib}GiB" for i in range(torch.cuda.device_count())
+            }
+            max_memory["cpu"] = f"{cpu_budget_gib}GiB"
+            load_kwargs["device_map"] = "balanced"
+            load_kwargs["max_memory"] = max_memory
+            logger.info(
+                f"[ws2a] Pooling active — device_map=balanced, max_memory={max_memory}"
+            )
+
+        def _build_pipeline(extra_kwargs: dict[str, Any]) -> Any:
+            if pipeline_class_name == "LTXConditionPipeline":
+                from diffusers import LTXConditionPipeline
+                return LTXConditionPipeline.from_pretrained(
+                    hf_id, torch_dtype=torch.bfloat16, **extra_kwargs
+                )
+            if need_i2v:
+                from diffusers import LTXImageToVideoPipeline
+                return LTXImageToVideoPipeline.from_pretrained(
+                    hf_id, torch_dtype=torch.float16, **extra_kwargs
+                )
+            from diffusers import LTXPipeline
+            return LTXPipeline.from_pretrained(
+                hf_id, torch_dtype=torch.float16, **extra_kwargs
+            )
+
+        try:
+            pipe = _build_pipeline(load_kwargs)
+            if pooling_active:
+                # Surface the resulting placement for diagnostics.
+                hf_map = getattr(pipe, "hf_device_map", None)
+                if hf_map is None:
+                    # device_map applies to submodules; sample the transformer.
+                    hf_map = getattr(getattr(pipe, "transformer", None), "hf_device_map", None)
+                logger.info(f"[ws2a] hf_device_map after balanced load: {hf_map}")
+        except Exception as exc:
+            # ── Fix (#950, 2026-04-24): clean teardown before fallback ──
+            # If the balanced load OOMs partway through, the pipeline can be
+            # partially-allocated on cuda:1. Calling `enable_model_cpu_offload`
+            # on top of a half-loaded pipe was leaving 11 GiB pinned on GPU 0
+            # and OOMing at step 0/30. Tear everything down first, then retry
+            # with offload-only on a fresh pipeline.
+            logger.warning(
+                f"[ws2a] device_map=balanced load failed ({exc}); "
+                f"tearing down and retrying with enable_model_cpu_offload only."
+            )
             try:
-                if hasattr(pipe, "transformer") and pipe.transformer is not None:
-                    pipe.transformer.to(LTX_TRANSFORMER_DEVICE)
-                if hasattr(pipe, "text_encoder") and pipe.text_encoder is not None:
-                    pipe.text_encoder.to(LTX_ENCODER_DEVICE)
-                if hasattr(pipe, "vae") and pipe.vae is not None:
-                    pipe.vae.to(LTX_VAE_DEVICE)
-                logger.info(
-                    f"[ws2a] Dual-GPU sharding active: transformer={LTX_TRANSFORMER_DEVICE} "
-                    f"encoder={LTX_ENCODER_DEVICE} vae={LTX_VAE_DEVICE} pooled_vram={_get_pooled_vram_gb()}GB"
-                )
-            except Exception as exc:
-                logger.warning(
-                    f"[ws2a] Sharding placement failed ({exc}); falling back to model_cpu_offload."
-                )
-                pooling_active = False
+                del pipe  # type: ignore[name-defined]
+            except UnboundLocalError:
+                pass
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                torch.cuda.synchronize()
+            pipe = _build_pipeline({})
+            pooling_active = False
+
         if not pooling_active:
+            # `enable_model_cpu_offload` requires no pre-existing device_map.
+            # When the balanced path was skipped entirely we never set one,
+            # so this is safe; if it WAS attempted, the teardown above
+            # rebuilt the pipeline from scratch (also safe).
+            if hasattr(pipe, "reset_device_map"):
+                try:
+                    pipe.reset_device_map()
+                except Exception:
+                    pass
             pipe.enable_model_cpu_offload()
+
         pipe.enable_attention_slicing()
         # Enable VAE tiling for 12GB GPUs — reduces VRAM during decode
         if hasattr(pipe, "vae") and hasattr(pipe.vae, "enable_tiling"):
@@ -735,7 +776,8 @@ def generate_video_ltx2(request: "GenerateRequest") -> bytes:
         state._pipeline = pipe
         state._model_name = effective_key
         state.loaded_model = hf_id
-        logger.info(f"Model '{effective_key}' ready (CUDA model-level offload + VAE tiling)")
+        mode_label = "balanced device_map" if pooling_active else "model_cpu_offload"
+        logger.info(f"Model '{effective_key}' ready ({mode_label} + VAE tiling)")
 
     generator = torch.Generator("cpu").manual_seed(
         request.seed if request.seed is not None else int(time.time()) % (2**32)
