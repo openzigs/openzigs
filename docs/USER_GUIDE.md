@@ -509,7 +509,7 @@ The OpenZigs UI is a **Next.js** application with a navigation bar providing acc
 | **Post-Actions** | `/admin/post-actions` | Create and manage custom post-action types for pipeline stages |
 | **Webhooks** | `/admin/webhooks` | Create and manage inbound webhooks for external integrations |
 | **Models / Capabilities** | `/admin/models` | Live LTX worker introspection — pooled VRAM across GPUs, per-device free/total, pooling status (transformer / encoder / VAE placement), per-model max-frames, sync-audio support, and audio modes available. Surfaces sidecar errors when the worker is offline. |
-| **Gallery** | `/gallery` | Asset gallery for generated images, videos, and audio; inline creation studio for txt2img, img2img, txt2video, img2video, txt2music. The studio composer exposes an **Audio mode** selector (Off / Auto via MMAudio v2a / Music via ACE-Step / Sync via LTX-2 native — Sync is gated on a 24 GB+ pooled VRAM LTX-2 model) and a **Duration mode** toggle (Single shot up to 4 s, or Extended 5–60 s rendered as stitched 4 s shots). |
+| **Gallery** | `/gallery` | Asset gallery for generated images, videos, and audio; inline creation studio for txt2img, img2img, txt2video, img2video, txt2music. The studio composer exposes an **Audio mode** selector (Off / Auto via MMAudio v2a / Music via ACE-Step / Sync via LTX-2 native — Sync is gated on a 24 GB+ pooled VRAM LTX-2 model) and a **Duration mode** toggle (Single shot up to 4 s, or Extended 5–60 s rendered as stitched 4 s shots). When `audio_mode=auto` is selected and the v2a sidecar is offline or fails, the resulting video lands in the gallery with a yellow **No audio** chip; hover the chip for the underlying error message. The video itself is still complete — only the audio layer is missing. |
 | **Music Studio** | `/music-studio` | AI Voice2Voice pipeline &amp; Smart Remix Lab — stem separation, voice conversion, instrument replacement, and auto-mastering |
 | **Director** | `/director` | AI video production wizard, blog-to-YouTube, timeline studio, and capture & trim |
 | **Director Studio** | `/director/studio/[id]` | Full timeline editor with player preview, scene inspector, drag-and-drop reordering, and YouTube direct publishing |
@@ -9614,4 +9614,16 @@ python scripts/gpu-stress-test.py --scenario vllm
 Fires 8 concurrent chat completions (mixed 256 / 1024 / 2048-token contexts). Exits non-zero if any request returns below 8 tokens/sec, which on 2x 12 GB usually means the wrong model size or a paging-thrash situation.
 
 See [docs/MULTI_GPU.md](MULTI_GPU.md#vllm-dual-gpu-tp2) for the full operational guide, conflict policy, and Ollama-vs-vLLM comparison.
+
+### LTX video performance & VRAM matrix
+
+Real-world per-step timings, the **`LTX_T5_LIFECYCLE`** env var (controls
+when T5-XXL is offloaded so it doesn't OOM 12 GB cards), and the
+recommended (model × pooling × T5 lifecycle) matrix per GPU topology live
+in [docs/MULTI_GPU.md → LTX Performance Notes](MULTI_GPU.md#ltx-performance-notes-issue-939).
+
+The headline rule: **never** select the 13B model on a single 12 GB card —
+each denoising step takes ~14 minutes due to cpu↔gpu weight swap. Use the
+2B distilled model (gated; needs `HF_TOKEN`) on a single small card, or
+enable `LTX_POOLING_MODE=auto` on a 2-GPU host.
 

@@ -115,6 +115,37 @@ describe("MediaQueueRepository", () => {
       expect(updated.galleryAssetId).toBe("asset-1");
     });
 
+    // Issue #939: shallow-merge patch into result_metadata so the v2a
+    // post-completion hook can flag a video as audio-degraded without
+    // clobbering the worker's original metadata payload.
+    it("updateResultMetadata shallow-merges patches into existing metadata", () => {
+      const job = repo.createJob({ type: "txt2video", payload: { prompt: "x" } });
+      repo.markComplete(job.id, "/gallery/v.mp4", { width: 1024, video_path: "/tmp/v.mp4" });
+
+      repo.updateResultMetadata(job.id, { audio_status: "failed", audio_error: "boom" });
+
+      const updated = repo.getJob(job.id)!;
+      expect(updated.resultMetadata).toEqual({
+        width: 1024,
+        video_path: "/tmp/v.mp4",
+        audio_status: "failed",
+        audio_error: "boom",
+      });
+    });
+
+    it("updateResultMetadata initialises metadata when none was set", () => {
+      const job = repo.createJob({ type: "txt2video", payload: { prompt: "x" } });
+      repo.markComplete(job.id, "/gallery/v.mp4");
+
+      repo.updateResultMetadata(job.id, { audio_status: "pending" });
+      expect(repo.getJob(job.id)!.resultMetadata).toEqual({ audio_status: "pending" });
+    });
+
+    it("updateResultMetadata is a no-op for unknown jobs", () => {
+      // Should not throw, should not mutate any other rows.
+      expect(() => repo.updateResultMetadata("does-not-exist", { x: 1 })).not.toThrow();
+    });
+
     it("retries on failure if under max retries", () => {
       const job = repo.createJob({ type: "txt2img", payload: { prompt: "t" } });
       repo.markFailed(job.id, "timeout");

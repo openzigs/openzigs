@@ -673,6 +673,36 @@ export class MediaQueueRepository {
       );
   }
 
+  /**
+   * Merge `patch` into the job's `result_metadata` JSON column. Used by
+   * post-completion hooks (e.g. v2a audio failures, Issue #939) to record
+   * degraded outcomes without altering the primary `complete` status.
+   *
+   * Existing keys in `patch` overwrite existing keys in metadata; this is
+   * a shallow merge by design so callers can structure their own subtrees.
+   */
+  updateResultMetadata(id: string, patch: Record<string, unknown>): void {
+    const row = this.db
+      .prepare("SELECT result_metadata FROM media_jobs WHERE id = ?")
+      .get(id) as { result_metadata: string | null } | undefined;
+    if (!row) return;
+    let existing: Record<string, unknown> = {};
+    if (row.result_metadata) {
+      try {
+        const parsed = JSON.parse(row.result_metadata) as unknown;
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+          existing = parsed as Record<string, unknown>;
+        }
+      } catch {
+        // Corrupt metadata — start fresh; the patch carries the new truth.
+      }
+    }
+    const merged = { ...existing, ...patch };
+    this.db
+      .prepare("UPDATE media_jobs SET result_metadata = ? WHERE id = ?")
+      .run(JSON.stringify(merged), id);
+  }
+
   markFailed(id: string, error: string): void {
     const now = this.clock().toISOString();
     const job = this.getJob(id);

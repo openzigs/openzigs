@@ -1,0 +1,17 @@
+# LTX-2 sidecar's OWN minimal venv requirements.
+#
+# Used by sidecars/ltx2/server_cuda.py — the FastAPI wrapper.
+# This is NOT the heavy upstream venv that contains ltx_pipelines /
+# ltx_core / torch / transformers / Gemma — that one lives at
+# ~/openzigs-sidecars/ltx2-src/.venv and is provisioned by
+# `bash sidecars/ltx2/setup.sh` via `uv sync` from the cloned monorepo.
+#
+# Per-job generations are dispatched via `subprocess.run()` to the
+# upstream venv's python interpreter, so this wrapper stays light:
+#   python3 -m venv sidecars/ltx2/venv
+#   source sidecars/ltx2/venv/bin/activate
+#   pip install -r sidecars/ltx2/requirements.txt
+fastapi>=0.115,<1.0
+uvicorn[standard]>=0.30,<1.0
+httpx>=0.27,<1.0
+pydantic>=2.7,<3.0

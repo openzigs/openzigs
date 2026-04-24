@@ -55,6 +55,37 @@ services:
     networks:
       - openzigs-network
 
+  # ── v2a / MMAudio Sidecar (Issue #939, opt-in profile) ──
+  # Most dev/desktop deployments run this in WSL via
+  # `sidecars/start-cuda-sidecars.sh` because CUDA passthrough into Docker
+  # Desktop is brittle on Windows. Enable here only on Linux hosts with the
+  # NVIDIA Container Toolkit installed:
+  #   docker compose --profile v2a up -d v2a-sidecar
+  v2a-sidecar:
+    build: ./sidecars/v2a
+    container_name: openzigs-v2a-sidecar
+    profiles: ["v2a"]
+    restart: unless-stopped
+    ports:
+      - "5012:5012"
+    environment:
+      - PORT=5012
+      - V2A_MODEL=${V2A_MODEL:-hkchengrex/MMAudio}
+      - V2A_DEFAULT_DURATION=${V2A_DEFAULT_DURATION:-8.0}
+      - V2A_MAX_DURATION=${V2A_MAX_DURATION:-30.0}
+      - V2A_IDLE_TIMEOUT=${V2A_IDLE_TIMEOUT:-300}
+      - WORKER_SECRET_TOKEN=${WORKER_SECRET_TOKEN:-}
+      - HF_TOKEN=${HF_TOKEN:-}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: ["gpu"]
+    networks:
+      - openzigs-network
+
 volumes:
   openzigs-data:
 

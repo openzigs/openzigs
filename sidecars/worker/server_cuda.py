@@ -41,7 +41,6 @@ import hmac
 import io
 import json
 import logging
-import math
 import os
 import subprocess
 import sys
@@ -94,6 +93,16 @@ VIDEO_MODEL_REGISTRY: dict[str, dict] = {
         "min_vram_gb": 16,
     },
     "ltxv-2b-096-distilled": {
+        # CORRECTION (Issue #939 follow-up, verified 2026-04-23):
+        # The previously-listed `Lightricks/LTX-Video-0.9.6-distilled` HF
+        # repo does NOT exist (HTTP 404 even with a valid token). Lightricks
+        # only publishes the 0.9.6-distilled weights as a raw `.safetensors`
+        # file inside the umbrella `Lightricks/LTX-Video` repo (intended for
+        # ComfyUI), with NO diffusers-layout snapshot. We therefore mark
+        # this entry as `unavailable` so the UI/capabilities/generate paths
+        # never attempt to load it. Use `ltxv-2b-legacy` (0.9 weights via the
+        # umbrella repo) or `ltxv-13b-097-distilled` (real diffusers v0.9.7)
+        # instead.
         "hf_id": "Lightricks/LTX-Video-0.9.6-distilled",
         "pipeline_class": "LTXPipeline",
         "default_steps": 4,
@@ -102,6 +111,12 @@ VIDEO_MODEL_REGISTRY: dict[str, dict] = {
         "vram_gb": 8,
         "tier": "low",
         "min_vram_gb": 8,
+        "unavailable": True,
+        "unavailable_reason": (
+            "Upstream gap: Lightricks does not publish a diffusers-layout HF "
+            "repo for 0.9.6-distilled (verified 2026-04-23). Use "
+            "`ltxv-2b-legacy` or `ltxv-13b-097-distilled` instead."
+        ),
     },
     "ltxv-2b-legacy": {
         "hf_id": "Lightricks/LTX-Video",
@@ -113,18 +128,31 @@ VIDEO_MODEL_REGISTRY: dict[str, dict] = {
         "tier": "low",
         "min_vram_gb": 8,
     },
-    # WS1-B (#926): LTX-2 22B distilled with native synchronized audio.
-    # Requires LTX_ALLOW_AUDIO=1 and pooled VRAM >= 24 GB to load.
+    # WS1-B (#926): LTX-2 distilled with native synchronized audio.
+    # 2026-04-24 update: this model is now served by the dedicated `ltx2`
+    # sidecar on port 5013 (see `sidecars/ltx2/`). The diffusers
+    # `LTX2Pipeline` path remains broken upstream (missing
+    # `LTX2TextConnectors`/`LTX2Vocoder` symbols), but the **native**
+    # `ltx_pipelines.distilled` CLI from the Lightricks/LTX-2 monorepo
+    # works end-to-end on a single 12 GB GPU + 32+ GB RAM with
+    # `--offload cpu` (validated by `scripts/ltx2_smoke.sh`).
+    # The worker no longer attempts to load this model in-process; the
+    # orchestrator should route `audio_mode: "native"` to port 5013.
     "ltxv-2-22b-distilled": {
-        "hf_id": "Lightricks/LTX-Video-2-22B-distilled",
-        "pipeline_class": "LTXConditionPipeline",
+        "hf_id": "Lightricks/LTX-2",
+        "pipeline_class": "LTX2Pipeline",
         "default_steps": 8,
         "default_guidance": 1.0,
-        "description": "LTX-Video 2 22B distilled — synchronized audio, dual-GPU recommended",
-        "vram_gb": 24,
+        "description": "LTX-2 19B distilled — native synchronized audio via the dedicated ltx2 sidecar (port 5013). Not loaded in-process by the worker.",
+        "vram_gb": 12,
         "tier": "ultra",
-        "min_vram_gb": 24,
+        "min_vram_gb": 6,
         "synchronized_audio": True,
+        # `served_by_sidecar` tells callers this model is NOT handled by the
+        # worker's in-process generate path; it must be routed to the named
+        # sidecar URL. The worker still advertises the model in /capabilities
+        # so the UI can offer it, but `generate_video_ltx2()` will refuse it.
+        "served_by_sidecar": "http://localhost:5013",
     },
 }
 
@@ -182,9 +210,28 @@ if LTX_POOLING_MODE not in ("off", "manual", "auto"):
 # the OS / display.
 LTX_TRANSFORMER_DEVICE: str = os.getenv("LTX_TRANSFORMER_DEVICE", "cuda:1").strip()
 LTX_ENCODER_DEVICE: str = os.getenv("LTX_ENCODER_DEVICE", "cuda:0").strip()
-LTX_VAE_DEVICE: str = os.getenv("LTX_VAE_DEVICE", "cuda:0").strip()
+# VAE colocates with the transformer by default — VAE decode activations need
+# to live next to the transformer output to avoid a cross-device copy of a
+# multi-GB latent tensor. (Issue #939 gap A: with VAE on cuda:0 next to
+# T5-XXL the VAE decode buffers OOM'd a 12 GB card.)
+LTX_VAE_DEVICE: str = os.getenv("LTX_VAE_DEVICE", "cuda:1").strip()
 # Minimum pooled VRAM in GB to enable auto-pooling (sum of all visible cards).
 LTX_POOLING_MIN_VRAM_GB: int = int(os.getenv("LTX_POOLING_MIN_VRAM_GB", "18"))
+# T5-XXL lifecycle on pooled / low-VRAM rigs (Issue #939 gap A):
+#   "keep"      -> leave T5 on the encoder device for the whole pipeline call.
+#                  Fastest when VRAM is plentiful (>=24 GB per card).
+#   "transient" -> manually run encode_prompt(), then move T5 to CPU and
+#                  empty_cache() before the transformer pass. Frees ~9.5 GB
+#                  on the encoder device so VAE decode buffers fit on 12 GB.
+#   "auto"      -> pick "transient" when ANY visible CUDA device has
+#                  <= LTX_T5_TRANSIENT_MAX_VRAM_GB total VRAM, else "keep".
+LTX_T5_LIFECYCLE: str = os.getenv("LTX_T5_LIFECYCLE", "auto").strip().lower()
+if LTX_T5_LIFECYCLE not in ("auto", "keep", "transient"):
+    logger.warning(
+        f"LTX_T5_LIFECYCLE='{LTX_T5_LIFECYCLE}' is not recognised; falling back to 'auto'"
+    )
+    LTX_T5_LIFECYCLE = "auto"
+LTX_T5_TRANSIENT_MAX_VRAM_GB: int = int(os.getenv("LTX_T5_TRANSIENT_MAX_VRAM_GB", "16"))
 # Hard override on max frames regardless of VRAM tier (escape hatch).
 LTX_MAX_FRAMES_OVERRIDE: int = int(os.getenv("LTX_MAX_FRAMES_OVERRIDE", "0"))
 # Allow LTX-2 / LTX-2.3 native synchronized audio. Off by default because the
@@ -278,6 +325,36 @@ def _get_vram_gb() -> int:
         _, total = torch.cuda.mem_get_info()
         return int(total / 1024**3)
     return 12  # Assume 12GB if detection fails
+
+
+def _resolve_t5_lifecycle() -> str:
+    """Return the effective LTX_T5_LIFECYCLE value (`keep` or `transient`).
+
+    "auto" expands to "transient" when **any** visible CUDA device has
+    total VRAM <= LTX_T5_TRANSIENT_MAX_VRAM_GB (default 16). The intent is
+    that on 12 GB cards (RTX 3060) we always free T5-XXL between encode and
+    transformer passes, while on 24 GB+ cards we keep it resident for speed.
+    """
+    if LTX_T5_LIFECYCLE in ("keep", "transient"):
+        return LTX_T5_LIFECYCLE
+    _ensure_torch()
+    if not torch.cuda.is_available():
+        return "transient"
+    try:
+        for i in range(torch.cuda.device_count()):
+            try:
+                _, total = torch.cuda.mem_get_info(i)
+                if int(total / 1024**3) <= LTX_T5_TRANSIENT_MAX_VRAM_GB:
+                    return "transient"
+            except Exception:
+                # Fall back to device props on older torch builds.
+                props = torch.cuda.get_device_properties(i)
+                if int(getattr(props, "total_memory", 0) / 1024**3) <= LTX_T5_TRANSIENT_MAX_VRAM_GB:
+                    return "transient"
+    except Exception as exc:
+        logger.debug("[t5-lifecycle] auto-detection failed: %s; defaulting to 'transient'", exc)
+        return "transient"
+    return "keep"
 
 
 def _get_max_frames_for_model(model_key: str) -> int:
@@ -639,8 +716,34 @@ def generate_video_ltx2(request: "GenerateRequest") -> bytes:
     if not spec:
         raise ValueError(f"Unknown model key: {model_key}")
 
+    # Models served by an external sidecar (e.g. ltxv-2-22b-distilled →
+    # port 5013) must not be loaded in-process by the worker. The
+    # orchestrator should route directly; surface a clear error if it ever
+    # forwards such a request to the worker by mistake.
+    sidecar_url = spec.get("served_by_sidecar")
+    if sidecar_url:
+        raise RuntimeError(
+            f"Model '{model_key}' is served by an external sidecar at "
+            f"{sidecar_url}. Route the request directly to that sidecar "
+            "instead of the video worker (the worker does not proxy)."
+        )
+
     hf_id = spec["hf_id"]
     pipeline_class_name = spec["pipeline_class"]
+
+    # Issue #939 gap B: gated HF repos require a token. Fail early with an
+    # actionable error rather than letting `from_pretrained()` raise a
+    # cryptic 401 deep inside diffusers.
+    if spec.get("requires_hf_token") and not (
+        os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN")
+    ):
+        raise RuntimeError(
+            f"Model '{model_key}' ({hf_id}) is a gated HuggingFace repo and "
+            "requires a logged-in HF token. Either set HF_TOKEN / "
+            "HUGGING_FACE_HUB_TOKEN in your environment after accepting the "
+            f"license at https://huggingface.co/{hf_id}, or pick a public "
+            "model (e.g. LTX_MODEL_KEY=ltxv-13b-097-distilled)."
+        )
 
     # Determine whether we need the img2video variant for legacy 2B models
     need_i2v = (
@@ -744,6 +847,66 @@ def generate_video_ltx2(request: "GenerateRequest") -> bytes:
             "generator": generator,
             "output_type": "pil",
         }
+
+        # Issue #939 gap A: when pooling is active and the T5 lifecycle resolves
+        # to "transient", manually run encode_prompt() on the encoder device,
+        # move T5 to CPU and free its VRAM before the transformer pass. This
+        # is what makes 13B distilled fit on 2× 12 GB pooled.
+        pooling_active = _is_pooling_active()
+        t5_lifecycle = _resolve_t5_lifecycle() if pooling_active else "keep"
+        if pooling_active and t5_lifecycle == "transient" and hasattr(state._pipeline, "encode_prompt"):
+            try:
+                pipe = state._pipeline
+                with torch.inference_mode():
+                    encode_out = pipe.encode_prompt(
+                        prompt=kwargs["prompt"],
+                        negative_prompt=kwargs["negative_prompt"],
+                        do_classifier_free_guidance=guidance > 1.0,
+                        device=LTX_ENCODER_DEVICE,
+                    )
+                # encode_prompt returns either a 4-tuple (LTXConditionPipeline)
+                # or a 2-tuple (LTXPipeline). Handle both.
+                if isinstance(encode_out, tuple) and len(encode_out) >= 2:
+                    prompt_embeds = encode_out[0]
+                    prompt_attention_mask = encode_out[1] if len(encode_out) > 1 else None
+                    negative_prompt_embeds = encode_out[2] if len(encode_out) > 2 else None
+                    negative_prompt_attention_mask = encode_out[3] if len(encode_out) > 3 else None
+                else:
+                    raise RuntimeError(f"Unexpected encode_prompt return shape: {type(encode_out)}")
+                # Move T5 off the encoder GPU and reclaim VRAM.
+                try:
+                    if hasattr(pipe, "text_encoder") and pipe.text_encoder is not None:
+                        pipe.text_encoder.to("cpu")
+                    gc.collect()
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                    logger.info("[t5-lifecycle] T5 encoded; moved to CPU and freed encoder VRAM")
+                except Exception as off_exc:
+                    logger.warning(f"[t5-lifecycle] T5 offload failed: {off_exc}; continuing")
+                # Move embeds to the transformer device for the diffusion pass.
+                target_dev = LTX_TRANSFORMER_DEVICE
+                prompt_embeds = prompt_embeds.to(target_dev)
+                if prompt_attention_mask is not None:
+                    prompt_attention_mask = prompt_attention_mask.to(target_dev)
+                if negative_prompt_embeds is not None:
+                    negative_prompt_embeds = negative_prompt_embeds.to(target_dev)
+                if negative_prompt_attention_mask is not None:
+                    negative_prompt_attention_mask = negative_prompt_attention_mask.to(target_dev)
+                # Swap prompt= for prompt_embeds=.
+                kwargs.pop("prompt", None)
+                kwargs.pop("negative_prompt", None)
+                kwargs["prompt_embeds"] = prompt_embeds
+                if prompt_attention_mask is not None:
+                    kwargs["prompt_attention_mask"] = prompt_attention_mask
+                if negative_prompt_embeds is not None:
+                    kwargs["negative_prompt_embeds"] = negative_prompt_embeds
+                if negative_prompt_attention_mask is not None:
+                    kwargs["negative_prompt_attention_mask"] = negative_prompt_attention_mask
+            except Exception as enc_exc:
+                logger.warning(
+                    f"[t5-lifecycle] transient encode path failed ({enc_exc}); "
+                    "falling back to in-pipeline encoding (T5 stays resident)"
+                )
 
         # img2video conditioning
         if request.init_image and request.type == "img2video":
@@ -1000,6 +1163,30 @@ async def lifespan(app: FastAPI):
     # linker state is fragile during process init.  CUDA info will be logged
     # on first generation request instead.
     logger.info("Video Worker (CUDA) starting up (torch import deferred)")
+    # Pooling visibility (Issue #939): log which GPU indices the worker can
+    # see and what pooling mode is configured. This makes it obvious in the
+    # log whether `WORKER_POOLING_MODE=auto` actually exposed both cards.
+    visible = os.environ.get("CUDA_VISIBLE_DEVICES", "<unset>")
+    logger.info(
+        f"[pooling] CUDA_VISIBLE_DEVICES={visible} "
+        f"LTX_POOLING_MODE={LTX_POOLING_MODE} "
+        f"transformer={LTX_TRANSFORMER_DEVICE} encoder={LTX_ENCODER_DEVICE} "
+        f"vae={LTX_VAE_DEVICE} min_vram_gb={LTX_POOLING_MIN_VRAM_GB} "
+        f"allow_audio={LTX_ALLOW_AUDIO}"
+    )
+    # Issue #939 gap A: surface the resolved T5 lifecycle alongside the
+    # chosen device layout so operators can confirm at a glance that the
+    # 12 GB-friendly path is active.
+    try:
+        t5_resolved = _resolve_t5_lifecycle()
+    except Exception as exc:
+        logger.debug("[t5-lifecycle] startup resolution failed: %s", exc)
+        t5_resolved = "unknown"
+    logger.info(
+        f"[t5-lifecycle] LTX_T5_LIFECYCLE={LTX_T5_LIFECYCLE} resolved={t5_resolved} "
+        f"transient_max_vram_gb={LTX_T5_TRANSIENT_MAX_VRAM_GB} "
+        f"layout: encode_on={LTX_ENCODER_DEVICE} -> transformer_on={LTX_TRANSFORMER_DEVICE} (vae_on={LTX_VAE_DEVICE})"
+    )
     reaper = asyncio.create_task(_idle_model_reaper())
     yield
     reaper.cancel()
@@ -1043,20 +1230,60 @@ async def memory_endpoint():
 
 @app.get("/gpu-info")
 async def gpu_info_endpoint():
-    """Report which CUDA device this sidecar is bound to (Issue #884)."""
+    """Report CUDA bindings and pooling state (Issue #884, #939).
+
+    Includes per-GPU detail (index/name/vram/free) so the admin UI can
+    render a real dual-GPU panel without scraping logs.
+    """
     _ensure_torch()
+    cuda_visible = os.environ.get("CUDA_VISIBLE_DEVICES", "")
     if not torch.cuda.is_available():
-        return {"available": False, "cuda_visible": os.environ.get("CUDA_VISIBLE_DEVICES", "")}
+        return {
+            "available": False,
+            "cuda_visible": cuda_visible,
+            "pooling_mode": LTX_POOLING_MODE,
+            "pooling_active": False,
+            "transformer_device": LTX_TRANSFORMER_DEVICE,
+            "encoder_device": LTX_ENCODER_DEVICE,
+            "vae_device": LTX_VAE_DEVICE,
+            "pooled_vram_gb": 0,
+            "gpus": [],
+        }
     idx = torch.cuda.current_device()
     free, total = torch.cuda.mem_get_info(idx)
+    device_count = torch.cuda.device_count()
+    pooling_active = _is_pooling_active()
+    pooled_vram = _get_pooled_vram_gb()
+    gpus = []
+    for i in range(device_count):
+        try:
+            g_free, g_total = torch.cuda.mem_get_info(i)
+            gpus.append({
+                "index": i,
+                "name": torch.cuda.get_device_name(i),
+                "vram_gb": round(g_total / 1024**3, 1),
+                "free_gb": round(g_free / 1024**3, 1),
+            })
+        except Exception as exc:
+            logger.warning(f"[gpu-info] mem_get_info({i}) failed: {exc}")
+            gpus.append({"index": i, "name": "unknown", "vram_gb": 0, "free_gb": 0})
     return {
         "available": True,
         "device_index": idx,
         "device_name": torch.cuda.get_device_name(idx),
-        "device_count": torch.cuda.device_count(),
+        "device_count": device_count,
         "total_mb": int(total / 1024**2),
         "free_mb": int(free / 1024**2),
-        "cuda_visible": os.environ.get("CUDA_VISIBLE_DEVICES", ""),
+        "cuda_visible": cuda_visible,
+        "pooling_mode": LTX_POOLING_MODE,
+        "pooling_active": pooling_active,
+        "transformer_device": LTX_TRANSFORMER_DEVICE if pooling_active else f"cuda:{idx}",
+        "encoder_device": LTX_ENCODER_DEVICE if pooling_active else f"cuda:{idx}",
+        "vae_device": LTX_VAE_DEVICE if pooling_active else f"cuda:{idx}",
+        "pooled_vram_gb": pooled_vram,
+        "t5_lifecycle": LTX_T5_LIFECYCLE,
+        "t5_lifecycle_resolved": _resolve_t5_lifecycle(),
+        "gpus": gpus,
     }
 
 
@@ -1148,90 +1375,136 @@ async def list_models():
             "vram_gb": spec["vram_gb"],
             "is_default": key == DEFAULT_MODEL_KEY,
             "synchronized_audio": bool(spec.get("synchronized_audio", False)),
+            "requires_hf_token": bool(spec.get("requires_hf_token", False)),
+            # #939 follow-up (2026-04-23): some entries have known upstream
+            # gaps (broken HF repo IDs, missing helper packages). They
+            # remain in the registry for documentation/traceability but
+            # `unavailable=true` tells the UI to grey them out and 
+            # `/generate` will reject them with HTTP 503.
+            "unavailable": bool(spec.get("unavailable", False)),
+            "unavailable_reason": spec.get("unavailable_reason"),
+            # 2026-04-24: when set, the UI/orchestrator must route requests
+            # to this URL instead of the worker's in-process generate path.
+            "served_by_sidecar": spec.get("served_by_sidecar"),
         })
+    # Native synchronized audio is now provided by the dedicated ltx2
+    # sidecar (port 5013) for any registry entry carrying both
+    # `synchronized_audio` and `served_by_sidecar`. Pooled VRAM is no
+    # longer the gate — the sidecar accepts CPU/disk offload on 12 GB+
+    # single-GPU hardware. We treat the model as audio-capable whenever
+    # LTX_ALLOW_AUDIO is on and at least one available entry advertises it.
+    audio_capable = LTX_ALLOW_AUDIO and any(
+        spec.get("synchronized_audio") and not spec.get("unavailable")
+        for spec in VIDEO_MODEL_REGISTRY.values()
+    )
     return {
         "models": models,
         "default_key": DEFAULT_MODEL_KEY,
         "default_repo": DEFAULT_MODEL_REPO,
-        # Audio is supported on CUDA only when the active model carries
-        # synchronized audio weights AND the runtime allows it.
-        "audio_supported": (
-            LTX_ALLOW_AUDIO
-            and any(spec.get("synchronized_audio") for spec in VIDEO_MODEL_REGISTRY.values())
-            and _get_pooled_vram_gb() >= 24
-        ),
+        "audio_supported": audio_capable,
     }
 
 
 @app.get("/capabilities")
 async def capabilities():
-    """WS2-C (#929) — Runtime capability report.
+    """Runtime capability report (Issues #929 / #939).
 
-    Surfaces detected dual-GPU sharding state, max-frame tier, available
-    audio modes, and the env-var configuration that drove the decisions.
-    Consumed by the admin UI (`ui/app/admin/models/`) so users can see
-    what their hardware is actually capable of without reading logs.
+    Flat schema consumed by the admin UI to render a hardware-aware
+    capabilities panel and pre-flight validate generation requests.
+    `audio_modes` reflects what the *runtime* supports right now:
+
+    * ``off``   — always present.
+    * ``auto``  — only when the v2a sidecar (port 5012) responds to /health.
+    * ``music`` — only when the music sidecar (port 5009) responds to /health.
+    * ``native`` — only when LTX-2 weights are in the registry, LTX_ALLOW_AUDIO=1,
+      and pooled VRAM ≥ 24 GB.
     """
     _ensure_torch()
     cuda_available = bool(torch.cuda.is_available())
     device_count = torch.cuda.device_count() if cuda_available else 0
     pooled_vram = _get_pooled_vram_gb() if cuda_available else 0
-    pooling_active = _is_pooling_active()
-    per_device = []
+    pooling_active = _is_pooling_active() if cuda_available else False
+
+    gpus = []
     if cuda_available:
         for i in range(device_count):
             try:
-                free, total = torch.cuda.mem_get_info(i)
-                per_device.append({
+                _free, total = torch.cuda.mem_get_info(i)
+                gpus.append({
                     "index": i,
                     "name": torch.cuda.get_device_name(i),
-                    "total_gb": int(total / 1024**3),
-                    "free_gb": int(free / 1024**3),
+                    "vram_gb": round(total / 1024**3, 1),
                 })
             except Exception as exc:
-                # Avoid leaking stack traces to external callers
-                # (CodeQL py/stack-trace-exposure). Log internally instead.
                 logger.warning(f"[capabilities] mem_get_info({i}) failed: {exc}")
-                per_device.append({"index": i, "error": "device_query_failed"})
+                gpus.append({"index": i, "name": "unknown", "vram_gb": 0})
 
+    models = []
+    for key, spec in VIDEO_MODEL_REGISTRY.items():
+        max_frames = _get_max_frames_for_model(key)
+        models.append({
+            "key": key,
+            "max_frames": max_frames,
+            "max_seconds_at_24fps": round(max_frames / 24.0, 2),
+            "synchronized_audio": bool(spec.get("synchronized_audio", False)),
+            "requires_hf_token": bool(spec.get("requires_hf_token", False)),
+            "hf_token_present": bool(
+                os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN")
+            ),
+            # #939 follow-up: see /models for rationale
+            "unavailable": bool(spec.get("unavailable", False)),
+            "unavailable_reason": spec.get("unavailable_reason"),
+        })
+
+    # Best-effort sidecar probes. ``httpx.get`` is sync-friendly here because
+    # we wrap it in a tight timeout; we never want this endpoint to block on
+    # a slow neighbour.
     audio_modes = ["off"]
-    # Post-processing v2a path is always available when the v2a sidecar is
-    # configured; the sidecar URL is owned by the orchestrator, not us.
-    audio_modes.append("auto")
-    if (
-        LTX_ALLOW_AUDIO
-        and pooled_vram >= 24
-        and any(spec.get("synchronized_audio") for spec in VIDEO_MODEL_REGISTRY.values())
+    try:
+        r = httpx.get("http://localhost:5012/health", timeout=0.5)
+        if r.status_code == 200:
+            audio_modes.append("auto")
+    except Exception:
+        pass  # v2a not reachable — omit "auto"
+    try:
+        r = httpx.get("http://localhost:5009/health", timeout=0.5)
+        if r.status_code == 200:
+            audio_modes.append("music")
+    except Exception:
+        pass  # music sidecar not reachable — omit "music"
+    # 2026-04-24: native audio is served by the dedicated ltx2 sidecar on
+    # port 5013 (not by the worker's in-process LTX path). The sidecar is
+    # itself an explicit opt-in (it has to be launched and pass /health),
+    # so we deliberately do NOT gate the native probe behind LTX_ALLOW_AUDIO
+    # — that flag is for the in-process VRAM-pool audio path. If the
+    # sidecar is running and ready, native is available regardless of the
+    # in-process flag's value.
+    if any(
+        spec.get("synchronized_audio") and not spec.get("unavailable")
+        for spec in VIDEO_MODEL_REGISTRY.values()
     ):
-        audio_modes.append("native")
+        try:
+            r = httpx.get("http://localhost:5013/health", timeout=0.5)
+            if r.status_code == 200 and r.json().get("ready"):
+                audio_modes.append("native")
+        except Exception:
+            pass  # ltx2 sidecar not reachable — omit "native"
+
+    pooling_mode_out = LTX_POOLING_MODE if LTX_POOLING_MODE in ("off", "manual", "auto") else "auto"
 
     return {
-        "cuda_available": cuda_available,
-        "device_count": device_count,
+        "gpu_count": device_count,
+        "gpus": gpus,
         "pooled_vram_gb": pooled_vram,
-        "per_device": per_device,
-        "pooling": {
-            "mode": LTX_POOLING_MODE,
-            "active": pooling_active,
-            "transformer_device": LTX_TRANSFORMER_DEVICE if pooling_active else None,
-            "encoder_device": LTX_ENCODER_DEVICE if pooling_active else None,
-            "vae_device": LTX_VAE_DEVICE if pooling_active else None,
-            "min_vram_gb": LTX_POOLING_MIN_VRAM_GB,
-        },
-        "max_frames": {
-            key: _get_max_frames_for_model(key)
-            for key in VIDEO_MODEL_REGISTRY.keys()
-        },
+        "pooling_active": pooling_active,
+        "pooling_mode": pooling_mode_out,
+        "transformer_device": LTX_TRANSFORMER_DEVICE,
+        "encoder_device": LTX_ENCODER_DEVICE,
+        "vae_device": LTX_VAE_DEVICE,
+        "t5_lifecycle": LTX_T5_LIFECYCLE,
+        "t5_lifecycle_resolved": _resolve_t5_lifecycle() if cuda_available else "transient",
+        "models": models,
         "audio_modes": audio_modes,
-        "env": {
-            "LTX_POOLING_MODE": LTX_POOLING_MODE,
-            "LTX_TRANSFORMER_DEVICE": LTX_TRANSFORMER_DEVICE,
-            "LTX_ENCODER_DEVICE": LTX_ENCODER_DEVICE,
-            "LTX_VAE_DEVICE": LTX_VAE_DEVICE,
-            "LTX_POOLING_MIN_VRAM_GB": LTX_POOLING_MIN_VRAM_GB,
-            "LTX_MAX_FRAMES_OVERRIDE": LTX_MAX_FRAMES_OVERRIDE,
-            "LTX_ALLOW_AUDIO": LTX_ALLOW_AUDIO,
-        },
     }
 
 
@@ -1253,6 +1526,19 @@ async def unload():
 async def generate(request: GenerateRequest):
     if state.is_busy:
         raise HTTPException(status_code=409, detail="Worker is busy with another job")
+
+    # #939 follow-up (2026-04-23): reject `unavailable` registry entries
+    # before any work begins so callers get a precise actionable reason
+    # instead of a cryptic from_pretrained() failure inside diffusers.
+    requested_spec = VIDEO_MODEL_REGISTRY.get(request.model, {})
+    if requested_spec.get("unavailable"):
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                f"Model '{request.model}' is currently unavailable: "
+                f"{requested_spec.get('unavailable_reason', 'no reason recorded')}"
+            ),
+        )
 
     # Audio gating (#926, #927):
     #
@@ -1298,267 +1584,22 @@ async def generate(request: GenerateRequest):
     return {"status": "accepted", "job_id": request.job_id}
 
 
-# ── WS2-B (#928): Extended duration via last-frame conditioning ──
-
-class GenerateExtendedRequest(BaseModel):
-    """Generate a video longer than the model's per-clip frame ceiling.
-
-    The worker computes ``ceil(target_duration_sec * fps / max_clip_frames)``
-    sub-clips, generates them sequentially with the **last frame of clip N**
-    used as the ``init_image`` for clip N+1, then concatenates with ffmpeg.
-    Optional 4-frame crossfade between clips smooths the seams.
-    """
-
-    job_id: str
-    prompt: str
-    target_duration_sec: float = Field(gt=0.0, le=120.0)
-    width: int = DEFAULT_WIDTH
-    height: int = DEFAULT_HEIGHT
-    fps: int = DEFAULT_FPS
-    model: str = DEFAULT_MODEL_KEY
-    callback_url: str
-    seed: Optional[int] = None
-    negative_prompt: Optional[str] = None
-    cfg_scale: Optional[float] = None
-    num_inference_steps: Optional[int] = None
-    crossfade: bool = True
-    init_image: Optional[str] = None  # base64 — seeds the first clip
-
-
-@app.post("/generate-extended", status_code=202, dependencies=[Depends(verify_token)])
-async def generate_extended(request: GenerateExtendedRequest):
-    """Accept an extended-duration job and dispatch it asynchronously.
-
-    The actual stitching loop lives in ``run_extended_generation_job`` which
-    reuses ``run_generation_job`` for each sub-clip; that keeps memory
-    behaviour identical to the single-clip path and avoids a parallel
-    generation code-path that would drift out of sync with #927 sharding.
-    """
-    if state.is_busy:
-        raise HTTPException(status_code=409, detail="Worker is busy with another job")
-
-    # Validate model exists and pick its per-clip ceiling.
-    if request.model not in VIDEO_MODEL_REGISTRY:
-        raise HTTPException(status_code=400, detail=f"Unknown model: {request.model}")
-    max_clip_frames = _get_max_frames_for_model(request.model)
-    target_frames = int(request.target_duration_sec * request.fps)
-    num_clips = max(1, math.ceil(target_frames / max_clip_frames))
-    if num_clips > 16:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                f"Requested {request.target_duration_sec}s would need "
-                f"{num_clips} sub-clips (>16). Reduce duration or use a "
-                "model with a higher per-clip frame ceiling."
-            ),
-        )
-
-    asyncio.create_task(run_extended_generation_job(request, max_clip_frames, num_clips))
-    logger.info(
-        f"[ws2b] Extended job {request.job_id} accepted "
-        f"({request.target_duration_sec}s -> {num_clips} sub-clips of "
-        f"{max_clip_frames} frames each)"
-    )
-    return {
-        "status": "accepted",
-        "job_id": request.job_id,
-        "num_clips": num_clips,
-        "max_clip_frames": max_clip_frames,
-        "target_frames": target_frames,
-    }
-
-
-async def run_extended_generation_job(
-    request: GenerateExtendedRequest,
-    max_clip_frames: int,
-    num_clips: int,
-) -> None:
-    """Sequentially generate sub-clips and stitch them with ffmpeg.
-
-    Implementation note: this function intentionally invokes the existing
-    ``run_generation_job`` per clip rather than re-entering the diffusion
-    pipeline directly. That preserves all the OOM, sharding, and progress
-    callback behaviour from the single-clip path. The trade-off is that
-    we incur per-clip async overhead, but for jobs measured in seconds-
-    of-video this is negligible.
-    """
-    output_paths: list[str] = []
-    last_frame_b64: Optional[str] = request.init_image
-    try:
-        await state.set_busy(True)
-        for clip_idx in range(num_clips):
-            clip_job_id = f"{request.job_id}__clip{clip_idx}"
-            sub_request = GenerateRequest(
-                job_id=clip_job_id,
-                type="img2video" if last_frame_b64 else "txt2video",
-                prompt=request.prompt,
-                width=request.width,
-                height=request.height,
-                num_frames=max_clip_frames,
-                fps=request.fps,
-                model=request.model,
-                callback_url=request.callback_url,
-                init_image=last_frame_b64,
-                seed=(request.seed + clip_idx) if request.seed is not None else None,
-                negative_prompt=request.negative_prompt,
-                cfg_scale=request.cfg_scale,
-                num_inference_steps=request.num_inference_steps,
-            )
-            await run_generation_job(sub_request)
-            result = _job_results.get(clip_job_id)
-            if not result or "video_path" not in result:
-                raise RuntimeError(
-                    f"Sub-clip {clip_idx} produced no output (job_id={clip_job_id})"
-                )
-            output_paths.append(result["video_path"])
-            # Extract the final frame for the next clip's seed image.
-            if clip_idx < num_clips - 1:
-                last_frame_b64 = _extract_last_frame_b64(result["video_path"])
-
-        # Concatenate the produced clips.
-        safe_jid = _safe_job_id(request.job_id)
-        final_path = os.path.join(
-            tempfile.gettempdir(), f"extended_{safe_jid}.mp4"
-        )
-        _concat_clips(output_paths, final_path, crossfade=request.crossfade, fps=request.fps)
-        _store_result(request.job_id, {
-            "status": "completed",
-            "video_path": final_path,
-            "num_clips": num_clips,
-            "duration_sec": request.target_duration_sec,
-        })
-        # Notify orchestrator
-        try:
-            if request.callback_url:
-                safe_url = validate_callback_url(request.callback_url)
-                async with httpx.AsyncClient(timeout=30.0) as client:
-                    await client.post(
-                        safe_url,
-                        json={
-                            "job_id": safe_jid,
-                            "status": "completed",
-                            "video_path": final_path,
-                            "extended": True,
-                        },
-                    )
-        except Exception as exc:
-            logger.warning(f"[ws2b] Callback POST failed: {exc}")
-    except Exception as exc:
-        logger.exception(f"[ws2b] Extended job {request.job_id} failed")
-        # Generic message to external callers; full trace stays in the log
-        # (CodeQL py/stack-trace-exposure).
-        _store_result(request.job_id, {"status": "failed", "error": "job failed; see worker logs"})
-        try:
-            if request.callback_url:
-                safe_url = validate_callback_url(request.callback_url)
-                async with httpx.AsyncClient(timeout=30.0) as client:
-                    await client.post(
-                        safe_url,
-                        json={
-                            "job_id": request.job_id,
-                            "status": "failed",
-                            "error": "job failed; see worker logs",
-                        },
-                    )
-        except Exception:
-            pass
-    finally:
-        await state.set_busy(False)
-
-
-def _extract_last_frame_b64(video_path: str) -> str:
-    """Use ffmpeg to grab the last frame as base64-encoded PNG bytes."""
-    safe_in = _safe_subprocess_path(video_path)
-    out_png = os.path.join(tempfile.gettempdir(), f"lastframe_{int(time.time()*1000)}.png")
-    cmd = [
-        "ffmpeg", "-y", "-sseof", "-0.1", "-i", safe_in,
-        "-update", "1", "-q:v", "1", out_png,
-    ]
-    subprocess.run(cmd, check=True, capture_output=True)
-    with open(out_png, "rb") as f:
-        data = f.read()
-    try:
-        os.remove(out_png)
-    except OSError:
-        pass
-    return base64.b64encode(data).decode("ascii")
-
-
-def _concat_clips(input_paths: list[str], output_path: str, *, crossfade: bool, fps: int) -> None:
-    """Concatenate ``input_paths`` into ``output_path``.
-
-    With ``crossfade=False`` we use the lossless concat demuxer. With
-    ``crossfade=True`` we apply a 4-frame xfade between successive clips
-    using the filter graph; this re-encodes but smooths discontinuities at
-    the seams (#928 acceptance criterion).
-    """
-    if not input_paths:
-        raise ValueError("input_paths cannot be empty")
-    # Confine every input path to an allowed root before passing to ffmpeg
-    # (CodeQL py/path-injection + py/command-line-injection sanitizer).
-    safe_inputs = [_safe_subprocess_path(p) for p in input_paths]
-    safe_output = _safe_subprocess_path(os.path.dirname(output_path) or ".")
-    # Re-join filename onto the validated directory so the output stays inside.
-    safe_out_path = os.path.join(safe_output, os.path.basename(output_path))
-    if len(safe_inputs) == 1 or not crossfade:
-        list_path = safe_out_path + ".concat.txt"
-        with open(list_path, "w", encoding="utf-8") as f:
-            for p in safe_inputs:
-                # ffmpeg concat list format: posix forward slashes, escaped quotes.
-                safe = p.replace("'", "\\'")
-                f.write(f"file '{safe}'\n")
-        cmd = [
-            "ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", list_path,
-            "-c", "copy", safe_out_path,
-        ]
-        try:
-            subprocess.run(cmd, check=True, capture_output=True)
-        finally:
-            try:
-                os.remove(list_path)
-            except OSError:
-                pass
-        return
-
-    # Crossfade variant: chain xfade filters. Duration = 4 frames in seconds.
-    xfade_dur = 4.0 / float(max(fps, 1))
-    inputs: list[str] = []
-    for p in safe_inputs:
-        inputs.extend(["-i", p])
-    # Build filter graph.
-    n = len(safe_inputs)
-    parts: list[str] = []
-    last_label = "[0:v]"
-    cumulative_offset = 0.0
-    for i in range(1, n):
-        # Need clip duration to set xfade offset.
-        clip_dur = _probe_duration(safe_inputs[i - 1])
-        cumulative_offset += clip_dur - xfade_dur
-        out_label = f"[v{i}]"
-        parts.append(
-            f"{last_label}[{i}:v]xfade=transition=fade:duration={xfade_dur}:offset={cumulative_offset}{out_label}"
-        )
-        last_label = out_label
-    filter_graph = ";".join(parts)
-    cmd = [
-        "ffmpeg", "-y", *inputs,
-        "-filter_complex", filter_graph,
-        "-map", last_label,
-        "-pix_fmt", "yuv420p",
-        safe_out_path,
-    ]
-    subprocess.run(cmd, check=True, capture_output=True)
-
-
-def _probe_duration(video_path: str) -> float:
-    """Return clip duration in seconds via ffprobe."""
-    safe_in = _safe_subprocess_path(video_path)
-    cmd = [
-        "ffprobe", "-v", "error", "-show_entries", "format=duration",
-        "-of", "default=noprint_wrappers=1:nokey=1", safe_in,
-    ]
-    out = subprocess.run(cmd, check=True, capture_output=True, text=True)
-    return float(out.stdout.strip())
+# ── Removed: /generate-extended (Issue #939) ──────────────────────
+# The orchestrator (`src/queue/queue-master.ts`) handles extended-duration
+# decomposition by submitting a sequence of standard /generate jobs with
+# `init_image` chained to the prior clip's last frame, then stitching with
+# ffmpeg client-side. Worker-side stitching has been removed because it
+# duplicated the orchestrator path and was never invoked.
+# A follow-up issue tracks moving stitching back into the worker for lower
+# IPC overhead if profiling justifies it.
+#
+# ── Removed: /generate-extended (Issue #939) ──────────────────────
+# Worker-side stitching has been removed. The orchestrator
+# (`src/queue/queue-master.ts`) decomposes extended-duration jobs into a
+# sequence of standard /generate calls, chains the prior clip's last frame
+# via the existing /last-frame endpoint, and stitches with ffmpeg client-
+# side. The server-side path duplicated that work and was never wired.
+# Follow-up: track lower-IPC worker-side stitching as a future enhancement.
 
 
 # ── Entrypoint ─────────────────────────────────────────────────

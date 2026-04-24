@@ -86,7 +86,9 @@ if [ "$GPU_COUNT" -ge 2 ]; then
     LIPSYNC_GPU_INDEX="${LIPSYNC_GPU_INDEX:-1}"
     SADTALKER_GPU_INDEX="${SADTALKER_GPU_INDEX:-1}"
     MUSIC_GPU_INDEX="${MUSIC_GPU_INDEX:-0}"
-    echo "Multi-GPU pinning: image-gen=$IMAGE_GEN_GPU_INDEX, audio=$AUDIO_GPU_INDEX, worker=$WORKER_GPU_INDEX, lipsync=$LIPSYNC_GPU_INDEX, sadtalker=$SADTALKER_GPU_INDEX, music=$MUSIC_GPU_INDEX"
+    V2A_GPU_INDEX="${V2A_GPU_INDEX:-0}"
+    LTX2_GPU_INDEX="${LTX2_GPU_INDEX:-1}"
+    echo "Multi-GPU pinning: image-gen=$IMAGE_GEN_GPU_INDEX, audio=$AUDIO_GPU_INDEX, worker=$WORKER_GPU_INDEX, lipsync=$LIPSYNC_GPU_INDEX, sadtalker=$SADTALKER_GPU_INDEX, music=$MUSIC_GPU_INDEX, v2a=$V2A_GPU_INDEX, ltx2=$LTX2_GPU_INDEX"
 else
     IMAGE_GEN_GPU_INDEX="${IMAGE_GEN_GPU_INDEX:-0}"
     AUDIO_GPU_INDEX="${AUDIO_GPU_INDEX:-0}"
@@ -94,10 +96,27 @@ else
     LIPSYNC_GPU_INDEX="${LIPSYNC_GPU_INDEX:-0}"
     SADTALKER_GPU_INDEX="${SADTALKER_GPU_INDEX:-0}"
     MUSIC_GPU_INDEX="${MUSIC_GPU_INDEX:-0}"
+    V2A_GPU_INDEX="${V2A_GPU_INDEX:-0}"
+    LTX2_GPU_INDEX="${LTX2_GPU_INDEX:-0}"
 fi
 
-# Kill any existing sidecar processes
-for port in 5005 5006 5007 5009 5010 5011; do
+# ── Worker pooling visibility (Issue #939) ──────────────────
+# When WORKER_POOLING_MODE=auto (default) and ≥2 GPUs are present, expose ALL
+# GPUs to the LTX worker so its `_is_pooling_active()` check can shard the
+# transformer/encoder/VAE across them. When set to 'off', fall back to the
+# single-GPU pin via WORKER_GPU_INDEX. The worker still honours
+# LTX_POOLING_MODE inside the process; this just controls what it can see.
+WORKER_POOLING_MODE="${WORKER_POOLING_MODE:-auto}"
+if [ "$WORKER_POOLING_MODE" = "auto" ] && [ "$GPU_COUNT" -ge 2 ]; then
+    WORKER_CUDA_VISIBLE="0,1"
+    echo "  worker pooling=auto → CUDA_VISIBLE_DEVICES=$WORKER_CUDA_VISIBLE (both GPUs visible)"
+else
+    WORKER_CUDA_VISIBLE="$WORKER_GPU_INDEX"
+    echo "  worker pooling=$WORKER_POOLING_MODE → CUDA_VISIBLE_DEVICES=$WORKER_CUDA_VISIBLE (single-GPU pin)"
+fi
+
+# Kill any existing sidecar processes (5012=v2a/MMAudio, 5013=ltx2 native)
+for port in 5005 5006 5007 5009 5010 5011 5012 5013; do
     pid=$(lsof -ti :$port 2>/dev/null || true)
     if [ -n "$pid" ]; then
         echo "Killing existing process on port $port (PID: $pid)"
@@ -133,8 +152,8 @@ if [ "${SKIP_WORKER:-0}" = "1" ]; then
     echo "Skipping Video Worker sidecar (SKIP_WORKER=1)"
     VID_PID=""
 else
-    echo "Starting Video Worker sidecar (port 5007, GPU $WORKER_GPU_INDEX)..."
-    setsid bash -c "cd '$SIDECARS_DIR/worker' && source venv/bin/activate && CUDA_VISIBLE_DEVICES='$WORKER_GPU_INDEX' HF_TOKEN='${HF_TOKEN:-}' CALLBACK_SECRET='${CALLBACK_SECRET:-}' LTX_MODEL_KEY='${LTX_MODEL_KEY:-ltxv-13b-097-distilled}' exec python server_cuda.py --port 5007 >> '$LOG_DIR/worker-cuda.log' 2>&1" &
+    echo "Starting Video Worker sidecar (port 5007, GPU(s) $WORKER_CUDA_VISIBLE, pooling=$WORKER_POOLING_MODE)..."
+    setsid bash -c "cd '$SIDECARS_DIR/worker' && source venv/bin/activate && CUDA_VISIBLE_DEVICES='$WORKER_CUDA_VISIBLE' HF_TOKEN='${HF_TOKEN:-}' CALLBACK_SECRET='${CALLBACK_SECRET:-}' LTX_MODEL_KEY='${LTX_MODEL_KEY:-ltxv-13b-097-distilled}' LTX_POOLING_MODE='${LTX_POOLING_MODE:-auto}' exec python server_cuda.py --port 5007 >> '$LOG_DIR/worker-cuda.log' 2>&1" &
     VID_PID=$!
     echo "$VID_PID" > "$PID_DIR/worker.pid"
     echo "  PID: $VID_PID"
@@ -178,6 +197,38 @@ else
     LIP_PID=""
 fi
 
+# ── Video-to-Audio / MMAudio (port 5012, Issue #925/#939) ──
+# Post-processing audio sidecar. The orchestrator dispatches generated
+# silent videos here when audio_mode=auto. CUDA-only.
+if [ -d "$SIDECARS_DIR/v2a" ]; then
+    echo "Starting v2a (MMAudio) sidecar (port 5012, GPU $V2A_GPU_INDEX)..."
+    setsid bash -c "cd '$SIDECARS_DIR/v2a' && source venv/bin/activate && CUDA_VISIBLE_DEVICES='$V2A_GPU_INDEX' HF_TOKEN='${HF_TOKEN:-}' WORKER_SECRET_TOKEN='${CALLBACK_SECRET:-}' exec python server_cuda.py --port 5012 >> '$LOG_DIR/v2a-cuda.log' 2>&1" &
+    V2A_PID=$!
+    echo "$V2A_PID" > "$PID_DIR/v2a.pid"
+    echo "  PID: $V2A_PID"
+else
+    echo "v2a sidecar not deployed (skipping port 5012)"
+    V2A_PID=""
+fi
+
+# ── LTX-2 Native Audio+Video (port 5013, follow-up to PR #940) ──
+# Wraps the upstream `ltx_pipelines.distilled` CLI from Lightricks/LTX-2.
+# Provisioned separately via `bash sidecars/ltx2/setup.sh` because the
+# upstream package is NOT on PyPI and must be installed via uv from a
+# git checkout. The sidecar's own venv (this repo's `sidecars/ltx2/venv`)
+# only needs FastAPI + httpx; the heavy upstream venv lives at
+# ~/openzigs-sidecars/ltx2-src/.venv and is invoked per-job via subprocess.
+if [ -d "$SIDECARS_DIR/ltx2" ]; then
+    echo "Starting ltx2 (native audio+video) sidecar (port 5013, GPU $LTX2_GPU_INDEX)..."
+    setsid bash -c "cd '$SIDECARS_DIR/ltx2' && source venv/bin/activate && CUDA_VISIBLE_DEVICES='$LTX2_GPU_INDEX' WORKER_SECRET_TOKEN='${CALLBACK_SECRET:-}' exec python server_cuda.py --port 5013 >> '$LOG_DIR/ltx2-cuda.log' 2>&1" &
+    LTX2_PID=$!
+    echo "$LTX2_PID" > "$PID_DIR/ltx2.pid"
+    echo "  PID: $LTX2_PID"
+else
+    echo "ltx2 sidecar not deployed (skipping port 5013); run sidecars/ltx2/setup.sh"
+    LTX2_PID=""
+fi
+
 # ── SadTalker / Talking Head (port 5011) ────────────────────
 if [ "${SKIP_SADTALKER:-0}" = "1" ]; then
     echo "Skipping SadTalker sidecar (SKIP_SADTALKER=1)"
@@ -201,7 +252,7 @@ echo ""
 echo "Waiting for sidecars to become ready..."
 sleep 8
 
-for entry in "5005:Image Gen" "5006:Audio" "5007:Video Worker" "5009:Music (ACE-Step)" "5010:Lip Sync (LatentSync)" "5011:SadTalker"; do
+for entry in "5005:Image Gen" "5006:Audio" "5007:Video Worker" "5009:Music (ACE-Step)" "5010:Lip Sync (LatentSync)" "5011:SadTalker" "5012:v2a (MMAudio)" "5013:ltx2 (LTX-2 native)"; do
     port="${entry%%:*}"
     name="${entry##*:}"
     if curl -sf "http://localhost:$port/health" > /dev/null 2>&1; then
@@ -212,7 +263,7 @@ for entry in "5005:Image Gen" "5006:Audio" "5007:Video Worker" "5009:Music (ACE-
 done
 
 echo ""
-echo "Sidecar PIDs: image-gen=$IMG_PID, audio=$AUD_PID, worker=$VID_PID${MUS_PID:+, music=$MUS_PID}${LIP_PID:+, lipsync=$LIP_PID}${SAD_PID:+, sadtalker=$SAD_PID}"
-echo "Logs: $LOG_DIR/{image-gen,audio,worker,music,lipsync,sadtalker}-cuda.log"
+echo "Sidecar PIDs: image-gen=$IMG_PID, audio=$AUD_PID, worker=$VID_PID${MUS_PID:+, music=$MUS_PID}${LIP_PID:+, lipsync=$LIP_PID}${SAD_PID:+, sadtalker=$SAD_PID}${V2A_PID:+, v2a=$V2A_PID}${LTX2_PID:+, ltx2=$LTX2_PID}"
+echo "Logs: $LOG_DIR/{image-gen,audio,worker,music,lipsync,sadtalker,v2a,ltx2}-cuda.log"
 echo ""
-echo "To stop all: kill $IMG_PID $AUD_PID $VID_PID${MUS_PID:+ $MUS_PID}${LIP_PID:+ $LIP_PID}${SAD_PID:+ $SAD_PID}"
+echo "To stop all: kill $IMG_PID $AUD_PID $VID_PID${MUS_PID:+ $MUS_PID}${LIP_PID:+ $LIP_PID}${SAD_PID:+ $SAD_PID}${V2A_PID:+ $V2A_PID}${LTX2_PID:+ $LTX2_PID}"

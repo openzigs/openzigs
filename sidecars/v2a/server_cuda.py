@@ -1,23 +1,44 @@
-"""
-Video-to-Audio (v2a) Worker Sidecar — MMAudio
-WS1-A (#925): Generates a synchronized audio track for an existing silent
-video clip. Wraps `hkchengrex/MMAudio` (MIT-licensed) so the orchestrator
-can post-process LTX-Video clips with realistic foley + ambient sound.
+﻿"""
+Video-to-Audio (v2a) Worker Sidecar â€” MMAudio
+WS1-A (#925) / Issue #939 gap D rewrite.
+
+Generates a synchronized audio track for an existing silent video clip
+by wrapping `hkchengrex/MMAudio` (MIT-licensed). The orchestrator's
+QueueMaster awaits this sidecar's `/generate` response synchronously and
+persists ``audio_status: "failed"`` on any non-200 â€” so this server MUST
+return clear, actionable errors when the model is missing rather than
+silently accepting a job it can't run.
+
+History (read this before changing the loader):
+  Pre-2026-04-23 versions used ``diffusers.DiffusionPipeline.from_pretrained(
+  "hkchengrex/MMAudio", trust_remote_code=True)``. That repo has no
+  ``model_index.json``, so that loader has *never* succeeded at runtime â€”
+  the orchestrator's old fire-and-forget call masked the failure. This
+  module now uses the upstream `mmaudio` package's documented loader from
+  https://github.com/hkchengrex/MMAudio (`demo.py`).
+
+  If the `mmaudio` package fails to import (e.g., Windows users without
+  flash-attn / WSL host without the optional dep), the server still
+  starts and the `/generate` endpoint returns HTTP 503 with an
+  actionable installation hint. That is the documented graceful-degrade
+  contract: the orchestrator marks the job ``audio_status: "failed"``
+  with a clear error, and the silent-fail bug never returns.
 
 HTTP API:
-  GET  /health         — health + busy state
-  GET  /gpu-info       — device count, VRAM, idle status
-  POST /unload         — free VRAM (called by QueueMaster between jobs)
-  POST /generate       — submit a v2a job (returns 202 + job_id)
-  GET  /status/{job_id}— poll job status
+  GET  /health         â€” health + busy state + mmaudio import status
+  GET  /gpu-info       â€” device count, VRAM, idle status
+  POST /unload         â€” free VRAM (called by QueueMaster between jobs)
+  POST /generate       â€” submit a v2a job (returns 202 + job_id when MMAudio
+                          is available; 503 with `error` field otherwise so
+                          the orchestrator can persist audio_status=failed)
+  GET  /status/{job_id}â€” poll job status
 
 Port: 5012 (default; configurable via PORT env var).
 
 License notes:
   - MMAudio: MIT (https://github.com/hkchengrex/MMAudio)
-  - We never bundle the weights; they are downloaded from HF on first
-    inference into the standard HF cache. The user is responsible for
-    accepting any HF-side license click-throughs.
+  - Weights are downloaded automatically by the upstream package on first
+    use into the standard MMAudio cache directory.
 """
 
 from __future__ import annotations
@@ -49,21 +70,20 @@ logging.basicConfig(
 logger = logging.getLogger("v2a-sidecar")
 
 
-# ── Configuration ───────────────────────────────────────────
+# â”€â”€ Configuration â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-DEFAULT_MODEL = os.getenv("V2A_MODEL", "hkchengrex/MMAudio")
+# Variant matching the upstream `all_model_cfg` keys: small_16k, small_44k,
+# medium_44k, large_44k, large_44k_v2.  Default to small_44k for 6 GB GPU
+# headroom (RTX 3060). large_44k_v2 is recommended on 12 GB+.
+DEFAULT_VARIANT = os.getenv("V2A_VARIANT", "small_44k")
 DEFAULT_DURATION_SEC = float(os.getenv("V2A_DEFAULT_DURATION", "8.0"))
 MAX_DURATION_SEC = float(os.getenv("V2A_MAX_DURATION", "30.0"))
+DEFAULT_NUM_STEPS = int(os.getenv("V2A_NUM_STEPS", "25"))
+DEFAULT_CFG_STRENGTH = float(os.getenv("V2A_CFG_STRENGTH", "4.5"))
 IDLE_TIMEOUT_SEC = int(os.getenv("V2A_IDLE_TIMEOUT", "300"))
 SECRET_TOKEN = os.getenv("WORKER_SECRET_TOKEN") or os.getenv("V2A_SECRET_TOKEN")
 
-# ── GPU placement (mirrors `sidecars/worker/server_cuda.py`) ──────────
-# V2A_DEVICE      — explicit override (e.g. "cuda:0", "cuda:1"). Empty = auto.
-# V2A_PREFER_LARGER_GPU — when 1 (default) and >1 GPUs are visible, place the
-#                          model on the device with the most total VRAM.
-# V2A_FALLBACK_TO_CPU   — kept for parity with worker; the v2a sidecar is
-#                          CUDA-only by design and will RuntimeError if no
-#                          CUDA is available regardless of this flag.
+# â”€â”€ GPU placement (mirrors `sidecars/worker/server_cuda.py`) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 V2A_DEVICE_OVERRIDE: str = os.getenv("V2A_DEVICE", "").strip()
 V2A_PREFER_LARGER_GPU: bool = os.getenv("V2A_PREFER_LARGER_GPU", "1").strip() in (
     "1", "true", "True",
@@ -73,8 +93,6 @@ V2A_FALLBACK_TO_CPU: bool = os.getenv("V2A_FALLBACK_TO_CPU", "0").strip() in (
 )
 
 # Containment roots for user-supplied video paths and tempfile outputs.
-# Any path that does not resolve under one of these roots is rejected with
-# HTTP 400 to defeat path-traversal (CodeQL py/path-injection sanitizer).
 _DEFAULT_RENDER_ROOT = os.path.expanduser("~/.openzigs/renders")
 ALLOWED_VIDEO_ROOTS: tuple[Path, ...] = tuple(
     Path(p).resolve()
@@ -84,18 +102,19 @@ ALLOWED_VIDEO_ROOTS: tuple[Path, ...] = tuple(
     )
 )
 _JOB_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
-# Hard-coded loopback hostnames are an explicit allow-list for callback URLs
-# (CodeQL py/full-ssrf sanitizer pattern).
 _ALLOWED_CALLBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
 
-# Lazy imports — torch/diffusers are huge and only needed at inference time.
+# Lazy state â€” torch/mmaudio are heavy, only loaded when first needed.
 torch = None
-_pipeline = None
+_pipeline = None  # tuple: (net, feature_utils, seq_cfg, dtype, device)
 _pipeline_load_lock = threading.Lock()
 _last_used_at: float = 0.0
 
-# Resolved device + reason are populated lazily by `_get_selected_device()`
-# the first time torch is loaded. Tests reset these via the helper below.
+# mmaudio import status. Recorded once at startup (in `_probe_mmaudio()`)
+# so /health can surface the install-or-not state without re-importing.
+_MMAUDIO_AVAILABLE: bool = False
+_MMAUDIO_IMPORT_ERROR: Optional[str] = None
+
 _selected_device: Optional[str] = None
 _selected_device_reason: str = "unset"
 
@@ -111,16 +130,13 @@ def _select_device() -> tuple[str, str]:
     """Pick the CUDA device this sidecar should run on.
 
     Resolution order (mirrors `sidecars/worker/server_cuda.py`):
-      1. ``V2A_DEVICE`` env override → returned verbatim, reason ``env-override``.
-      2. No CUDA available → :class:`RuntimeError` (no silent CPU fallback).
-      3. Single GPU → ``cuda:0`` with reason ``auto``.
-      4. Multiple GPUs and ``V2A_PREFER_LARGER_GPU=1`` → device with the most
+      1. ``V2A_DEVICE`` env override â†’ returned verbatim, reason ``env-override``.
+      2. No CUDA available â†’ :class:`RuntimeError` (no silent CPU fallback).
+      3. Single GPU â†’ ``cuda:0`` with reason ``auto``.
+      4. Multiple GPUs and ``V2A_PREFER_LARGER_GPU=1`` â†’ device with the most
          total VRAM, reason ``auto``.
-      5. Multiple GPUs and ``V2A_PREFER_LARGER_GPU=0`` → ``cuda:0``, reason
+      5. Multiple GPUs and ``V2A_PREFER_LARGER_GPU=0`` â†’ ``cuda:0``, reason
          ``auto``.
-
-    Returns the ``(device, reason)`` pair. ``reason`` is included so the
-    `/gpu-info` endpoint can explain why a device was picked.
     """
     _ensure_torch()
     env_override = os.getenv("V2A_DEVICE", "").strip()
@@ -149,8 +165,6 @@ def _select_device() -> tuple[str, str]:
         try:
             _, total = torch.cuda.mem_get_info(i)
         except Exception as exc:
-            # Older torch builds lack per-device mem_get_info; fall back to
-            # device properties so selection still works.
             logger.debug("[v2a] mem_get_info(%d) failed: %s", i, exc, exc_info=True)
             try:
                 props = torch.cuda.get_device_properties(i)
@@ -168,7 +182,6 @@ def _select_device() -> tuple[str, str]:
 
 
 def _get_selected_device() -> str:
-    """Return the cached selected device, computing it on first call."""
     global _selected_device, _selected_device_reason
     if _selected_device is None:
         _selected_device, _selected_device_reason = _select_device()
@@ -182,13 +195,14 @@ def _get_selected_device() -> str:
 def _get_selected_device_reason() -> str:
     return _selected_device_reason
 
+
 # Job results: in-memory ring buffer.
 _MAX_RESULTS = 64
 _results: dict[str, dict] = {}
 _results_lock = threading.Lock()
 
 
-# ── Security ────────────────────────────────────────────────
+# â”€â”€ Security â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def verify_token(authorization: Optional[str] = Header(None)) -> None:
     if SECRET_TOKEN is None:
@@ -217,7 +231,6 @@ def validate_callback_url(url: str) -> str:
         raise ValueError("URL must have a hostname")
     if host not in _ALLOWED_CALLBACK_HOSTS:
         raise ValueError("Callback host not in allow-list")
-    # Reconstruct from validated parts (breaks the dataflow taint chain).
     port = f":{parsed.port}" if parsed.port else ""
     path = parsed.path or "/"
     query = f"?{parsed.query}" if parsed.query else ""
@@ -241,13 +254,12 @@ def safe_video_path(p: str) -> str:
 
 
 def safe_job_id(jid: str) -> str:
-    """Reject job ids containing characters that could escape filename context."""
     if not _JOB_ID_RE.match(jid):
         raise ValueError("job_id must match ^[A-Za-z0-9_-]{1,128}$")
     return jid
 
 
-# ── Lazy torch + pipeline loader ────────────────────────────
+# â”€â”€ Lazy torch + mmaudio loader â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def _ensure_torch() -> None:
     global torch
@@ -258,8 +270,38 @@ def _ensure_torch() -> None:
             _torch.backends.cudnn.benchmark = True
 
 
-def _load_pipeline():
-    """Load MMAudio on first use; cache for subsequent jobs."""
+def _probe_mmaudio() -> tuple[bool, Optional[str]]:
+    """Try importing the upstream mmaudio package once at startup.
+
+    We deliberately import only the names we'll actually call in the loader
+    so a partial install (e.g. missing flash-attn dependency) reports
+    accurately. The result is cached in ``_MMAUDIO_AVAILABLE`` /
+    ``_MMAUDIO_IMPORT_ERROR`` so /health can surface it without paying
+    the import cost on every request.
+    """
+    try:
+        from mmaudio.eval_utils import (  # noqa: F401
+            ModelConfig, all_model_cfg, generate, load_video,
+        )
+        from mmaudio.model.flow_matching import FlowMatching  # noqa: F401
+        from mmaudio.model.networks import MMAudio, get_my_mmaudio  # noqa: F401
+        from mmaudio.model.utils.features_utils import FeaturesUtils  # noqa: F401
+        return True, None
+    except Exception as exc:
+        return False, f"{type(exc).__name__}: {exc}"
+
+
+def _load_pipeline() -> tuple[Any, Any, Any, Any, str]:
+    """Load MMAudio on first use; cache for subsequent jobs.
+
+    Raises :class:`RuntimeError` with an actionable message when:
+      - the `mmaudio` package isn't importable (graceful degrade);
+      - CUDA isn't available;
+      - the upstream loader fails (model weights download error, etc.).
+
+    The orchestrator translates RuntimeError â†’ audio_status=failed via the
+    /generate handler below, so callers always see an explicit failure.
+    """
     global _pipeline, _last_used_at
     if _pipeline is not None:
         _last_used_at = time.time()
@@ -268,28 +310,55 @@ def _load_pipeline():
         if _pipeline is not None:
             _last_used_at = time.time()
             return _pipeline
-        _ensure_torch()
-        logger.info(f"[v2a] Loading {DEFAULT_MODEL} on CUDA (this is a one-time ~6GB download)...")
-        try:
-            # MMAudio publishes a `pipelines.MMAudioPipeline` style class through
-            # diffusers. We catch ImportError so users without the dep set get a
-            # clear actionable error instead of a stack trace at startup.
-            from diffusers import DiffusionPipeline  # type: ignore
-            pipe = DiffusionPipeline.from_pretrained(
-                DEFAULT_MODEL,
-                torch_dtype=torch.float16,
-                trust_remote_code=True,
+        if not _MMAUDIO_AVAILABLE:
+            raise RuntimeError(
+                "MMAudio is not installed. Install via: "
+                "`pip install -r sidecars/v2a/requirements.txt` "
+                "(this pulls `git+https://github.com/hkchengrex/MMAudio.git`). "
+                f"Import error captured at startup: {_MMAUDIO_IMPORT_ERROR}"
             )
-            device = _get_selected_device()
-            pipe = pipe.to(device)
+        _ensure_torch()
+        from mmaudio.eval_utils import all_model_cfg
+        from mmaudio.model.networks import get_my_mmaudio
+        from mmaudio.model.utils.features_utils import FeaturesUtils
+
+        if DEFAULT_VARIANT not in all_model_cfg:
+            raise RuntimeError(
+                f"Unknown V2A_VARIANT={DEFAULT_VARIANT!r}. "
+                f"Valid values: {sorted(all_model_cfg.keys())}"
+            )
+        model_cfg = all_model_cfg[DEFAULT_VARIANT]
+        device = _get_selected_device()
+        dtype = torch.bfloat16 if torch.cuda.is_available() else torch.float32
+        logger.info(
+            "[v2a] Loading mmaudio variant=%s on %s (dtype=%s). "
+            "Weights will download to the mmaudio cache on first run.",
+            DEFAULT_VARIANT, device, dtype,
+        )
+        try:
+            model_cfg.download_if_needed()
+            seq_cfg = model_cfg.seq_cfg
+            net = get_my_mmaudio(model_cfg.model_name).to(device, dtype).eval()
+            net.load_weights(
+                torch.load(model_cfg.model_path, map_location=device, weights_only=True)
+            )
+            feature_utils = FeaturesUtils(
+                tod_vae_ckpt=model_cfg.vae_path,
+                synchformer_ckpt=model_cfg.synchformer_ckpt,
+                enable_conditions=True,
+                mode=model_cfg.mode,
+                bigvgan_vocoder_ckpt=getattr(model_cfg, "bigvgan_16k_path", None),
+                need_vae_encoder=False,
+            ).to(device, dtype).eval()
         except Exception as exc:
             raise RuntimeError(
-                f"Failed to load MMAudio model '{DEFAULT_MODEL}': {exc}. "
-                "Install with: pip install -r sidecars/v2a/requirements.txt"
+                f"Failed to load MMAudio variant '{DEFAULT_VARIANT}': {exc}. "
+                "Verify your install: `pip install -r sidecars/v2a/requirements.txt` "
+                "and ensure the host has internet access on first run for the ~600MB weight download."
             ) from exc
-        _pipeline = pipe
+        _pipeline = (net, feature_utils, seq_cfg, dtype, device)
         _last_used_at = time.time()
-        logger.info("[v2a] MMAudio pipeline ready")
+        logger.info("[v2a] MMAudio pipeline ready (variant=%s)", DEFAULT_VARIANT)
         return _pipeline
 
 
@@ -308,16 +377,13 @@ def _unload_pipeline() -> None:
             if torch is not None and torch.cuda.is_available():
                 torch.cuda.empty_cache()
         except Exception as exc:
-            # empty_cache() can fail on driver/init edge cases — log and move on
-            # since unload is best-effort.
             logger.debug("[v2a] torch.cuda.empty_cache() failed: %s", exc, exc_info=True)
         logger.info("[v2a] Pipeline unloaded; VRAM freed")
 
 
-# ── Idle-timeout watchdog ───────────────────────────────────
+# â”€â”€ Idle-timeout watchdog â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 async def _idle_unload_watchdog() -> None:
-    """Background task that unloads the model after IDLE_TIMEOUT_SEC of no jobs."""
     while True:
         try:
             await asyncio.sleep(60)
@@ -333,13 +399,23 @@ async def _idle_unload_watchdog() -> None:
             logger.warning(f"[v2a] watchdog error: {exc}")
 
 
-# ── FastAPI App ─────────────────────────────────────────────
+# â”€â”€ FastAPI App â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 from contextlib import asynccontextmanager
 
 
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
+    global _MMAUDIO_AVAILABLE, _MMAUDIO_IMPORT_ERROR
+    _MMAUDIO_AVAILABLE, _MMAUDIO_IMPORT_ERROR = _probe_mmaudio()
+    if _MMAUDIO_AVAILABLE:
+        logger.info("[v2a] mmaudio import probe: OK")
+    else:
+        logger.warning(
+            "[v2a] mmaudio import probe FAILED: %s. /generate will return 503 "
+            "until you `pip install -r sidecars/v2a/requirements.txt`.",
+            _MMAUDIO_IMPORT_ERROR,
+        )
     task = asyncio.create_task(_idle_unload_watchdog())
     try:
         yield
@@ -348,12 +424,10 @@ async def _lifespan(app: FastAPI):
         try:
             await task
         except asyncio.CancelledError:
-            # Expected during graceful shutdown — the watchdog raises this
-            # when its sleep is cancelled.
             logger.debug("[v2a] watchdog cancelled during lifespan shutdown")
 
 
-app = FastAPI(title="OpenZigs v2a Sidecar", version="1.0.0", lifespan=_lifespan)
+app = FastAPI(title="OpenZigs v2a Sidecar", version="2.0.0", lifespan=_lifespan)
 
 
 class GenerateRequest(BaseModel):
@@ -365,6 +439,8 @@ class GenerateRequest(BaseModel):
     negative_prompt: Optional[str] = Field(default=None, max_length=512)
     seed: Optional[int] = None
     callback_url: Optional[str] = None
+    num_steps: Optional[int] = Field(default=None, ge=1, le=100)
+    cfg_strength: Optional[float] = Field(default=None, ge=0.0, le=20.0)
 
 
 def _store(job_id: str, payload: dict) -> None:
@@ -392,55 +468,94 @@ def _resolve_video_input(request: GenerateRequest) -> str:
     return tmp
 
 
+def _generate_audio_sync(
+    request: GenerateRequest, in_video: str, out_audio: str,
+) -> None:
+    """Run the synchronous mmaudio inference. Called via asyncio.to_thread."""
+    from mmaudio.eval_utils import generate as mmaudio_generate, load_video
+    from mmaudio.model.flow_matching import FlowMatching
+
+    net, feature_utils, seq_cfg, dtype, device = _load_pipeline()
+
+    duration = float(request.duration_sec)
+    num_steps = int(request.num_steps or DEFAULT_NUM_STEPS)
+    cfg_strength = float(request.cfg_strength or DEFAULT_CFG_STRENGTH)
+
+    rng = torch.Generator(device=device)
+    if request.seed is not None:
+        rng.manual_seed(int(request.seed))
+    else:
+        rng.manual_seed(int(time.time()) % (2**31))
+
+    fm = FlowMatching(min_sigma=0, inference_mode="euler", num_steps=num_steps)
+
+    # Adjust seq lengths to match the requested duration. The upstream
+    # `seq_cfg` exposes a `duration` setter that recomputes latent / clip
+    # / sync sequence lengths so the network can be `update_seq_lengths`'d
+    # in a single call.
+    seq_cfg.duration = duration
+
+    video_info = load_video(Path(in_video), duration)
+    clip_frames = video_info.clip_frames.unsqueeze(0)
+    sync_frames = video_info.sync_frames.unsqueeze(0)
+
+    # The user's video may be shorter than `duration` (e.g. 3.96s when 4.0s
+    # was requested), in which case `load_video` returns fewer CLIP/sync
+    # frames than `seq_cfg` expects, and the network's
+    # `preprocess_conditions` assertion fires. Re-derive the network's
+    # expected sequence lengths from the *actual* frame counts so they
+    # always match. The latent length scales linearly with CLIP length.
+    actual_clip_len = int(clip_frames.shape[1])
+    actual_sync_len = int(sync_frames.shape[1])
+    expected_clip_len = int(seq_cfg.clip_seq_len)
+    if actual_clip_len != expected_clip_len:
+        ratio = actual_clip_len / max(expected_clip_len, 1)
+        actual_latent_len = max(1, int(round(int(seq_cfg.latent_seq_len) * ratio)))
+        logger.info(
+            "[v2a] Adjusting seq lengths to actual video frames: "
+            "clip %d->%d, sync %d->%d, latent %d->%d",
+            expected_clip_len, actual_clip_len,
+            int(seq_cfg.sync_seq_len), actual_sync_len,
+            int(seq_cfg.latent_seq_len), actual_latent_len,
+        )
+        net.update_seq_lengths(actual_latent_len, actual_clip_len, actual_sync_len)
+    else:
+        net.update_seq_lengths(
+            seq_cfg.latent_seq_len, seq_cfg.clip_seq_len, seq_cfg.sync_seq_len,
+        )
+
+    prompt_text = request.prompt or ""
+    negative_text = request.negative_prompt or ""
+
+    with torch.inference_mode():
+        audios = mmaudio_generate(
+            clip_frames, sync_frames, [prompt_text],
+            negative_text=[negative_text],
+            feature_utils=feature_utils,
+            net=net, fm=fm, rng=rng,
+            cfg_strength=cfg_strength,
+        )
+    audio = audios.float().cpu()[0]
+    sample_rate = int(getattr(seq_cfg, "sampling_rate", 16000))
+
+    # Write 16-bit PCM WAV via torchaudio when available, else stdlib `wave`.
+    try:
+        import torchaudio  # type: ignore
+        if audio.ndim == 1:
+            audio = audio.unsqueeze(0)
+        torchaudio.save(out_audio, audio, sample_rate=sample_rate)
+    except Exception as exc:
+        logger.debug("[v2a] torchaudio.save failed (%s); falling back to wave module", exc)
+        _write_wav_stdlib(audio, out_audio, sample_rate=sample_rate)
+
+
 async def _run_job(request: GenerateRequest) -> None:
     safe_jid = safe_job_id(request.job_id)
     out_audio = os.path.join(tempfile.gettempdir(), f"v2a_{safe_jid}.wav")
     in_video: Optional[str] = None
     try:
         in_video = _resolve_video_input(request)
-        _ensure_torch()
-        pipe = _load_pipeline()
-        generator = None
-        if request.seed is not None and torch is not None:
-            gen_device = _get_selected_device() if torch.cuda.is_available() else "cpu"
-            generator = torch.Generator(device=gen_device)
-            generator.manual_seed(int(request.seed))
-
-        # NOTE: We invoke the pipeline through a generic call signature because
-        # MMAudio's public API has shifted between releases. The adapter below
-        # catches the common variants. If your installed MMAudio version uses
-        # different kwargs, edit this call (it is intentionally isolated).
-        kwargs: dict[str, Any] = {
-            "video_path": in_video,
-            "duration": float(request.duration_sec),
-        }
-        if request.prompt:
-            kwargs["prompt"] = request.prompt
-        if request.negative_prompt:
-            kwargs["negative_prompt"] = request.negative_prompt
-        if generator is not None:
-            kwargs["generator"] = generator
-        try:
-            audio = await asyncio.to_thread(pipe, **kwargs)
-        except TypeError:
-            # Older MMAudio versions take a positional video and `seconds=`.
-            audio = await asyncio.to_thread(
-                pipe, in_video, seconds=float(request.duration_sec)
-            )
-
-        # The pipeline returns either a path, a tensor, or a dict — adapt.
-        if hasattr(audio, "audios"):  # diffusers AudioPipelineOutput
-            arr = audio.audios[0]
-            _write_wav(arr, out_audio, sample_rate=16000)
-        elif isinstance(audio, str) and os.path.isfile(audio):
-            # Confine the source path under tempdir before moving it.
-            src = os.path.realpath(audio)
-            if not src.startswith(os.path.realpath(tempfile.gettempdir()) + os.sep):
-                raise RuntimeError("Pipeline returned a path outside tempdir")
-            os.replace(src, out_audio)
-        else:
-            raise RuntimeError("Unsupported pipeline output type from MMAudio")
-
+        await asyncio.to_thread(_generate_audio_sync, request, in_video, out_audio)
         _store(safe_jid, {"status": "completed", "audio_path": out_audio})
         if request.callback_url:
             try:
@@ -474,33 +589,29 @@ async def _run_job(request: GenerateRequest) -> None:
                         },
                     )
             except Exception as cb_exc:
-                # Best-effort failure callback; if it can't be delivered we
-                # surface it in logs but do not raise (the job is already
-                # recorded as failed in the in-memory ring buffer).
                 logger.warning("[v2a] failure callback failed: %s", cb_exc)
     finally:
-        # Clean up the temporary input only if we materialised it from b64.
         if in_video and request.video_b64:
             try:
-                # Re-validate path containment before unlinking (defence in depth).
                 cleanup = os.path.realpath(in_video)
                 if cleanup.startswith(os.path.realpath(tempfile.gettempdir()) + os.sep):
                     os.remove(cleanup)
             except OSError as exc:
-                # Tempfile cleanup is best-effort — the OS will reap it on
-                # reboot — but we log so users can spot leakage in long runs.
                 logger.debug("[v2a] temp input cleanup failed: %s", exc, exc_info=True)
 
 
-def _write_wav(arr, out_path: str, *, sample_rate: int) -> None:
-    """Persist a 1-D float audio tensor / numpy array as 16-bit PCM WAV."""
+def _write_wav_stdlib(arr, out_path: str, *, sample_rate: int) -> None:
+    """Persist a 1-D float audio tensor / numpy array as 16-bit PCM WAV.
+
+    Used as a fallback when torchaudio is missing. The mmaudio package
+    pulls torchaudio in transitively, so this is rarely hit in practice.
+    """
     import wave
     import struct
     if hasattr(arr, "cpu"):
         arr = arr.cpu().numpy()
     if hasattr(arr, "ndim") and arr.ndim > 1:
         arr = arr[0]
-    # Clamp to [-1, 1] then scale to int16.
     samples = [max(-1.0, min(1.0, float(x))) for x in arr]
     with wave.open(out_path, "wb") as wf:
         wf.setnchannels(1)
@@ -509,7 +620,7 @@ def _write_wav(arr, out_path: str, *, sample_rate: int) -> None:
         wf.writeframes(b"".join(struct.pack("<h", int(s * 32767)) for s in samples))
 
 
-# ── Routes ──────────────────────────────────────────────────
+# â”€â”€ Routes â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @app.get("/health")
 async def health():
@@ -517,7 +628,9 @@ async def health():
         "status": "ok",
         "sidecar": "v2a",
         "loaded": _pipeline is not None,
-        "model": DEFAULT_MODEL,
+        "variant": DEFAULT_VARIANT,
+        "mmaudio_available": _MMAUDIO_AVAILABLE,
+        "mmaudio_import_error": _MMAUDIO_IMPORT_ERROR,
     }
 
 
@@ -528,8 +641,6 @@ async def gpu_info():
         return {"cuda_available": False}
     try:
         device = _get_selected_device()
-        # Parse the index out of "cuda:N" so mem_get_info reports on the
-        # selected GPU rather than always cuda:0.
         try:
             device_index = int(device.split(":", 1)[1]) if ":" in device else 0
         except (ValueError, IndexError):
@@ -543,10 +654,9 @@ async def gpu_info():
             "total_gb": int(total / 1024**3),
             "free_gb": int(free / 1024**3),
             "loaded": _pipeline is not None,
+            "mmaudio_available": _MMAUDIO_AVAILABLE,
         }
     except RuntimeError as exc:
-        # _select_device() raises RuntimeError when CUDA is missing despite
-        # is_available() initially returning true (e.g. driver gone away).
         logger.warning("[v2a] gpu-info: device selection failed: %s", exc)
         return {"cuda_available": False, "error": str(exc)}
     except Exception as exc:
@@ -562,6 +672,38 @@ async def unload():
 
 @app.post("/generate", status_code=202, dependencies=[Depends(verify_token)])
 async def generate(request: GenerateRequest):
+    """Accept a v2a job.
+
+    Issue #939 gap D contract: when MMAudio cannot run for a structural
+    reason (package not installed), reject *synchronously* with HTTP 503
+    + a clear ``error`` body so the orchestrator can persist
+    ``audio_status: "failed"`` immediately. Never accept-then-silently-fail.
+    """
+    if not _MMAUDIO_AVAILABLE:
+        msg = (
+            "MMAudio not installed in the v2a sidecar. "
+            "Run: pip install -r sidecars/v2a/requirements.txt"
+        )
+        if _MMAUDIO_IMPORT_ERROR:
+            msg += f" (import error: {_MMAUDIO_IMPORT_ERROR})"
+        logger.warning("[v2a] /generate rejected: %s", msg)
+        raise HTTPException(status_code=503, detail=msg)
+    try:
+        # Validate inputs synchronously so HTTP 400s come back to the
+        # orchestrator BEFORE we accept the job.
+        safe_job_id(request.job_id)
+        if request.video_path:
+            safe_video_path(request.video_path)
+        elif not request.video_b64:
+            raise HTTPException(
+                status_code=400,
+                detail="Either video_path or video_b64 is required",
+            )
+    except HTTPException:
+        raise
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     asyncio.create_task(_run_job(request))
     logger.info(f"[v2a] Accepted job {request.job_id} (duration={request.duration_sec}s)")
     return {"status": "accepted", "job_id": request.job_id}
@@ -576,7 +718,7 @@ async def status(job_id: str):
     return {"job_id": job_id, **result}
 
 
-# ── Entrypoint ──────────────────────────────────────────────
+# â”€â”€ Entrypoint â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 if __name__ == "__main__":
     import argparse
@@ -586,4 +728,7 @@ if __name__ == "__main__":
     parser.add_argument("--port", type=int, default=int(os.environ.get("PORT", "5012")))
     parser.add_argument("--host", default="0.0.0.0")
     args = parser.parse_args()
+
+    logger.info("[v2a] Starting uvicorn on %s:%d (mmaudio_available=%s)",
+                args.host, args.port, _MMAUDIO_AVAILABLE)
     uvicorn.run(app, host=args.host, port=args.port, log_level="info")

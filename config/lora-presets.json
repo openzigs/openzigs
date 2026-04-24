@@ -16,8 +16,8 @@
       "resolution": 1024
     },
     "flux-dev": {
-      "label": "FLUX.1 dev (768×768)",
-      "description": "FLUX.1 dev — highest quality face fidelity. Requires 4-bit QLoRA on 12 GB cards; bf16 mixed precision.",
+      "label": "FLUX.1 dev (512×512)",
+      "description": "FLUX.1 dev — highest quality face fidelity. 512×512 is the recommended resolution on 12 GB cards (Issue #939); push to 768 only with ≥24 GB pooled VRAM. 4-bit QLoRA + bf16 mixed precision.",
       "baseModel": "flux-dev",
       "rank": 16,
       "loraAlpha": 32,
@@ -26,7 +26,7 @@
       "batchSize": 1,
       "gradientAccumulationSteps": 4,
       "mixedPrecision": "bf16",
-      "resolution": 768
+      "resolution": 512
     },
     "flux-schnell": {
       "label": "FLUX.1 schnell (768×768, 4-step)",

@@ -2174,9 +2174,11 @@ export class QueueMaster extends EventEmitter {
     this.emit("job:complete", updatedJob);
     logger.info(`[QueueMaster] Job ${jobId} complete (type=${job.type})`);
 
-    // WS1-A (#925): post-process video jobs with audio_mode='auto' through
-    // the v2a (MMAudio) sidecar. Fire-and-forget; failures are logged but
-    // never block the original video job's completion semantics.
+    // WS1-A (#925) / Issue #939: post-process video jobs with audio_mode='auto'
+    // through the v2a (MMAudio) sidecar. Failures are surfaced into the job's
+    // result_metadata as `audio_status: "failed"` so the UI can render a
+    // degraded-asset chip; the video itself remains `complete` because the
+    // primary (visual) work succeeded.
     try {
       const audioMode = (job.payload as { audio_mode?: string }).audio_mode;
       const isVideoJob =
@@ -2188,27 +2190,53 @@ export class QueueMaster extends EventEmitter {
         const durationSec = Math.max(1, Math.round(numFrames / fps));
         const audioPrompt = (job.payload as { audio_prompt?: string }).audio_prompt;
         if (videoPath) {
-          void dispatchV2aJob({
+          // Await the dispatch (the call is bounded by v2a-client's own
+          // 10s AbortSignal.timeout) so we know whether to flag the asset
+          // before we move on to the next tick.
+          const v2aResult = await dispatchV2aJob({
             jobId: `${jobId}__v2a`,
             videoPath,
             durationSec,
             prompt: audioPrompt,
             seed: job.payload.seed,
-          }).catch((err) => {
+          }).catch((err) => ({
+            status: "failed" as const,
+            jobId: `${jobId}__v2a`,
+            error: err instanceof Error ? err.message : String(err),
+          }));
+          if (v2aResult.status === "failed") {
             logger.warn(
-              `[QueueMaster] v2a dispatch for ${jobId} threw: ${err instanceof Error ? err.message : String(err)}`,
+              `[QueueMaster] v2a dispatch for ${jobId} failed: ${v2aResult.error ?? "unknown"} — marking asset audio_status=failed`,
             );
-          });
+            this.repo.updateResultMetadata(jobId, {
+              audio_status: "failed",
+              audio_error: v2aResult.error ?? "v2a dispatch failed",
+            });
+            // Re-emit so any UI subscribers see the updated metadata.
+            const refreshed = this.repo.getJob(jobId);
+            if (refreshed) this.emit("job:complete", refreshed);
+          } else if (v2aResult.status === "accepted") {
+            this.repo.updateResultMetadata(jobId, { audio_status: "pending" });
+          }
         } else {
           logger.debug(
             `[QueueMaster] v2a skipped for ${jobId}: no video_path in result metadata`,
           );
+          this.repo.updateResultMetadata(jobId, {
+            audio_status: "skipped",
+            audio_error: "no video_path in worker result",
+          });
         }
       }
     } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
       logger.warn(
-        `[QueueMaster] v2a post-processing hook errored for ${jobId}: ${err instanceof Error ? err.message : String(err)}`,
+        `[QueueMaster] v2a post-processing hook errored for ${jobId}: ${msg}`,
       );
+      this.repo.updateResultMetadata(jobId, {
+        audio_status: "failed",
+        audio_error: msg,
+      });
     }
 
     // Check if entire project is done

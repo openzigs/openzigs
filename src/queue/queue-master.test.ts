@@ -14,6 +14,14 @@ vi.mock("node:fs/promises", () => ({
   },
 }));
 
+// Issue #939: mock the v2a HTTP client so QueueMaster's audio_mode=auto
+// post-completion hook can be tested without a live MMAudio sidecar.
+const dispatchV2aJobMock = vi.fn();
+vi.mock("./v2a-client.js", () => ({
+  dispatchV2aJob: (...args: unknown[]) => dispatchV2aJobMock(...args),
+  v2aHealthCheck: vi.fn(),
+}));
+
 const mockFetch = vi.fn();
 vi.stubGlobal("fetch", mockFetch);
 
@@ -54,6 +62,7 @@ function makeRepo() {
     markDispatched: vi.fn(),
     markComplete: vi.fn(),
     markFailed: vi.fn(),
+    updateResultMetadata: vi.fn(),
     isProjectComplete: vi.fn(() => ({ complete: false, total: 0 })),
     createAsset: vi.fn(() => "asset-1"),
     getAsset: vi.fn((): Record<string, unknown> | null => null),
@@ -1874,6 +1883,149 @@ describe("QueueMaster", () => {
       expect(body.voice).toBe("af_heart");
       // reference_audio should be decoded to a temp file path
       expect(body.ref_audio_path).toBeDefined();
+    });
+  });
+
+  // ── Issue #939 — v2a (MMAudio) post-completion hook ─────────────────
+
+  describe("v2a audio_mode=auto hook (Issue #939)", () => {
+    it("persists audio_status=failed and re-emits job:complete when v2a fails", async () => {
+      const videoJob = makeJob({
+        id: "vid-fail-1",
+        type: "txt2video",
+        status: "dispatched",
+        targetNode: "m2-pro",
+        payload: { prompt: "a robot", audio_mode: "auto", fps: 24, num_frames: 72 },
+      });
+      const completedJob = { ...videoJob, status: "complete" as const };
+      const refreshedJob = {
+        ...completedJob,
+        resultMetadata: {
+          video_path: "/tmp/vid-fail-1.mp4",
+          audio_status: "failed",
+          audio_error: "connection refused",
+        } as Record<string, unknown>,
+      };
+      // Order: handleJobCompletion(get→complete), then post-hook getJob(emit), then refreshed
+      repo.getJob
+        .mockReturnValueOnce(videoJob)
+        .mockReturnValueOnce(completedJob)
+        .mockReturnValueOnce(refreshedJob);
+
+      dispatchV2aJobMock.mockResolvedValue({
+        status: "failed",
+        jobId: "vid-fail-1__v2a",
+        error: "connection refused",
+      });
+
+      mockFetch.mockRejectedValue(new Error(""));
+
+      const completeHandler = vi.fn();
+      qm.on("job:complete", completeHandler);
+
+      await qm.handleJobCompletion("vid-fail-1", {
+        media_type: "video/mp4",
+        metadata: { result_url: "/downloads/vid-fail-1.mp4", video_path: "/tmp/vid-fail-1.mp4" },
+      });
+
+      expect(dispatchV2aJobMock).toHaveBeenCalledTimes(1);
+      expect(repo.updateResultMetadata).toHaveBeenCalledWith(
+        "vid-fail-1",
+        { audio_status: "failed", audio_error: "connection refused" },
+      );
+      // Initial complete + re-emit after the failure flag is set.
+      expect(completeHandler).toHaveBeenCalledTimes(2);
+    });
+
+    it("persists audio_status=pending when v2a accepts the job", async () => {
+      const videoJob = makeJob({
+        id: "vid-ok-1",
+        type: "img2video",
+        status: "dispatched",
+        targetNode: "m2-pro",
+        payload: { prompt: "x", audio_mode: "auto", fps: 24, num_frames: 96 },
+      });
+      const completedJob = { ...videoJob, status: "complete" as const };
+      repo.getJob.mockReturnValueOnce(videoJob).mockReturnValueOnce(completedJob);
+
+      dispatchV2aJobMock.mockResolvedValue({ status: "accepted", jobId: "vid-ok-1__v2a" });
+      mockFetch.mockRejectedValue(new Error(""));
+
+      await qm.handleJobCompletion("vid-ok-1", {
+        media_type: "video/mp4",
+        metadata: { result_url: "/d/vid-ok-1.mp4", video_path: "/tmp/vid-ok-1.mp4" },
+      });
+
+      expect(repo.updateResultMetadata).toHaveBeenCalledWith(
+        "vid-ok-1",
+        { audio_status: "pending" },
+      );
+    });
+
+    it("persists audio_status=skipped when worker returned no video_path", async () => {
+      const videoJob = makeJob({
+        id: "vid-no-path",
+        type: "txt2video",
+        status: "dispatched",
+        payload: { prompt: "x", audio_mode: "auto" },
+      });
+      const completedJob = { ...videoJob, status: "complete" as const };
+      repo.getJob.mockReturnValueOnce(videoJob).mockReturnValueOnce(completedJob);
+
+      mockFetch.mockRejectedValue(new Error(""));
+
+      await qm.handleJobCompletion("vid-no-path", {
+        media_type: "video/mp4",
+        metadata: { result_url: "/d/x.mp4" }, // no video_path
+      });
+
+      expect(dispatchV2aJobMock).not.toHaveBeenCalled();
+      expect(repo.updateResultMetadata).toHaveBeenCalledWith(
+        "vid-no-path",
+        expect.objectContaining({ audio_status: "skipped" }),
+      );
+    });
+
+    it("does not invoke v2a for non-video jobs or audio_mode != 'auto'", async () => {
+      const imgJob = makeJob({ id: "img-1", type: "txt2img", status: "dispatched" });
+      const completedImg = { ...imgJob, status: "complete" as const };
+      repo.getJob.mockReturnValueOnce(imgJob).mockReturnValueOnce(completedImg);
+      mockFetch.mockRejectedValue(new Error(""));
+
+      await qm.handleJobCompletion("img-1", {
+        media_type: "image/png",
+        metadata: { result_url: "/d/img-1.png" },
+      });
+
+      expect(dispatchV2aJobMock).not.toHaveBeenCalled();
+      expect(repo.updateResultMetadata).not.toHaveBeenCalled();
+    });
+
+    it("converts v2a-client thrown errors into audio_status=failed", async () => {
+      const videoJob = makeJob({
+        id: "vid-throw",
+        type: "txt2video",
+        status: "dispatched",
+        payload: { prompt: "x", audio_mode: "auto", fps: 24, num_frames: 72 },
+      });
+      const completedJob = { ...videoJob, status: "complete" as const };
+      repo.getJob
+        .mockReturnValueOnce(videoJob)
+        .mockReturnValueOnce(completedJob)
+        .mockReturnValueOnce(completedJob);
+
+      dispatchV2aJobMock.mockRejectedValue(new Error("ETIMEDOUT"));
+      mockFetch.mockRejectedValue(new Error(""));
+
+      await qm.handleJobCompletion("vid-throw", {
+        media_type: "video/mp4",
+        metadata: { result_url: "/d/v.mp4", video_path: "/tmp/v.mp4" },
+      });
+
+      expect(repo.updateResultMetadata).toHaveBeenCalledWith(
+        "vid-throw",
+        expect.objectContaining({ audio_status: "failed" }),
+      );
     });
   });
 });
