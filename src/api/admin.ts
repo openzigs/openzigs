@@ -3409,6 +3409,28 @@ export const createAdminRouter = ({
 
   // ── Copilot SDK Sessions (Phase 1-4 of Epic #334) ──
   if (copilot) {
+    // Issue #944 — restart the Copilot SDK after a startup failure.
+    router.post("/copilot/restart", async (_req, res) => {
+      if (!copilot.restart) {
+        return res.status(501).json({
+          ok: false,
+          started: false,
+          error: "Copilot wrapper does not support restart",
+        });
+      }
+      try {
+        const result = await copilot.restart();
+        const status = result.ok ? 200 : 503;
+        return res.status(status).json(result);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        logger.error(`Copilot SDK restart failed: ${message}`);
+        return res
+          .status(500)
+          .json({ ok: false, started: false, error: message });
+      }
+    });
+
     // Phase 4: Session analytics (must be before :sessionId routes)
     router.get("/copilot-sessions/analytics", (_req, res) => {
       const analytics = copilot.getSessionAnalytics();

@@ -7,11 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added
+### Added (Epic #941 — Harden Copilot SDK startup)
+
+- **`POST /api/admin/copilot/restart` endpoint (#944):** New admin endpoint that resets `started`/`startFailed`/`lastStartError`/`startPromise` on the `CopilotWrapper` and re-invokes `client.start()`. Returns `{ ok, started, error? }`. Lets operators recover from a transient SDK boot failure without restarting the whole server. Requires the same admin auth as the rest of `/api/admin`.
+- **`copilot.startTimeoutMs` config knob (#942):** Zod-validated number, bounds `1000…120_000`, default `10_000`. Layered through `config/default.json` → `~/.openzigs/config.json` → env, and wired into `CopilotWrapperService` via the constructor option of the same name.
+- **TaskWorker `awaiting_copilot` recovery (#945):** Background tasks that throw `Copilot SDK is unavailable` are no longer permanently failed. Instead they are deferred back to `queued` with an `awaiting_copilot_until` timestamp (`now + 30s`) via the new `TaskEngine.deferForCopilot()` and `TaskRepository.deferForCopilot()` methods. The dequeue path filters out rows whose deferred-until is in the future. Schema migration follows the existing `ALTER TABLE` pattern (new `awaiting_copilot_until TEXT` column).
+- **Copilot CLI Troubleshooting subsection in `docs/USER_GUIDE.md` (#946):** Documents (a) what the new error message means, (b) that `@github/copilot-sdk` bundles its own CLI per [github/copilot-sdk#984](https://github.com/github/copilot-sdk/issues/984), (c) the new restart endpoint, and (d) the configurable startup timeout.
+
+### Fixed (Epic #941)
+
+- **Real `client.start()` errors are now surfaced (#943):** `CopilotWrapperService.doStart()` previously swallowed the underlying error with a bare `catch {}` and `chat()`/`listModels()` returned a generic message. The catch now logs the full detail via Winston with `category: "system"`, stores a `~200 char` truncated copy on a new `lastStartError` field, and surfaces it in every user-facing error message after the literal marker `Copilot SDK is unavailable: …`. Downstream consumers (TaskWorker, future UI banners) can classify recoverable failures by checking for that marker.
+- **Removed hardcoded "CLI version 0.0.394" remediation string (#946):** The wrapper no longer instructs users to upgrade to a specific SDK-bundled CLI version (which is opaque, version-pinned by the SDK, and not user-controllable per [github/copilot-sdk#984](https://github.com/github/copilot-sdk/issues/984)). Replaced with a generic pointer to `docs/USER_GUIDE.md` and the new `/api/admin/copilot/restart` endpoint.
+
+### Added (Epic #948 — LTX GPU pooling, audio delegation & clip duration fixes)
 
 - **LTX-2 sidecar audio delegation:** When the gallery requests `txt2video` with `audio=true` and the active model cannot produce synchronized audio in-process (no 24 GB pooled VRAM, in-process model not the 22B variant), the worker now proxies the job to the dedicated LTX-2 sidecar on `:5013` instead of returning HTTP 400. New env vars `LTX2_SIDECAR_URL`, `LTX2_SIDECAR_TOKEN`, `LTX2_SIDECAR_POLL_INTERVAL_SEC`, `LTX2_SIDECAR_TIMEOUT_SEC`. The path is now ALSO gated behind an explicit `LTX2_SIDECAR_VERIFIED=1` env opt-in because the upstream LTX-2 distilled CLI with `--offload cpu` was observed to produce coloured-noise output on 12 GB single-card hosts (verified by md5-comparing the bundled smoke-test MP4 to a fresh production job — both decoded to rainbow static). `/capabilities` advertises `"native"` in `audio_modes` only when sidecar `/health` reports `ready: true` AND `LTX2_SIDECAR_VERIFIED=1`, and exposes `LTX2_SIDECAR_URL`, `LTX2_SIDECAR_READY`, `LTX2_SIDECAR_VERIFIED`, and `LTX2_SIDECAR_NATIVE_AVAILABLE` in its `env` block.
 
-### Fixed
+### Fixed (Epic #948)
 
 - **Gallery sync-audio gate is no longer permanently closed:** The studio composer used to substring-match `form.model_repo` against `LTX-Video-2`/`ltxv-2-22b` (neither of which appear in the in-app catalog) AND require ≥ 24 GB pooled VRAM. Both checks made the "Sync — Native sync audio (LTX-2 only)" option unselectable on every supported config. The gate now keys off the catalog entry id (`ltx-2*`) and trusts the worker's `audio_modes` array (which already accounts for sidecar readiness). ([ui/app/gallery/page.tsx](ui/app/gallery/page.tsx))
 - **`scripts/ltx2_launch.sh` fixed to launch from the WSL deployment dir** (`~/openzigs-sidecars/ltx2`) — the prior `cd` pointed at a path inside the repo where `server_cuda.py` does not exist (the LTX-2 sidecar source ships outside the repo). Added `scripts/worker_restart.sh` companion script.

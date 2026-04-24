@@ -179,6 +179,8 @@ export type CopilotConfig = {
   defaultWorkingDirectory?: string | null;
   customAgents?: CustomAgentConfig[];
   nativeMcpServers?: Record<string, NativeMcpServerConfig>;
+  /** Timeout in ms for the initial Copilot SDK `client.start()` call. Default 10000. */
+  startTimeoutMs?: number;
 };
 
 export type SentinelAppConfig = {
@@ -553,6 +555,13 @@ const copilotSchema = z
     defaultWorkingDirectory: z.string().nullable().optional().default(null),
     customAgents: z.array(customAgentSchema).optional().default([]),
     nativeMcpServers: nativeMcpServersSchema.optional().default({}),
+    startTimeoutMs: z
+      .number()
+      .int()
+      .min(1000)
+      .max(120_000)
+      .optional()
+      .default(10_000),
   })
   .optional();
 

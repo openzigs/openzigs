@@ -680,7 +680,7 @@ export const ChatView = () => {
       {/* Fallback warning */}
       {fallbackWarning && (
         <div className="border-b border-amber-600/30 bg-amber-500/10 px-5 py-2 text-center text-xs text-amber-700 dark:text-amber-400">
-          Copilot SDK unavailable — using fallback model list. Update your Copilot CLI to v0.0.394+ for full functionality.
+          Copilot SDK unavailable — using fallback model list. See Copilot CLI troubleshooting in <code className="font-mono">docs/USER_GUIDE.md</code>, then have an admin POST <code className="font-mono">/api/admin/copilot/restart</code> to recover.
         </div>
       )}
 

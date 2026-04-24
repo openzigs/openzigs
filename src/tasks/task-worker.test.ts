@@ -1397,4 +1397,74 @@ describe("TaskWorker", () => {
     const chatOptions = mockCopilot.chat.mock.calls[0][1] as { enableSubagents?: boolean };
     expect(chatOptions.enableSubagents).toBeUndefined();
   });
+
+  // ── Issue #945 — Copilot SDK unavailability handling ──
+  it("defers (rather than fails) tasks when chat throws 'Copilot SDK is unavailable'", async () => {
+    const mockCopilot = makeMockCopilot(async function* () {
+      yield "";
+      throw new Error(
+        "Copilot SDK is unavailable: Copilot CLI start timed out after 50ms",
+      );
+    });
+
+    worker = new TaskWorker({
+      engine,
+      copilot: mockCopilot,
+      maxConcurrent: 1,
+      pollIntervalMs: 25,
+      log: silentLog,
+    });
+
+    const task = engine.submit(
+      { trigger: "cron", goal: "Will hit unavailable SDK" },
+      { mode: "background" },
+    );
+
+    const deferredPromise = new Promise<void>((resolve) => {
+      worker.on("task:deferred", () => resolve());
+    });
+
+    worker.start();
+    await deferredPromise;
+
+    const stored = engine.getTask(task.id)!;
+    // Task is back to queued, never marked failed
+    expect(stored.status).toBe("queued");
+    expect(stored.error).toMatch(/Copilot SDK is unavailable/);
+    // Repository row carries the awaiting_copilot_until timestamp
+    const row = db
+      .prepare("SELECT awaiting_copilot_until FROM agent_tasks WHERE id = ?")
+      .get(task.id) as { awaiting_copilot_until: string | null };
+    expect(row.awaiting_copilot_until).not.toBeNull();
+    expect(new Date(row.awaiting_copilot_until!).getTime()).toBeGreaterThan(
+      Date.now() - 1_000,
+    );
+  });
+
+  it("dequeue() skips tasks whose awaiting_copilot_until is in the future", () => {
+    // Use the fixed-clock `now` (set in beforeEach) so the SQL comparison is deterministic.
+    const future = new Date(now.getTime() + 60_000).toISOString();
+    const past = new Date(now.getTime() - 1_000).toISOString();
+
+    const a = repo.insert({ trigger: "cron", goal: "deferred future" });
+    const b = repo.insert({ trigger: "cron", goal: "deferred past" });
+    const c = repo.insert({ trigger: "cron", goal: "ready" });
+
+    repo.deferForCopilot(a.id, future, "still down");
+    repo.deferForCopilot(b.id, past, "was down");
+
+    // Should claim 'b' first (created before c), then 'c', then nothing.
+    const first = repo.dequeue();
+    expect(first).not.toBeNull();
+    expect([b.id, c.id]).toContain(first!.id);
+    const second = repo.dequeue();
+    expect(second).not.toBeNull();
+    const third = repo.dequeue();
+    // 'a' is still deferred into the future, so it must NOT be claimed.
+    expect(third).toBeNull();
+    const claimed = [first!.id, second!.id];
+    expect(claimed).toContain(b.id);
+    expect(claimed).toContain(c.id);
+    expect(claimed).not.toContain(a.id);
+  });
 });

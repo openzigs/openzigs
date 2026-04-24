@@ -25,6 +25,7 @@ import type {
   CompactionEvent,
 } from "./token-tracker.js";
 import { getUserSelectedModel } from "../config/user-model.js";
+import { logger } from "../logging/logger.js";
 
 export type { TokenUsage, TokenUsageEvent, CompactionEvent };
 
@@ -471,6 +472,10 @@ export interface CopilotWrapper {
   getSkillDirectories?(): string[];
   /** Add a skill directory and invalidate cached sessions. */
   addSkillDirectory?(dir: string): void;
+  /** Underlying detail of the most recent startup failure, or null if start succeeded / has not been attempted. */
+  getLastStartError?(): string | null;
+  /** Reset the start state and re-attempt SDK startup. Returns the outcome of the new attempt. */
+  restart?(): Promise<{ ok: boolean; started: boolean; error?: string }>;
 }
 
 export type CopilotWrapperOptions = {
@@ -480,6 +485,8 @@ export type CopilotWrapperOptions = {
   clientId?: string;
   model?: string;
   authTimeoutMs?: number;
+  /** Timeout in ms for the initial Copilot SDK `client.start()` call. Default 10_000. */
+  startTimeoutMs?: number;
   maxToolsPerRequest?: number;
   onToolCall?: (tool: string, args: unknown) => Promise<void>;
   onPermissionRequest?: PermissionRequestHandler;
@@ -681,7 +688,9 @@ export class CopilotWrapperService
   private authTimeoutMs: number;
   private started = false;
   private startFailed = false;
+  private lastStartError: string | null = null;
   private startPromise?: Promise<void>;
+  private startTimeoutMs: number;
   private pendingAuth?: Promise<AuthState>;
   private toolCallHandler?: (tool: string, args: unknown) => Promise<void>;
   private permissionHandler?: PermissionRequestHandler;
@@ -714,7 +723,7 @@ export class CopilotWrapperService
     lifecycleEvents: [],
     lastUpdated: new Date().toISOString(),
   };
-  private lifecycleUnsubscribe?: () => void; // retained for future teardown
+  private lifecycleUnsubscribe?: () => void;
   readonly tokenTracker = new TokenTracker();
   private memoryContextProvider?: () => Promise<string | null>;
 
@@ -725,6 +734,7 @@ export class CopilotWrapperService
     clientId = process.env.GITHUB_CLIENT_ID ?? "",
     model = "gpt-4.1",
     authTimeoutMs = 5 * 60 * 1000,
+    startTimeoutMs = 10_000,
     maxToolsPerRequest = 30,
     sendAndWaitTimeoutMs = 15 * 60 * 1000, // 15 minutes — browser automation needs room
     onToolCall,
@@ -747,6 +757,7 @@ export class CopilotWrapperService
     this.clientId = clientId;
     this.model = model;
     this.authTimeoutMs = authTimeoutMs;
+    this.startTimeoutMs = startTimeoutMs;
     this.maxToolsPerRequest = maxToolsPerRequest;
     this.sendAndWaitTimeoutMs = sendAndWaitTimeoutMs;
     this.toolCallHandler = onToolCall;
@@ -902,9 +913,13 @@ export class CopilotWrapperService
     await this.ensureStarted();
 
     if (this.startFailed) {
+      const detail = this.lastStartError
+        ? `: ${this.lastStartError}`
+        : "";
       throw new Error(
-        "Copilot SDK is unavailable. The Copilot CLI may be outdated or missing. " +
-          "Please update your GitHub Copilot extension to get CLI version 0.0.394 or later.",
+        `Copilot SDK is unavailable${detail}. ` +
+          "See Copilot CLI troubleshooting in docs/USER_GUIDE.md, " +
+          "or POST /api/admin/copilot/restart after fixing the underlying issue.",
       );
     }
 
@@ -1102,7 +1117,11 @@ export class CopilotWrapperService
   async listModels(): Promise<CopilotModel[]> {
     await this.ensureStarted();
     if (this.startFailed) {
-      throw new Error("Copilot SDK failed to start — cannot list models");
+      const detail = this.lastStartError ? `: ${this.lastStartError}` : "";
+      throw new Error(
+        `Copilot SDK is unavailable${detail} — cannot list models. ` +
+          "See Copilot CLI troubleshooting in docs/USER_GUIDE.md.",
+      );
     }
     if (!this.client.listModels) {
       return [{ id: this.model }];
@@ -1132,6 +1151,7 @@ export class CopilotWrapperService
   private async doStart() {
     if (!this.client.start) {
       this.started = true;
+      this.lastStartError = null;
       return;
     }
     try {
@@ -1139,12 +1159,18 @@ export class CopilotWrapperService
         this.client.start(),
         new Promise<never>((_, reject) =>
           setTimeout(
-            () => reject(new Error("Copilot CLI start timed out after 10s")),
-            10_000,
+            () =>
+              reject(
+                new Error(
+                  `Copilot CLI start timed out after ${this.startTimeoutMs}ms`,
+                ),
+              ),
+            this.startTimeoutMs,
           ),
         ),
       ]);
       this.started = true;
+      this.lastStartError = null;
 
       // Subscribe to client-level lifecycle events (Phase 4)
       if (this.client.on) {
@@ -1165,9 +1191,63 @@ export class CopilotWrapperService
           },
         );
       }
-    } catch {
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      // Truncate to ~200 chars so the surfaced user message stays readable
+      // while still preserving enough signal for debugging.
+      const truncated =
+        detail.length > 200 ? `${detail.slice(0, 197)}...` : detail;
+      this.lastStartError = truncated;
       this.startFailed = true;
+      logger.error(
+        `Copilot SDK failed to start: ${truncated}`,
+        { category: "system", error: detail },
+      );
     }
+  }
+
+  /** Underlying detail of the most recent startup failure, or null. */
+  getLastStartError(): string | null {
+    return this.lastStartError;
+  }
+
+  /**
+   * Reset the start state and re-attempt SDK startup. Safe to call after
+   * a previous failure (e.g. after the user updated the Copilot CLI).
+   * Returns the outcome of the new attempt.
+   */
+  async restart(): Promise<{ ok: boolean; started: boolean; error?: string }> {
+    this.started = false;
+    this.startFailed = false;
+    this.lastStartError = null;
+    this.startPromise = undefined;
+    if (this.lifecycleUnsubscribe) {
+      try {
+        this.lifecycleUnsubscribe();
+      } catch {
+        // best-effort cleanup
+      }
+      this.lifecycleUnsubscribe = undefined;
+    }
+    try {
+      await this.ensureStarted();
+    } catch (err) {
+      // doStart() does not throw — it sets startFailed. But guard anyway
+      // in case a future change makes it throw.
+      const detail = err instanceof Error ? err.message : String(err);
+      if (!this.lastStartError) {
+        this.lastStartError = detail;
+        this.startFailed = true;
+      }
+    }
+    if (this.started) {
+      return { ok: true, started: true };
+    }
+    return {
+      ok: false,
+      started: false,
+      error: this.lastStartError ?? "Copilot SDK failed to start",
+    };
   }
 
   private async sendWithRetries(
