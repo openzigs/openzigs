@@ -1472,17 +1472,17 @@ async def capabilities():
             audio_modes.append("music")
     except Exception:
         pass  # music sidecar not reachable — omit "music"
-    if (
-        LTX_ALLOW_AUDIO
-        and any(
-            spec.get("synchronized_audio") and not spec.get("unavailable")
-            for spec in VIDEO_MODEL_REGISTRY.values()
-        )
+    # 2026-04-24: native audio is served by the dedicated ltx2 sidecar on
+    # port 5013 (not by the worker's in-process LTX path). The sidecar is
+    # itself an explicit opt-in (it has to be launched and pass /health),
+    # so we deliberately do NOT gate the native probe behind LTX_ALLOW_AUDIO
+    # — that flag is for the in-process VRAM-pool audio path. If the
+    # sidecar is running and ready, native is available regardless of the
+    # in-process flag's value.
+    if any(
+        spec.get("synchronized_audio") and not spec.get("unavailable")
+        for spec in VIDEO_MODEL_REGISTRY.values()
     ):
-        # 2026-04-24: native audio is now served by the dedicated ltx2
-        # sidecar on port 5013 (not by the worker's in-process LTX path).
-        # Probe its /health rather than gating on pooled VRAM — the sidecar
-        # itself enforces hardware requirements and gracefully degrades.
         try:
             r = httpx.get("http://localhost:5013/health", timeout=0.5)
             if r.status_code == 200 and r.json().get("ready"):

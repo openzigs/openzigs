@@ -121,9 +121,18 @@ logger = logging.getLogger("ltx2-sidecar")
 LTX2_SRC_ROOT = Path(
     os.getenv("LTX2_SRC_ROOT", os.path.expanduser("~/openzigs-sidecars/ltx2-src"))
 ).resolve()
+# CRITICAL: use absolute() (NOT resolve()) for the venv python path.
+# uv-created venvs symlink ``.venv/bin/python`` → ``/usr/bin/python3``;
+# Path.resolve() would follow the symlink and we'd invoke the system
+# interpreter with sys.prefix=/usr, bypassing the venv's site-packages
+# entirely (yielding "ModuleNotFoundError: No module named 'ltx_pipelines'").
+# Python's site init keys off sys.executable (the symlink path), so we
+# must preserve the unresolved path that points into the venv.
 LTX2_VENV_PYTHON = Path(
-    os.getenv("LTX2_VENV_PYTHON", str(LTX2_SRC_ROOT / ".venv" / "bin" / "python"))
-).resolve()
+    os.path.abspath(
+        os.getenv("LTX2_VENV_PYTHON", str(LTX2_SRC_ROOT / ".venv" / "bin" / "python"))
+    )
+)
 
 # Model artefacts (downloaded by setup.sh).
 LTX2_MODELS_ROOT = Path(

@@ -236,6 +236,27 @@ def test_audio_modes_excludes_native_when_sidecar_reachable_but_not_ready(monkey
     assert "native" not in out["audio_modes"]
 
 
+def test_audio_modes_includes_native_even_when_ltx_allow_audio_false(monkeypatch, server_module):
+    """2026-04-24 regression: LTX_ALLOW_AUDIO gates the worker's IN-PROCESS
+    audio path only — the dedicated ltx2 sidecar is its own opt-in (it has
+    to be launched and pass /health). When the sidecar is healthy, native
+    must be advertised regardless of LTX_ALLOW_AUDIO. This was a real walk-
+    through bug where the user's normal `start-cuda-sidecars.sh` launch
+    didn't set LTX_ALLOW_AUDIO=1, suppressing native even though the
+    sidecar was running."""
+    monkeypatch.setattr(server_module, "LTX_POOLING_MODE", "off")
+    monkeypatch.setattr(server_module, "LTX_ALLOW_AUDIO", False)
+    _install(
+        server_module,
+        device_count=1, vrams_gb=[12],
+        reachable_ports={5013: True},
+        health_payloads={5013: {"ready": True}},
+    )
+
+    out = _run(server_module.capabilities())
+    assert "native" in out["audio_modes"], out["audio_modes"]
+
+
 # ── /gpu-info pooling fields ──────────────────────────────────────────
 
 

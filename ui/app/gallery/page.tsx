@@ -2180,8 +2180,11 @@ interface StudioFormState {
   // Phase 1: Gallery Studio Feature Parity (#781)
   pipeline: string;
   audio: boolean;
-  // WS1-A/WS2-C (#925, #929) — audio mode selector replaces boolean
-  audioMode: "off" | "auto" | "music" | "sync";
+  // WS1-A/WS2-C (#925, #929) — audio mode selector replaces boolean.
+  // 2026-04-24: "sync" was renamed to "native" so the form value matches
+  // the backend MediaJobPayload.audio_mode wire format ("off" | "auto" |
+  // "music" | "native"). The user-facing label remains "Sync" in the UI.
+  audioMode: "off" | "auto" | "music" | "native";
   tiling: string;
   enhance_prompt: boolean;
   model_repo: string;
@@ -2305,8 +2308,9 @@ function GalleryStudio({
   });
 
   // WS2-C (#929) — LTX worker capabilities. Drives the audio-mode selector
-  // (sync only when synchronized_audio + 24GB+ pooled VRAM available) and
-  // the extended-duration cap.
+  // (native available when the per-model synchronized_audio flag is true AND
+  // the global audio_modes array includes "native" — the latter is itself a
+  // live probe of the ltx2 sidecar /health) and the extended-duration cap.
   const capabilitiesQuery = useQuery({
     queryKey: ["admin-capabilities"],
     queryFn: () =>
@@ -2314,6 +2318,11 @@ function GalleryStudio({
         pooled_vram_gb?: number;
         max_frames?: Record<string, number>;
         audio_modes?: string[];
+        models?: Array<{
+          key: string;
+          synchronized_audio?: boolean;
+          unavailable?: boolean;
+        }>;
       }>("/api/admin/capabilities"),
     staleTime: 30_000,
     retry: 0,
@@ -2493,15 +2502,32 @@ function GalleryStudio({
     setForm((prev) => ({ ...prev, audioMode: "off", audio: false }));
   }
 
-  // WS2-C (#929) — sync audio gate: only the LTX-2 22B model + 24GB+ pooled
-  // VRAM enables the "sync" option in the audio-mode selector.
-  const pooledVram = capabilitiesQuery.data?.pooled_vram_gb ?? 0;
+  // WS2-C (#929) — sync audio gate.
+  // 2026-04-24 (walkthrough fix #2): the previous substring heuristic
+  // (`form.model_repo.includes("LTX-Video-2") || form.model_repo.includes(
+  // "ltxv-2-22b")`) didn't match any string the model picker actually
+  // emitted (`AITRADER/ltx2-distilled-4bit-mlx`, `dgrauet/ltx-2.3-mlx-
+  // distilled-q4`), making the Sync option permanently disabled. We now
+  // (a) consult the worker's `/capabilities` `models[]` array — if any
+  // entry advertises `synchronized_audio: true` and the user's selected
+  // model_repo OR pipeline alias maps to it, the gate opens; (b) also
+  // honour any picker entry whose id contains `ltx-2`/`ltx2`/`ltxv-2` so
+  // the local model catalog stays in sync with reality.
+  const capabilityModels = capabilitiesQuery.data?.models ?? [];
+  const nativeAudioCapableModelKeys = new Set(
+    capabilityModels
+      .filter((m) => m.synchronized_audio && !m.unavailable)
+      .map((m) => m.key.toLowerCase()),
+  );
+  const selectedModelTokens = `${form.model_repo} ${form.imageModel}`.toLowerCase();
+  const matchesNativeCapableEntry = Array.from(nativeAudioCapableModelKeys).some(
+    (k) => selectedModelTokens.includes(k),
+  );
+  const matchesLtx2Heuristic = /\b(ltx-?2|ltxv-?2)\b/.test(selectedModelTokens);
   const syncAudioModelSelected =
-    form.model_repo.includes("LTX-Video-2") ||
-    form.model_repo.includes("ltxv-2-22b");
+    matchesNativeCapableEntry || matchesLtx2Heuristic;
   const syncAudioAvailable =
     syncAudioModelSelected &&
-    pooledVram >= 24 &&
     (capabilitiesQuery.data?.audio_modes ?? []).includes("native");
 
   // WS2-B (#928) — extended duration cap. Pull from capabilities if known,
@@ -3832,7 +3858,7 @@ function GalleryStudio({
                     | "off"
                     | "auto"
                     | "music"
-                    | "sync";
+                    | "native";
                   update("audioMode", value);
                   update("audio", value !== "off");
                 }}
@@ -3852,12 +3878,14 @@ function GalleryStudio({
                   Music — Background music (ACE-Step)
                 </option>
                 <option
-                  value="sync"
+                  value="native"
                   disabled={!syncAudioAvailable}
                   title={
                     syncAudioAvailable
-                      ? "Native LTX-2 synchronized audio"
-                      : `Requires LTX-2 model + 24GB+ pooled VRAM. Currently ${syncAudioModelSelected ? "unavailable" : "select an LTX-2 model"} (pooled ${pooledVram}GB).`
+                      ? "Native LTX-2 synchronized audio (served by ltx2 sidecar on :5013)"
+                      : syncAudioModelSelected
+                        ? "Native audio unavailable — ltx2 sidecar (port 5013) is not ready. Start it via sidecars/start-cuda-sidecars.sh."
+                        : "Select an LTX-2 model to enable native sync audio."
                   }
                 >
                   Sync — Native sync audio (LTX-2 only)
