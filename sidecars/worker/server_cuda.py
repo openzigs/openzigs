@@ -197,6 +197,16 @@ LTX2_SIDECAR_URL: str = os.getenv("LTX2_SIDECAR_URL", "http://127.0.0.1:5013").r
 LTX2_SIDECAR_TOKEN: str = os.getenv("LTX2_SIDECAR_TOKEN", "").strip()
 LTX2_SIDECAR_POLL_INTERVAL_SEC: float = float(os.getenv("LTX2_SIDECAR_POLL_INTERVAL_SEC", "3.0"))
 LTX2_SIDECAR_TIMEOUT_SEC: int = int(os.getenv("LTX2_SIDECAR_TIMEOUT_SEC", "1800"))
+# Quality gate: the upstream LTX-2 distilled CLI invoked with --offload cpu has
+# been observed to produce coloured-noise output on 12 GB single-card hosts
+# (see incident 2026-04-24 — both the production job AND the bundled smoke-test
+# MP4 decoded to rainbow static, despite the subprocess exiting cleanly with the
+# expected per-stage progress bars). Until upstream is patched, /capabilities
+# only advertises 'native' audio (and /generate only accepts the delegation
+# path) when the operator has explicitly opted in via LTX2_SIDECAR_VERIFIED=1.
+# The opt-in env var is the operator's signed promise that they have visually
+# verified at least one MP4 from this sidecar build on this hardware.
+LTX2_SIDECAR_VERIFIED: bool = os.getenv("LTX2_SIDECAR_VERIFIED", "").strip().lower() in {"1", "true", "yes"}
 
 # ── VRAM-Based Frame Limits ────────────────────────────────────
 # Empirically derived safe frame counts for different VRAM budgets.
@@ -1331,9 +1341,11 @@ async def capabilities():
         and pooled_vram >= 24
         and any(spec.get("synchronized_audio") for spec in VIDEO_MODEL_REGISTRY.values())
     )
-    # Sidecar-delegated native audio works on a single 12 GB card via the
-    # upstream LTX-2 CLI's offloading.
-    sidecar_native_available = await _ltx2_sidecar_ready()
+    # Sidecar-delegated native audio is only advertised when the operator has
+    # explicitly opted in via LTX2_SIDECAR_VERIFIED=1 — see the env-var docstring
+    # above for why a /health probe alone is insufficient.
+    sidecar_healthy = await _ltx2_sidecar_ready()
+    sidecar_native_available = sidecar_healthy and LTX2_SIDECAR_VERIFIED
     if in_process_native_available or sidecar_native_available:
         audio_modes.append("native")
 
@@ -1364,7 +1376,9 @@ async def capabilities():
             "LTX_MAX_FRAMES_OVERRIDE": LTX_MAX_FRAMES_OVERRIDE,
             "LTX_ALLOW_AUDIO": LTX_ALLOW_AUDIO,
             "LTX2_SIDECAR_URL": LTX2_SIDECAR_URL,
-            "LTX2_SIDECAR_READY": sidecar_native_available,
+            "LTX2_SIDECAR_READY": sidecar_healthy,
+            "LTX2_SIDECAR_VERIFIED": LTX2_SIDECAR_VERIFIED,
+            "LTX2_SIDECAR_NATIVE_AVAILABLE": sidecar_native_available,
         },
     }
 
@@ -1421,6 +1435,19 @@ async def generate(request: GenerateRequest):
                     ),
                 )
         else:
+            if not LTX2_SIDECAR_VERIFIED:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Audio generation is not supported by model '{request.model}' in-process, "
+                        "and the LTX-2 sidecar delegation path is currently disabled because "
+                        "LTX2_SIDECAR_VERIFIED is not set. The upstream LTX-2 distilled CLI with "
+                        "--offload cpu has been observed to produce coloured-noise output on this "
+                        "hardware tier — set LTX2_SIDECAR_VERIFIED=1 only after visually verifying "
+                        "a sample MP4 from this sidecar build. Use audio='auto' for post-process v2a "
+                        "in the meantime."
+                    ),
+                )
             sidecar_ready = await _ltx2_sidecar_ready()
             if not sidecar_ready:
                 raise HTTPException(

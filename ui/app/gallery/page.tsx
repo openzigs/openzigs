@@ -3841,7 +3841,7 @@ function GalleryStudio({
                     syncAudioAvailable
                       ? "Native LTX-2 synchronized audio"
                       : syncAudioModelSelected
-                        ? "LTX-2 sidecar is not ready. Start it to enable native sync audio."
+                        ? "LTX-2 sidecar is not ready or has not been verified on this hardware. Use 'Auto' for post-process audio in the meantime."
                         : "Select an LTX-2 model to enable native sync audio."
                   }
                 >
