@@ -308,7 +308,14 @@ def _get_max_frames_for_model(model_key: str) -> int:
     if LTX_MAX_FRAMES_OVERRIDE > 0:
         return LTX_MAX_FRAMES_OVERRIDE
     vram_gb = _get_vram_gb()
-    if "22b" in model_key or "ltxv-2" in model_key:
+    # "ltxv-2" matches both "ltxv-2b-legacy" (a 2B model) AND "ltxv-2-22b-distilled"
+    # (the 22B model), so we must check for "22b" first (exact substring) before
+    # falling through to the generic 2B bucket. The old check
+    # `"22b" in key or "ltxv-2" in key` incorrectly routed all 2B models into the
+    # "22b" category, which has no VRAM_FRAME_LIMITS entry for 10-11 GB cards and
+    # therefore fell through to the `return 49` fallback — producing 2-second clips
+    # on any single-GPU host after a restart (when pooling is inactive).
+    if "22b" in model_key:
         category = "22b"
     elif "13b" in model_key:
         category = "13b"
