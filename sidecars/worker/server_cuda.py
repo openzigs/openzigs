@@ -129,38 +129,30 @@ VIDEO_MODEL_REGISTRY: dict[str, dict] = {
         "min_vram_gb": 8,
     },
     # WS1-B (#926): LTX-2 distilled with native synchronized audio.
-    # CORRECTION (verified 2026-04-23): the real public repo is
-    # `Lightricks/LTX-2` (19B parameters, NOT 22B). The previously-listed
-    # `Lightricks/LTX-Video-2-22B-distilled` HF id does not exist (HTTP 404).
-    # The registry KEY `ltxv-2-22b-distilled` is preserved for backwards
-    # compatibility with existing UI/test/doc references (#940 leaves it in
-    # place so this fix is registry-internal). However the model is still
-    # NOT loadable via diffusers as-is: `Lightricks/LTX-2/model_index.json`
-    # references `from ltx2 import LTX2TextConnectors` and `from ltx2 import
-    # LTX2Vocoder`, but the `ltx2` Python package is not published to PyPI
-    # nor in the Lightricks/LTX-2 GitHub monorepo (only `ltx-core` and
-    # `ltx-pipelines` exist, with import names `ltx_core`/`ltx_pipelines`).
-    # diffusers 0.38.0.dev0 has all the LTX-2 classes (`LTX2Pipeline` etc.)
-    # and the weights are public/ungated, but `from_pretrained` cannot
-    # complete until Lightricks publishes the `ltx2` shim package (or fixes
-    # the model_index references). Marked `unavailable` until then.
+    # 2026-04-24 update: this model is now served by the dedicated `ltx2`
+    # sidecar on port 5013 (see `sidecars/ltx2/`). The diffusers
+    # `LTX2Pipeline` path remains broken upstream (missing
+    # `LTX2TextConnectors`/`LTX2Vocoder` symbols), but the **native**
+    # `ltx_pipelines.distilled` CLI from the Lightricks/LTX-2 monorepo
+    # works end-to-end on a single 12 GB GPU + 32+ GB RAM with
+    # `--offload cpu` (validated by `scripts/ltx2_smoke.sh`).
+    # The worker no longer attempts to load this model in-process; the
+    # orchestrator should route `audio_mode: "native"` to port 5013.
     "ltxv-2-22b-distilled": {
         "hf_id": "Lightricks/LTX-2",
         "pipeline_class": "LTX2Pipeline",
         "default_steps": 8,
         "default_guidance": 1.0,
-        "description": "LTX-2 19B distilled — synchronized audio (key preserved as `ltxv-2-22b-distilled` for backwards compat; real repo is `Lightricks/LTX-2`, 19B not 22B)",
-        "vram_gb": 20,
+        "description": "LTX-2 19B distilled — native synchronized audio via the dedicated ltx2 sidecar (port 5013). Not loaded in-process by the worker.",
+        "vram_gb": 12,
         "tier": "ultra",
-        "min_vram_gb": 20,
+        "min_vram_gb": 6,
         "synchronized_audio": True,
-        "unavailable": True,
-        "unavailable_reason": (
-            "Upstream gap: Lightricks/LTX-2 model_index references the `ltx2` "
-            "Python package which is not yet published (verified 2026-04-23). "
-            "Will become loadable once Lightricks ships the shim or updates "
-            "model_index to reference `ltx_core` instead."
-        ),
+        # `served_by_sidecar` tells callers this model is NOT handled by the
+        # worker's in-process generate path; it must be routed to the named
+        # sidecar URL. The worker still advertises the model in /capabilities
+        # so the UI can offer it, but `generate_video_ltx2()` will refuse it.
+        "served_by_sidecar": "http://localhost:5013",
     },
 }
 
@@ -723,6 +715,18 @@ def generate_video_ltx2(request: "GenerateRequest") -> bytes:
     spec = VIDEO_MODEL_REGISTRY.get(model_key)
     if not spec:
         raise ValueError(f"Unknown model key: {model_key}")
+
+    # Models served by an external sidecar (e.g. ltxv-2-22b-distilled →
+    # port 5013) must not be loaded in-process by the worker. The
+    # orchestrator should route directly; surface a clear error if it ever
+    # forwards such a request to the worker by mistake.
+    sidecar_url = spec.get("served_by_sidecar")
+    if sidecar_url:
+        raise RuntimeError(
+            f"Model '{model_key}' is served by an external sidecar at "
+            f"{sidecar_url}. Route the request directly to that sidecar "
+            "instead of the video worker (the worker does not proxy)."
+        )
 
     hf_id = spec["hf_id"]
     pipeline_class_name = spec["pipeline_class"]
@@ -1379,21 +1383,25 @@ async def list_models():
             # `/generate` will reject them with HTTP 503.
             "unavailable": bool(spec.get("unavailable", False)),
             "unavailable_reason": spec.get("unavailable_reason"),
+            # 2026-04-24: when set, the UI/orchestrator must route requests
+            # to this URL instead of the worker's in-process generate path.
+            "served_by_sidecar": spec.get("served_by_sidecar"),
         })
+    # Native synchronized audio is now provided by the dedicated ltx2
+    # sidecar (port 5013) for any registry entry carrying both
+    # `synchronized_audio` and `served_by_sidecar`. Pooled VRAM is no
+    # longer the gate — the sidecar accepts CPU/disk offload on 12 GB+
+    # single-GPU hardware. We treat the model as audio-capable whenever
+    # LTX_ALLOW_AUDIO is on and at least one available entry advertises it.
+    audio_capable = LTX_ALLOW_AUDIO and any(
+        spec.get("synchronized_audio") and not spec.get("unavailable")
+        for spec in VIDEO_MODEL_REGISTRY.values()
+    )
     return {
         "models": models,
         "default_key": DEFAULT_MODEL_KEY,
         "default_repo": DEFAULT_MODEL_REPO,
-        # Audio is supported on CUDA only when an *available* model carries
-        # synchronized audio weights AND the runtime allows it.
-        "audio_supported": (
-            LTX_ALLOW_AUDIO
-            and any(
-                spec.get("synchronized_audio") and not spec.get("unavailable")
-                for spec in VIDEO_MODEL_REGISTRY.values()
-            )
-            and _get_pooled_vram_gb() >= 24
-        ),
+        "audio_supported": audio_capable,
     }
 
 
@@ -1466,13 +1474,21 @@ async def capabilities():
         pass  # music sidecar not reachable — omit "music"
     if (
         LTX_ALLOW_AUDIO
-        and pooled_vram >= 24
         and any(
             spec.get("synchronized_audio") and not spec.get("unavailable")
             for spec in VIDEO_MODEL_REGISTRY.values()
         )
     ):
-        audio_modes.append("native")
+        # 2026-04-24: native audio is now served by the dedicated ltx2
+        # sidecar on port 5013 (not by the worker's in-process LTX path).
+        # Probe its /health rather than gating on pooled VRAM — the sidecar
+        # itself enforces hardware requirements and gracefully degrades.
+        try:
+            r = httpx.get("http://localhost:5013/health", timeout=0.5)
+            if r.status_code == 200 and r.json().get("ready"):
+                audio_modes.append("native")
+        except Exception:
+            pass  # ltx2 sidecar not reachable — omit "native"
 
     pooling_mode_out = LTX_POOLING_MODE if LTX_POOLING_MODE in ("off", "manual", "auto") else "auto"
 

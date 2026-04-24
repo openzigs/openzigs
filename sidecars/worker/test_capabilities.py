@@ -54,8 +54,14 @@ def _make_torch_stub(device_count: int, vrams_gb: list[int]) -> MagicMock:
     return stub
 
 
-def _make_httpx_stub(reachable: dict[int, bool]) -> MagicMock:
-    """Stub httpx.get such that it returns 200 only for ports in `reachable=True`."""
+def _make_httpx_stub(reachable: dict[int, bool], health_payloads: dict[int, dict] | None = None) -> MagicMock:
+    """Stub httpx.get such that it returns 200 only for ports in `reachable=True`.
+
+    For ports that need a structured /health response (e.g. 5013 for the
+    ltx2 sidecar, where ``audio_modes`` gating reads ``ready`` from the
+    JSON body), supply ``health_payloads={port: {"ready": True}}``.
+    """
+    payloads = health_payloads or {}
 
     def _get(url: str, timeout: float = 0.5):
         # crude: parse port from `http://localhost:PORT/...`
@@ -66,6 +72,7 @@ def _make_httpx_stub(reachable: dict[int, bool]) -> MagicMock:
         ok = reachable.get(port, False)
         resp = MagicMock()
         resp.status_code = 200 if ok else 503
+        resp.json = MagicMock(return_value=payloads.get(port, {}))
         if not ok:
             # Make it raise like a real ConnectError would for unreachable ports.
             raise RuntimeError(f"connection refused (stub): :{port}")
@@ -85,9 +92,9 @@ def server_module(monkeypatch):
     sys.modules.pop("server_cuda", None)
 
 
-def _install(sc, *, device_count: int, vrams_gb: list[int], reachable_ports: dict[int, bool]) -> None:
+def _install(sc, *, device_count: int, vrams_gb: list[int], reachable_ports: dict[int, bool], health_payloads: dict[int, dict] | None = None) -> None:
     sc.torch = _make_torch_stub(device_count, vrams_gb)
-    sc.httpx = _make_httpx_stub(reachable_ports)
+    sc.httpx = _make_httpx_stub(reachable_ports, health_payloads)
 
 
 def _run(coro):
@@ -144,9 +151,12 @@ def test_capabilities_models_array_shape(monkeypatch, server_module):
     # flag for gated HF repos like Lightricks/LTX-Video-0.9.6-distilled, which
     # returns 401 without a token) and `hf_token_present` (live env check) so
     # the UI can warn before the user tries to load a gated model.
+    # 2026-04-23 follow-up: also exposes `unavailable` + `unavailable_reason`
+    # for entries with known upstream gaps.
     assert set(m0.keys()) == {
         "key", "max_frames", "max_seconds_at_24fps", "synchronized_audio",
         "requires_hf_token", "hf_token_present",
+        "unavailable", "unavailable_reason",
     }
     assert isinstance(m0["max_frames"], int)
     assert isinstance(m0["max_seconds_at_24fps"], float)
@@ -185,21 +195,42 @@ def test_audio_modes_includes_music_when_5009_reachable(monkeypatch, server_modu
     assert "music" in out["audio_modes"]
 
 
-def test_audio_modes_includes_native_only_with_pooled_24gb_and_allow_flag(monkeypatch, server_module):
-    monkeypatch.setattr(server_module, "LTX_POOLING_MODE", "auto")
-    monkeypatch.setattr(server_module, "LTX_POOLING_MIN_VRAM_GB", 18)
+def test_audio_modes_includes_native_when_ltx2_sidecar_ready(monkeypatch, server_module):
+    """2026-04-24: native audio is now gated on the ltx2 sidecar (port 5013)
+    reporting `ready: True` from /health, NOT pooled VRAM. The sidecar
+    enforces hardware requirements itself (CPU offload works on 12 GB+)."""
+    monkeypatch.setattr(server_module, "LTX_POOLING_MODE", "off")
     monkeypatch.setattr(server_module, "LTX_ALLOW_AUDIO", True)
-    _install(server_module, device_count=2, vrams_gb=[12, 12], reachable_ports={})
+    _install(
+        server_module,
+        device_count=1, vrams_gb=[12],
+        reachable_ports={5013: True},
+        health_payloads={5013: {"ready": True}},
+    )
 
     out = _run(server_module.capabilities())
-    # Pooled 24 GB + allow flag + ltxv-2-22b in registry -> "native" present.
     assert "native" in out["audio_modes"], out["audio_modes"]
 
 
-def test_audio_modes_excludes_native_when_pooled_below_24(monkeypatch, server_module):
+def test_audio_modes_excludes_native_when_ltx2_sidecar_unreachable(monkeypatch, server_module):
     monkeypatch.setattr(server_module, "LTX_POOLING_MODE", "off")
     monkeypatch.setattr(server_module, "LTX_ALLOW_AUDIO", True)
     _install(server_module, device_count=1, vrams_gb=[12], reachable_ports={})
+
+    out = _run(server_module.capabilities())
+    assert "native" not in out["audio_modes"]
+
+
+def test_audio_modes_excludes_native_when_sidecar_reachable_but_not_ready(monkeypatch, server_module):
+    """Sidecar process up but venv/models missing → /health returns ready=False."""
+    monkeypatch.setattr(server_module, "LTX_POOLING_MODE", "off")
+    monkeypatch.setattr(server_module, "LTX_ALLOW_AUDIO", True)
+    _install(
+        server_module,
+        device_count=1, vrams_gb=[12],
+        reachable_ports={5013: True},
+        health_payloads={5013: {"ready": False}},
+    )
 
     out = _run(server_module.capabilities())
     assert "native" not in out["audio_modes"]

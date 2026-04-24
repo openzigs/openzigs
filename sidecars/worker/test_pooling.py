@@ -224,16 +224,18 @@ def test_ltxv2_22b_falls_back_on_unknown_topology(monkeypatch, server_module):
 
 
 def test_ltxv2_22b_distilled_registered_with_audio_flag(server_module):
-    # NOTE (#940 follow-up, 2026-04-23): registry KEY preserved as
+    # NOTE (#940 follow-up, 2026-04-24): registry KEY preserved as
     # `ltxv-2-22b-distilled` for backwards compat, but the underlying
     # spec has been corrected to point at the real public repo
-    # `Lightricks/LTX-2` (19B params, NOT 22B; pipeline is `LTX2Pipeline`,
-    # NOT `LTXConditionPipeline`). Marked `unavailable=True` until the
-    # upstream `ltx2` Python package is published.
+    # `Lightricks/LTX-2` (19B params, NOT 22B; pipeline is `LTX2Pipeline`).
+    # The model is now served by the dedicated ltx2 sidecar (port 5013)
+    # via the upstream native ``ltx_pipelines.distilled`` CLI, so the
+    # worker's `unavailable=True` block has been removed and a
+    # `served_by_sidecar` marker added so the worker's in-process
+    # generate path refuses to load it.
     spec = server_module.VIDEO_MODEL_REGISTRY["ltxv-2-22b-distilled"]
     assert spec["synchronized_audio"] is True
-    assert spec["min_vram_gb"] == 20
     assert spec["pipeline_class"] == "LTX2Pipeline"
     assert spec["hf_id"] == "Lightricks/LTX-2"
-    assert spec.get("unavailable") is True
-    assert "ltx2" in spec.get("unavailable_reason", "").lower()
+    assert spec.get("unavailable") is not True
+    assert spec.get("served_by_sidecar") == "http://localhost:5013"
