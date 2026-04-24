@@ -2892,8 +2892,17 @@ function GalleryStudio({
         payload.pipeline = form.pipeline;
         // WS1-A/WS2-C (#925, #929): audio_mode is the new field; keep
         // back-compat boolean `audio` for any backend not yet switched over.
-        payload.audio_mode = form.audioMode;
-        payload.audio = form.audioMode !== "off";
+        // The worker's `audio` flag means "produce synchronized audio
+        // in-process" — that ONLY applies to "sync" (native LTX-2). The
+        // "auto" (MMAudio v2a) and "music" (ACE-Step) modes are
+        // post-process pipelines fired by QueueMaster after the silent
+        // video completes; they MUST NOT set audio=true on the worker or
+        // the worker will reject the job (see #951).
+        // Backend queue type uses "native"; the studio composer uses
+        // "sync" as the friendlier label — translate at the boundary.
+        payload.audio_mode =
+          form.audioMode === "sync" ? "native" : form.audioMode;
+        payload.audio = form.audioMode === "sync";
         payload.tiling = form.tiling;
         payload.enhance_prompt = form.enhance_prompt;
         if (form.model_repo) {
