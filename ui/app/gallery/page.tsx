@@ -2548,6 +2548,17 @@ function GalleryStudio({
     return Math.max(...frames.map((f) => Math.floor(f / 24)), 8);
   })();
 
+  // Per-model frame ceiling from live capabilities (accounts for GPU pooling).
+  // Falls back to 97 (safe single-12GB-card limit) when capabilities haven't
+  // loaded yet or the selected model isn't in the map.
+  const maxCapableFrames = (() => {
+    const selectedModel = ltxModelCatalog.find(
+      (m) => m.repo === form.model_repo,
+    );
+    if (!selectedModel || !capabilitiesQuery.data?.max_frames) return 97;
+    return capabilitiesQuery.data.max_frames[selectedModel.id] ?? 97;
+  })();
+
   const fluxQLabel =
     imageGenMode === "network"
       ? "FluxQ (Network — via Admin)"
@@ -2896,7 +2907,7 @@ function GalleryStudio({
       }
 
       if (isVideo) {
-        payload.num_frames = Math.min(form.num_frames, 97);
+        payload.num_frames = Math.min(form.num_frames, maxCapableFrames);
         payload.fps = form.fps;
         payload.num_inference_steps = form.video_steps;
         payload.cfg_scale = form.video_guidance;
@@ -3652,7 +3663,7 @@ function GalleryStudio({
           <div className="mb-4 grid grid-cols-5 gap-3">
             <div>
               <label className="mb-1 block text-[11px] font-medium text-muted-foreground">
-                Frames (max 97)
+                Frames (max {maxCapableFrames})
               </label>
               <input
                 type="number"
@@ -3660,11 +3671,14 @@ function GalleryStudio({
                 onChange={(e) =>
                   update(
                     "num_frames",
-                    Math.min(parseInt(e.target.value) || 97, 97),
+                    Math.min(
+                      parseInt(e.target.value) || maxCapableFrames,
+                      maxCapableFrames,
+                    ),
                   )
                 }
                 min={1}
-                max={97}
+                max={maxCapableFrames}
                 className="w-full rounded-lg border border-border bg-card px-2 py-1.5 text-sm text-foreground"
               />
             </div>
