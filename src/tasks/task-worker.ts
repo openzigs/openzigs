@@ -11,6 +11,22 @@ import { normalizeLegacyStages } from "./pipeline-schema.js";
 import { waitForTask } from "./wait-for-task.js";
 import { logger } from "../logging/logger.js";
 
+/**
+ * Issue #945 — how long to hold a task off the queue after a Copilot SDK
+ * unavailability error. Operators have this window to call
+ * POST /api/admin/copilot/restart (or fix the underlying issue) before the
+ * task is re-attempted. Tasks remain queued indefinitely on repeat failures
+ * and are never permanently failed by this code path.
+ */
+const COPILOT_DEFER_DELAY_MS = 30_000;
+
+/**
+ * Marker substring thrown by CopilotWrapper when client.start() fails or
+ * times out. Kept as a literal contract so changes to the wrapper's wording
+ * are caught by the wrapper's own tests.
+ */
+const COPILOT_UNAVAILABLE_MARKER = "Copilot SDK is unavailable";
+
 export type TaskWorkerOptions = {
   engine: TaskEngine;
   copilot: CopilotWrapper;
@@ -258,6 +274,25 @@ export class TaskWorker extends EventEmitter {
       this.eventStreamer?.clearTask(task.id);
 
       const message = error instanceof Error ? error.message : String(error);
+
+      // Issue #945 — Copilot SDK transient outages are recoverable.
+      // Defer the task back onto the queue with an `awaiting_copilot_until`
+      // timestamp instead of permanently failing. Once the operator restarts
+      // the SDK (POST /api/admin/copilot/restart) the task will be picked up
+      // on the next dequeue tick after the delay window elapses.
+      if (this.isCopilotUnavailableError(message)) {
+        const deferred = this.engine.deferForCopilot(
+          task.id,
+          COPILOT_DEFER_DELAY_MS,
+          message,
+        );
+        this.log.warn(
+          `TaskWorker deferred task ${task.id} for ${COPILOT_DEFER_DELAY_MS}ms (Copilot SDK unavailable): ${message}`,
+        );
+        this.emit("task:deferred", deferred);
+        return;
+      }
+
       const failed = this.engine.fail(task.id, message);
       this.log.error(`TaskWorker failed task ${task.id}: ${message}`);
       this.emit("task:error", failed);
@@ -348,6 +383,15 @@ export class TaskWorker extends EventEmitter {
   }
 
   /**
+   * Issue #945 — returns true if the given error message originates from the
+   * CopilotWrapper signalling that the underlying Copilot CLI failed to start.
+   * Used to short-circuit permanent failure into a deferred re-queue.
+   */
+  private isCopilotUnavailableError(message: string): boolean {
+    return message.includes(COPILOT_UNAVAILABLE_MARKER);
+  }
+
+  /**
    * Execute a multi-stage pipeline. Supports both sequential prompt stages
    * and parallel groups (branches executed via Promise.all).
    *
@@ -381,7 +425,25 @@ export class TaskWorker extends EventEmitter {
         stageResults.push(...nodeResult.records);
 
         if (nodeResult.failed) {
-          const errorMsg = `Pipeline aborted at node "${node.name}": ${nodeResult.error ?? "unknown error"}`;
+          const nodeError = nodeResult.error ?? "unknown error";
+          // Issue #945 — even mid-pipeline, defer rather than fail when the
+          // SDK is unavailable. The pipeline will resume from this node when
+          // re-dequeued; partial state is not preserved (the whole task
+          // restarts), but the user retains the option to retry instead of
+          // losing the task entirely.
+          if (this.isCopilotUnavailableError(nodeError)) {
+            const deferred = this.engine.deferForCopilot(
+              task.id,
+              COPILOT_DEFER_DELAY_MS,
+              nodeError,
+            );
+            this.log.warn(
+              `TaskWorker pipeline deferred task ${task.id} at node "${node.name}" (Copilot SDK unavailable): ${nodeError}`,
+            );
+            this.emit("task:deferred", deferred);
+            return;
+          }
+          const errorMsg = `Pipeline aborted at node "${node.name}": ${nodeError}`;
           this.log.error(errorMsg);
           const failed = this.engine.fail(task.id, errorMsg);
           this.emit("task:error", failed);
@@ -400,6 +462,18 @@ export class TaskWorker extends EventEmitter {
       this.emit("task:done", completed);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      if (this.isCopilotUnavailableError(message)) {
+        const deferred = this.engine.deferForCopilot(
+          task.id,
+          COPILOT_DEFER_DELAY_MS,
+          message,
+        );
+        this.log.warn(
+          `TaskWorker pipeline deferred task ${task.id} for ${COPILOT_DEFER_DELAY_MS}ms (Copilot SDK unavailable): ${message}`,
+        );
+        this.emit("task:deferred", deferred);
+        return;
+      }
       const failed = this.engine.fail(task.id, `Pipeline error: ${message}`);
       this.log.error(`TaskWorker pipeline failed task ${task.id}: ${message}`);
       this.emit("task:error", failed);

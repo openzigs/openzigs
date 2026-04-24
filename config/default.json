@@ -78,7 +78,8 @@
     "defaultReasoningEffort": "medium",
     "defaultWorkingDirectory": null,
     "customAgents": [],
-    "nativeMcpServers": {}
+    "nativeMcpServers": {},
+    "startTimeoutMs": 10000
   },
   "knowledge": {
     "enabled": true,

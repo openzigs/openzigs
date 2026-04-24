@@ -91,6 +91,24 @@ export class TaskEngine extends EventEmitter {
     return task;
   }
 
+  /**
+   * Issue #945 — defer a task that hit a transient Copilot SDK outage.
+   * Resets the task to `queued` with an `awaiting_copilot_until` timestamp;
+   * the dequeue path will skip it until that time has passed. Never
+   * permanently fails the task on this error class. Emits `task:deferred`.
+   *
+   * @param taskId  Task to defer
+   * @param delayMs How long to hold the task before it can be re-dequeued
+   * @param error   Underlying error message to surface to operators
+   */
+  deferForCopilot(taskId: string, delayMs: number, error: string): AgentTask {
+    const until = new Date(Date.now() + Math.max(0, delayMs)).toISOString();
+    this.repository.deferForCopilot(taskId, until, error);
+    const task = this.repository.getById(taskId)!;
+    this.emit("task:deferred", task);
+    return task;
+  }
+
   /** Cancel a queued or running task. Emits `task:cancelled`. Returns the task or null. */
   cancel(taskId: string): AgentTask | null {
     const cancelled = this.repository.cancel(taskId);

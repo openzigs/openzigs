@@ -133,6 +133,12 @@ export class TaskRepository {
       this.db.exec("ALTER TABLE agent_tasks ADD COLUMN enable_in_session_subagents INTEGER NOT NULL DEFAULT 0");
     }
 
+    // Issue #945 — defer-until timestamp for tasks waiting on Copilot SDK restart.
+    // When set and in the future, dequeue() skips the row instead of failing it.
+    if (!columns.some((c) => c.name === "awaiting_copilot_until")) {
+      this.db.exec("ALTER TABLE agent_tasks ADD COLUMN awaiting_copilot_until TEXT DEFAULT NULL");
+    }
+
     // ── Backfill: link orphaned agent tasks to their parent ──
     // Before the parentTaskId propagation fix, spawn-agent/orchestrate-agents
     // never set parentTaskId. This backfill matches orphaned agent tasks to
@@ -265,18 +271,37 @@ export class TaskRepository {
     const row = this.db
       .prepare(
         `UPDATE agent_tasks
-         SET status = 'running', started_at = ?
+         SET status = 'running', started_at = ?, awaiting_copilot_until = NULL
          WHERE id = (
            SELECT id FROM agent_tasks
            WHERE status = 'queued'
+             AND (awaiting_copilot_until IS NULL OR awaiting_copilot_until <= ?)
            ORDER BY created_at ASC
            LIMIT 1
          )
          RETURNING *`
       )
-      .get(now) as StoredTask | undefined;
+      .get(now, now) as StoredTask | undefined;
 
     return row ? toTask(row) : null;
+  }
+
+  /**
+   * Issue #945 — defer a task that hit a transient Copilot SDK outage. Resets
+   * status to 'queued', stores the deferred-until timestamp, and writes the
+   * underlying error so operators can see why the task was held back.
+   */
+  deferForCopilot(id: string, untilISO: string, errorMsg: string): void {
+    this.db
+      .prepare(
+        `UPDATE agent_tasks
+         SET status = 'queued',
+             started_at = NULL,
+             error = ?,
+             awaiting_copilot_until = ?
+         WHERE id = ?`,
+      )
+      .run(errorMsg, untilISO, id);
   }
 
   /** Mark a task as running. */

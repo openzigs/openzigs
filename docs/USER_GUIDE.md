@@ -7718,6 +7718,44 @@ Hey {{username}}! Saw your comment on our post about "{{post_caption}}". Check y
 | Voice TTS not working | Missing Google Cloud credentials. | Set `GOOGLE_APPLICATION_CREDENTIALS` env var to your service account JSON key file path. See [Enabling Voice Features](#enabling-voice-features). |
 | Wake word not responding | Web Speech API not supported in browser. | Use Chrome, Edge, or Brave. Firefox does not support the Web Speech API. |
 
+### Copilot CLI Troubleshooting
+
+When the underlying GitHub Copilot CLI fails to start, every chat and `listModels()` call throws an error containing the literal marker `Copilot SDK is unavailable`, followed by the underlying detail (e.g. `Copilot CLI start timed out after 10000ms` or `unknown option '--headless'`). The full underlying error is also written to the server log under `category: "system"`.
+
+**(a) What the error means.** The Copilot SDK could not spawn or talk to its bundled `copilot` CLI. The most common causes are:
+- The CLI binary is missing from `node_modules/@github/copilot-sdk/...` (re-run `pnpm install`).
+- The bundled CLI is incompatible with the SDK version (re-install or update the SDK).
+- A timeout on first start because the machine was busy or offline.
+- Authentication is missing (run `pnpm setup` to complete the device-flow auth).
+
+**(b) How the SDK bundles its CLI.** Per [github/copilot-sdk#984](https://github.com/github/copilot-sdk/issues/984), `@github/copilot-sdk` ships its own copy of the `copilot` CLI inside the package and invokes it as a subprocess. This is why the user's `npm i -g @github/copilot` global install does **not** affect the SDK's behavior — only the bundled binary matters. Do not pin a specific CLI version in your own code; the SDK manages that.
+
+**(c) Restart endpoint.** After fixing the underlying problem (e.g. re-running `pnpm install`), call `POST /api/admin/copilot/restart` to reset the wrapper's `startFailed` state and re-attempt startup without restarting the whole server. Response body:
+
+```json
+{ "ok": true, "started": true }
+```
+
+On failure:
+
+```json
+{ "ok": false, "started": false, "error": "Copilot CLI start timed out after 10000ms" }
+```
+
+The endpoint requires the same admin auth as the rest of `/api/admin`. Background tasks that hit the unavailability error are deferred (not failed) — they are returned to the queue with an `awaiting_copilot_until` timestamp 30 seconds in the future and will resume automatically once the SDK is healthy again.
+
+**(d) Configurable timeout.** The first `client.start()` call has a default timeout of 10 seconds. To override, set `copilot.startTimeoutMs` in `~/.openzigs/config.json` (Zod-validated to `1000…120000`):
+
+```json
+{
+  "copilot": {
+    "startTimeoutMs": 30000
+  }
+}
+```
+
+Use a higher value on slow machines or when running inside a container with cold-start latency. Use a lower value to surface unavailability faster in CI.
+
 ## Secret Vault — Zero-Trust Credential Storage
 
 The Secret Vault provides AES-256-GCM encrypted local storage for passwords, API keys, and other credentials. Secrets are stored at `~/.openzigs/vault.enc` with `0600` permissions (owner-read/write only).
