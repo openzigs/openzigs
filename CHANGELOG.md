@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (Epic #941 — Harden Copilot SDK startup)
+
+- **`POST /api/admin/copilot/restart` endpoint (#944):** New admin endpoint that resets `started`/`startFailed`/`lastStartError`/`startPromise` on the `CopilotWrapper` and re-invokes `client.start()`. Returns `{ ok, started, error? }`. Lets operators recover from a transient SDK boot failure without restarting the whole server. Requires the same admin auth as the rest of `/api/admin`.
+- **`copilot.startTimeoutMs` config knob (#942):** Zod-validated number, bounds `1000…120_000`, default `10_000`. Layered through `config/default.json` → `~/.openzigs/config.json` → env, and wired into `CopilotWrapperService` via the constructor option of the same name.
+- **TaskWorker `awaiting_copilot` recovery (#945):** Background tasks that throw `Copilot SDK is unavailable` are no longer permanently failed. Instead they are deferred back to `queued` with an `awaiting_copilot_until` timestamp (`now + 30s`) via the new `TaskEngine.deferForCopilot()` and `TaskRepository.deferForCopilot()` methods. The dequeue path filters out rows whose deferred-until is in the future. Schema migration follows the existing `ALTER TABLE` pattern (new `awaiting_copilot_until TEXT` column).
+- **Copilot CLI Troubleshooting subsection in `docs/USER_GUIDE.md` (#946):** Documents (a) what the new error message means, (b) that `@github/copilot-sdk` bundles its own CLI per [github/copilot-sdk#984](https://github.com/github/copilot-sdk/issues/984), (c) the new restart endpoint, and (d) the configurable startup timeout.
+
+### Fixed (Epic #941)
+
+- **Real `client.start()` errors are now surfaced (#943):** `CopilotWrapperService.doStart()` previously swallowed the underlying error with a bare `catch {}` and `chat()`/`listModels()` returned a generic message. The catch now logs the full detail via Winston with `category: "system"`, stores a `~200 char` truncated copy on a new `lastStartError` field, and surfaces it in every user-facing error message after the literal marker `Copilot SDK is unavailable: …`. Downstream consumers (TaskWorker, future UI banners) can classify recoverable failures by checking for that marker.
+- **Removed hardcoded "CLI version 0.0.394" remediation string (#946):** The wrapper no longer instructs users to upgrade to a specific SDK-bundled CLI version (which is opaque, version-pinned by the SDK, and not user-controllable per [github/copilot-sdk#984](https://github.com/github/copilot-sdk/issues/984)). Replaced with a generic pointer to `docs/USER_GUIDE.md` and the new `/api/admin/copilot/restart` endpoint.
+
 ### Added (Epic #924 — LTX video audio, longer durations & correct LoRA training params)
 
 - **LTX-Video VRAM pooling across two GPUs (#927, WS2-A):** New env-var matrix (`LTX_POOLING_MODE`, `LTX_TRANSFORMER_DEVICE=cuda:1`, `LTX_ENCODER_DEVICE=cuda:0`, `LTX_VAE_DEVICE=cuda:0`, `LTX_POOLING_MIN_VRAM_GB=18`, `LTX_MAX_FRAMES_OVERRIDE`, `LTX_ALLOW_AUDIO`) auto-detects `torch.cuda.device_count()` + per-device `mem_get_info(i)` and shards the LTX-Video pipeline (transformer on `cuda:1`, T5 encoder + VAE on `cuda:0`) when summed VRAM is ≥ threshold. Falls back gracefully to `enable_model_cpu_offload()` on any placement error. Introduces a pooled VRAM-tier table that lifts max frames from 57 (1×12 GB) to 161 (2×12 GB) and 257 (2×24 GB). Citation in the source code points to the diffusers "Working with big models" doc (Tavily verified 2026-04-22).

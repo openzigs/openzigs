@@ -653,6 +653,7 @@ try {
 const copilot = new CopilotWrapperService({
   toolRegistry,
   maxToolsPerRequest: config.session?.maxToolsPerRequest ?? 30,
+  startTimeoutMs: config.copilot?.startTimeoutMs,
   infiniteSessions: config.session?.infiniteSessions,
   hooks: createHooksConfig({
     toolRegistry,
