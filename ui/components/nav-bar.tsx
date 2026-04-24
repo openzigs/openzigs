@@ -69,6 +69,7 @@ const NAV_GROUPS: NavGroup[] = [
     icon: <Settings className="h-3.5 w-3.5" />,
     items: [
       { href: "/admin", label: "Settings" },
+      { href: "/admin/models", label: "Models" },
       { href: "/knowledge", label: "Knowledge" },
       { href: "/social", label: "Social Brain" },
       { href: "/admin/webhooks", label: "Webhooks" },

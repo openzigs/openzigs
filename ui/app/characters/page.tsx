@@ -111,6 +111,42 @@ export default function CharactersPage() {
   const [trainEpochs, setTrainEpochs] = useState(200);
   const [trainNotifyViaTelegram, setTrainNotifyViaTelegram] = useState(false);
 
+  // WS3-D (#933) — LoRA preset & extended training params
+  const [trainPresetKey, setTrainPresetKey] = useState<string>("");
+  const [trainBaseModel, setTrainBaseModel] = useState<
+    "sdxl" | "flux-dev" | "flux-schnell" | "sd15"
+  >("sdxl");
+  const [trainLoraAlpha, setTrainLoraAlpha] = useState(32);
+  const [trainMaxSteps, setTrainMaxSteps] = useState(700);
+  const [trainBatchSize, setTrainBatchSize] = useState(1);
+  const [trainGradAccum, setTrainGradAccum] = useState(1);
+  const [trainMixedPrecision, setTrainMixedPrecision] = useState<
+    "fp16" | "bf16" | "no"
+  >("fp16");
+  const [trainResolution, setTrainResolution] = useState(1024);
+  const [showAdvancedTraining, setShowAdvancedTraining] = useState(false);
+
+  // WS3-D (#933) — "Dirty" tracking for the 9 preset-controlled training
+  // fields. We snapshot the preset's defaults into `baselineRef` whenever a
+  // preset is applied; on every render, `trainDirty` is recomputed by
+  // comparing the live state to that snapshot. This avoids the timing
+  // pitfalls of effect-based dirty tracking when preset values happen to
+  // match the initial defaults (which would skip a state change and leave
+  // a stale flag).
+  type LoraSnapshot = {
+    baseModel: "sdxl" | "flux-dev" | "flux-schnell" | "sd15";
+    rank: number;
+    loraAlpha: number;
+    learningRate: number;
+    maxSteps: number;
+    batchSize: number;
+    gradAccum: number;
+    mixedPrecision: "fp16" | "bf16" | "no";
+    resolution: number;
+  };
+  const baselineRef = useRef<LoraSnapshot | null>(null);
+  const [pendingPresetKey, setPendingPresetKey] = useState<string | null>(null);
+
   // AI Enhance model selection dialog
   const [showEnhanceDialog, setShowEnhanceDialog] = useState(false);
   const [enhanceModel, setEnhanceModel] = useState<string>("");
@@ -141,6 +177,115 @@ export default function CharactersPage() {
     enabled: showEnhanceDialog,
     staleTime: 30_000,
   });
+
+  // WS3-D (#933) — LoRA training preset registry
+  type LoraPresetEntry = {
+    label: string;
+    description: string;
+    baseModel: "sdxl" | "flux-dev" | "flux-schnell" | "sd15";
+    rank: number;
+    loraAlpha: number;
+    learningRate: number;
+    steps: number;
+    batchSize: number;
+    gradientAccumulationSteps: number;
+    mixedPrecision: "fp16" | "bf16" | "no";
+    resolution: number;
+  };
+  const loraPresetsQuery = useQuery({
+    queryKey: ["lora-presets"],
+    queryFn: () =>
+      fetchJson<{ presets: Record<string, LoraPresetEntry> }>(
+        "/api/admin/lora-presets",
+      ),
+    staleTime: 5 * 60_000,
+  });
+  const loraPresets = loraPresetsQuery.data?.presets ?? {};
+
+  const applyLoraPreset = (key: string) => {
+    setTrainPresetKey(key);
+    const preset = loraPresets[key];
+    if (!preset) {
+      // "Custom" sentinel — there is no baseline to compare against, so the
+      // form is considered clean.
+      baselineRef.current = null;
+      return;
+    }
+    setTrainBaseModel(preset.baseModel);
+    setTrainRank(preset.rank);
+    setTrainLoraAlpha(preset.loraAlpha);
+    setTrainLR(preset.learningRate);
+    setTrainMaxSteps(preset.steps);
+    setTrainBatchSize(preset.batchSize);
+    setTrainGradAccum(preset.gradientAccumulationSteps);
+    setTrainMixedPrecision(preset.mixedPrecision);
+    setTrainResolution(preset.resolution);
+    // Snapshot the preset's defaults so subsequent renders can compute
+    // `trainDirty` by comparing live state against this baseline.
+    baselineRef.current = {
+      baseModel: preset.baseModel,
+      rank: preset.rank,
+      loraAlpha: preset.loraAlpha,
+      learningRate: preset.learningRate,
+      maxSteps: preset.steps,
+      batchSize: preset.batchSize,
+      gradAccum: preset.gradientAccumulationSteps,
+      mixedPrecision: preset.mixedPrecision,
+      resolution: preset.resolution,
+    };
+  };
+
+  // Derived `trainDirty` flag: true iff a preset has been applied AND the
+  // live state of any of the 9 fields diverges from the snapshot.
+  const baseline = baselineRef.current;
+  const trainDirty: boolean =
+    baseline !== null &&
+    (
+      trainBaseModel !== baseline.baseModel ||
+      trainRank !== baseline.rank ||
+      trainLoraAlpha !== baseline.loraAlpha ||
+      trainLR !== baseline.learningRate ||
+      trainMaxSteps !== baseline.maxSteps ||
+      trainBatchSize !== baseline.batchSize ||
+      trainGradAccum !== baseline.gradAccum ||
+      trainMixedPrecision !== baseline.mixedPrecision ||
+      trainResolution !== baseline.resolution
+    );
+
+  // Number of fields that diverge from the *current* preset's defaults.
+  // Used in the confirm dialog body so the user knows how many values they
+  // would lose by switching presets.
+  const countDivergingFields = (presetKey: string): number => {
+    const preset = loraPresets[presetKey];
+    if (!preset) return 0;
+    let n = 0;
+    if (trainBaseModel !== preset.baseModel) n++;
+    if (trainRank !== preset.rank) n++;
+    if (trainLoraAlpha !== preset.loraAlpha) n++;
+    if (trainLR !== preset.learningRate) n++;
+    if (trainMaxSteps !== preset.steps) n++;
+    if (trainBatchSize !== preset.batchSize) n++;
+    if (trainGradAccum !== preset.gradientAccumulationSteps) n++;
+    if (trainMixedPrecision !== preset.mixedPrecision) n++;
+    if (trainResolution !== preset.resolution) n++;
+    return n;
+  };
+
+  // Gatekeeper called from the preset <select> onChange. If the form is
+  // dirty AND at least one field differs from the *current* preset baseline,
+  // we open a confirm dialog before clobbering the user's edits.
+  const handlePresetChange = (key: string) => {
+    if (!trainDirty) {
+      applyLoraPreset(key);
+      return;
+    }
+    const diverging = trainPresetKey ? countDivergingFields(trainPresetKey) : 0;
+    if (diverging === 0) {
+      applyLoraPreset(key);
+      return;
+    }
+    setPendingPresetKey(key);
+  };
 
   // ── Mutations ─────────────────────────────────────────
   const createMutation = useMutation({
@@ -211,6 +356,13 @@ export default function CharactersPage() {
       loraRank: number;
       numEpochs: number;
       notifyViaTelegram?: boolean;
+      baseModel?: string;
+      loraAlpha?: number;
+      maxTrainSteps?: number;
+      trainBatchSize?: number;
+      gradientAccumulationSteps?: number;
+      mixedPrecision?: string;
+      resolution?: number;
     }) =>
       fetchJson<{ ok: boolean; message: string }>(
         `/api/characters/${data.id}/train`,
@@ -222,6 +374,13 @@ export default function CharactersPage() {
             loraRank: data.loraRank,
             numEpochs: data.numEpochs,
             notifyViaTelegram: data.notifyViaTelegram,
+            baseModel: data.baseModel,
+            loraAlpha: data.loraAlpha,
+            maxTrainSteps: data.maxTrainSteps,
+            trainBatchSize: data.trainBatchSize,
+            gradientAccumulationSteps: data.gradientAccumulationSteps,
+            mixedPrecision: data.mixedPrecision,
+            resolution: data.resolution,
           }),
         },
       ),
@@ -308,6 +467,7 @@ export default function CharactersPage() {
       triggerWord?: string;
       description?: string;
       photoCaptions?: Record<string, string>;
+      baseModel?: string;
     }) =>
       fetchJson<CharacterProfile>(`/api/characters/${id}`, {
         method: "PUT",
@@ -884,6 +1044,193 @@ export default function CharactersPage() {
                       </select>
                     </div>
                   </div>
+
+                  {/* WS3-D (#933) — Preset + extended LoRA training params */}
+                  <div className="rounded-md border border-border bg-muted/20 p-3 space-y-3">
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                      <div>
+                        <label className="text-xs font-medium text-muted-foreground">
+                          Preset
+                        </label>
+                        <select
+                          data-testid="lora-preset-select"
+                          value={trainPresetKey}
+                          onChange={(e) => handlePresetChange(e.target.value)}
+                          className="mt-1 w-full rounded-md border border-border bg-background px-3 py-1.5 text-sm"
+                        >
+                          <option value="">Custom</option>
+                          {Object.entries(loraPresets).map(([key, p]) => (
+                            <option key={key} value={key}>
+                              {p.label}
+                            </option>
+                          ))}
+                        </select>
+                        {trainDirty && (
+                          <span
+                            data-testid="lora-preset-modified"
+                            className="mt-1 inline-block text-[10px] italic text-muted-foreground"
+                          >
+                            (modified)
+                          </span>
+                        )}
+                        {trainPresetKey && loraPresets[trainPresetKey] && (
+                          <p className="mt-1 text-[10px] text-muted-foreground">
+                            {loraPresets[trainPresetKey].description}
+                          </p>
+                        )}
+                      </div>
+                      <div>
+                        <label className="inline-flex items-center gap-1 text-xs font-medium text-muted-foreground">
+                          Base Model
+                          <span className="group relative cursor-help">
+                            <Info className="h-3 w-3 opacity-50" />
+                            <span className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-1 w-64 -translate-x-1/2 rounded-md bg-popover px-3 py-2 text-[10px] leading-snug text-popover-foreground shadow-md border border-border opacity-0 transition-opacity group-hover:opacity-100">
+                              Must match the inference model — a mismatch will
+                              silently disable the LoRA at generation time.
+                            </span>
+                          </span>
+                        </label>
+                        <select
+                          data-testid="lora-base-model-select"
+                          value={trainBaseModel}
+                          onChange={(e) => {
+                            const v = e.target.value as
+                              | "sdxl"
+                              | "flux-dev"
+                              | "flux-schnell"
+                              | "sd15";
+                            setTrainBaseModel(v);
+                            updateMutation.mutate({
+                              id: selected.id,
+                              baseModel: v,
+                              silent: true,
+                            });
+                          }}
+                          className="mt-1 w-full rounded-md border border-border bg-background px-3 py-1.5 text-sm"
+                        >
+                          <option value="sdxl">SDXL</option>
+                          <option value="flux-dev">Flux dev</option>
+                          <option value="flux-schnell">Flux schnell</option>
+                          <option value="sd15">SD 1.5</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+                      <div>
+                        <label className="text-xs font-medium text-muted-foreground">
+                          LoRA Alpha
+                        </label>
+                        <input
+                          type="number"
+                          min={1}
+                          max={256}
+                          step={1}
+                          value={trainLoraAlpha}
+                          onChange={(e) =>
+                            setTrainLoraAlpha(parseInt(e.target.value))
+                          }
+                          className="mt-1 w-full rounded-md border border-border bg-background px-3 py-1.5 text-sm"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-xs font-medium text-muted-foreground">
+                          Max Train Steps
+                        </label>
+                        <input
+                          type="number"
+                          min={50}
+                          max={10000}
+                          step={50}
+                          value={trainMaxSteps}
+                          onChange={(e) =>
+                            setTrainMaxSteps(parseInt(e.target.value))
+                          }
+                          className="mt-1 w-full rounded-md border border-border bg-background px-3 py-1.5 text-sm"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-xs font-medium text-muted-foreground">
+                          Batch Size
+                        </label>
+                        <input
+                          type="number"
+                          min={1}
+                          max={16}
+                          step={1}
+                          value={trainBatchSize}
+                          onChange={(e) =>
+                            setTrainBatchSize(parseInt(e.target.value))
+                          }
+                          className="mt-1 w-full rounded-md border border-border bg-background px-3 py-1.5 text-sm"
+                        />
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => setShowAdvancedTraining((v) => !v)}
+                      className="text-xs font-medium text-primary hover:underline"
+                      data-testid="lora-advanced-toggle"
+                    >
+                      {showAdvancedTraining ? "▾ Hide advanced" : "▸ Advanced"}
+                    </button>
+
+                    {showAdvancedTraining && (
+                      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+                        <div>
+                          <label className="text-xs font-medium text-muted-foreground">
+                            Grad Accum Steps
+                          </label>
+                          <input
+                            type="number"
+                            min={1}
+                            max={32}
+                            step={1}
+                            value={trainGradAccum}
+                            onChange={(e) =>
+                              setTrainGradAccum(parseInt(e.target.value))
+                            }
+                            className="mt-1 w-full rounded-md border border-border bg-background px-3 py-1.5 text-sm"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-xs font-medium text-muted-foreground">
+                            Mixed Precision
+                          </label>
+                          <select
+                            value={trainMixedPrecision}
+                            onChange={(e) =>
+                              setTrainMixedPrecision(
+                                e.target.value as "fp16" | "bf16" | "no",
+                              )
+                            }
+                            className="mt-1 w-full rounded-md border border-border bg-background px-3 py-1.5 text-sm"
+                          >
+                            <option value="fp16">fp16</option>
+                            <option value="bf16">bf16</option>
+                            <option value="no">no</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="text-xs font-medium text-muted-foreground">
+                            Resolution
+                          </label>
+                          <input
+                            type="number"
+                            min={256}
+                            max={2048}
+                            step={64}
+                            value={trainResolution}
+                            onChange={(e) =>
+                              setTrainResolution(parseInt(e.target.value))
+                            }
+                            className="mt-1 w-full rounded-md border border-border bg-background px-3 py-1.5 text-sm"
+                          />
+                        </div>
+                      </div>
+                    )}
+                  </div>
                   <button
                     onClick={() =>
                       trainMutation.mutate({
@@ -893,6 +1240,13 @@ export default function CharactersPage() {
                         loraRank: trainRank,
                         numEpochs: trainEpochs,
                         notifyViaTelegram: trainNotifyViaTelegram || undefined,
+                        baseModel: trainBaseModel,
+                        loraAlpha: trainLoraAlpha,
+                        maxTrainSteps: trainMaxSteps,
+                        trainBatchSize: trainBatchSize,
+                        gradientAccumulationSteps: trainGradAccum,
+                        mixedPrecision: trainMixedPrecision,
+                        resolution: trainResolution,
                       })
                     }
                     disabled={
@@ -1010,6 +1364,24 @@ export default function CharactersPage() {
           variant="danger"
           onConfirm={() => deleteMutation.mutate(deleteTarget.id)}
           onCancel={() => setDeleteTarget(null)}
+        />
+      )}
+
+      {/* WS3-D (#933): Confirm before overwriting custom training params */}
+      {pendingPresetKey !== null && (
+        <ConfirmDialog
+          title="Overwrite custom training parameters?"
+          message={`Switching presets will reset rank, alpha, learning rate, and ${
+            trainPresetKey ? countDivergingFields(trainPresetKey) : 0
+          } other fields you customized.`}
+          confirmLabel="Apply preset"
+          cancelLabel="Keep my values"
+          onConfirm={() => {
+            const key = pendingPresetKey;
+            setPendingPresetKey(null);
+            applyLoraPreset(key);
+          }}
+          onCancel={() => setPendingPresetKey(null)}
         />
       )}
 

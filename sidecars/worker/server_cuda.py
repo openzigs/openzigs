@@ -41,6 +41,7 @@ import hmac
 import io
 import json
 import logging
+import math
 import os
 import subprocess
 import sys
@@ -112,6 +113,19 @@ VIDEO_MODEL_REGISTRY: dict[str, dict] = {
         "tier": "low",
         "min_vram_gb": 8,
     },
+    # WS1-B (#926): LTX-2 22B distilled with native synchronized audio.
+    # Requires LTX_ALLOW_AUDIO=1 and pooled VRAM >= 24 GB to load.
+    "ltxv-2-22b-distilled": {
+        "hf_id": "Lightricks/LTX-Video-2-22B-distilled",
+        "pipeline_class": "LTXConditionPipeline",
+        "default_steps": 8,
+        "default_guidance": 1.0,
+        "description": "LTX-Video 2 22B distilled — synchronized audio, dual-GPU recommended",
+        "vram_gb": 24,
+        "tier": "ultra",
+        "min_vram_gb": 24,
+        "synchronized_audio": True,
+    },
 }
 
 # ── Constants ──────────────────────────────────────────────────
@@ -144,6 +158,39 @@ MAX_HEIGHT = int(os.getenv("LTX_MAX_HEIGHT", "720"))
 MAX_PIXELS = MAX_WIDTH * MAX_HEIGHT
 MODEL_IDLE_TIMEOUT_SEC = int(os.getenv("MODEL_IDLE_TIMEOUT", "300"))
 
+# ── WS2-A (#927): Dual-GPU LTX sharding configuration ──────────
+# All env vars below are documented in `sidecars/worker/.env.example` and
+# `docs/MULTI_GPU.md`. Defaults are conservative and will silently fall back
+# to single-GPU mode on systems with <2 CUDA devices or insufficient pooled
+# VRAM.
+#
+# LTX_POOLING_MODE values:
+#   "off"     -> never pool; existing single-GPU path
+#   "manual"  -> always attempt sharding even on a single GPU (will fail
+#               clearly if conditions not met). Useful for tests.
+#   "auto"    -> detect device_count >= 2 and pooled VRAM >= LTX_POOLING_MIN_VRAM_GB,
+#               otherwise transparently fall back. THIS IS THE DEFAULT.
+LTX_POOLING_MODE: str = os.getenv("LTX_POOLING_MODE", "auto").strip().lower()
+if LTX_POOLING_MODE not in ("off", "manual", "auto"):
+    logger.warning(
+        f"LTX_POOLING_MODE='{LTX_POOLING_MODE}' is not recognised; falling back to 'auto'"
+    )
+    LTX_POOLING_MODE = "auto"
+
+# Per-component device overrides. Heaviest module (transformer) defaults to
+# cuda:1 because the 13B FLUX text encoder + VAE typically share cuda:0 with
+# the OS / display.
+LTX_TRANSFORMER_DEVICE: str = os.getenv("LTX_TRANSFORMER_DEVICE", "cuda:1").strip()
+LTX_ENCODER_DEVICE: str = os.getenv("LTX_ENCODER_DEVICE", "cuda:0").strip()
+LTX_VAE_DEVICE: str = os.getenv("LTX_VAE_DEVICE", "cuda:0").strip()
+# Minimum pooled VRAM in GB to enable auto-pooling (sum of all visible cards).
+LTX_POOLING_MIN_VRAM_GB: int = int(os.getenv("LTX_POOLING_MIN_VRAM_GB", "18"))
+# Hard override on max frames regardless of VRAM tier (escape hatch).
+LTX_MAX_FRAMES_OVERRIDE: int = int(os.getenv("LTX_MAX_FRAMES_OVERRIDE", "0"))
+# Allow LTX-2 / LTX-2.3 native synchronized audio. Off by default because the
+# weights are large and require pooled VRAM to fit.
+LTX_ALLOW_AUDIO: bool = os.getenv("LTX_ALLOW_AUDIO", "0").strip() in ("1", "true", "True")
+
 # ── VRAM-Based Frame Limits ────────────────────────────────────
 # Empirically derived safe frame counts for different VRAM budgets.
 # These are conservative to avoid OOM in the middle of generation.
@@ -156,18 +203,78 @@ VRAM_FRAME_LIMITS: dict[tuple[str, int], int] = {
     ("13b", 14): 97,    # 16GB GPUs: ~4 seconds at 24fps
     ("13b", 10): 57,    # 12GB GPUs: ~2.3 seconds at 24fps (RTX 3060)
     ("13b", 6): 25,     # 8GB GPUs: ~1 second (not recommended)
+    # WS2-A (#927): pooled (dual-GPU) tiers — sum of all visible cards.
+    # The transformer is sharded onto cuda:1 leaving ~full VRAM for activations.
+    ("13b", 24): 161,   # 2x 12 GB pooled = 24 GB tier
+    ("13b", 32): 201,   # 2x 16 GB pooled or 1x 32 GB
+    ("13b", 48): 257,   # 2x 24 GB or pro cards
     # 2B models are much lighter
     ("2b", 22): 161,
     ("2b", 14): 161,
     ("2b", 10): 121,    # 12GB: ~5 seconds
     ("2b", 6): 81,      # 8GB: ~3.3 seconds
+    ("2b", 24): 161,    # pooled 2B is already maxed
+    # WS1-B (#926): LTX-2 22B distilled with synchronized audio.
+    ("22b", 22): 121,   # single 24 GB
+    ("22b", 24): 161,   # pooled 24 GB (2x 12)
+    ("22b", 32): 201,
+    ("22b", 48): 257,
 }
 
 
+def _is_pooling_active() -> bool:
+    """Return True iff dual-GPU sharding should be used for this load.
+
+    Honors LTX_POOLING_MODE (off/manual/auto) and LTX_POOLING_MIN_VRAM_GB.
+    """
+    _ensure_torch()
+    if LTX_POOLING_MODE == "off":
+        return False
+    if not torch.cuda.is_available():
+        return False
+    device_count = torch.cuda.device_count()
+    if LTX_POOLING_MODE == "manual":
+        return device_count >= 2
+    # auto
+    if device_count < 2:
+        return False
+    pooled = _get_pooled_vram_gb()
+    return pooled >= LTX_POOLING_MIN_VRAM_GB
+
+
+def _get_pooled_vram_gb() -> int:
+    """Sum of total VRAM (GB, rounded down) across all visible CUDA devices."""
+    _ensure_torch()
+    if not torch.cuda.is_available():
+        return 0
+    total_bytes = 0
+    for i in range(torch.cuda.device_count()):
+        try:
+            _, total = torch.cuda.mem_get_info(i)
+            total_bytes += total
+        except Exception as exc:
+            # mem_get_info per-device requires fairly recent torch; on older
+            # builds, fall back to props.
+            logger.debug("mem_get_info failed for device %d: %s; falling back to get_device_properties", i, exc)
+            try:
+                props = torch.cuda.get_device_properties(i)
+                total_bytes += getattr(props, "total_memory", 0)
+            except Exception as inner_exc:
+                logger.debug("get_device_properties also failed for device %d: %s; skipping", i, inner_exc)
+    return int(total_bytes / 1024**3)
+
+
 def _get_vram_gb() -> int:
-    """Get total VRAM in GB (rounded down)."""
+    """Get total VRAM in GB (rounded down).
+
+    When pooling is active this returns the *pooled* total so that the frame
+    limit picker upgrades to the dual-GPU tier automatically. When pooling is
+    inactive it returns the primary device's VRAM, preserving legacy behaviour.
+    """
     _ensure_torch()
     if torch.cuda.is_available():
+        if _is_pooling_active():
+            return _get_pooled_vram_gb()
         _, total = torch.cuda.mem_get_info()
         return int(total / 1024**3)
     return 12  # Assume 12GB if detection fails
@@ -175,17 +282,27 @@ def _get_vram_gb() -> int:
 
 def _get_max_frames_for_model(model_key: str) -> int:
     """Calculate max safe frames based on model size and available VRAM."""
+    if LTX_MAX_FRAMES_OVERRIDE > 0:
+        return LTX_MAX_FRAMES_OVERRIDE
     vram_gb = _get_vram_gb()
-    category = "13b" if "13b" in model_key else "2b"
+    if "22b" in model_key or "ltxv-2" in model_key:
+        category = "22b"
+    elif "13b" in model_key:
+        category = "13b"
+    else:
+        category = "2b"
 
-    # Find the matching or next-lower VRAM tier
-    for tier in [22, 14, 10, 6]:
+    # Find the matching or next-lower VRAM tier (pooled tiers first when active).
+    tiers = [48, 32, 24, 22, 14, 10, 6]
+    for tier in tiers:
         if vram_gb >= tier:
             limit = VRAM_FRAME_LIMITS.get((category, tier))
             if limit:
                 return limit
 
     # Fallback: very conservative for unknown configs
+    if category == "22b":
+        return 49
     return 25 if category == "13b" else 57
 
 
@@ -230,22 +347,25 @@ def verify_token(authorization: Optional[str] = Header(None)) -> None:
 
 
 def validate_callback_url(url: str) -> str:
-    """Validate a sidecar callback URL.
+    """Validate a sidecar callback URL and return a reconstructed safe URL.
 
     The worker sidecar only ever calls back to the OpenZigs orchestrator on the
     same host, so the allowlist is intentionally narrow:
 
     * Only ``http`` / ``https`` schemes are accepted.
     * Only loopback hosts (``localhost``, ``127.0.0.0/8``, ``::1``) and
-      ``*.local`` mDNS names are accepted.
+      ``*.local`` mDNS names are accepted, plus RFC1918 private ranges for
+      Docker-bridge call-backs.
     * Cloud metadata endpoints (``169.254.169.254``, ``fd00:ec2::254``),
-      RFC 1918 ranges, link-local ranges and IPv4-mapped-IPv6 addresses are
-      rejected outright. This closes the SSRF class CodeQL flagged
-      (``py/full-ssrf``, sub-issue #904).
+      link-local ranges and IPv4-mapped-IPv6 addresses are rejected outright.
+
+    The returned URL is **reconstructed** from the validated components rather
+    than the original tainted input, so CodeQL's ``py/full-ssrf`` flow
+    analysis recognises the function as a sanitizer (#904 / #935).
     """
     parsed = urlparse(url)
     if parsed.scheme not in ("http", "https"):
-        raise ValueError(f"URL scheme must be http or https, got: {parsed.scheme}")
+        raise ValueError("URL scheme must be http or https")
     host = (parsed.hostname or "").strip("[]")
     if not host:
         raise ValueError("URL must have a hostname")
@@ -260,44 +380,39 @@ def validate_callback_url(url: str) -> str:
         "metadata.goog",
     }
     if host.lower() in METADATA_HOSTS:
-        raise ValueError(f"Callback URL host blocked (metadata endpoint): {host}")
+        raise ValueError("Callback URL host blocked (metadata endpoint)")
 
-    # Loopback hostnames are always safe.
+    accepted = False
     if host in ("localhost", "127.0.0.1", "::1"):
-        return url
+        accepted = True
+    else:
+        try:
+            addr = ipaddress.ip_address(host)
+        except ValueError:
+            # Hostname (not an IP literal). Allow only mDNS `.local` names.
+            if host.endswith(".local"):
+                accepted = True
+            else:
+                raise ValueError("Callback URL host not allowed")
+        else:
+            # Unwrap IPv4-mapped IPv6.
+            if isinstance(addr, ipaddress.IPv6Address) and addr.ipv4_mapped is not None:
+                addr = addr.ipv4_mapped
+                if str(addr) in METADATA_HOSTS:
+                    raise ValueError("Callback URL host blocked (mapped metadata endpoint)")
+            if addr.is_link_local or addr.is_multicast or addr.is_unspecified:
+                raise ValueError("Callback URL host not allowed")
+            if addr.is_loopback or addr.is_private:
+                accepted = True
 
-    try:
-        addr = ipaddress.ip_address(host)
-    except ValueError:
-        # Hostname (not an IP literal). Allow only mDNS `.local` names; deny
-        # everything else so a public DNS name can't be used to pivot.
-        if host.endswith(".local"):
-            return url
-        raise ValueError(f"Callback URL host not allowed: {host}")
+    if not accepted:
+        raise ValueError("Callback URL host not allowed")
 
-    # Unwrap IPv4-mapped IPv6 (e.g. ::ffff:169.254.169.254) so the metadata
-    # check above also catches the mapped form.
-    if isinstance(addr, ipaddress.IPv6Address) and addr.ipv4_mapped is not None:
-        addr = addr.ipv4_mapped
-        if str(addr) in METADATA_HOSTS:
-            raise ValueError(
-                f"Callback URL host blocked (mapped metadata endpoint): {host}"
-            )
-
-    if addr.is_loopback:
-        return url
-
-    # RFC1918 private addresses (10/8, 172.16/12, 192.168/16) are allowed so
-    # the worker can post back to the orchestrator across Docker bridge
-    # networks. We deliberately exclude link-local (``is_link_local`` —
-    # 169.254/16, fe80::/10) since that's where cloud metadata lives.
-    if addr.is_link_local or addr.is_multicast or addr.is_unspecified:
-        raise ValueError(f"Callback URL host not allowed: {host}")
-    if addr.is_private:
-        return url
-
-    # Anything else — public IPs, reserved ranges — is rejected.
-    raise ValueError(f"Callback URL host not allowed: {host}")
+    # Reconstruct the URL from validated parts (breaks CodeQL taint chain).
+    port = f":{parsed.port}" if parsed.port else ""
+    path = parsed.path or "/"
+    query = f"?{parsed.query}" if parsed.query else ""
+    return f"{parsed.scheme}://{host}{port}{path}{query}"
 
 
 def _is_safe_callback_url(url: str) -> bool:
@@ -306,6 +421,44 @@ def _is_safe_callback_url(url: str) -> bool:
         return True
     except ValueError:
         return False
+
+
+# ── WS2-B (#928) hardening: containment for subprocess paths ──
+
+import re as _re
+import pathlib as _pathlib
+
+_DEFAULT_RENDER_ROOT = os.path.expanduser("~/.openzigs/renders")
+_ALLOWED_SUBPROCESS_ROOTS: tuple[_pathlib.Path, ...] = tuple(
+    _pathlib.Path(p).resolve()
+    for p in (
+        os.getenv("WORKER_RENDER_ROOT", _DEFAULT_RENDER_ROOT),
+        tempfile.gettempdir(),
+    )
+)
+_JOB_ID_RE = _re.compile(r"^[A-Za-z0-9_-]{1,128}$")
+
+
+def _safe_subprocess_path(p: str) -> str:
+    """Confine a path that will be passed as an ffmpeg/ffprobe argv to one
+    of our render or temp roots (CodeQL py/path-injection +
+    py/command-line-injection sanitizer using pathlib + relative_to())."""
+    if not isinstance(p, str) or not p:
+        raise ValueError("Path must be a non-empty string")
+    candidate = _pathlib.Path(p).resolve()
+    for root in _ALLOWED_SUBPROCESS_ROOTS:
+        try:
+            candidate.relative_to(root)
+            return str(candidate)
+        except ValueError:
+            continue
+    raise ValueError("Subprocess path is outside the allowed roots")
+
+
+def _safe_job_id(jid: str) -> str:
+    if not isinstance(jid, str) or not _JOB_ID_RE.match(jid):
+        raise ValueError("job_id must match ^[A-Za-z0-9_-]{1,128}$")
+    return jid
 
 
 # ── Worker State ─────────────────────────────────────────────
@@ -522,7 +675,42 @@ def generate_video_ltx2(request: "GenerateRequest") -> bytes:
                 torch_dtype=torch.float16,
             )
 
-        pipe.enable_model_cpu_offload()
+        pooling_active = _is_pooling_active()
+        if pooling_active:
+            # WS2-A (#927): manual dual-GPU sharding.
+            #
+            # Tavily research 2026-04-22 confirms diffusers `LTXConditionPipeline`
+            # and `LTXPipeline` continue to support per-component `.to(device)`
+            # placement on releases 0.30.x through current main, and that this
+            # is the recommended pattern over `device_map="auto"` (which is
+            # documented as experimental and incompatible with `.to()` /
+            # `enable_model_cpu_offload` mode-switching without an explicit
+            # `reset_device_map()` call).
+            #
+            # Sources:
+            #   https://huggingface.co/docs/diffusers/main/tutorials/inference_with_big_models
+            #   https://discuss.huggingface.co/t/using-second-gpu/23453
+            #
+            # The pipeline `__call__` keeps activations on the transformer's
+            # device and tolerates encoder/VAE living on a different CUDA index.
+            try:
+                if hasattr(pipe, "transformer") and pipe.transformer is not None:
+                    pipe.transformer.to(LTX_TRANSFORMER_DEVICE)
+                if hasattr(pipe, "text_encoder") and pipe.text_encoder is not None:
+                    pipe.text_encoder.to(LTX_ENCODER_DEVICE)
+                if hasattr(pipe, "vae") and pipe.vae is not None:
+                    pipe.vae.to(LTX_VAE_DEVICE)
+                logger.info(
+                    f"[ws2a] Dual-GPU sharding active: transformer={LTX_TRANSFORMER_DEVICE} "
+                    f"encoder={LTX_ENCODER_DEVICE} vae={LTX_VAE_DEVICE} pooled_vram={_get_pooled_vram_gb()}GB"
+                )
+            except Exception as exc:
+                logger.warning(
+                    f"[ws2a] Sharding placement failed ({exc}); falling back to model_cpu_offload."
+                )
+                pooling_active = False
+        if not pooling_active:
+            pipe.enable_model_cpu_offload()
         pipe.enable_attention_slicing()
         # Enable VAE tiling for 12GB GPUs — reduces VRAM during decode
         if hasattr(pipe, "vae") and hasattr(pipe.vae, "enable_tiling"):
@@ -959,12 +1147,91 @@ async def list_models():
             "default_guidance": spec["default_guidance"],
             "vram_gb": spec["vram_gb"],
             "is_default": key == DEFAULT_MODEL_KEY,
+            "synchronized_audio": bool(spec.get("synchronized_audio", False)),
         })
     return {
         "models": models,
         "default_key": DEFAULT_MODEL_KEY,
         "default_repo": DEFAULT_MODEL_REPO,
-        "audio_supported": False,
+        # Audio is supported on CUDA only when the active model carries
+        # synchronized audio weights AND the runtime allows it.
+        "audio_supported": (
+            LTX_ALLOW_AUDIO
+            and any(spec.get("synchronized_audio") for spec in VIDEO_MODEL_REGISTRY.values())
+            and _get_pooled_vram_gb() >= 24
+        ),
+    }
+
+
+@app.get("/capabilities")
+async def capabilities():
+    """WS2-C (#929) — Runtime capability report.
+
+    Surfaces detected dual-GPU sharding state, max-frame tier, available
+    audio modes, and the env-var configuration that drove the decisions.
+    Consumed by the admin UI (`ui/app/admin/models/`) so users can see
+    what their hardware is actually capable of without reading logs.
+    """
+    _ensure_torch()
+    cuda_available = bool(torch.cuda.is_available())
+    device_count = torch.cuda.device_count() if cuda_available else 0
+    pooled_vram = _get_pooled_vram_gb() if cuda_available else 0
+    pooling_active = _is_pooling_active()
+    per_device = []
+    if cuda_available:
+        for i in range(device_count):
+            try:
+                free, total = torch.cuda.mem_get_info(i)
+                per_device.append({
+                    "index": i,
+                    "name": torch.cuda.get_device_name(i),
+                    "total_gb": int(total / 1024**3),
+                    "free_gb": int(free / 1024**3),
+                })
+            except Exception as exc:
+                # Avoid leaking stack traces to external callers
+                # (CodeQL py/stack-trace-exposure). Log internally instead.
+                logger.warning(f"[capabilities] mem_get_info({i}) failed: {exc}")
+                per_device.append({"index": i, "error": "device_query_failed"})
+
+    audio_modes = ["off"]
+    # Post-processing v2a path is always available when the v2a sidecar is
+    # configured; the sidecar URL is owned by the orchestrator, not us.
+    audio_modes.append("auto")
+    if (
+        LTX_ALLOW_AUDIO
+        and pooled_vram >= 24
+        and any(spec.get("synchronized_audio") for spec in VIDEO_MODEL_REGISTRY.values())
+    ):
+        audio_modes.append("native")
+
+    return {
+        "cuda_available": cuda_available,
+        "device_count": device_count,
+        "pooled_vram_gb": pooled_vram,
+        "per_device": per_device,
+        "pooling": {
+            "mode": LTX_POOLING_MODE,
+            "active": pooling_active,
+            "transformer_device": LTX_TRANSFORMER_DEVICE if pooling_active else None,
+            "encoder_device": LTX_ENCODER_DEVICE if pooling_active else None,
+            "vae_device": LTX_VAE_DEVICE if pooling_active else None,
+            "min_vram_gb": LTX_POOLING_MIN_VRAM_GB,
+        },
+        "max_frames": {
+            key: _get_max_frames_for_model(key)
+            for key in VIDEO_MODEL_REGISTRY.keys()
+        },
+        "audio_modes": audio_modes,
+        "env": {
+            "LTX_POOLING_MODE": LTX_POOLING_MODE,
+            "LTX_TRANSFORMER_DEVICE": LTX_TRANSFORMER_DEVICE,
+            "LTX_ENCODER_DEVICE": LTX_ENCODER_DEVICE,
+            "LTX_VAE_DEVICE": LTX_VAE_DEVICE,
+            "LTX_POOLING_MIN_VRAM_GB": LTX_POOLING_MIN_VRAM_GB,
+            "LTX_MAX_FRAMES_OVERRIDE": LTX_MAX_FRAMES_OVERRIDE,
+            "LTX_ALLOW_AUDIO": LTX_ALLOW_AUDIO,
+        },
     }
 
 
@@ -987,23 +1254,311 @@ async def generate(request: GenerateRequest):
     if state.is_busy:
         raise HTTPException(status_code=409, detail="Worker is busy with another job")
 
-    # Audio generation is only supported on the MLX backend (Apple Silicon).
-    # The CUDA diffusers pipelines have no synchronized audio support.
+    # Audio gating (#926, #927):
+    #
+    #   - On the CUDA backend, only `ltxv-2-22b-distilled` carries native
+    #     synchronized audio weights.
+    #   - It is gated behind LTX_ALLOW_AUDIO=1 and pooled VRAM >= 24 GB so
+    #     it never silently OOMs a 12 GB single-card host.
+    #   - All other models still reject audio outright, matching legacy
+    #     behaviour.
     if request.audio:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                "Audio generation is not supported on the CUDA backend. "
-                "Only the Apple Silicon (MLX) worker with LTX_ALLOW_AUDIO=1 "
-                "and the full BF16 model supports synchronized audio. "
-                "Please submit this job without audio=true, or route it to "
-                "an Apple Silicon node."
-            ),
-        )
+        model_spec = VIDEO_MODEL_REGISTRY.get(request.model, {})
+        synchronized_audio_supported = bool(model_spec.get("synchronized_audio"))
+        pooled_vram = _get_pooled_vram_gb()
+        if not synchronized_audio_supported:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Audio generation is not supported by model '{request.model}' on CUDA. "
+                    "Only 'ltxv-2-22b-distilled' carries synchronized audio weights, "
+                    "or post-process via the v2a sidecar (audio='auto')."
+                ),
+            )
+        if not LTX_ALLOW_AUDIO:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "LTX-2 synchronized audio is disabled. Set LTX_ALLOW_AUDIO=1 "
+                    "to enable. See docs/MULTI_GPU.md for VRAM requirements."
+                ),
+            )
+        if pooled_vram < 24:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"LTX-2 synchronized audio requires >=24 GB pooled VRAM "
+                    f"(detected {pooled_vram} GB). Use audio='auto' to dispatch "
+                    "the v2a sidecar instead, or add a second GPU."
+                ),
+            )
 
     asyncio.create_task(run_generation_job(request))
     logger.info(f"Job {request.job_id} accepted")
     return {"status": "accepted", "job_id": request.job_id}
+
+
+# ── WS2-B (#928): Extended duration via last-frame conditioning ──
+
+class GenerateExtendedRequest(BaseModel):
+    """Generate a video longer than the model's per-clip frame ceiling.
+
+    The worker computes ``ceil(target_duration_sec * fps / max_clip_frames)``
+    sub-clips, generates them sequentially with the **last frame of clip N**
+    used as the ``init_image`` for clip N+1, then concatenates with ffmpeg.
+    Optional 4-frame crossfade between clips smooths the seams.
+    """
+
+    job_id: str
+    prompt: str
+    target_duration_sec: float = Field(gt=0.0, le=120.0)
+    width: int = DEFAULT_WIDTH
+    height: int = DEFAULT_HEIGHT
+    fps: int = DEFAULT_FPS
+    model: str = DEFAULT_MODEL_KEY
+    callback_url: str
+    seed: Optional[int] = None
+    negative_prompt: Optional[str] = None
+    cfg_scale: Optional[float] = None
+    num_inference_steps: Optional[int] = None
+    crossfade: bool = True
+    init_image: Optional[str] = None  # base64 — seeds the first clip
+
+
+@app.post("/generate-extended", status_code=202, dependencies=[Depends(verify_token)])
+async def generate_extended(request: GenerateExtendedRequest):
+    """Accept an extended-duration job and dispatch it asynchronously.
+
+    The actual stitching loop lives in ``run_extended_generation_job`` which
+    reuses ``run_generation_job`` for each sub-clip; that keeps memory
+    behaviour identical to the single-clip path and avoids a parallel
+    generation code-path that would drift out of sync with #927 sharding.
+    """
+    if state.is_busy:
+        raise HTTPException(status_code=409, detail="Worker is busy with another job")
+
+    # Validate model exists and pick its per-clip ceiling.
+    if request.model not in VIDEO_MODEL_REGISTRY:
+        raise HTTPException(status_code=400, detail=f"Unknown model: {request.model}")
+    max_clip_frames = _get_max_frames_for_model(request.model)
+    target_frames = int(request.target_duration_sec * request.fps)
+    num_clips = max(1, math.ceil(target_frames / max_clip_frames))
+    if num_clips > 16:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Requested {request.target_duration_sec}s would need "
+                f"{num_clips} sub-clips (>16). Reduce duration or use a "
+                "model with a higher per-clip frame ceiling."
+            ),
+        )
+
+    asyncio.create_task(run_extended_generation_job(request, max_clip_frames, num_clips))
+    logger.info(
+        f"[ws2b] Extended job {request.job_id} accepted "
+        f"({request.target_duration_sec}s -> {num_clips} sub-clips of "
+        f"{max_clip_frames} frames each)"
+    )
+    return {
+        "status": "accepted",
+        "job_id": request.job_id,
+        "num_clips": num_clips,
+        "max_clip_frames": max_clip_frames,
+        "target_frames": target_frames,
+    }
+
+
+async def run_extended_generation_job(
+    request: GenerateExtendedRequest,
+    max_clip_frames: int,
+    num_clips: int,
+) -> None:
+    """Sequentially generate sub-clips and stitch them with ffmpeg.
+
+    Implementation note: this function intentionally invokes the existing
+    ``run_generation_job`` per clip rather than re-entering the diffusion
+    pipeline directly. That preserves all the OOM, sharding, and progress
+    callback behaviour from the single-clip path. The trade-off is that
+    we incur per-clip async overhead, but for jobs measured in seconds-
+    of-video this is negligible.
+    """
+    output_paths: list[str] = []
+    last_frame_b64: Optional[str] = request.init_image
+    try:
+        await state.set_busy(True)
+        for clip_idx in range(num_clips):
+            clip_job_id = f"{request.job_id}__clip{clip_idx}"
+            sub_request = GenerateRequest(
+                job_id=clip_job_id,
+                type="img2video" if last_frame_b64 else "txt2video",
+                prompt=request.prompt,
+                width=request.width,
+                height=request.height,
+                num_frames=max_clip_frames,
+                fps=request.fps,
+                model=request.model,
+                callback_url=request.callback_url,
+                init_image=last_frame_b64,
+                seed=(request.seed + clip_idx) if request.seed is not None else None,
+                negative_prompt=request.negative_prompt,
+                cfg_scale=request.cfg_scale,
+                num_inference_steps=request.num_inference_steps,
+            )
+            await run_generation_job(sub_request)
+            result = _job_results.get(clip_job_id)
+            if not result or "video_path" not in result:
+                raise RuntimeError(
+                    f"Sub-clip {clip_idx} produced no output (job_id={clip_job_id})"
+                )
+            output_paths.append(result["video_path"])
+            # Extract the final frame for the next clip's seed image.
+            if clip_idx < num_clips - 1:
+                last_frame_b64 = _extract_last_frame_b64(result["video_path"])
+
+        # Concatenate the produced clips.
+        safe_jid = _safe_job_id(request.job_id)
+        final_path = os.path.join(
+            tempfile.gettempdir(), f"extended_{safe_jid}.mp4"
+        )
+        _concat_clips(output_paths, final_path, crossfade=request.crossfade, fps=request.fps)
+        _store_result(request.job_id, {
+            "status": "completed",
+            "video_path": final_path,
+            "num_clips": num_clips,
+            "duration_sec": request.target_duration_sec,
+        })
+        # Notify orchestrator
+        try:
+            if request.callback_url:
+                safe_url = validate_callback_url(request.callback_url)
+                async with httpx.AsyncClient(timeout=30.0) as client:
+                    await client.post(
+                        safe_url,
+                        json={
+                            "job_id": safe_jid,
+                            "status": "completed",
+                            "video_path": final_path,
+                            "extended": True,
+                        },
+                    )
+        except Exception as exc:
+            logger.warning(f"[ws2b] Callback POST failed: {exc}")
+    except Exception as exc:
+        logger.exception(f"[ws2b] Extended job {request.job_id} failed")
+        # Generic message to external callers; full trace stays in the log
+        # (CodeQL py/stack-trace-exposure).
+        _store_result(request.job_id, {"status": "failed", "error": "job failed; see worker logs"})
+        try:
+            if request.callback_url:
+                safe_url = validate_callback_url(request.callback_url)
+                async with httpx.AsyncClient(timeout=30.0) as client:
+                    await client.post(
+                        safe_url,
+                        json={
+                            "job_id": request.job_id,
+                            "status": "failed",
+                            "error": "job failed; see worker logs",
+                        },
+                    )
+        except Exception:
+            pass
+    finally:
+        await state.set_busy(False)
+
+
+def _extract_last_frame_b64(video_path: str) -> str:
+    """Use ffmpeg to grab the last frame as base64-encoded PNG bytes."""
+    safe_in = _safe_subprocess_path(video_path)
+    out_png = os.path.join(tempfile.gettempdir(), f"lastframe_{int(time.time()*1000)}.png")
+    cmd = [
+        "ffmpeg", "-y", "-sseof", "-0.1", "-i", safe_in,
+        "-update", "1", "-q:v", "1", out_png,
+    ]
+    subprocess.run(cmd, check=True, capture_output=True)
+    with open(out_png, "rb") as f:
+        data = f.read()
+    try:
+        os.remove(out_png)
+    except OSError:
+        pass
+    return base64.b64encode(data).decode("ascii")
+
+
+def _concat_clips(input_paths: list[str], output_path: str, *, crossfade: bool, fps: int) -> None:
+    """Concatenate ``input_paths`` into ``output_path``.
+
+    With ``crossfade=False`` we use the lossless concat demuxer. With
+    ``crossfade=True`` we apply a 4-frame xfade between successive clips
+    using the filter graph; this re-encodes but smooths discontinuities at
+    the seams (#928 acceptance criterion).
+    """
+    if not input_paths:
+        raise ValueError("input_paths cannot be empty")
+    # Confine every input path to an allowed root before passing to ffmpeg
+    # (CodeQL py/path-injection + py/command-line-injection sanitizer).
+    safe_inputs = [_safe_subprocess_path(p) for p in input_paths]
+    safe_output = _safe_subprocess_path(os.path.dirname(output_path) or ".")
+    # Re-join filename onto the validated directory so the output stays inside.
+    safe_out_path = os.path.join(safe_output, os.path.basename(output_path))
+    if len(safe_inputs) == 1 or not crossfade:
+        list_path = safe_out_path + ".concat.txt"
+        with open(list_path, "w", encoding="utf-8") as f:
+            for p in safe_inputs:
+                # ffmpeg concat list format: posix forward slashes, escaped quotes.
+                safe = p.replace("'", "\\'")
+                f.write(f"file '{safe}'\n")
+        cmd = [
+            "ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", list_path,
+            "-c", "copy", safe_out_path,
+        ]
+        try:
+            subprocess.run(cmd, check=True, capture_output=True)
+        finally:
+            try:
+                os.remove(list_path)
+            except OSError:
+                pass
+        return
+
+    # Crossfade variant: chain xfade filters. Duration = 4 frames in seconds.
+    xfade_dur = 4.0 / float(max(fps, 1))
+    inputs: list[str] = []
+    for p in safe_inputs:
+        inputs.extend(["-i", p])
+    # Build filter graph.
+    n = len(safe_inputs)
+    parts: list[str] = []
+    last_label = "[0:v]"
+    cumulative_offset = 0.0
+    for i in range(1, n):
+        # Need clip duration to set xfade offset.
+        clip_dur = _probe_duration(safe_inputs[i - 1])
+        cumulative_offset += clip_dur - xfade_dur
+        out_label = f"[v{i}]"
+        parts.append(
+            f"{last_label}[{i}:v]xfade=transition=fade:duration={xfade_dur}:offset={cumulative_offset}{out_label}"
+        )
+        last_label = out_label
+    filter_graph = ";".join(parts)
+    cmd = [
+        "ffmpeg", "-y", *inputs,
+        "-filter_complex", filter_graph,
+        "-map", last_label,
+        "-pix_fmt", "yuv420p",
+        safe_out_path,
+    ]
+    subprocess.run(cmd, check=True, capture_output=True)
+
+
+def _probe_duration(video_path: str) -> float:
+    """Return clip duration in seconds via ffprobe."""
+    safe_in = _safe_subprocess_path(video_path)
+    cmd = [
+        "ffprobe", "-v", "error", "-show_entries", "format=duration",
+        "-of", "default=noprint_wrappers=1:nokey=1", safe_in,
+    ]
+    out = subprocess.run(cmd, check=True, capture_output=True, text=True)
+    return float(out.stdout.strip())
 
 
 # ── Entrypoint ─────────────────────────────────────────────────

@@ -115,6 +115,12 @@ def parse_args():
     p.add_argument("--lr_warmup_steps", type=int, default=0)
     p.add_argument("--max_train_steps", type=int, default=500)
     p.add_argument("--rank", type=int, default=16)
+    # WS3-A (#930): lora_alpha defaults to 2*rank (industry standard for stable
+    # training). Pass an explicit value to override. Set env LORA_LEGACY_ALPHA=1
+    # to force the historical alpha=rank behaviour for reproducibility of
+    # adapters trained before this fix.
+    p.add_argument("--lora_alpha", type=int, default=None,
+                    help="LoRA scaling alpha; defaults to 2*rank (or rank when LORA_LEGACY_ALPHA=1).")
     p.add_argument("--mixed_precision", type=str, default="fp16",
                     choices=["no", "fp16", "bf16"])
     p.add_argument("--seed", type=int, default=42)
@@ -187,9 +193,18 @@ def main():
     # Enable gradient checkpointing to reduce VRAM (trades compute for memory)
     unet.enable_gradient_checkpointing()
 
+    if args.lora_alpha is not None:
+        effective_alpha = args.lora_alpha
+    elif os.getenv("LORA_LEGACY_ALPHA", "0").strip() in ("1", "true", "True"):
+        effective_alpha = args.rank
+        log.info(f"[lora] LORA_LEGACY_ALPHA=1 — using legacy alpha=rank={args.rank}")
+    else:
+        effective_alpha = 2 * args.rank
+        log.info(f"[lora] Using best-practice lora_alpha=2*rank={effective_alpha}")
+
     lora_config = LoraConfig(
         r=args.rank,
-        lora_alpha=args.rank,
+        lora_alpha=effective_alpha,
         init_lora_weights="gaussian",
         target_modules=[
             "to_q", "to_k", "to_v", "to_out.0",
@@ -397,6 +412,7 @@ def main():
         "architecture": "sdxl",
         "resolution": args.resolution,
         "rank": args.rank,
+        "lora_alpha": effective_alpha,
         "max_train_steps": args.max_train_steps,
         "learning_rate": args.learning_rate,
     }

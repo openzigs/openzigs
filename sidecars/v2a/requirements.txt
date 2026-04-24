@@ -1,0 +1,20 @@
+# OpenZigs v2a sidecar — MMAudio
+# Tested with Python 3.10 / 3.11. CUDA build must match your driver.
+
+fastapi>=0.110
+uvicorn[standard]>=0.27
+httpx>=0.27
+pydantic>=2.6
+
+# Heavy ML deps. Install with the CUDA index appropriate for your card.
+# torch>=2.3 is required for the 0.9.x diffusers pipelines; bf16 needs >=2.4.
+torch>=2.3
+diffusers>=0.30
+transformers>=4.41
+accelerate>=0.30
+safetensors>=0.4
+
+# MMAudio publishes its weights through HuggingFace; the package itself
+# sometimes ships as `mmaudio`. If your install of diffusers cannot resolve
+# it via DiffusionPipeline.from_pretrained, install the standalone package:
+#   pip install mmaudio

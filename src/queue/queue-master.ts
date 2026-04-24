@@ -13,6 +13,7 @@ import { EventEmitter } from "node:events";
 import { logger } from "../logging/logger.js";
 import type { MediaQueueRepository } from "./media-queue-repository.js";
 import { AUDIO_JOB_TYPES } from "./types.js";
+import { dispatchV2aJob } from "./v2a-client.js";
 import type {
   MediaJob,
   QueueConfig,
@@ -2172,6 +2173,43 @@ export class QueueMaster extends EventEmitter {
     const updatedJob = this.repo.getJob(jobId)!;
     this.emit("job:complete", updatedJob);
     logger.info(`[QueueMaster] Job ${jobId} complete (type=${job.type})`);
+
+    // WS1-A (#925): post-process video jobs with audio_mode='auto' through
+    // the v2a (MMAudio) sidecar. Fire-and-forget; failures are logged but
+    // never block the original video job's completion semantics.
+    try {
+      const audioMode = (job.payload as { audio_mode?: string }).audio_mode;
+      const isVideoJob =
+        job.type === "txt2video" || job.type === "img2video";
+      if (isVideoJob && audioMode === "auto" && result.media_type?.startsWith("video/")) {
+        const videoPath = (result.metadata?.video_path as string | undefined) ?? undefined;
+        const fps = (job.payload.fps as number | undefined) ?? 24;
+        const numFrames = (job.payload.num_frames as number | undefined) ?? 121;
+        const durationSec = Math.max(1, Math.round(numFrames / fps));
+        const audioPrompt = (job.payload as { audio_prompt?: string }).audio_prompt;
+        if (videoPath) {
+          void dispatchV2aJob({
+            jobId: `${jobId}__v2a`,
+            videoPath,
+            durationSec,
+            prompt: audioPrompt,
+            seed: job.payload.seed,
+          }).catch((err) => {
+            logger.warn(
+              `[QueueMaster] v2a dispatch for ${jobId} threw: ${err instanceof Error ? err.message : String(err)}`,
+            );
+          });
+        } else {
+          logger.debug(
+            `[QueueMaster] v2a skipped for ${jobId}: no video_path in result metadata`,
+          );
+        }
+      }
+    } catch (err) {
+      logger.warn(
+        `[QueueMaster] v2a post-processing hook errored for ${jobId}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
 
     // Check if entire project is done
     if (job.projectId) {

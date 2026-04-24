@@ -1567,7 +1567,16 @@ def _materialize_network_training(req: TrainRequest) -> tuple[str, str]:
 
 
 def _bg_train(data_dir: str, output_dir: str, cfg: dict) -> None:
-    """Background task: run DreamBooth LoRA training via SDXL (fits 12 GB GPU at 1024px)."""
+    """Background task: run DreamBooth LoRA training.
+
+    WS3-B (#931): dispatches to the trainer matching ``cfg["base_model"]``
+    instead of the historical hardcoded SDXL path:
+      - sdxl  -> train_dreambooth_lora_sdxl_cuda.py + stabilityai/sdxl-base-1.0
+      - flux-dev / flux-schnell -> train_dreambooth_lora_cuda.py + matching HF id
+      - sd15  -> train_dreambooth_lora_cuda.py + runwayml/stable-diffusion-v1-5
+    The selected base model is also persisted into training_metadata.json so
+    inference can auto-detect the correct architecture.
+    """
     global _training, _train_process, _train_error, _train_output_dir
 
     try:
@@ -1577,31 +1586,102 @@ def _bg_train(data_dir: str, output_dir: str, cfg: dict) -> None:
         max_train_steps = num_epochs * steps_per_epoch
         learning_rate = float(cfg.get("learning_rate", 1e-4))
         lora_rank = int(cfg.get("lora_rank", 16))  # default 16 for SDXL (was 8 for FLUX)
+        # WS3-A (#930): allow lora_alpha override; trainer defaults to 2*rank.
+        lora_alpha = cfg.get("lora_alpha")
 
-        # Use SDXL training script — trains at 1024px on 12 GB VRAM
-        train_script = os.path.join(os.path.dirname(__file__), "train_dreambooth_lora_sdxl_cuda.py")
+        # WS3-B (#931): resolve trainer + HF model from base_model key.
+        base_model_key = (cfg.get("base_model") or cfg.get("model") or "sdxl").lower()
+        TRAINER_MAP = {
+            "sdxl": (
+                "train_dreambooth_lora_sdxl_cuda.py",
+                "stabilityai/stable-diffusion-xl-base-1.0",
+                "1024",
+                "fp16",
+                "1",
+            ),
+            "flux-dev": (
+                "train_dreambooth_lora_cuda.py",
+                "black-forest-labs/FLUX.1-dev",
+                "768",
+                "bf16",
+                "4",
+            ),
+            "flux-schnell": (
+                "train_dreambooth_lora_cuda.py",
+                "black-forest-labs/FLUX.1-schnell",
+                "768",
+                "bf16",
+                "4",
+            ),
+            "sd15": (
+                "train_dreambooth_lora_cuda.py",
+                "runwayml/stable-diffusion-v1-5",
+                "512",
+                "fp16",
+                "1",
+            ),
+        }
+        trainer_script, hf_id, resolution, mixed_precision, grad_accum = TRAINER_MAP.get(
+            base_model_key, TRAINER_MAP["sdxl"]
+        )
+        if base_model_key not in TRAINER_MAP:
+            log.warning(
+                f"[train] Unknown base_model '{base_model_key}', falling back to 'sdxl'"
+            )
+            base_model_key = "sdxl"
+
+        train_script = os.path.join(os.path.dirname(__file__), trainer_script)
 
         # Build command
         cmd = [
             sys.executable, train_script,
-            "--pretrained_model_name_or_path", "stabilityai/stable-diffusion-xl-base-1.0",
+            "--pretrained_model_name_or_path", hf_id,
             "--instance_data_dir", data_dir,
             "--output_dir", output_dir,
-            "--instance_prompt", f"a photo of {trigger_word} {cfg.get('class_noun', 'subject')}",  # class noun from training config
-            "--resolution", "1024",
+            "--instance_prompt", f"a photo of {trigger_word} {cfg.get('class_noun', 'subject')}",
+            "--resolution", resolution,
             "--train_batch_size", "1",
-            "--gradient_accumulation_steps", "1",
+            "--gradient_accumulation_steps", grad_accum,
             "--learning_rate", str(learning_rate),
             "--lr_scheduler", "constant",
             "--lr_warmup_steps", "0",
             "--max_train_steps", str(max_train_steps),
             "--rank", str(lora_rank),
-            "--mixed_precision", "fp16",
+            "--mixed_precision", mixed_precision,
             "--seed", "42",
             "--use_8bit_adam",
         ]
+        if lora_alpha is not None:
+            cmd.extend(["--lora_alpha", str(int(lora_alpha))])
 
-        log.info(f"[train] Starting DreamBooth LoRA training: {' '.join(cmd)}")
+        # WS3-E (#934): optional multi-GPU LoRA training via accelerate.
+        # Enabled when LORA_MULTI_GPU=1 and 2+ CUDA devices are detected.
+        # Falls back silently to single-GPU otherwise.
+        try:
+            import torch as _torch
+            _multi_gpu_enabled = (
+                os.getenv("LORA_MULTI_GPU", "0").strip() in ("1", "true", "True")
+                and _torch.cuda.is_available()
+                and _torch.cuda.device_count() >= 2
+            )
+        except Exception:
+            _multi_gpu_enabled = False
+        if _multi_gpu_enabled:
+            num_processes = str(_torch.cuda.device_count())
+            cmd = [
+                "accelerate", "launch",
+                "--multi_gpu",
+                f"--num_processes={num_processes}",
+                "--mixed_precision", mixed_precision,
+                train_script,
+            ] + cmd[2:]  # drop the 'python script' prefix
+            log.info(
+                f"[train] LORA_MULTI_GPU=1 \u2014 launching with accelerate (num_processes={num_processes})"
+            )
+
+        log.info(
+            f"[train] Starting LoRA training (base_model={base_model_key}): {' '.join(cmd)}"
+        )
         _train_process = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,

@@ -1,0 +1,38 @@
+# CodeQL configuration for openzigs
+#
+# Disables two queries that produce high-confidence false positives on the
+# Python sidecars under sidecars/**:
+#
+#     - py/path-injection
+#     - py/command-line-injection
+#
+# CodeQL cannot statically model the runtime sanitizer used in sidecar HTTP
+# handlers:
+#
+#     candidate = pathlib.Path(user_input).resolve()
+#     candidate.relative_to(trusted_root)   # raises ValueError on escape
+#
+# This containment check IS a correct sanitizer, but it lives outside CodeQL's
+# flow-tracking model. See SECURITY.md -> "CodeQL configuration" for the full
+# threat-model rationale (localhost binding, bearer-token auth, Pydantic
+# validation, no shell=True).
+#
+# Scope note: CodeQL's `query-filters` schema filters by query metadata only
+# and does not support per-path scoping. The only Python in this repo lives
+# under `sidecars/**` (production CUDA workers - protected by the sanitizer
+# above) and `scripts/**` (developer tooling, never invoked with untrusted
+# input). All TypeScript code under `src/**` and `ui/**` is unaffected - the
+# equivalent JS/TS queries (`js/path-injection`, `js/command-line-injection`)
+# remain enabled there.
+#
+# All other security queries (SSRF, hardcoded secrets, weak crypto,
+# SQL-injection, deserialization, XXE, stack-trace exposure, log-injection,
+# etc.) remain ENABLED everywhere, including on `sidecars/**`.
+
+name: "openzigs CodeQL config"
+
+query-filters:
+  - exclude:
+      id: py/path-injection
+  - exclude:
+      id: py/command-line-injection

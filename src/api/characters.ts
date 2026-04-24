@@ -174,6 +174,8 @@ export function createCharacterRouter({
         referencePhotos: body.referencePhotos ?? [],
         loraScale: body.loraScale ?? 0.8,
         trainingConfig: body.trainingConfig,
+        baseModel:
+          typeof body.baseModel === "string" ? body.baseModel.trim() : null,
       };
 
       const character = characterRepo.create(input);
@@ -470,6 +472,28 @@ export function createCharacterRouter({
         typeof overrides.telegramChatId === "string"
           ? overrides.telegramChatId
           : undefined;
+      // WS3-B (#931): per-character configurable training base model. Falls
+      // back to the character's persisted baseModel, then to "sdxl" (the
+      // default trainer script). Accepted: sdxl | flux-dev | flux-schnell | sd15.
+      const allowedBaseModels = new Set([
+        "sdxl",
+        "flux-dev",
+        "flux-schnell",
+        "sd15",
+      ]);
+      const requestedBase =
+        typeof overrides.baseModel === "string" ? overrides.baseModel : null;
+      const baseModel =
+        requestedBase && allowedBaseModels.has(requestedBase)
+          ? requestedBase
+          : character.baseModel && allowedBaseModels.has(character.baseModel)
+            ? character.baseModel
+            : "sdxl";
+      // WS3-A (#930): allow lora_alpha override; defaults to 2*rank inside trainer.
+      const loraAlpha =
+        typeof overrides.loraAlpha === "number"
+          ? overrides.loraAlpha
+          : undefined;
 
       // Build per-image prompt: use per-image caption if available,
       // fall back to character description, then generic trigger-word prompt
@@ -505,19 +529,22 @@ export function createCharacterRouter({
       }
 
       const trainConfig = {
-        model: "flux-dev",
+        model: baseModel,
+        base_model: baseModel,
         trigger_word: character.triggerWord,
         class_noun: deriveClassNoun(character.description),
         steps,
         num_epochs: numEpochs,
         learning_rate: learningRate,
         lora_rank: loraRank,
+        ...(loraAlpha !== undefined ? { lora_alpha: loraAlpha } : {}),
       };
 
       // Update status to training
       characterRepo.update(character.id, {
         status: "training",
         trainingConfig: trainConfig,
+        baseModel,
         errorMessage: null,
       });
 

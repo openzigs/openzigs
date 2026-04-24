@@ -266,6 +266,18 @@ export interface MediaJobPayload {
   // ── LTX Video Engine v2 fields ─────────────────────────────
   /** Enable synchronized audio generation (LTX-2.3+) */
   audio?: boolean;
+  /**
+   * WS1-A (#925): Audio handling mode for the video pipeline.
+   *   - "off"    — silent video (legacy default)
+   *   - "auto"   — post-generate via the v2a (MMAudio) sidecar
+   *   - "music"  — post-generate via the music-studio sidecar (background score)
+   *   - "native" — use LTX-2's built-in synchronized audio (sets `audio: true`)
+   * If unset, behaviour is preserved by `audio` boolean for backwards
+   * compatibility.
+   */
+  audio_mode?: "off" | "auto" | "music" | "native";
+  /** WS1-A (#925): optional prompt for the v2a sidecar (e.g. "ocean waves"). */
+  audio_prompt?: string;
   /** VAE tiling mode: auto, none, default, aggressive, conservative */
   tiling?: string;
   /** Override model repository for video generation */

@@ -87,6 +87,39 @@ export function injectCharacterLora(
       payload.lora_paths = loraPaths;
       payload.lora_scales = loraScales;
 
+      // WS3-C (#932): force the inference model to the LoRA's training base
+      // model. Loading an SDXL adapter into a FLUX pipe (or vice-versa) is a
+      // silent no-op at best and a crash at worst. We pick the first matched
+      // character's baseModel — multi-character prompts mixing base models is
+      // unsupported and emits a warning.
+      const baseModels = new Set<string>();
+      for (const c of readyCharacters) {
+        if (
+          c.baseModel &&
+          loraPaths.includes(c.trainedLoraPath ?? "")
+        ) {
+          baseModels.add(c.baseModel);
+        }
+      }
+      if (baseModels.size > 0) {
+        const [forced] = baseModels;
+        if (
+          payload.model &&
+          payload.model !== forced &&
+          !payload.model.startsWith(forced)
+        ) {
+          logger.warn(
+            `[LoRAInject] Caller requested model="${payload.model}" but character LoRA was trained for "${forced}" — forcing model="${forced}" to avoid silent mismatch.`,
+          );
+        }
+        payload.model = forced;
+        if (baseModels.size > 1) {
+          logger.warn(
+            `[LoRAInject] Multiple base models in matched characters: ${[...baseModels].join(", ")} — used "${forced}". Adapters from other base models will likely silently no-op.`,
+          );
+        }
+      }
+
       const multiSubjectCues =
         /\b(another|other|two|three|second|both|together with|alongside|chasing|playing with|next to|beside|with a|and a)\b/i;
       const currentPrompt = String(payload.prompt ?? "");
@@ -147,6 +180,21 @@ export function injectExplicitCharacterLora(
   // explicit selection wins.
   payload.lora_paths = [char.trainedLoraPath];
   payload.lora_scales = [char.loraScale];
+
+  // WS3-C (#932): pin the inference model to the LoRA's training base
+  // model so an SDXL-trained adapter never silently lands inside a FLUX pipe.
+  if (char.baseModel) {
+    if (
+      payload.model &&
+      payload.model !== char.baseModel &&
+      !payload.model.startsWith(char.baseModel)
+    ) {
+      logger.warn(
+        `[LoRAInject] Caller requested model="${payload.model}" but character "${char.name}" LoRA was trained for "${char.baseModel}" — forcing model="${char.baseModel}".`,
+      );
+    }
+    payload.model = char.baseModel;
+  }
 
   // Inject the trigger word into the prompt if it's not already present so
   // the trained activation token actually fires during sampling.

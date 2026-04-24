@@ -24,6 +24,14 @@ export interface CharacterProfile {
   trainedLoraPath: string | null;
   loraScale: number;
   trainingConfig: Record<string, unknown> | null;
+  /**
+   * Base diffusion model the LoRA adapter was trained against
+   * (e.g. "sdxl", "flux-dev", "flux-schnell", "sd15"). When set, the LoRA
+   * injection layer forces inference to use this model so a SDXL-trained
+   * adapter is never silently loaded into a FLUX pipe (and vice-versa).
+   * WS3-C (#932).
+   */
+  baseModel: string | null;
   status: CharacterStatus;
   errorMessage: string | null;
   createdAt: string;
@@ -38,6 +46,7 @@ export interface CharacterCreate {
   photoCaptions?: Record<string, string>;
   loraScale?: number;
   trainingConfig?: Record<string, unknown>;
+  baseModel?: string | null;
 }
 
 export interface CharacterUpdate {
@@ -49,6 +58,7 @@ export interface CharacterUpdate {
   trainedLoraPath?: string | null;
   loraScale?: number;
   trainingConfig?: Record<string, unknown> | null;
+  baseModel?: string | null;
   status?: CharacterStatus;
   errorMessage?: string | null;
 }
@@ -63,6 +73,7 @@ type StoredCharacter = {
   trained_lora_path: string | null;
   lora_scale: number;
   training_config: string | null;
+  base_model: string | null;
   status: string;
   error_message: string | null;
   created_at: string;
@@ -108,6 +119,15 @@ export class CharacterRepository {
     } catch {
       // Column already exists
     }
+
+    // WS3-C (#932): Track which base model the LoRA was trained against so
+    // the injection layer can force-pin the inference model and avoid silent
+    // SDXL-LoRA-into-FLUX-pipe mismatches.
+    try {
+      this.db.exec(`ALTER TABLE character_profiles ADD COLUMN base_model TEXT`);
+    } catch {
+      // Column already exists
+    }
   }
 
   create(input: CharacterCreate): CharacterProfile {
@@ -117,8 +137,8 @@ export class CharacterRepository {
     this.db
       .prepare(
         `INSERT INTO character_profiles
-           (id, name, description, trigger_word, reference_photos, photo_captions, lora_scale, training_config, status, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
+           (id, name, description, trigger_word, reference_photos, photo_captions, lora_scale, training_config, base_model, status, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
       )
       .run(
         id,
@@ -129,6 +149,7 @@ export class CharacterRepository {
         JSON.stringify(input.photoCaptions ?? {}),
         input.loraScale ?? 0.8,
         input.trainingConfig ? JSON.stringify(input.trainingConfig) : null,
+        input.baseModel ?? null,
         now,
         now,
       );
@@ -170,6 +191,7 @@ export class CharacterRepository {
     const trainedLoraPath = input.trainedLoraPath !== undefined ? input.trainedLoraPath : existing.trainedLoraPath;
     const loraScale = input.loraScale ?? existing.loraScale;
     const trainingConfig = input.trainingConfig !== undefined ? input.trainingConfig : existing.trainingConfig;
+    const baseModel = input.baseModel !== undefined ? input.baseModel : existing.baseModel;
     const status = input.status ?? existing.status;
     const errorMessage = input.errorMessage !== undefined ? input.errorMessage : existing.errorMessage;
 
@@ -178,7 +200,7 @@ export class CharacterRepository {
         `UPDATE character_profiles
          SET name = ?, description = ?, trigger_word = ?, reference_photos = ?,
              photo_captions = ?, trained_lora_path = ?, lora_scale = ?, training_config = ?,
-             status = ?, error_message = ?, updated_at = ?
+             base_model = ?, status = ?, error_message = ?, updated_at = ?
          WHERE id = ?`,
       )
       .run(
@@ -190,6 +212,7 @@ export class CharacterRepository {
         trainedLoraPath,
         loraScale,
         trainingConfig ? JSON.stringify(trainingConfig) : null,
+        baseModel,
         status,
         errorMessage,
         now,
@@ -216,6 +239,7 @@ export class CharacterRepository {
         trainedLoraPath: row.trained_lora_path,
         loraScale: row.lora_scale,
         trainingConfig: row.training_config ? (JSON.parse(row.training_config) as Record<string, unknown>) : null,
+        baseModel: row.base_model ?? null,
         status: row.status as CharacterStatus,
         errorMessage: row.error_message,
         createdAt: row.created_at,
@@ -233,6 +257,7 @@ export class CharacterRepository {
         trainedLoraPath: row.trained_lora_path,
         loraScale: row.lora_scale,
         trainingConfig: null,
+        baseModel: row.base_model ?? null,
         status: row.status as CharacterStatus,
         errorMessage: row.error_message,
         createdAt: row.created_at,
