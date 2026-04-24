@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **LTX-2 sidecar audio delegation:** When the gallery requests `txt2video` with `audio=true` and the active model cannot produce synchronized audio in-process (no 24 GB pooled VRAM, in-process model not the 22B variant), the worker now proxies the job to the dedicated LTX-2 sidecar on `:5013` instead of returning HTTP 400. New env vars `LTX2_SIDECAR_URL`, `LTX2_SIDECAR_TOKEN`, `LTX2_SIDECAR_POLL_INTERVAL_SEC`, `LTX2_SIDECAR_TIMEOUT_SEC`. `/capabilities` now advertises `"native"` in `audio_modes` whenever the sidecar `/health` reports `ready: true`, and exposes `LTX2_SIDECAR_URL` + `LTX2_SIDECAR_READY` in its `env` block.
+
+### Fixed
+
+- **Gallery sync-audio gate is no longer permanently closed:** The studio composer used to substring-match `form.model_repo` against `LTX-Video-2`/`ltxv-2-22b` (neither of which appear in the in-app catalog) AND require ≥ 24 GB pooled VRAM. Both checks made the "Sync — Native sync audio (LTX-2 only)" option unselectable on every supported config. The gate now keys off the catalog entry id (`ltx-2*`) and trusts the worker's `audio_modes` array (which already accounts for sidecar readiness). ([ui/app/gallery/page.tsx](ui/app/gallery/page.tsx))
+- **`scripts/ltx2_launch.sh` fixed to launch from the WSL deployment dir** (`~/openzigs-sidecars/ltx2`) — the prior `cd` pointed at a path inside the repo where `server_cuda.py` does not exist (the LTX-2 sidecar source ships outside the repo). Added `scripts/worker_restart.sh` companion script.
+
+## [Unreleased — Epic #924]
+
 ### Added (Epic #924 — LTX video audio, longer durations & correct LoRA training params)
 
 - **LTX-Video VRAM pooling across two GPUs (#927, WS2-A):** New env-var matrix (`LTX_POOLING_MODE`, `LTX_TRANSFORMER_DEVICE=cuda:1`, `LTX_ENCODER_DEVICE=cuda:0`, `LTX_VAE_DEVICE=cuda:0`, `LTX_POOLING_MIN_VRAM_GB=18`, `LTX_MAX_FRAMES_OVERRIDE`, `LTX_ALLOW_AUDIO`) auto-detects `torch.cuda.device_count()` + per-device `mem_get_info(i)` and shards the LTX-Video pipeline (transformer on `cuda:1`, T5 encoder + VAE on `cuda:0`) when summed VRAM is ≥ threshold. Falls back gracefully to `enable_model_cpu_offload()` on any placement error. Introduces a pooled VRAM-tier table that lifts max frames from 57 (1×12 GB) to 161 (2×12 GB) and 257 (2×24 GB). Citation in the source code points to the diffusers "Working with big models" doc (Tavily verified 2026-04-22).

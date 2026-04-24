@@ -2476,15 +2476,19 @@ function GalleryStudio({
     setForm((prev) => ({ ...prev, audioMode: "off", audio: false }));
   }
 
-  // WS2-C (#929) — sync audio gate: only the LTX-2 22B model + 24GB+ pooled
-  // VRAM enables the "sync" option in the audio-mode selector.
-  const pooledVram = capabilitiesQuery.data?.pooled_vram_gb ?? 0;
+  // WS2-C (#929) — sync audio gate. The worker's `audio_modes` array is the
+  // source of truth: it already accounts for in-process pooled-VRAM checks AND
+  // the LTX-2 sidecar readiness probe (the sidecar runs LTX-2 in its own
+  // process, so the orchestrator's pooled VRAM is no longer the limiting
+  // factor). Only the model gate remains in the UI: any LTX-2 catalog entry
+  // (id starts with "ltx-2") is eligible.
+  const selectedCatalogEntry = ltxModelCatalog.find(
+    (m) => m.repo === form.model_repo,
+  );
   const syncAudioModelSelected =
-    form.model_repo.includes("LTX-Video-2") ||
-    form.model_repo.includes("ltxv-2-22b");
+    (selectedCatalogEntry?.id ?? "").startsWith("ltx-2");
   const syncAudioAvailable =
     syncAudioModelSelected &&
-    pooledVram >= 24 &&
     (capabilitiesQuery.data?.audio_modes ?? []).includes("native");
 
   // WS2-B (#928) — extended duration cap. Pull from capabilities if known,
@@ -3836,7 +3840,9 @@ function GalleryStudio({
                   title={
                     syncAudioAvailable
                       ? "Native LTX-2 synchronized audio"
-                      : `Requires LTX-2 model + 24GB+ pooled VRAM. Currently ${syncAudioModelSelected ? "unavailable" : "select an LTX-2 model"} (pooled ${pooledVram}GB).`
+                      : syncAudioModelSelected
+                        ? "LTX-2 sidecar is not ready. Start it to enable native sync audio."
+                        : "Select an LTX-2 model to enable native sync audio."
                   }
                 >
                   Sync — Native sync audio (LTX-2 only)
