@@ -2217,7 +2217,10 @@ const DEFAULT_FORM: StudioFormState = {
   audioMode: "off",
   tiling: "auto",
   enhance_prompt: false,
-  model_repo: "",
+  // Default to the legacy 2B CUDA model: publicly downloadable (no HF auth
+  // required) and fits comfortably on a 12 GB GPU. Users on Apple Silicon
+  // or larger CUDA cards can switch via the model dropdown.
+  model_repo: "Lightricks/LTX-Video",
   preset_id: "",
   video_duration: 4,
   durationMode: "single",
@@ -2382,18 +2385,49 @@ function GalleryStudio({
   });
   const presets = presetsQuery.data?.presets ?? [];
 
-  // LTX model catalog constants
+  // LTX model catalog. CUDA-side entries (matching the backend's
+  // VIDEO_MODEL_REGISTRY in sidecars/worker/server_cuda.py) are listed
+  // first because they are what the Windows / Linux worker actually loads.
+  // The MLX-quantized LTX-2 entries are kept for Apple Silicon hosts that
+  // route through the MLX worker. The default `model_repo` (DEFAULT_FORM)
+  // points at the legacy 2B CUDA model because it is publicly downloadable
+  // (no HF license-acceptance gate) and fits comfortably on the most common
+  // 12 GB consumer GPU without needing the dual-GPU sharding path.
   const ltxModelCatalog = [
+    {
+      id: "ltxv-2b-legacy",
+      repo: "Lightricks/LTX-Video",
+      name: "LTX-Video 2B (CUDA, 12 GB, public)",
+      memoryGB: 8,
+    },
+    {
+      id: "ltxv-2b-096-distilled",
+      repo: "Lightricks/LTX-Video-0.9.6-distilled",
+      name: "LTX-Video 2B 0.9.6 Distilled (CUDA, requires HF auth)",
+      memoryGB: 8,
+    },
+    {
+      id: "ltxv-13b-097-distilled",
+      repo: "Lightricks/LTX-Video-0.9.7-distilled",
+      name: "LTX-Video 13B Distilled (CUDA, ≥16 GB or pooled)",
+      memoryGB: 16,
+    },
+    {
+      id: "ltxv-13b-097-dev",
+      repo: "Lightricks/LTX-Video-0.9.7-dev",
+      name: "LTX-Video 13B Dev (CUDA, ≥16 GB or pooled)",
+      memoryGB: 16,
+    },
     {
       id: "ltx-2-distilled-q4",
       repo: "AITRADER/ltx2-distilled-4bit-mlx",
-      name: "LTX-2 Distilled Q4",
+      name: "LTX-2 Distilled Q4 (MLX, Apple Silicon)",
       memoryGB: 19,
     },
     {
       id: "ltx-2.3-distilled-q4",
       repo: "dgrauet/ltx-2.3-mlx-distilled-q4",
-      name: "LTX-2.3 Distilled Q4",
+      name: "LTX-2.3 Distilled Q4 (MLX, Apple Silicon)",
       memoryGB: 20,
     },
   ];
@@ -2476,16 +2510,35 @@ function GalleryStudio({
     setForm((prev) => ({ ...prev, audioMode: "off", audio: false }));
   }
 
-  // WS2-C (#929) — sync audio gate: only the LTX-2 22B model + 24GB+ pooled
-  // VRAM enables the "sync" option in the audio-mode selector.
-  const pooledVram = capabilitiesQuery.data?.pooled_vram_gb ?? 0;
+  // WS2-C (#929) — sync audio gate. The worker's `audio_modes` array is the
+  // source of truth: it already accounts for in-process pooled-VRAM checks AND
+  // the LTX-2 sidecar readiness probe (the sidecar runs LTX-2 in its own
+  // process, so the orchestrator's pooled VRAM is no longer the limiting
+  // factor). Only the model gate remains in the UI: any LTX-2 catalog entry
+  // (id starts with "ltx-2") is eligible.
+  const selectedCatalogEntry = ltxModelCatalog.find(
+    (m) => m.repo === form.model_repo,
+  );
   const syncAudioModelSelected =
-    form.model_repo.includes("LTX-Video-2") ||
-    form.model_repo.includes("ltxv-2-22b");
+    (selectedCatalogEntry?.id ?? "").startsWith("ltx-2");
   const syncAudioAvailable =
     syncAudioModelSelected &&
-    pooledVram >= 24 &&
     (capabilitiesQuery.data?.audio_modes ?? []).includes("native");
+
+  // #952 — auto/MMAudio v2a sidecar gate. The worker now probes the v2a
+  // sidecar /health and only advertises "auto" in audio_modes when it is
+  // actually reachable. Disable the option when unavailable so the UI does
+  // not silently produce silent video.
+  const autoAudioAvailable = (capabilitiesQuery.data?.audio_modes ?? []).includes(
+    "auto",
+  );
+  if (
+    !autoAudioAvailable &&
+    form.audioMode === "auto" &&
+    capabilitiesQuery.data
+  ) {
+    setForm((prev) => ({ ...prev, audioMode: "off", audio: false }));
+  }
 
   // WS2-B (#928) — extended duration cap. Pull from capabilities if known,
   // else fall back to a conservative 60s.
@@ -2493,6 +2546,17 @@ function GalleryStudio({
     const frames = Object.values(capabilitiesQuery.data?.max_frames ?? {});
     if (frames.length === 0) return 60;
     return Math.max(...frames.map((f) => Math.floor(f / 24)), 8);
+  })();
+
+  // Per-model frame ceiling from live capabilities (accounts for GPU pooling).
+  // Falls back to 97 (safe single-12GB-card limit) when capabilities haven't
+  // loaded yet or the selected model isn't in the map.
+  const maxCapableFrames = (() => {
+    const selectedModel = ltxModelCatalog.find(
+      (m) => m.repo === form.model_repo,
+    );
+    if (!selectedModel || !capabilitiesQuery.data?.max_frames) return 97;
+    return capabilitiesQuery.data.max_frames[selectedModel.id] ?? 97;
   })();
 
   const fluxQLabel =
@@ -2843,7 +2907,7 @@ function GalleryStudio({
       }
 
       if (isVideo) {
-        payload.num_frames = Math.min(form.num_frames, 97);
+        payload.num_frames = Math.min(form.num_frames, maxCapableFrames);
         payload.fps = form.fps;
         payload.num_inference_steps = form.video_steps;
         payload.cfg_scale = form.video_guidance;
@@ -2854,8 +2918,17 @@ function GalleryStudio({
         payload.pipeline = form.pipeline;
         // WS1-A/WS2-C (#925, #929): audio_mode is the new field; keep
         // back-compat boolean `audio` for any backend not yet switched over.
-        payload.audio_mode = form.audioMode;
-        payload.audio = form.audioMode !== "off";
+        // The worker's `audio` flag means "produce synchronized audio
+        // in-process" — that ONLY applies to "sync" (native LTX-2). The
+        // "auto" (MMAudio v2a) and "music" (ACE-Step) modes are
+        // post-process pipelines fired by QueueMaster after the silent
+        // video completes; they MUST NOT set audio=true on the worker or
+        // the worker will reject the job (see #951).
+        // Backend queue type uses "native"; the studio composer uses
+        // "sync" as the friendlier label — translate at the boundary.
+        payload.audio_mode =
+          form.audioMode === "sync" ? "native" : form.audioMode;
+        payload.audio = form.audioMode === "sync";
         payload.tiling = form.tiling;
         payload.enhance_prompt = form.enhance_prompt;
         if (form.model_repo) {
@@ -3590,7 +3663,7 @@ function GalleryStudio({
           <div className="mb-4 grid grid-cols-5 gap-3">
             <div>
               <label className="mb-1 block text-[11px] font-medium text-muted-foreground">
-                Frames (max 97)
+                Frames (max {maxCapableFrames})
               </label>
               <input
                 type="number"
@@ -3598,11 +3671,14 @@ function GalleryStudio({
                 onChange={(e) =>
                   update(
                     "num_frames",
-                    Math.min(parseInt(e.target.value) || 97, 97),
+                    Math.min(
+                      parseInt(e.target.value) || maxCapableFrames,
+                      maxCapableFrames,
+                    ),
                   )
                 }
                 min={1}
-                max={97}
+                max={maxCapableFrames}
                 className="w-full rounded-lg border border-border bg-card px-2 py-1.5 text-sm text-foreground"
               />
             </div>
@@ -3824,8 +3900,17 @@ function GalleryStudio({
                 }
               >
                 <option value="off">Off — Silent (default)</option>
-                <option value="auto">
+                <option
+                  value="auto"
+                  disabled={!autoAudioAvailable}
+                  title={
+                    autoAudioAvailable
+                      ? "Generate sound effects post-process via MMAudio v2a sidecar"
+                      : "v2a (MMAudio) sidecar on :5012 is not reachable. Start it and reload to enable."
+                  }
+                >
                   Auto — Generate sound effects (MMAudio v2a)
+                  {!autoAudioAvailable ? " — sidecar offline" : ""}
                 </option>
                 <option value="music">
                   Music — Background music (ACE-Step)
@@ -3836,7 +3921,9 @@ function GalleryStudio({
                   title={
                     syncAudioAvailable
                       ? "Native LTX-2 synchronized audio"
-                      : `Requires LTX-2 model + 24GB+ pooled VRAM. Currently ${syncAudioModelSelected ? "unavailable" : "select an LTX-2 model"} (pooled ${pooledVram}GB).`
+                      : syncAudioModelSelected
+                        ? "LTX-2 sidecar is not ready or has not been verified on this hardware. Use 'Auto' for post-process audio in the meantime."
+                        : "Select an LTX-2 model to enable native sync audio."
                   }
                 >
                   Sync — Native sync audio (LTX-2 only)

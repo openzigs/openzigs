@@ -129,7 +129,13 @@ VIDEO_MODEL_REGISTRY: dict[str, dict] = {
 }
 
 # ── Constants ──────────────────────────────────────────────────
-DEFAULT_MODEL_KEY = os.getenv("LTX_MODEL_KEY") or "ltxv-13b-097-distilled"
+# Default to the legacy 2B model (`Lightricks/LTX-Video`): it is publicly
+# downloadable (no HF license-acceptance required, unlike the 0.9.6 variants
+# which return HTTP 401), already in the standard HF cache on most installs,
+# and fits comfortably on a single 12 GB consumer card. The 13B 0.9.7 variants
+# remain available via explicit model_repo selection but require ≥16 GB single-
+# card or working pooled-VRAM sharding (#949) to run end-to-end without OOM.
+DEFAULT_MODEL_KEY = os.getenv("LTX_MODEL_KEY") or "ltxv-2b-legacy"
 # Legacy env var support: if LTX_MODEL_REPO is set but LTX_MODEL_KEY is not,
 # look up the repo in the registry or use it as a raw HF ID.
 _legacy_repo = os.getenv("LTX_MODEL_REPO")
@@ -190,6 +196,23 @@ LTX_MAX_FRAMES_OVERRIDE: int = int(os.getenv("LTX_MAX_FRAMES_OVERRIDE", "0"))
 # Allow LTX-2 / LTX-2.3 native synchronized audio. Off by default because the
 # weights are large and require pooled VRAM to fit.
 LTX_ALLOW_AUDIO: bool = os.getenv("LTX_ALLOW_AUDIO", "0").strip() in ("1", "true", "True")
+# LTX-2 sidecar (port 5013) — separate process running the upstream LTX-2 CLI
+# with native synchronized audio. When healthy, the worker delegates audio=true
+# jobs that target a non-22B model to the sidecar instead of rejecting them.
+LTX2_SIDECAR_URL: str = os.getenv("LTX2_SIDECAR_URL", "http://127.0.0.1:5013").rstrip("/")
+LTX2_SIDECAR_TOKEN: str = os.getenv("LTX2_SIDECAR_TOKEN", "").strip()
+LTX2_SIDECAR_POLL_INTERVAL_SEC: float = float(os.getenv("LTX2_SIDECAR_POLL_INTERVAL_SEC", "3.0"))
+LTX2_SIDECAR_TIMEOUT_SEC: int = int(os.getenv("LTX2_SIDECAR_TIMEOUT_SEC", "1800"))
+# Quality gate: the upstream LTX-2 distilled CLI invoked with --offload cpu has
+# been observed to produce coloured-noise output on 12 GB single-card hosts
+# (see incident 2026-04-24 — both the production job AND the bundled smoke-test
+# MP4 decoded to rainbow static, despite the subprocess exiting cleanly with the
+# expected per-stage progress bars). Until upstream is patched, /capabilities
+# only advertises 'native' audio (and /generate only accepts the delegation
+# path) when the operator has explicitly opted in via LTX2_SIDECAR_VERIFIED=1.
+# The opt-in env var is the operator's signed promise that they have visually
+# verified at least one MP4 from this sidecar build on this hardware.
+LTX2_SIDECAR_VERIFIED: bool = os.getenv("LTX2_SIDECAR_VERIFIED", "").strip().lower() in {"1", "true", "yes"}
 
 # ── VRAM-Based Frame Limits ────────────────────────────────────
 # Empirically derived safe frame counts for different VRAM budgets.
@@ -285,7 +308,14 @@ def _get_max_frames_for_model(model_key: str) -> int:
     if LTX_MAX_FRAMES_OVERRIDE > 0:
         return LTX_MAX_FRAMES_OVERRIDE
     vram_gb = _get_vram_gb()
-    if "22b" in model_key or "ltxv-2" in model_key:
+    # "ltxv-2" matches both "ltxv-2b-legacy" (a 2B model) AND "ltxv-2-22b-distilled"
+    # (the 22B model), so we must check for "22b" first (exact substring) before
+    # falling through to the generic 2B bucket. The old check
+    # `"22b" in key or "ltxv-2" in key` incorrectly routed all 2B models into the
+    # "22b" category, which has no VRAM_FRAME_LIMITS entry for 10-11 GB cards and
+    # therefore fell through to the `return 49` fallback — producing 2-second clips
+    # on any single-GPU host after a restart (when pooling is inactive).
+    if "22b" in model_key:
         category = "22b"
     elif "13b" in model_key:
         category = "13b"
@@ -654,63 +684,98 @@ def generate_video_ltx2(request: "GenerateRequest") -> bytes:
     # Load model if needed
     if state._pipeline is None or state._model_name != effective_key:
         unload_model()
-        logger.info(f"Loading video model '{effective_key}' ({hf_id}) on CUDA with model_cpu_offload...")
+        logger.info(f"Loading video model '{effective_key}' ({hf_id}) on CUDA...")
 
-        if pipeline_class_name == "LTXConditionPipeline":
-            from diffusers import LTXConditionPipeline
-            pipe = LTXConditionPipeline.from_pretrained(
-                hf_id,
-                torch_dtype=torch.bfloat16,
-            )
-        elif need_i2v:
-            from diffusers import LTXImageToVideoPipeline
-            pipe = LTXImageToVideoPipeline.from_pretrained(
-                hf_id,
-                torch_dtype=torch.float16,
-            )
-        else:
-            from diffusers import LTXPipeline
-            pipe = LTXPipeline.from_pretrained(
-                hf_id,
-                torch_dtype=torch.float16,
-            )
-
+        # ── Pooling decision ─────────────────────────────────────
+        # Prior implementation called `pipe.transformer.to("cuda:1")` which
+        # placed the WHOLE 13B transformer (~26 GB in bf16) onto a single
+        # 12 GB card → guaranteed OOM. There was no actual layer sharding.
+        #
+        # Fix (#949, 2026-04-24): use diffusers' `device_map="balanced"` with
+        # an explicit per-device `max_memory` budget. Accelerate then
+        # distributes transformer layers across cuda:0 + cuda:1 (and spills
+        # any remainder to CPU) without exceeding the per-card cap. This is
+        # the documented pattern from the diffusers "Working with big models"
+        # tutorial (Tavily verified 2026-04-24, https://huggingface.co/docs/
+        # diffusers/main/tutorials/inference_with_big_models).
+        #
+        # We pass `max_memory` at from_pretrained time so accelerate does
+        # the placement during weight load — there is no second .to() pass.
         pooling_active = _is_pooling_active()
+        load_kwargs: dict[str, Any] = {}
         if pooling_active:
-            # WS2-A (#927): manual dual-GPU sharding.
-            #
-            # Tavily research 2026-04-22 confirms diffusers `LTXConditionPipeline`
-            # and `LTXPipeline` continue to support per-component `.to(device)`
-            # placement on releases 0.30.x through current main, and that this
-            # is the recommended pattern over `device_map="auto"` (which is
-            # documented as experimental and incompatible with `.to()` /
-            # `enable_model_cpu_offload` mode-switching without an explicit
-            # `reset_device_map()` call).
-            #
-            # Sources:
-            #   https://huggingface.co/docs/diffusers/main/tutorials/inference_with_big_models
-            #   https://discuss.huggingface.co/t/using-second-gpu/23453
-            #
-            # The pipeline `__call__` keeps activations on the transformer's
-            # device and tolerates encoder/VAE living on a different CUDA index.
+            # Reserve ~1 GiB per card for activations / KV cache / attention.
+            per_gpu_budget_gib = max(int(_get_vram_gb()) - 1, 6)
+            cpu_budget_gib = int(os.getenv("LTX_POOLING_CPU_BUDGET_GIB", "64"))
+            max_memory: dict[Any, str] = {
+                i: f"{per_gpu_budget_gib}GiB" for i in range(torch.cuda.device_count())
+            }
+            max_memory["cpu"] = f"{cpu_budget_gib}GiB"
+            load_kwargs["device_map"] = "balanced"
+            load_kwargs["max_memory"] = max_memory
+            logger.info(
+                f"[ws2a] Pooling active — device_map=balanced, max_memory={max_memory}"
+            )
+
+        def _build_pipeline(extra_kwargs: dict[str, Any]) -> Any:
+            if pipeline_class_name == "LTXConditionPipeline":
+                from diffusers import LTXConditionPipeline
+                return LTXConditionPipeline.from_pretrained(
+                    hf_id, torch_dtype=torch.bfloat16, **extra_kwargs
+                )
+            if need_i2v:
+                from diffusers import LTXImageToVideoPipeline
+                return LTXImageToVideoPipeline.from_pretrained(
+                    hf_id, torch_dtype=torch.float16, **extra_kwargs
+                )
+            from diffusers import LTXPipeline
+            return LTXPipeline.from_pretrained(
+                hf_id, torch_dtype=torch.float16, **extra_kwargs
+            )
+
+        try:
+            pipe = _build_pipeline(load_kwargs)
+            if pooling_active:
+                # Surface the resulting placement for diagnostics.
+                hf_map = getattr(pipe, "hf_device_map", None)
+                if hf_map is None:
+                    # device_map applies to submodules; sample the transformer.
+                    hf_map = getattr(getattr(pipe, "transformer", None), "hf_device_map", None)
+                logger.info(f"[ws2a] hf_device_map after balanced load: {hf_map}")
+        except Exception as exc:
+            # ── Fix (#950, 2026-04-24): clean teardown before fallback ──
+            # If the balanced load OOMs partway through, the pipeline can be
+            # partially-allocated on cuda:1. Calling `enable_model_cpu_offload`
+            # on top of a half-loaded pipe was leaving 11 GiB pinned on GPU 0
+            # and OOMing at step 0/30. Tear everything down first, then retry
+            # with offload-only on a fresh pipeline.
+            logger.warning(
+                f"[ws2a] device_map=balanced load failed ({exc}); "
+                f"tearing down and retrying with enable_model_cpu_offload only."
+            )
             try:
-                if hasattr(pipe, "transformer") and pipe.transformer is not None:
-                    pipe.transformer.to(LTX_TRANSFORMER_DEVICE)
-                if hasattr(pipe, "text_encoder") and pipe.text_encoder is not None:
-                    pipe.text_encoder.to(LTX_ENCODER_DEVICE)
-                if hasattr(pipe, "vae") and pipe.vae is not None:
-                    pipe.vae.to(LTX_VAE_DEVICE)
-                logger.info(
-                    f"[ws2a] Dual-GPU sharding active: transformer={LTX_TRANSFORMER_DEVICE} "
-                    f"encoder={LTX_ENCODER_DEVICE} vae={LTX_VAE_DEVICE} pooled_vram={_get_pooled_vram_gb()}GB"
-                )
-            except Exception as exc:
-                logger.warning(
-                    f"[ws2a] Sharding placement failed ({exc}); falling back to model_cpu_offload."
-                )
-                pooling_active = False
+                del pipe  # type: ignore[name-defined]
+            except UnboundLocalError:
+                pass
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                torch.cuda.synchronize()
+            pipe = _build_pipeline({})
+            pooling_active = False
+
         if not pooling_active:
+            # `enable_model_cpu_offload` requires no pre-existing device_map.
+            # When the balanced path was skipped entirely we never set one,
+            # so this is safe; if it WAS attempted, the teardown above
+            # rebuilt the pipeline from scratch (also safe).
+            if hasattr(pipe, "reset_device_map"):
+                try:
+                    pipe.reset_device_map()
+                except Exception:
+                    pass
             pipe.enable_model_cpu_offload()
+
         pipe.enable_attention_slicing()
         # Enable VAE tiling for 12GB GPUs — reduces VRAM during decode
         if hasattr(pipe, "vae") and hasattr(pipe.vae, "enable_tiling"):
@@ -718,7 +783,8 @@ def generate_video_ltx2(request: "GenerateRequest") -> bytes:
         state._pipeline = pipe
         state._model_name = effective_key
         state.loaded_model = hf_id
-        logger.info(f"Model '{effective_key}' ready (CUDA model-level offload + VAE tiling)")
+        mode_label = "balanced device_map" if pooling_active else "model_cpu_offload"
+        logger.info(f"Model '{effective_key}' ready ({mode_label} + VAE tiling)")
 
     generator = torch.Generator("cpu").manual_seed(
         request.seed if request.seed is not None else int(time.time()) % (2**32)
@@ -840,6 +906,132 @@ async def _report_progress(
         logger.debug(f"Progress report failed (non-fatal): {e}")
 
 
+# ── LTX-2 Sidecar Delegation ─────────────────────────────────
+# When the upstream LTX-2 sidecar (default: http://127.0.0.1:5013) is healthy,
+# the worker delegates audio=true jobs that target a non-22B model to it instead
+# of rejecting them. The sidecar runs the official LTX-2 CLI which natively
+# muxes synchronized audio into the output MP4.
+
+def _ltx2_sidecar_headers() -> dict[str, str]:
+    headers = {"Content-Type": "application/json"}
+    if LTX2_SIDECAR_TOKEN:
+        headers["Authorization"] = f"Bearer {LTX2_SIDECAR_TOKEN}"
+    return headers
+
+
+async def _ltx2_sidecar_ready() -> bool:
+    """Probe the LTX-2 sidecar /health endpoint. Returns True iff ready."""
+    try:
+        async with httpx.AsyncClient(timeout=2.0) as client:
+            resp = await client.get(f"{LTX2_SIDECAR_URL}/health")
+        if resp.status_code != 200:
+            return False
+        body = resp.json()
+        return bool(body.get("ready"))
+    except Exception as exc:
+        logger.debug(f"[ltx2-sidecar] health probe failed: {exc}")
+        return False
+
+
+# #952: v2a (MMAudio) sidecar reachability probe. The capabilities endpoint
+# previously advertised audio_modes=['off', 'auto'] unconditionally — even
+# when the v2a sidecar (port 5012) was down. The UI then offered the user an
+# "Auto" option that silently produced silent video. Now we probe and only
+# advertise "auto" when the sidecar's /health says ready.
+V2A_SIDECAR_URL: str = os.getenv("V2A_SIDECAR_URL", "http://127.0.0.1:5012").rstrip("/")
+
+
+async def _v2a_sidecar_ready() -> bool:
+    """Probe the v2a (MMAudio) sidecar /health endpoint."""
+    try:
+        async with httpx.AsyncClient(timeout=2.0) as client:
+            resp = await client.get(f"{V2A_SIDECAR_URL}/health")
+        if resp.status_code != 200:
+            return False
+        body = resp.json()
+        # MMAudio sidecar reports {"status":"ok"} when ready;
+        # accept either explicit ready=true or status=ok for compatibility.
+        return bool(body.get("ready")) or body.get("status") == "ok"
+    except Exception as exc:
+        logger.debug(f"[v2a-sidecar] health probe failed: {exc}")
+        return False
+
+
+async def _delegate_to_ltx2_sidecar(request: "GenerateRequest") -> bytes:
+    """Submit a job to the LTX-2 sidecar, poll for completion, return MP4 bytes.
+
+    The sidecar writes the result to a path on its own filesystem; we read it
+    back as bytes so the worker's existing callback contract (base64-encoded
+    media) is preserved end-to-end.
+    """
+    payload: dict[str, Any] = {
+        "job_id": request.job_id,
+        "prompt": request.prompt,
+        "width": request.width,
+        "height": request.height,
+        "num_frames": request.num_frames,
+        "frame_rate": request.fps,
+    }
+    if request.seed is not None:
+        payload["seed"] = int(request.seed)
+
+    submit_url = f"{LTX2_SIDECAR_URL}/generate"
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        resp = await client.post(submit_url, json=payload, headers=_ltx2_sidecar_headers())
+    if resp.status_code not in (200, 202):
+        raise RuntimeError(
+            f"LTX-2 sidecar /generate returned {resp.status_code}: {resp.text[:300]}"
+        )
+
+    deadline = time.time() + LTX2_SIDECAR_TIMEOUT_SEC
+    status_url = f"{LTX2_SIDECAR_URL}/status/{request.job_id}"
+    last_status: dict[str, Any] = {}
+    while time.time() < deadline:
+        await asyncio.sleep(LTX2_SIDECAR_POLL_INTERVAL_SEC)
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.get(status_url, headers=_ltx2_sidecar_headers())
+        except Exception as exc:
+            logger.debug(f"[ltx2-sidecar] status poll error: {exc}")
+            continue
+        if resp.status_code == 404:
+            # Job not yet visible in the sidecar's ring buffer; keep polling.
+            continue
+        if resp.status_code != 200:
+            raise RuntimeError(
+                f"LTX-2 sidecar /status returned {resp.status_code}: {resp.text[:300]}"
+            )
+        last_status = resp.json()
+        state_str = str(last_status.get("status", "")).lower()
+        if state_str == "completed":
+            video_path = last_status.get("video_path")
+            if not video_path or not os.path.isfile(video_path):
+                raise RuntimeError(
+                    f"LTX-2 sidecar reported completion but video_path missing: {video_path!r}"
+                )
+            with open(video_path, "rb") as fh:
+                return fh.read()
+        if state_str == "failed":
+            err = last_status.get("error") or "ltx2 sidecar generation failed"
+            raise RuntimeError(f"LTX-2 sidecar job failed: {err}")
+        # Otherwise: pending / running — keep polling.
+
+    raise RuntimeError(
+        f"LTX-2 sidecar job {request.job_id} did not complete within "
+        f"{LTX2_SIDECAR_TIMEOUT_SEC}s (last status: {last_status})"
+    )
+
+
+def _ltx2_audio_supported_in_process(model_key: str) -> bool:
+    """True iff the worker can generate audio in-process for this model.
+
+    Only `ltxv-2-22b-distilled` carries native sync-audio weights and only
+    when LTX_ALLOW_AUDIO=1 + pooled VRAM >= 24 GB — see the /generate gate.
+    """
+    spec = VIDEO_MODEL_REGISTRY.get(model_key, {})
+    return bool(spec.get("synchronized_audio"))
+
+
 # ── Async Job Runner ────────────────────────────────────────
 
 async def run_generation_job(request: "GenerateRequest"):
@@ -851,10 +1043,24 @@ async def run_generation_job(request: "GenerateRequest"):
         await _report_progress(request.job_id, request.progress_url, "Initializing", 0, "Loading model...")
 
         if request.type in ("txt2video", "img2video"):
-            await _report_progress(request.job_id, request.progress_url, "Generating", 10, "Generating video...")
-            media_bytes = await asyncio.get_event_loop().run_in_executor(
-                None, generate_video_ltx2, request
-            )
+            # Delegate audio=true jobs to the LTX-2 sidecar when the in-process
+            # path can't satisfy them (i.e. anything other than the 22B native
+            # variant). The /generate gate has already verified sidecar health
+            # before tagging the request with `_delegate_to_ltx2_sidecar`.
+            if getattr(request, "delegate_to_ltx2_sidecar", False):
+                await _report_progress(
+                    request.job_id, request.progress_url,
+                    "Generating", 10, "Delegating to LTX-2 sidecar (native audio)…",
+                )
+                logger.info(
+                    f"Job {request.job_id}: delegating to LTX-2 sidecar at {LTX2_SIDECAR_URL}"
+                )
+                media_bytes = await _delegate_to_ltx2_sidecar(request)
+            else:
+                await _report_progress(request.job_id, request.progress_url, "Generating", 10, "Generating video...")
+                media_bytes = await asyncio.get_event_loop().run_in_executor(
+                    None, generate_video_ltx2, request
+                )
             media_type = "video/mp4"
         else:
             raise ValueError(f"Unsupported job type: {request.type}")
@@ -964,6 +1170,10 @@ class GenerateRequest(BaseModel):
     enhance_prompt: bool = False
     image_strength: float = Field(default=1.0, ge=0.0, le=1.0)
     progress_url: Optional[str] = None
+    # Internal flag — set by /generate when the request is being delegated to
+    # the LTX-2 sidecar (port 5013). Not part of the public API; clients
+    # should leave this unset.
+    delegate_to_ltx2_sidecar: bool = False
 
 
 class StatusResponse(BaseModel):
@@ -1195,14 +1405,26 @@ async def capabilities():
                 per_device.append({"index": i, "error": "device_query_failed"})
 
     audio_modes = ["off"]
-    # Post-processing v2a path is always available when the v2a sidecar is
-    # configured; the sidecar URL is owned by the orchestrator, not us.
-    audio_modes.append("auto")
-    if (
+    # Post-processing v2a path is only advertised when the v2a sidecar is
+    # actually reachable (#952). Previously this was unconditional, which
+    # caused the studio composer to offer an "Auto" option that silently
+    # produced silent video when the sidecar was down (e.g., venv broken or
+    # process not started).
+    v2a_ready = await _v2a_sidecar_ready()
+    if v2a_ready:
+        audio_modes.append("auto")
+    # In-process native audio (22B model) requires LTX_ALLOW_AUDIO + 24 GB pooled.
+    in_process_native_available = (
         LTX_ALLOW_AUDIO
         and pooled_vram >= 24
         and any(spec.get("synchronized_audio") for spec in VIDEO_MODEL_REGISTRY.values())
-    ):
+    )
+    # Sidecar-delegated native audio is only advertised when the operator has
+    # explicitly opted in via LTX2_SIDECAR_VERIFIED=1 — see the env-var docstring
+    # above for why a /health probe alone is insufficient.
+    sidecar_healthy = await _ltx2_sidecar_ready()
+    sidecar_native_available = sidecar_healthy and LTX2_SIDECAR_VERIFIED
+    if in_process_native_available or sidecar_native_available:
         audio_modes.append("native")
 
     return {
@@ -1231,6 +1453,13 @@ async def capabilities():
             "LTX_POOLING_MIN_VRAM_GB": LTX_POOLING_MIN_VRAM_GB,
             "LTX_MAX_FRAMES_OVERRIDE": LTX_MAX_FRAMES_OVERRIDE,
             "LTX_ALLOW_AUDIO": LTX_ALLOW_AUDIO,
+            "LTX2_SIDECAR_URL": LTX2_SIDECAR_URL,
+            "LTX2_SIDECAR_READY": sidecar_healthy,
+            "LTX2_SIDECAR_VERIFIED": LTX2_SIDECAR_VERIFIED,
+            "LTX2_SIDECAR_NATIVE_AVAILABLE": sidecar_native_available,
+            "V2A_SIDECAR_URL": V2A_SIDECAR_URL,
+            "V2A_SIDECAR_READY": v2a_ready,
+            "CUDA_VISIBLE_DEVICES": os.getenv("CUDA_VISIBLE_DEVICES", ""),
         },
     }
 
@@ -1254,43 +1483,67 @@ async def generate(request: GenerateRequest):
     if state.is_busy:
         raise HTTPException(status_code=409, detail="Worker is busy with another job")
 
-    # Audio gating (#926, #927):
+    # Audio gating (#926, #927) + LTX-2 sidecar delegation:
     #
     #   - On the CUDA backend, only `ltxv-2-22b-distilled` carries native
-    #     synchronized audio weights.
-    #   - It is gated behind LTX_ALLOW_AUDIO=1 and pooled VRAM >= 24 GB so
-    #     it never silently OOMs a 12 GB single-card host.
-    #   - All other models still reject audio outright, matching legacy
-    #     behaviour.
+    #     synchronized audio weights in-process. It is gated behind
+    #     LTX_ALLOW_AUDIO=1 and pooled VRAM >= 24 GB so it never silently
+    #     OOMs a 12 GB single-card host.
+    #   - For all other models, audio=true is delegated to the LTX-2 sidecar
+    #     (default :5013) when it is healthy. The sidecar runs the upstream
+    #     LTX-2 CLI which natively muxes synchronized audio and works on a
+    #     single 12 GB card via offloading. If the sidecar is unhealthy we
+    #     fall back to the original 400 so callers can either start it or
+    #     switch to audio='auto' (post-process v2a).
     if request.audio:
-        model_spec = VIDEO_MODEL_REGISTRY.get(request.model, {})
-        synchronized_audio_supported = bool(model_spec.get("synchronized_audio"))
-        pooled_vram = _get_pooled_vram_gb()
-        if not synchronized_audio_supported:
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    f"Audio generation is not supported by model '{request.model}' on CUDA. "
-                    "Only 'ltxv-2-22b-distilled' carries synchronized audio weights, "
-                    "or post-process via the v2a sidecar (audio='auto')."
-                ),
-            )
-        if not LTX_ALLOW_AUDIO:
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    "LTX-2 synchronized audio is disabled. Set LTX_ALLOW_AUDIO=1 "
-                    "to enable. See docs/MULTI_GPU.md for VRAM requirements."
-                ),
-            )
-        if pooled_vram < 24:
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    f"LTX-2 synchronized audio requires >=24 GB pooled VRAM "
-                    f"(detected {pooled_vram} GB). Use audio='auto' to dispatch "
-                    "the v2a sidecar instead, or add a second GPU."
-                ),
+        if _ltx2_audio_supported_in_process(request.model):
+            pooled_vram = _get_pooled_vram_gb()
+            if not LTX_ALLOW_AUDIO:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "LTX-2 synchronized audio is disabled. Set LTX_ALLOW_AUDIO=1 "
+                        "to enable. See docs/MULTI_GPU.md for VRAM requirements."
+                    ),
+                )
+            if pooled_vram < 24:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"LTX-2 synchronized audio requires >=24 GB pooled VRAM "
+                        f"(detected {pooled_vram} GB). Use audio='auto' to dispatch "
+                        "the v2a sidecar instead, or add a second GPU."
+                    ),
+                )
+        else:
+            if not LTX2_SIDECAR_VERIFIED:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Audio generation is not supported by model '{request.model}' in-process, "
+                        "and the LTX-2 sidecar delegation path is currently disabled because "
+                        "LTX2_SIDECAR_VERIFIED is not set. The upstream LTX-2 distilled CLI with "
+                        "--offload cpu has been observed to produce coloured-noise output on this "
+                        "hardware tier — set LTX2_SIDECAR_VERIFIED=1 only after visually verifying "
+                        "a sample MP4 from this sidecar build. Use audio='auto' for post-process v2a "
+                        "in the meantime."
+                    ),
+                )
+            sidecar_ready = await _ltx2_sidecar_ready()
+            if not sidecar_ready:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Audio generation is not supported by model '{request.model}' on CUDA "
+                        f"in-process, and the LTX-2 sidecar at {LTX2_SIDECAR_URL} is not reachable. "
+                        "Start the sidecar (sidecars/ltx2/) or use audio='auto' for post-process v2a."
+                    ),
+                )
+            # Tag the request so run_generation_job routes to the sidecar.
+            request.delegate_to_ltx2_sidecar = True
+            logger.info(
+                f"Job {request.job_id}: model '{request.model}' + audio=true → "
+                f"will delegate to LTX-2 sidecar at {LTX2_SIDECAR_URL}"
             )
 
     asyncio.create_task(run_generation_job(request))
