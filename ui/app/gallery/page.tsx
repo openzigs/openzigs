@@ -2525,6 +2525,21 @@ function GalleryStudio({
     syncAudioModelSelected &&
     (capabilitiesQuery.data?.audio_modes ?? []).includes("native");
 
+  // #952 — auto/MMAudio v2a sidecar gate. The worker now probes the v2a
+  // sidecar /health and only advertises "auto" in audio_modes when it is
+  // actually reachable. Disable the option when unavailable so the UI does
+  // not silently produce silent video.
+  const autoAudioAvailable = (capabilitiesQuery.data?.audio_modes ?? []).includes(
+    "auto",
+  );
+  if (
+    !autoAudioAvailable &&
+    form.audioMode === "auto" &&
+    capabilitiesQuery.data
+  ) {
+    setForm((prev) => ({ ...prev, audioMode: "off", audio: false }));
+  }
+
   // WS2-B (#928) — extended duration cap. Pull from capabilities if known,
   // else fall back to a conservative 60s.
   const maxExtendedSeconds = (() => {
@@ -3871,8 +3886,17 @@ function GalleryStudio({
                 }
               >
                 <option value="off">Off — Silent (default)</option>
-                <option value="auto">
+                <option
+                  value="auto"
+                  disabled={!autoAudioAvailable}
+                  title={
+                    autoAudioAvailable
+                      ? "Generate sound effects post-process via MMAudio v2a sidecar"
+                      : "v2a (MMAudio) sidecar on :5012 is not reachable. Start it and reload to enable."
+                  }
+                >
                   Auto — Generate sound effects (MMAudio v2a)
+                  {!autoAudioAvailable ? " — sidecar offline" : ""}
                 </option>
                 <option value="music">
                   Music — Background music (ACE-Step)

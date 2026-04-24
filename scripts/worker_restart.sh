@@ -12,6 +12,13 @@ sleep 2
 cd ~/openzigs-sidecars/worker
 source venv/bin/activate
 export LTX_POOLING_MODE="${LTX_POOLING_MODE:-auto}"
+# #952: Expose BOTH RTX 3060 cards to the worker so the diffusers
+# `device_map="balanced"` pooling path (#949) actually has a second
+# device to shard onto. Previously the worker process inherited a
+# CUDA_VISIBLE_DEVICES=0 from the parent shell which made
+# torch.cuda.device_count() return 1 and pooling.active=false even
+# though `nvidia-smi` from outside reported both cards.
+export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0,1}"
 nohup python server_cuda.py --port 5007 --host 0.0.0.0 > /tmp/worker.log 2>&1 &
 echo "PID=$!"
 sleep 6

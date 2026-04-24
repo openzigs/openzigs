@@ -926,6 +926,30 @@ async def _ltx2_sidecar_ready() -> bool:
         return False
 
 
+# #952: v2a (MMAudio) sidecar reachability probe. The capabilities endpoint
+# previously advertised audio_modes=['off', 'auto'] unconditionally — even
+# when the v2a sidecar (port 5012) was down. The UI then offered the user an
+# "Auto" option that silently produced silent video. Now we probe and only
+# advertise "auto" when the sidecar's /health says ready.
+V2A_SIDECAR_URL: str = os.getenv("V2A_SIDECAR_URL", "http://127.0.0.1:5012").rstrip("/")
+
+
+async def _v2a_sidecar_ready() -> bool:
+    """Probe the v2a (MMAudio) sidecar /health endpoint."""
+    try:
+        async with httpx.AsyncClient(timeout=2.0) as client:
+            resp = await client.get(f"{V2A_SIDECAR_URL}/health")
+        if resp.status_code != 200:
+            return False
+        body = resp.json()
+        # MMAudio sidecar reports {"status":"ok"} when ready;
+        # accept either explicit ready=true or status=ok for compatibility.
+        return bool(body.get("ready")) or body.get("status") == "ok"
+    except Exception as exc:
+        logger.debug(f"[v2a-sidecar] health probe failed: {exc}")
+        return False
+
+
 async def _delegate_to_ltx2_sidecar(request: "GenerateRequest") -> bytes:
     """Submit a job to the LTX-2 sidecar, poll for completion, return MP4 bytes.
 
@@ -1374,9 +1398,14 @@ async def capabilities():
                 per_device.append({"index": i, "error": "device_query_failed"})
 
     audio_modes = ["off"]
-    # Post-processing v2a path is always available when the v2a sidecar is
-    # configured; the sidecar URL is owned by the orchestrator, not us.
-    audio_modes.append("auto")
+    # Post-processing v2a path is only advertised when the v2a sidecar is
+    # actually reachable (#952). Previously this was unconditional, which
+    # caused the studio composer to offer an "Auto" option that silently
+    # produced silent video when the sidecar was down (e.g., venv broken or
+    # process not started).
+    v2a_ready = await _v2a_sidecar_ready()
+    if v2a_ready:
+        audio_modes.append("auto")
     # In-process native audio (22B model) requires LTX_ALLOW_AUDIO + 24 GB pooled.
     in_process_native_available = (
         LTX_ALLOW_AUDIO
@@ -1421,6 +1450,9 @@ async def capabilities():
             "LTX2_SIDECAR_READY": sidecar_healthy,
             "LTX2_SIDECAR_VERIFIED": LTX2_SIDECAR_VERIFIED,
             "LTX2_SIDECAR_NATIVE_AVAILABLE": sidecar_native_available,
+            "V2A_SIDECAR_URL": V2A_SIDECAR_URL,
+            "V2A_SIDECAR_READY": v2a_ready,
+            "CUDA_VISIBLE_DEVICES": os.getenv("CUDA_VISIBLE_DEVICES", ""),
         },
     }
 
