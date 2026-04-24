@@ -723,7 +723,7 @@ export class CopilotWrapperService
     lifecycleEvents: [],
     lastUpdated: new Date().toISOString(),
   };
-  private lifecycleUnsubscribe?: () => void; // retained for future teardown
+  private lifecycleUnsubscribe?: () => void;
   readonly tokenTracker = new TokenTracker();
   private memoryContextProvider?: () => Promise<string | null>;
 
