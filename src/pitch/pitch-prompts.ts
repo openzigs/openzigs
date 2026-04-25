@@ -106,13 +106,33 @@ export function buildDraftSystemPrompt(
   ].join("\n");
 }
 
+/**
+ * Locate `slide` inside `deck.slides`. Reference equality is tried first
+ * (cheap, covers in-memory regenerate flows), then a structural fallback
+ * matching template + JSON-serialized content (covers cloned slides
+ * round-tripped through the repo or Socket.IO). Returns `-1` when the
+ * slide is not part of the deck.
+ *
+ * Sub-issue #957 regression: the old `findIndex(s => s === slide)`
+ * silently returned -1 for any caller that handed us a clone, which made
+ * `prev`/`next` look as if the slide was always the last one in the deck.
+ */
+export function findSlideIndex(deck: Deck, slide: Slide): number {
+  const ref = deck.slides.findIndex((s) => s === slide);
+  if (ref >= 0) return ref;
+  const target = JSON.stringify({ t: slide.template, c: slide.content });
+  return deck.slides.findIndex(
+    (s) => JSON.stringify({ t: s.template, c: s.content }) === target,
+  );
+}
+
 /** System prompt for regenerating a single slide. */
 export function buildRegenerateSystemPrompt(
   deck: Deck,
   slide: Slide,
   hint?: string,
 ): string {
-  const idx = deck.slides.findIndex((s) => s === slide);
+  const idx = findSlideIndex(deck, slide);
   const prev = idx > 0 ? deck.slides[idx - 1] : null;
   const next = idx >= 0 && idx < deck.slides.length - 1 ? deck.slides[idx + 1] : null;
   const summarize = (s: Slide): string =>
