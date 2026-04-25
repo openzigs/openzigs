@@ -1881,6 +1881,8 @@ The **Pitch** workspace turns a script, brief, or research notes into a designed
 | Markdown | `GET …/export.md` | All 14 templates; pipes/newlines escaped in tables |
 | Speaker-notes PDF | `GET …/export.notes.pdf` | One section per slide, verbatim notes |
 
+> **Note — first PDF export downloads Chromium (~170 MB).** PDF export is implemented via `decktape`, which depends on a headless Chromium build. The Chromium binary is downloaded automatically on the first hit to either PDF endpoint and cached for subsequent calls. CI / Docker images that need PDF export should warm the cache during the build step, e.g. `npx decktape --version`, so the first user-facing export does not block on the download.
+
 #### Rate limits
 
 All Pitch routes are throttled per-IP with `express-rate-limit` (1 hour window, standard `RateLimit-*` + `Retry-After` headers, `429 { error: { code: "rate_limited" } }` on overflow):

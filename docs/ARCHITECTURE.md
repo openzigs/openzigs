@@ -6916,7 +6916,7 @@ The Pitch subsystem turns user scripts into branded, exportable slide decks. It 
 
 ### Request flow
 
-`mermaid
+```mermaid
 flowchart LR
   UI[UI ui/app/pitch/*] -->|REST| Router[src/api/pitch.ts]
   Router --> Limiters[express-rate-limit per route]
@@ -6928,7 +6928,7 @@ flowchart LR
   Schema --> Exporters[pitch-export-pdf/pptx/zip/md/notes.ts]
   Repo -->|events| Sock[Socket.IO pitch:* taxonomy]
   Sock --> UI
-`
+```
 
 ### Key components
 
@@ -6941,13 +6941,17 @@ flowchart LR
 | `src/pitch/pitch-prompts.ts` | `PROMPT_INJECTION_GUARD` system instruction telling the model to treat envelope contents as data |
 | `src/pitch/pitch-generator.ts` | Two-stage generation: stage 1 truncates to `MAX_SLIDES_PER_DECK = 80` then stage 2 validates against final `DeckSchema` |
 | `src/pitch/pitch-renderer.ts` | Reveal HTML renderer; strict CSP for standalone mode |
-| `src/pitch/pitch-export-utils.ts` | `safeFilename` (`[a-zA-Z0-9._-]+`, 120 char cap), `assertWithinTmpdir` (path-prefix containment with platform separator), `htmlToPdf` (decktape subprocess + `AbortController`) |
+| `src/pitch/pitch-export-utils.ts` | `safeFilename` (`[a-zA-Z0-9._-]+`, 120 char cap), `assertWithinTmpdir` (realpath-based symlink containment under `os.tmpdir()`), `htmlToPdf` (decktape subprocess + `AbortController`) |
 | `src/pitch/pitch-export-pdf.ts` / `-pptx.ts` / `-zip.ts` / `-md.ts` / `-notes.ts` | Per-format exporters; PDF + notes pipelines abort early when `opts.signal.aborted` |
 | `src/pitch/pitch-repository.ts` | SQLite tables `pitch_decks`, `pitch_brand_kits`, `pitch_slide_assets`; `seedStarterBrandKits` writes the 6 starter kits |
 
+#### PDF export — Chromium dependency
+
+The PDF + speaker-notes pipelines shell out to `decktape`, which transitively depends on a headless Chromium build (~170 MB). Chromium is downloaded automatically on the first call to either PDF endpoint and cached under the user's npm/Puppeteer cache for subsequent runs. CI and container images that exercise PDF export should warm the cache during the image build (e.g. `RUN npx decktape --version`) so the first request does not pay the one-time download cost.
+
 ### Security boundaries
 
-`mermaid
+```mermaid
 flowchart TB
   Input[User Input] --> Limiter{Rate Limited?}
   Limiter -->|429| Err[/RateLimit-* + Retry-After/]
@@ -6963,7 +6967,7 @@ flowchart TB
   Export --> Tmp[assertWithinTmpdir]
   Tmp --> Subproc[decktape spawn + AbortSignal]
   Subproc --> Client[Buffer + generic error message]
-`
+```
 
 ### Rate-limit policy
 

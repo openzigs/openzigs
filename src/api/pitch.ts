@@ -411,6 +411,26 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
           message: `Too many ${label} requests, please slow down`,
         },
       },
+      // Audit every 429 with category `security` so brute-force /
+      // denial-of-wallet attempts surface in the audit log alongside the
+      // starter-kit-immutability blocks. Mirrors the `audit("security",
+      // ...)` calls earlier in this router. Sub-issue follow-up to PR
+      // #984 review.
+      handler: (req, res, _next, options) => {
+        audit(
+          "security",
+          "pitch.rate_limit_exceeded",
+          {
+            ip: req.ip,
+            route: req.originalUrl ?? req.url,
+            label,
+            limit: max,
+            windowMs: ONE_HOUR_MS,
+          },
+          "warn",
+        );
+        res.status(options.statusCode).json(options.message);
+      },
       // The Express server already sets `trust proxy` per the deployment;
       // we don't override the IPv6 validator here. Tests that hit limits
       // run against a single localhost IP so the per-IP partitioning is

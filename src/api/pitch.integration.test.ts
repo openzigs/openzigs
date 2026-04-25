@@ -92,6 +92,7 @@ interface Harness {
     md: number;
     notes: number;
   };
+  auditLog: ReturnType<typeof vi.fn>;
   cleanup: () => void;
 }
 
@@ -110,6 +111,13 @@ function buildHarness(): Harness {
 
   const exporterCalls = { pdf: 0, pptx: 0, zip: 0, md: 0, notes: 0 };
 
+  // Lightweight audit-logger spy so tests can assert security events
+  // (eg. rate-limit 429s emit `pitch.rate_limit_exceeded`).
+  const auditLog = vi.fn().mockResolvedValue(undefined);
+  const auditLogger = { log: auditLog } as unknown as NonNullable<
+    PitchRouterDeps["auditLogger"]
+  >;
+
   const fakeBuffer = Buffer.from("FAKE EXPORT");
   const deps: PitchRouterDeps = {
     pitchRepo,
@@ -125,6 +133,7 @@ function buildHarness(): Harness {
       createJob: vi.fn(),
     } as unknown as PitchRouterDeps["mediaQueueRepo"],
     brandKitsDir,
+    auditLogger,
     exporters: {
       pdf: (async () => {
         exporterCalls.pdf++;
@@ -184,6 +193,7 @@ function buildHarness(): Harness {
     db,
     brandKitsDir,
     exporterCalls,
+    auditLog,
     cleanup: () => {
       db.close();
       try {
@@ -429,6 +439,74 @@ describe("Pitch — Phase 7 integration (sub-issue #976)", () => {
       // The payload must NOT leak server internals; only `code` +
       // `message` are allowed.
       expect(Object.keys(tripped.body.error).sort()).toEqual(["code", "message"]);
+    });
+
+    it("/decks/:id/slides/:id/image — 30/hr cap (PR #984)", async () => {
+      // Pre-create a deck so the image handler can reach the rate
+      // limiter; the limiter middleware runs before the handler body.
+      const deck = makeDraftedDeck("Image-Test");
+      const inserted = h.deps.pitchRepo.insertDeck({
+        id: deck.id,
+        title: deck.title,
+        brand_kit_id: deck.brand_kit_id,
+        aspect_ratio: deck.aspect_ratio,
+        metadata: deck.metadata,
+        slides: deck.slides.map((s, i) => ({
+          id: `${deck.id}-s${i}`,
+          slide: s,
+        })),
+      });
+      const slideId = h.deps.pitchRepo.listSlidesForDeck(inserted.id)[0].id;
+      enqueueSlideImageMock.mockReturnValue({
+        jobId: "j",
+        assetId: "a",
+      });
+      await assertLimitTripsAfter(30, () =>
+        request(h.app)
+          .post(
+            `/api/admin/pitch/decks/${inserted.id}/slides/${slideId}/image`,
+          )
+          .send({ prompt: "hero", mode: "inline" }),
+      );
+    });
+
+    it("emits a `security` audit event on 429 (PR #984)", async () => {
+      generateDeckMock.mockResolvedValue(makeDraftedDeck("Audit-Test"));
+      h.auditLog.mockClear();
+      // Burn through the 10/hr draft cap, then trip the limiter once.
+      for (let i = 0; i < 10; i++) {
+        await request(h.app)
+          .post("/api/admin/pitch/decks/draft")
+          .send({
+            script: "x",
+            brandKitId: "starter-modern-minimal",
+          });
+      }
+      const tripped = await request(h.app)
+        .post("/api/admin/pitch/decks/draft")
+        .send({
+          script: "x",
+          brandKitId: "starter-modern-minimal",
+        });
+      expect(tripped.status).toBe(429);
+
+      // The audit logger must have been called with category=security
+      // and event=pitch.rate_limit_exceeded carrying ip/route/limit/windowMs.
+      const securityCalls = h.auditLog.mock.calls.filter(
+        ([entry]) =>
+          (entry as { category?: string }).category === "security" &&
+          (entry as { event?: string }).event === "pitch.rate_limit_exceeded",
+      );
+      expect(securityCalls.length).toBeGreaterThanOrEqual(1);
+      const payload = (securityCalls[0][0] as {
+        details: Record<string, unknown>;
+      }).details;
+      expect(payload).toMatchObject({
+        route: expect.stringContaining("/decks/draft"),
+        limit: 10,
+        windowMs: expect.any(Number),
+      });
+      expect(payload).toHaveProperty("ip");
     });
   });
 

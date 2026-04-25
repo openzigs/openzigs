@@ -126,6 +126,26 @@ describe("assertWithinTmpdir", () => {
       assertWithinTmpdir(`${tmpdir()}/../../../etc/passwd`),
     ).toThrow(/inside os\.tmpdir/);
   });
+
+  it("rejects a symlink under tmpdir() that points outside (Phase 7 #984)", async () => {
+    // Skip on Windows: requires Administrator rights to create symlinks.
+    if (process.platform === "win32") return;
+    const { mkdtempSync, symlinkSync, rmSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const dir = mkdtempSync(`${tmpdir()}/openzigs-pitch-symlink-`);
+    // /tmp/openzigs-pitch-symlink-XXXX/escape -> / (root)
+    const linkPath = join(dir, "escape");
+    symlinkSync("/", linkPath);
+    try {
+      // A candidate whose parent is the planted symlink must be rejected
+      // because the parent's realpath resolves outside `tmpdir()`.
+      expect(() =>
+        assertWithinTmpdir(join(linkPath, "etc", "passwd")),
+      ).toThrow(/inside os\.tmpdir/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });
 
 // ── htmlToPdf — mocked spawn ───────────────────────────────────────────

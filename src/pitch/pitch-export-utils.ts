@@ -14,9 +14,10 @@
  */
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { realpathSync } from "node:fs";
 import { readFile, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import sharp from "sharp";
 
 /** Hard timeout for any decktape invocation (ms). */
@@ -178,24 +179,57 @@ export async function htmlToPdf(
 }
 
 /**
- * Throw if `candidate` does not normalize to a path inside `os.tmpdir()`.
+ * Throw if `candidate` does not resolve to a path inside `os.tmpdir()`,
+ * including after symlink resolution.
  *
  * Sub-issue #977 — Phase 6 review noted that an attacker who could control
  * the temp filename (eg. via a future feature accepting upload-named
  * artifacts) could otherwise point decktape at `file:///etc/passwd` via a
- * `..` traversal. Today the filename is `randomUUID()`-derived, but this
- * guard makes the LFI surface structurally impossible — callers cannot
- * accidentally regress the property by changing the path generator.
+ * `..` traversal. Phase 7 review (PR #984) hardened the original
+ * lexical-only check: a symlink planted under `os.tmpdir()` and pointing
+ * outside (`/tmp/evil -> /etc`) bypassed the previous `path.resolve`
+ * containment check. We now resolve the parent directory through
+ * `fs.realpathSync` and re-check containment against the realpath of
+ * `os.tmpdir()`. The candidate's basename is appended back so the file
+ * itself need not exist yet (decktape creates it).
+ *
+ * Defends against:
+ *   - `..` traversal (`/tmp/../etc/passwd`)
+ *   - sibling-prefix attacks (`/tmpfoo/x` vs `/tmp`)
+ *   - absolute paths outside `tmpdir()` (`/etc/passwd`, `C:\Windows\...`)
+ *   - symlink escape (`/tmp/evil -> /etc`, then candidate `/tmp/evil/passwd`)
+ *
+ * `os.tmpdir()` is OS-controlled and assumed trusted; we resolve its
+ * realpath once per call so a symlinked tmpdir (e.g. macOS
+ * `/tmp -> /private/tmp`) does not produce a false negative.
  */
 export function assertWithinTmpdir(candidate: string): void {
-  const tmp = resolve(tmpdir());
+  const tmpReal = realpathSync(tmpdir());
   const normalized = resolve(candidate);
-  // `+ path.sep` is appended to `tmp` so `"/tmpfoo"` does not pass when
-  // `tmpdir()` is `"/tmp"`. Direct equality with `tmp` is also rejected
-  // — we want a child path, not the directory itself.
+  // Resolve the parent directory through the filesystem so a symlink
+  // planted under `tmpdir()` cannot redirect us outside. We do NOT
+  // realpath the candidate itself because in the production call site
+  // the file does not yet exist (decktape will create it).
+  const parent = dirname(normalized);
+  let parentReal: string;
+  try {
+    parentReal = realpathSync(parent);
+  } catch {
+    // Parent does not exist (or a path component is not a directory) —
+    // fail closed. The production path always uses `os.tmpdir()` itself
+    // as the parent, which always exists.
+    throw new Error(
+      `pitch: temp path parent must exist inside os.tmpdir() (got ${candidate})`,
+    );
+  }
+  const resolved = join(parentReal, basename(normalized));
+
   const sep = process.platform === "win32" ? "\\" : "/";
-  const tmpWithSep = tmp.endsWith(sep) ? tmp : tmp + sep;
-  if (normalized === tmp || !normalized.startsWith(tmpWithSep)) {
+  const tmpWithSep = tmpReal.endsWith(sep) ? tmpReal : tmpReal + sep;
+  // Direct equality with `tmpReal` is also rejected — we want a child
+  // path, not the directory itself. `+ path.sep` defends against
+  // sibling-prefix attacks (`/tmpfoo` vs `/tmp`).
+  if (resolved === tmpReal || !resolved.startsWith(tmpWithSep)) {
     throw new Error(
       `pitch: temp path must be inside os.tmpdir() (got ${candidate})`,
     );
