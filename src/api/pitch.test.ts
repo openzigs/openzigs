@@ -465,6 +465,62 @@ describe("Pitch REST router", () => {
     });
   });
 
+  // ── #963 (Phase 4) — Render endpoint ─────────────────────────────────
+
+  describe("render endpoint (#963)", () => {
+    it("GET /decks/:deckId/render returns embedded HTML by default", async () => {
+      const kitId = createCustomKit(harness);
+      const { deckId } = createDeck(harness, kitId);
+      const res = await request(harness.app).get(
+        `/api/admin/pitch/decks/${deckId}/render`,
+      );
+      expect(res.status).toBe(200);
+      expect(res.headers["content-type"]).toMatch(/text\/html/);
+      expect(res.headers["cache-control"]).toBe("no-store");
+      expect(res.text).toContain('class="pitch-deck-wrap"');
+      expect(res.text).toContain('class="reveal"');
+      expect(res.text).not.toContain("<!doctype");
+    });
+
+    it("GET /decks/:deckId/render?mode=standalone returns full HTML doc", async () => {
+      const kitId = createCustomKit(harness);
+      const { deckId } = createDeck(harness, kitId);
+      const res = await request(harness.app).get(
+        `/api/admin/pitch/decks/${deckId}/render?mode=standalone`,
+      );
+      expect(res.status).toBe(200);
+      expect(res.text.startsWith("<!doctype html>")).toBe(true);
+      expect(res.text).toContain("reveal.js@5/dist/reveal.css");
+    });
+
+    it("returns 404 when deck not found", async () => {
+      const res = await request(harness.app).get(
+        "/api/admin/pitch/decks/missing/render",
+      );
+      expect(res.status).toBe(404);
+    });
+
+    it("returns 404 when deck's brand kit is missing", async () => {
+      const kitId = createCustomKit(harness);
+      const { deckId } = createDeck(harness, kitId);
+      // Force the deck to point at a non-existent brand kit. Bypass the
+      // foreign-key guard with a direct SQL update — production code
+      // can't reach this state, but the route's defensive 404 is worth covering.
+      harness.db.pragma("foreign_keys = OFF");
+      try {
+        harness.db
+          .prepare(`UPDATE pitch_decks SET brand_kit_id = ? WHERE id = ?`)
+          .run("missing-kit", deckId);
+      } finally {
+        harness.db.pragma("foreign_keys = ON");
+      }
+      const res = await request(harness.app).get(
+        `/api/admin/pitch/decks/${deckId}/render`,
+      );
+      expect(res.status).toBe(404);
+    });
+  });
+
   // ── #962 — AI endpoints ──────────────────────────────────────────────
 
   describe("AI endpoints (#962)", () => {
