@@ -28,6 +28,7 @@ import { extname, join, resolve } from "node:path";
 import { Router, type Request, type Response } from "express";
 import multer from "multer";
 import { nanoid } from "nanoid";
+import rateLimit, { type RateLimitRequestHandler } from "express-rate-limit";
 import sharp from "sharp";
 import type { Server as SocketIOServer } from "socket.io";
 import { z, type ZodTypeAny } from "zod";
@@ -383,10 +384,56 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
   };
 
   // ────────────────────────────────────────────────────────────────────
+  // Rate limiting (Phase 7 / sub-issue #977)
+  //
+  // Per-IP limits applied to the expensive endpoints. The global app-level
+  // rate limiter in `src/app.ts` still runs first (5000 req / 15 min) — the
+  // limiters below are tighter ceilings on individual cost centres:
+  //   - LLM-backed routes (draft, regenerate, enhance, image)
+  //   - Subprocess-backed exports (pdf, pptx, zip, notes)
+  //   - Cheap CRUD/list — basically just abuse protection
+  //
+  // All limiters emit standard `RateLimit-*` headers and a `429` with
+  // `Retry-After`. `windowMs` is set to one hour (3 600 000 ms) so the
+  // per-route caps are easy to reason about ("10 drafts per hour", etc.).
+  // ────────────────────────────────────────────────────────────────────
+
+  const ONE_HOUR_MS = 60 * 60 * 1000;
+  const buildLimiter = (max: number, label: string): RateLimitRequestHandler =>
+    rateLimit({
+      windowMs: ONE_HOUR_MS,
+      max,
+      standardHeaders: true,
+      legacyHeaders: false,
+      message: {
+        error: {
+          code: "rate_limited",
+          message: `Too many ${label} requests, please slow down`,
+        },
+      },
+      // The Express server already sets `trust proxy` per the deployment;
+      // we don't override the IPv6 validator here. Tests that hit limits
+      // run against a single localhost IP so the per-IP partitioning is
+      // exactly what we want to assert against.
+    });
+
+  const draftLimiter = buildLimiter(10, "deck draft");
+  const regenerateLimiter = buildLimiter(60, "slide regenerate");
+  const enhanceLimiter = buildLimiter(60, "slide enhance");
+  const imageLimiter = buildLimiter(30, "slide image");
+  const pdfLimiter = buildLimiter(20, "PDF export");
+  const pptxLimiter = buildLimiter(30, "PPTX export");
+  const zipLimiter = buildLimiter(30, "ZIP export");
+  const mdLimiter = buildLimiter(60, "Markdown export");
+  const htmlLimiter = buildLimiter(60, "HTML export");
+  const notesLimiter = buildLimiter(20, "speaker-notes PDF");
+  const crudLimiter = buildLimiter(600, "API");
+
+  // ────────────────────────────────────────────────────────────────────
   // Deck CRUD (#959)
   // ────────────────────────────────────────────────────────────────────
 
-  router.get("/decks", (req, res) => {
+  router.get("/decks", crudLimiter, (req, res) => {
     const limitRaw = Number.parseInt(String(req.query.limit ?? "50"), 10);
     const offsetRaw = Number.parseInt(String(req.query.offset ?? "0"), 10);
     const limit = Number.isFinite(limitRaw)
@@ -402,7 +449,7 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
     });
   });
 
-  router.post("/decks", (req, res) => {
+  router.post("/decks", crudLimiter, (req, res) => {
     const body = parseBody(CreateDeckBody, res, req);
     if (!body) return;
 
@@ -439,7 +486,7 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
     }
   });
 
-  router.get("/decks/:deckId", (req, res) => {
+  router.get("/decks/:deckId", crudLimiter, (req, res) => {
     const deck = deps.pitchRepo.getDeck(req.params.deckId);
     if (!deck) {
       sendError(res, 404, "not_found", `deck ${req.params.deckId} not found`);
@@ -450,7 +497,7 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
   });
 
   // Phase 4 / sub-issue #963 — Reveal HTML render endpoint.
-  router.get("/decks/:deckId/render", (req, res) => {
+  router.get("/decks/:deckId/render", htmlLimiter, (req, res) => {
     const mode = req.query.mode === "standalone" ? "standalone" : "embedded";
     const deck = deps.pitchRepo.getDeck(req.params.deckId);
     if (!deck) {
@@ -483,6 +530,28 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
       res.setHeader("Content-Type", "text/html; charset=utf-8");
       // Render output is dynamic per-deck — never cache at the edge.
       res.setHeader("Cache-Control", "no-store");
+      // CSP (#977): standalone Reveal HTML inlines its own init script
+      // and styles, so `'unsafe-inline'` is required for both — mitigated
+      // by the fact that ALL user content interpolated into the HTML
+      // passes through `sanitizeRichText` / `escapeHtml` first. The CDN
+      // entries are explicit — reveal.js comes from jsdelivr in standalone
+      // mode, image URLs are http(s) only, and `data:` is allowed only
+      // for inline image previews. Embedded mode also benefits since the
+      // browser still respects the header on the response.
+      res.setHeader(
+        "Content-Security-Policy",
+        [
+          "default-src 'self'",
+          "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net",
+          "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net",
+          "img-src 'self' data: https:",
+          "font-src 'self' data: https:",
+          "connect-src 'self'",
+          "frame-ancestors 'self'",
+          "base-uri 'self'",
+          "form-action 'none'",
+        ].join("; "),
+      );
       res.send(html);
     } catch (err) {
       logger.error(
@@ -542,7 +611,7 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
     res.setHeader("Cache-Control", "no-store");
   };
 
-  router.get("/decks/:deckId/export.html", (req, res) => {
+  router.get("/decks/:deckId/export.html", htmlLimiter, (req, res) => {
     // Alias for `/render?mode=standalone` so the export menu is uniform.
     const ctx = loadDeckAndKit(req, res);
     if (!ctx?.deck) return;
@@ -560,6 +629,22 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
       emit("pitch:deck:exported", { deckId: ctx.deck.id, format: "html" });
       res.setHeader("Content-Type", "text/html; charset=utf-8");
       res.setHeader("Cache-Control", "no-store");
+      // Same CSP as `/render` (#977) — standalone HTML carries inlined
+      // Reveal init + theme overrides, so `'unsafe-inline'` is required.
+      res.setHeader(
+        "Content-Security-Policy",
+        [
+          "default-src 'self'",
+          "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net",
+          "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net",
+          "img-src 'self' data: https:",
+          "font-src 'self' data: https:",
+          "connect-src 'self'",
+          "frame-ancestors 'self'",
+          "base-uri 'self'",
+          "form-action 'none'",
+        ].join("; "),
+      );
       res.send(html);
     } catch (err) {
       logger.error(
@@ -569,7 +654,7 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
     }
   });
 
-  router.get("/decks/:deckId/export.md", (req, res) => {
+  router.get("/decks/:deckId/export.md", mdLimiter, (req, res) => {
     const ctx = loadDeckAndKit(req, res);
     if (!ctx?.deck) return;
     try {
@@ -590,7 +675,7 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
     }
   });
 
-  router.get("/decks/:deckId/export.zip", async (req, res) => {
+  router.get("/decks/:deckId/export.zip", zipLimiter, async (req, res) => {
     const ctx = loadDeckAndKit(req, res);
     if (!ctx?.deck) return;
     try {
@@ -611,7 +696,7 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
     }
   });
 
-  router.get("/decks/:deckId/export.pptx", async (req, res) => {
+  router.get("/decks/:deckId/export.pptx", pptxLimiter, async (req, res) => {
     const ctx = loadDeckAndKit(req, res);
     if (!ctx?.deck) return;
     try {
@@ -632,7 +717,7 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
     }
   });
 
-  router.get("/decks/:deckId/export.pdf", async (req, res) => {
+  router.get("/decks/:deckId/export.pdf", pdfLimiter, async (req, res) => {
     const ctx = loadDeckAndKit(req, res);
     if (!ctx?.deck) return;
     // Belt-and-braces — express response timeout matches decktape's hard cap.
@@ -662,7 +747,7 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
     }
   });
 
-  router.get("/decks/:deckId/export.notes.pdf", async (req, res) => {
+  router.get("/decks/:deckId/export.notes.pdf", notesLimiter, async (req, res) => {
     const ctx = loadDeckAndKit(req, res);
     if (!ctx?.deck) return;
     req.setTimeout(60_000);
@@ -696,7 +781,7 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
     }
   });
 
-  router.patch("/decks/:deckId", (req, res) => {
+  router.patch("/decks/:deckId", crudLimiter, (req, res) => {
     const body = parseBody(UpdateDeckBody, res, req);
     if (!body) return;
 
@@ -739,7 +824,7 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
     res.json({ deck: updated });
   });
 
-  router.delete("/decks/:deckId", (req, res) => {
+  router.delete("/decks/:deckId", crudLimiter, (req, res) => {
     // Cascade is intentional (per #956 design / FK ON DELETE CASCADE on slides
     // and assets). Block only if deck is missing.
     const ok = deps.pitchRepo.deleteDeck(req.params.deckId);
@@ -756,7 +841,7 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
   // Slide CRUD (#959)
   // ────────────────────────────────────────────────────────────────────
 
-  router.post("/decks/:deckId/slides", (req, res) => {
+  router.post("/decks/:deckId/slides", crudLimiter, (req, res) => {
     const body = parseBody(AppendSlideBody, res, req);
     if (!body) return;
 
@@ -767,6 +852,18 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
     }
 
     const slides = deps.pitchRepo.listSlidesForDeck(deck.id);
+    // Defence-in-depth (#977): reject before insert if appending would
+    // push the deck past the schema's 80-slide hard cap. Mirrors
+    // `MAX_SLIDES_PER_DECK` in `pitch-generator.ts`.
+    if (slides.length >= 80) {
+      sendError(
+        res,
+        409,
+        "conflict",
+        "deck has reached the 80-slide cap; remove a slide before appending",
+      );
+      return;
+    }
     const insertAt =
       body.position !== undefined
         ? Math.min(Math.max(body.position, 0), slides.length)
@@ -810,7 +907,7 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
     }
   });
 
-  router.patch("/decks/:deckId/slides/:slideId", (req, res) => {
+  router.patch("/decks/:deckId/slides/:slideId", crudLimiter, (req, res) => {
     const body = parseBody(PatchSlideBody, res, req);
     if (!body) return;
 
@@ -841,7 +938,7 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
     }
   });
 
-  router.put("/decks/:deckId/slides/:slideId/move", (req, res) => {
+  router.put("/decks/:deckId/slides/:slideId/move", crudLimiter, (req, res) => {
     const body = parseBody(MoveSlideBody, res, req);
     if (!body) return;
 
@@ -886,7 +983,7 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
     }
   });
 
-  router.delete("/decks/:deckId/slides/:slideId", (req, res) => {
+  router.delete("/decks/:deckId/slides/:slideId", crudLimiter, (req, res) => {
     const existing = deps.pitchRepo.getSlide(req.params.slideId);
     if (!existing || existing.deck_id !== req.params.deckId) {
       sendError(res, 404, "not_found", `slide ${req.params.slideId} not found`);
@@ -925,7 +1022,7 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
   // AI endpoints (#962)
   // ────────────────────────────────────────────────────────────────────
 
-  router.post("/decks/draft", async (req, res) => {
+  router.post("/decks/draft", draftLimiter, async (req, res) => {
     const body = parseBody(DraftDeckBody, res, req);
     if (!body) return;
 
@@ -977,6 +1074,7 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
 
   router.post(
     "/decks/:deckId/slides/:slideId/regenerate",
+    regenerateLimiter,
     async (req, res) => {
       const body = parseBody(RegenerateSlideBody, res, req);
       if (!body) return;
@@ -1015,7 +1113,7 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
     },
   );
 
-  router.post("/decks/:deckId/slides/:slideId/enhance", async (req, res) => {
+  router.post("/decks/:deckId/slides/:slideId/enhance", enhanceLimiter, async (req, res) => {
     const body = parseBody(EnhanceSlideBody, res, req);
     if (!body) return;
 
@@ -1060,7 +1158,7 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
     }
   });
 
-  router.post("/decks/:deckId/slides/:slideId/image", (req, res) => {
+  router.post("/decks/:deckId/slides/:slideId/image", imageLimiter, (req, res) => {
     const body = parseBody(SlideImageBody, res, req);
     if (!body) return;
 
@@ -1113,7 +1211,7 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
   // Brand kits (#966)
   // ────────────────────────────────────────────────────────────────────
 
-  router.get("/brand-kits", (_req, res) => {
+  router.get("/brand-kits", crudLimiter, (_req, res) => {
     const kits = deps.brandKitRepo.getAll();
     res.json({
       brandKits: kits.map((k) => ({
@@ -1123,7 +1221,7 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
     });
   });
 
-  router.post("/brand-kits", (req, res) => {
+  router.post("/brand-kits", crudLimiter, (req, res) => {
     const body = parseBody(CreateBrandKitBody, res, req);
     if (!body) return;
 
@@ -1159,7 +1257,7 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
     }
   });
 
-  router.get("/brand-kits/:id", (req, res) => {
+  router.get("/brand-kits/:id", crudLimiter, (req, res) => {
     const kit = deps.brandKitRepo.getById(req.params.id);
     if (!kit) {
       sendError(res, 404, "not_found", `brand kit ${req.params.id} not found`);
@@ -1170,7 +1268,7 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
     });
   });
 
-  router.patch("/brand-kits/:id", (req, res) => {
+  router.patch("/brand-kits/:id", crudLimiter, (req, res) => {
     if (STARTER_KIT_IDS.has(req.params.id)) {
       audit(
         "security",
@@ -1202,7 +1300,7 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
     });
   });
 
-  router.delete("/brand-kits/:id", (req, res) => {
+  router.delete("/brand-kits/:id", crudLimiter, (req, res) => {
     if (STARTER_KIT_IDS.has(req.params.id)) {
       audit(
         "security",
@@ -1238,6 +1336,7 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
 
   router.post(
     "/brand-kits/:id/logo",
+    crudLimiter,
     logoUpload.single("logo"),
     async (req, res) => {
       const kit = deps.brandKitRepo.getById(req.params.id);

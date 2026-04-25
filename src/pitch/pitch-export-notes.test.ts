@@ -121,4 +121,20 @@ describe("exportNotesToPdf", () => {
     expect(htmlSeen).toContain("Hello");
     expect(htmlSeen).toContain("Agenda");
   });
+
+  // ── Phase 7 / sub-issue #977 — abort-signal early-exit ─────────────
+  it("rejects without spawning a subprocess when the AbortSignal is already aborted", async () => {
+    const spawnImpl = vi.fn();
+    const ac = new AbortController();
+    ac.abort();
+
+    await expect(
+      exportNotesToPdf(deck(), {
+        spawnImpl: spawnImpl as never,
+        signal: ac.signal,
+      }),
+    ).rejects.toThrow(/aborted/i);
+
+    expect(spawnImpl).not.toHaveBeenCalled();
+  });
 });

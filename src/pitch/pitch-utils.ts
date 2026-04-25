@@ -13,9 +13,12 @@ import type { ZodTypeAny, z } from "zod";
 /** Maximum allowed user-script length (kept in sync with `DeckSchema.metadata.source_script`). */
 export const MAX_USER_SCRIPT_BYTES = 50_000;
 
-/** Markers that delimit user-supplied content inside a system prompt. */
-export const USER_SCRIPT_START = "<<<USER_SCRIPT_START>>>";
-export const USER_SCRIPT_END = "<<<USER_SCRIPT_END>>>";
+/** Markers that delimit user-supplied content inside a system prompt. The
+ *  `<DATA>` / `</DATA>` envelope is referenced by name in the prompt-injection
+ *  guard sentence — changing the marker requires updating the guard text in
+ *  `pitch-prompts.ts` to match. */
+export const USER_SCRIPT_START = "<DATA>";
+export const USER_SCRIPT_END = "</DATA>";
 
 /**
  * Strip ```json fences (or bare ``` fences) and trim whitespace.
@@ -35,18 +38,20 @@ export function stripCodeFences(raw: string): string {
 }
 
 /**
- * Wrap a user script in delimiter markers for inclusion as DATA in the LLM
- * prompt. Strips any pre-existing markers so a malicious user can't smuggle
- * a fake "USER_SCRIPT_END" → injection-instruction → "USER_SCRIPT_START"
- * sandwich into the prompt.
+ * Wrap a user script in `<DATA>...</DATA>` envelope tags so the LLM can be
+ * told (in the system prompt's prompt-injection guard) to treat everything
+ * inside as content to summarize, never as instructions. Strips any
+ * pre-existing markers — case-insensitively, with stray whitespace tolerated
+ * — so a malicious user can't smuggle a fake `</DATA>` → injection →
+ * `<DATA>` sandwich into the prompt.
  *
  * Throws when the post-strip script exceeds {@link MAX_USER_SCRIPT_BYTES}.
  */
 export function wrapUserScript(script: string): string {
   const cleaned = String(script ?? "")
-    // Defence: remove any user-planted delimiter sequences.
-    .split(USER_SCRIPT_START).join("")
-    .split(USER_SCRIPT_END).join("");
+    // Defence: remove any user-planted DATA delimiter sequences (case- and
+    // whitespace-insensitive so `< data >` and `</ DATA>` are also stripped).
+    .replace(/<\s*\/?\s*data\s*>/gi, "");
   if (Buffer.byteLength(cleaned, "utf8") > MAX_USER_SCRIPT_BYTES) {
     throw new Error(
       `pitch: user script exceeds ${MAX_USER_SCRIPT_BYTES.toLocaleString()} byte cap`,

@@ -55,6 +55,7 @@ Open **http://localhost:3001** for the UI. The API server runs on **http://local
 | **Multi-Channel** | Chat via Web UI, Telegram, or Discord. Message routing with access control and personality injection. |
 | **Social Media** | Post, schedule, and manage content across Facebook, Instagram, LinkedIn, Reddit, TikTok, Twitter/X, and YouTube. |
 | **Video Pipeline** | Blog-to-video production: script generation, thumbnail selection, Remotion rendering, asset download from Pexels/Pixabay. |
+| **Studio → Pitch** | AI slide-deck generator from a script: 14 templates, brand kits, in-browser editor, exports to PDF, PowerPoint, Markdown, static HTML, and a zipped offline bundle. See [User Guide](docs/USER_GUIDE.md#studio--pitch-ai-slide-decks). |
 | **Voice & Audio** | TTS via Google Cloud and F5-TTS sidecar, GPT-SoVITS voice cloning, background music generation via music sidecar. |
 | **Image Generation** | Stable Diffusion / FLUX via image-gen sidecar, with optional Mac Mini network node offloading. |
 | **Music Studio** | AI music composition and generation via dedicated music-studio sidecar (local or networked). |

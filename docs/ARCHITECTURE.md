@@ -48,6 +48,7 @@
 - [Character Lab — LoRA Training & Identity Consistency](#character-lab--lora-training--identity-consistency-epic-374)
 - [Autonomous Agent Testing Architecture](#autonomous-agent-testing-architecture)
 - [Studio Mode: Screen Capture, Trim & AI Auto-Cut](#studio-mode-screen-capture-trim--ai-auto-cut)
+- [Studio → Pitch (AI Slide Decks) (Epic #951)](#studio--pitch-ai-slide-decks-epic-951)
 - [OpusClip Feature Parity — Video Pipeline](#opusclip-feature-parity--video-pipeline-epic-817)
 - [SEO Suite — Site Audit, Link Analysis & Health Scoring](#seo-suite--site-audit-link-analysis--health-scoring-epic-838)
 
@@ -6908,3 +6909,81 @@ Nodes are color-coded: green (no issues), yellow (some issues), red (many issues
 - E2E: `seo-dashboard.spec.ts` — 18 Playwright tests
 
 ### Tracking: [Epic #838](https://github.com/openzigs/openzigs/issues/838)
+
+## Studio → Pitch (AI Slide Decks) (Epic #951)
+
+The Pitch subsystem turns user scripts into branded, exportable slide decks. It is wired through `src/api/pitch.ts` (Express router mounted at `/api/admin/pitch`), backed by `src/pitch/pitch-repository.ts` (SQLite via `better-sqlite3` with WAL + foreign keys) and rendered in the UI under `ui/app/pitch/`.
+
+### Request flow
+
+`mermaid
+flowchart LR
+  UI[UI ui/app/pitch/*] -->|REST| Router[src/api/pitch.ts]
+  Router --> Limiters[express-rate-limit per route]
+  Limiters --> Schema[pitch-schema.ts Zod validation]
+  Schema --> Generator[pitch-generator.ts wrap+envelope+LLM]
+  Schema --> Repo[pitch-repository.ts SQLite]
+  Schema --> Image[pitch-image-service.ts Flux queue]
+  Schema --> Renderer[pitch-renderer.ts Reveal HTML + DOMPurify]
+  Schema --> Exporters[pitch-export-pdf/pptx/zip/md/notes.ts]
+  Repo -->|events| Sock[Socket.IO pitch:* taxonomy]
+  Sock --> UI
+`
+
+### Key components
+
+| File | Responsibility |
+|---|---|
+| `src/api/pitch.ts` | 24 routes, per-route rate-limit factory `buildLimiter(max, label)`, CSP on render/HTML export, 80-slide cap |
+| `src/pitch/pitch-schema.ts` | All Zod schemas. `BrandKitSchema`/`SlideImageSchema` URL fields are server-populated only |
+| `src/pitch/pitch-sanitize.ts` | Centralised DOMPurify; `sanitizeRichText/escapeHtml/escapeAttr/safeUrl`. Forbids `script`/`iframe`/`object`/`embed`/`link`/`meta`/`base`/`form`/`style` and all `on*`/`formaction`/`xlink:href`/`srcdoc`/`action`/`background`/`ping`/`style` attributes |
+| `src/pitch/pitch-utils.ts` | `wrapUserScript`: wraps user input in `<DATA>...</DATA>` envelope and strips any envelope tokens from the body |
+| `src/pitch/pitch-prompts.ts` | `PROMPT_INJECTION_GUARD` system instruction telling the model to treat envelope contents as data |
+| `src/pitch/pitch-generator.ts` | Two-stage generation: stage 1 truncates to `MAX_SLIDES_PER_DECK = 80` then stage 2 validates against final `DeckSchema` |
+| `src/pitch/pitch-renderer.ts` | Reveal HTML renderer; strict CSP for standalone mode |
+| `src/pitch/pitch-export-utils.ts` | `safeFilename` (`[a-zA-Z0-9._-]+`, 120 char cap), `assertWithinTmpdir` (path-prefix containment with platform separator), `htmlToPdf` (decktape subprocess + `AbortController`) |
+| `src/pitch/pitch-export-pdf.ts` / `-pptx.ts` / `-zip.ts` / `-md.ts` / `-notes.ts` | Per-format exporters; PDF + notes pipelines abort early when `opts.signal.aborted` |
+| `src/pitch/pitch-repository.ts` | SQLite tables `pitch_decks`, `pitch_brand_kits`, `pitch_slide_assets`; `seedStarterBrandKits` writes the 6 starter kits |
+
+### Security boundaries
+
+`mermaid
+flowchart TB
+  Input[User Input] --> Limiter{Rate Limited?}
+  Limiter -->|429| Err[/RateLimit-* + Retry-After/]
+  Limiter -->|allow| Zod[Zod Schema]
+  Zod -->|fail| BadReq[/400 validation error/]
+  Zod --> Envelope[wrapUserScript: <DATA>...</DATA>]
+  Envelope --> LLM[LLM with PROMPT_INJECTION_GUARD]
+  LLM --> Cap[Truncate to 80 slides]
+  Cap --> Sanitize[DOMPurify sanitizeRichText]
+  Sanitize --> Persist[(SQLite)]
+  Persist --> Export[Exporters]
+  Export --> Filename[safeFilename allowlist]
+  Export --> Tmp[assertWithinTmpdir]
+  Tmp --> Subproc[decktape spawn + AbortSignal]
+  Subproc --> Client[Buffer + generic error message]
+`
+
+### Rate-limit policy
+
+All routes share a 1-hour window via the in-router `buildLimiter` factory. Limits per route: draft 10, regenerate 60, enhance 60, image 30, PDF 20, PPTX 30, ZIP 30, MD 60, HTML 60, notes 20, CRUD 600. Headers are the standard `RateLimit-*` set + `Retry-After`; overflow returns `429 { error: { code: "rate_limited", message } }`.
+
+### Socket.IO event taxonomy
+
+| Event | Payload |
+|---|---|
+| `pitch:deck:created` | `{ deckId, title }` |
+| `pitch:deck:updated` | `{ deckId, slideId? }` |
+| `pitch:deck:deleted` | `{ deckId }` |
+| `pitch:deck:exported` | `{ deckId, format, bytes }` |
+| `pitch:slide:image:queued` | `{ deckId, slideId, jobId, assetId }` |
+| `pitch:slide:image:ready` | `{ deckId, slideId, assetId, url }` |
+
+### Test coverage
+
+- `src/pitch/*.test.ts` — 17 unit suites covering schema, sanitize (50+ OWASP XSS payloads), generator truncation, prompts envelope regression, all 5 exporters with 17-payload filename fuzz, abort-signal early return.
+- `src/api/pitch.integration.test.ts` — full lifecycle (draft → patch → reorder → enqueue → 5 exports → delete), rate-limit defence per family (4 tests), 80-slide cap.
+- `src/api/pitch.test.ts` — 94 router branch-coverage tests including starter brand kit immutability + logo content sniffing.
+
+### Tracking: [Epic #951](https://github.com/openzigs/openzigs/issues/951)

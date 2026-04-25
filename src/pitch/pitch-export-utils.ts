@@ -16,7 +16,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { readFile, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import sharp from "sharp";
 
 /** Hard timeout for any decktape invocation (ms). */
@@ -96,6 +96,13 @@ export async function htmlToPdf(
   const tempHtmlPath = join(tmpdir(), `openzigs-pitch-${id}.html`);
   const tempPdfPath = join(tmpdir(), `openzigs-pitch-${id}.pdf`);
 
+  // Defence-in-depth (#977): both temp paths MUST resolve to a child of
+  // `os.tmpdir()`. Anything else — a `..` traversal, a symlink redirect,
+  // a Windows drive-letter swap — means the LFI guard rejects the request
+  // before decktape ever sees a `file://` URL pointing at `/etc/passwd`.
+  assertWithinTmpdir(tempHtmlPath);
+  assertWithinTmpdir(tempPdfPath);
+
   // The `file://` URL form is what Decktape needs to load a local doc.
   const tempHtmlUrl = `file://${tempHtmlPath.replace(/\\/g, "/")}`;
 
@@ -167,6 +174,31 @@ export async function htmlToPdf(
     return pdfBytes;
   } finally {
     await cleanupTemp();
+  }
+}
+
+/**
+ * Throw if `candidate` does not normalize to a path inside `os.tmpdir()`.
+ *
+ * Sub-issue #977 — Phase 6 review noted that an attacker who could control
+ * the temp filename (eg. via a future feature accepting upload-named
+ * artifacts) could otherwise point decktape at `file:///etc/passwd` via a
+ * `..` traversal. Today the filename is `randomUUID()`-derived, but this
+ * guard makes the LFI surface structurally impossible — callers cannot
+ * accidentally regress the property by changing the path generator.
+ */
+export function assertWithinTmpdir(candidate: string): void {
+  const tmp = resolve(tmpdir());
+  const normalized = resolve(candidate);
+  // `+ path.sep` is appended to `tmp` so `"/tmpfoo"` does not pass when
+  // `tmpdir()` is `"/tmp"`. Direct equality with `tmp` is also rejected
+  // — we want a child path, not the directory itself.
+  const sep = process.platform === "win32" ? "\\" : "/";
+  const tmpWithSep = tmp.endsWith(sep) ? tmp : tmp + sep;
+  if (normalized === tmp || !normalized.startsWith(tmpWithSep)) {
+    throw new Error(
+      `pitch: temp path must be inside os.tmpdir() (got ${candidate})`,
+    );
   }
 }
 

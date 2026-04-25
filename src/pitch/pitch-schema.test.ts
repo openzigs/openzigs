@@ -103,6 +103,44 @@ describe("BrandKitSchema", () => {
   });
 });
 
+// ── SSRF allowlist enumeration (Phase 7 / sub-issue #977) ─────────────
+//
+// Every URL-typed field in the schema is server-populated, never user-
+// supplied. This test asserts the EXACT set of URL fields so that any
+// future addition forces the author to:
+//   1) Update this allowlist, and
+//   2) Wire the new field through `isAllowedWebhookUrl` (or equivalent
+//      SSRF guard) before persistence.
+
+describe("Schema URL-field SSRF audit", () => {
+  // Allowlist of every `z.string().url()` field path in pitch-schema.ts.
+  // Format: "<SchemaName>.<fieldName>".
+  const ALLOWED_URL_FIELDS = [
+    "BrandKitSchema.logoUrl",
+    "BrandKitSchema.watermarkUrl",
+    "SlideImageSchema.url",
+  ] as const;
+
+  it("source file has exactly the enumerated URL fields", async () => {
+    const { readFile } = await import("node:fs/promises");
+    const { fileURLToPath } = await import("node:url");
+    const here = fileURLToPath(new URL(".", import.meta.url));
+    const src = await readFile(`${here}pitch-schema.ts`, "utf8");
+    // Count actual `z.string().url()` occurrences in CODE only (skip
+    // JSDoc/comment lines so a documented example doesn't trip the
+    // count).
+    const codeOnly = src
+      .split("\n")
+      .filter((line) => {
+        const t = line.trimStart();
+        return !t.startsWith("*") && !t.startsWith("//") && !t.startsWith("/*");
+      })
+      .join("\n");
+    const matches = codeOnly.match(/z\s*\.\s*string\s*\(\s*\)\s*\.\s*url\s*\(\s*\)/g) ?? [];
+    expect(matches.length).toBe(ALLOWED_URL_FIELDS.length);
+  });
+});
+
 // ── SlideSchema (one positive + one negative test per template) ───────────
 
 describe("SlideSchema — discriminated union covers all 14 templates", () => {

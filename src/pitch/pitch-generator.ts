@@ -16,6 +16,7 @@
  * timestamps in tests.
  */
 import { nanoid } from "nanoid";
+import { z } from "zod";
 import type { CopilotWrapper } from "../copilot/copilot-wrapper.js";
 import {
   DeckSchema,
@@ -39,6 +40,14 @@ import {
 
 const PITCH_AGENT_NAME = "pitch-writer";
 const DEFAULT_TARGET_SLIDE_COUNT = 12;
+
+/**
+ * Hard ceiling on slides per deck. Mirrors `DeckSchema.slides.max(80)` and
+ * is used as a defence-in-depth check before re-validating the model output
+ * \u2014 if the model returns 200 slides, we truncate to 80 instead of feeding
+ * the schema parser an oversized array.
+ */
+export const MAX_SLIDES_PER_DECK = 80;
 
 export interface GenerateDeckOpts {
   /** User-supplied script text. Must be ≤50 KB (enforced before the LLM call). */
@@ -196,6 +205,11 @@ function assembleDeck(raw: string, opts: GenerateDeckOpts): Deck {
   // Stage 1 — accept whatever shape the model emits and pick the slides
   // out, validating each one strictly. Everything else falls back to the
   // server-controlled defaults below.
+  //
+  // Note: `slides` is validated with a relaxed `min(1)` cap here (no upper
+  // bound) so we can truncate down to MAX_SLIDES_PER_DECK as a defence-in-
+  // depth step rather than throwing the whole draft away. The final
+  // `DeckSchema.parse()` below re-applies the strict `max(80)` limit.
   const parsed = parseAndValidate(raw, DeckSchema.partial({
     id: true,
     brand_kit_id: true,
@@ -203,9 +217,7 @@ function assembleDeck(raw: string, opts: GenerateDeckOpts): Deck {
     updated_at: true,
     metadata: true,
   }).extend({
-    // `slides` is non-optional and is the only field the model is required
-    // to get right.
-    slides: DeckSchema.shape.slides,
+    slides: z.array(SlideSchema).min(1),
     title: DeckSchema.shape.title,
   }));
 
@@ -215,12 +227,22 @@ function assembleDeck(raw: string, opts: GenerateDeckOpts): Deck {
   const estimatedMinutes =
     opts.options?.estimatedMinutes ?? parsed.metadata?.estimated_minutes;
 
+  // Defence-in-depth (#977): truncate to {@link MAX_SLIDES_PER_DECK} BEFORE
+  // we hand the array to `DeckSchema.parse()`. The schema also enforces the
+  // cap (and would reject the parse), but truncating here means a model that
+  // ignores the prompt's "hard cap 80" instruction still produces a usable
+  // deck instead of a 500.
+  const slides =
+    parsed.slides.length > MAX_SLIDES_PER_DECK
+      ? parsed.slides.slice(0, MAX_SLIDES_PER_DECK)
+      : parsed.slides;
+
   const deck: Deck = {
     id: nanoid(),
     title: parsed.title,
     brand_kit_id: opts.brandKit.id,
     aspect_ratio: parsed.aspect_ratio ?? "16:9",
-    slides: parsed.slides,
+    slides,
     metadata: {
       source_script: opts.script ?? "",
       source_summary: parsed.metadata?.source_summary,

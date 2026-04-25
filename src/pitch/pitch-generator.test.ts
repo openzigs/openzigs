@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { generateDeck, regenerateSlide } from "./pitch-generator.js";
+import { generateDeck, regenerateSlide, MAX_SLIDES_PER_DECK } from "./pitch-generator.js";
 import { MAX_USER_SCRIPT_BYTES } from "./pitch-utils.js";
 import type { BrandKit, Deck, Slide } from "./pitch-schema.js";
 import type { CopilotWrapper } from "../copilot/copilot-wrapper.js";
@@ -90,11 +90,11 @@ describe("generateDeck", () => {
     expect(deck.metadata.source_script).toBe("the script");
     expect(deck.created_at).toBe("2026-04-24T12:00:00.000Z");
     expect(deck.updated_at).toBe("2026-04-24T12:00:00.000Z");
-    // The wrapper script-injection guard wraps the user input in markers.
+    // The wrapper script-injection guard wraps the user input in DATA markers.
     const sentMessage = chat.mock.calls[0][0] as string;
-    expect(sentMessage).toContain("<<<USER_SCRIPT_START>>>");
+    expect(sentMessage).toContain("<DATA>");
     expect(sentMessage).toContain("the script");
-    expect(sentMessage).toContain("<<<USER_SCRIPT_END>>>");
+    expect(sentMessage).toContain("</DATA>");
   });
 
   it("strips ```json fences from the LLM output", async () => {
@@ -229,6 +229,45 @@ describe("generateDeck", () => {
     const ts = Date.parse(deck.created_at);
     expect(ts).toBeGreaterThanOrEqual(before - 1_000);
     expect(ts).toBeLessThanOrEqual(Date.now() + 1_000);
+  });
+
+  // ── Phase 7 / sub-issue #977 — 80-slide cap (defence-in-depth) ─────
+  it("truncates to MAX_SLIDES_PER_DECK when the LLM returns more slides than allowed", async () => {
+    expect(MAX_SLIDES_PER_DECK).toBe(80);
+    // Generate 100 alternating bullet/qa slides — well over the cap.
+    const oversized = Array.from({ length: 100 }, (_, i) =>
+      i % 2 === 0
+        ? {
+            template: "bullet_list" as const,
+            content: { heading: `H${i}`, bullets: ["a", "b"] },
+            speaker_notes: "",
+            transition: "slide" as const,
+            fragments: [],
+          }
+        : {
+            template: "qa" as const,
+            content: { heading: `Q${i}` },
+            speaker_notes: "",
+            transition: "slide" as const,
+            fragments: [],
+          },
+    );
+    const oversizedPayload = JSON.stringify({
+      title: "Too Many",
+      aspect_ratio: "16:9",
+      slides: oversized,
+      metadata: { source_script: "x", tone: "formal", audience: "VCs" },
+    });
+    const { copilot } = mockCopilot([oversizedPayload]);
+    const deck = await generateDeck({
+      script: "x",
+      brandKit: KIT,
+      copilot,
+      clock: FROZEN_CLOCK,
+    });
+    expect(deck.slides).toHaveLength(MAX_SLIDES_PER_DECK);
+    // Truncated from the FRONT — slide 0 should still be the first one.
+    expect(deck.slides[0].template).toBe("bullet_list");
   });
 });
 
