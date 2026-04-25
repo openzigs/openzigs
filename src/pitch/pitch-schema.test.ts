@@ -2,6 +2,8 @@ import { describe, it, expect } from "vitest";
 import {
   BrandKitSchema,
   DeckSchema,
+  DeckToneEnum,
+  DraftDeckBodySchema,
   HexColor,
   SLIDE_TEMPLATES,
   SlideAssetSchema,
@@ -472,6 +474,192 @@ describe("SlideAssetSchema", () => {
     ).toThrow();
     expect(() =>
       SlideAssetSchema.parse({ ...base, local_path: "" }),
+    ).toThrow();
+  });
+});
+
+// ── DraftDeckBodySchema — wizard ↔ backend contract ───────────────────────
+//
+// The Phase-3 backend POST /api/admin/pitch/decks/draft validator is
+// `.strict()` and silently 400s on unknown fields. The Phase-4 wizard
+// (`ui/app/pitch/new/page.tsx`) builds an `options` object and POSTs it.
+// These tests pin the contract: any drift between client field names and
+// backend Zod fails CI rather than 400-ing in production.
+
+describe("DraftDeckBodySchema — wizard ↔ backend contract", () => {
+  it("accepts the exact payload the wizard produces", () => {
+    // Mirror of the body literal in `ui/app/pitch/new/page.tsx`
+    // (handleSubmit). Keep this object in lock-step with the wizard.
+    const wizardPayload = {
+      script: "Pitch script body.",
+      brandKitId: "kit-a",
+      options: {
+        targetSlideCount: 15,
+        audience: "CTOs",
+        tone: "casual" as const,
+      },
+    };
+    expect(() => DraftDeckBodySchema.parse(wizardPayload)).not.toThrow();
+  });
+
+  it("accepts a payload with audience/tone omitted (empty-audience branch)", () => {
+    // When the wizard's audience input is empty it sends `undefined`,
+    // which JSON.stringify drops — so the wire payload simply lacks
+    // those keys.
+    const wirePayload = {
+      script: "x",
+      brandKitId: "kit-a",
+      options: { targetSlideCount: 10, tone: "formal" as const },
+    };
+    expect(() => DraftDeckBodySchema.parse(wirePayload)).not.toThrow();
+  });
+
+  it("rejects the legacy `slideCount` field (the regression we just fixed)", () => {
+    const stale = {
+      script: "x",
+      brandKitId: "kit-a",
+      options: { slideCount: 15 },
+    };
+    expect(() => DraftDeckBodySchema.parse(stale)).toThrow();
+  });
+
+  it("rejects unknown top-level fields (.strict)", () => {
+    expect(() =>
+      DraftDeckBodySchema.parse({
+        script: "x",
+        brandKitId: "kit-a",
+        rogueField: "boom",
+      }),
+    ).toThrow();
+  });
+
+  it("rejects unknown nested options fields (.strict)", () => {
+    expect(() =>
+      DraftDeckBodySchema.parse({
+        script: "x",
+        brandKitId: "kit-a",
+        options: { targetSlideCount: 10, rogue: 1 },
+      }),
+    ).toThrow();
+  });
+
+  it("enforces targetSlideCount bounds (1..80, integer)", () => {
+    const base = { script: "x", brandKitId: "kit-a" };
+    expect(() =>
+      DraftDeckBodySchema.parse({ ...base, options: { targetSlideCount: 0 } }),
+    ).toThrow();
+    expect(() =>
+      DraftDeckBodySchema.parse({ ...base, options: { targetSlideCount: 81 } }),
+    ).toThrow();
+    expect(() =>
+      DraftDeckBodySchema.parse({ ...base, options: { targetSlideCount: 1.5 } }),
+    ).toThrow();
+  });
+
+  it("accepts every value in DeckToneEnum (wizard ↔ backend tone parity)", () => {
+    // If you add/remove a tone in `DeckToneEnum`, the wizard radio set
+    // in `ui/app/pitch/new/page.tsx` (TONE_OPTIONS) must be updated to
+    // match. The wizard test asserts the radio set; this test asserts
+    // each canonical value validates through the backend.
+    for (const tone of DeckToneEnum.options) {
+      expect(() =>
+        DraftDeckBodySchema.parse({
+          script: "x",
+          brandKitId: "kit-a",
+          options: { targetSlideCount: 10, tone },
+        }),
+      ).not.toThrow();
+    }
+  });
+
+  it('rejects tone:"persuasive" (regression: wizard-only legacy value)', () => {
+    // Pre-fix the wizard exposed a "persuasive" option that is not in
+    // `DeckToneEnum`. Selecting it produced a silent 400 from the
+    // `.strict()` backend validator. This guard prevents the legacy
+    // value from creeping back into either side.
+    expect(() =>
+      DraftDeckBodySchema.parse({
+        script: "x",
+        brandKitId: "kit-a",
+        options: { targetSlideCount: 10, tone: "persuasive" },
+      }),
+    ).toThrow();
+  });
+});
+//
+// The Phase-3 backend POST /api/admin/pitch/decks/draft validator is
+// `.strict()` and silently 400s on unknown fields. The Phase-4 wizard
+// (`ui/app/pitch/new/page.tsx`) builds an `options` object and POSTs it.
+// These tests pin the contract: any drift between client field names and
+// backend Zod fails CI rather than 400-ing in production.
+
+describe("DraftDeckBodySchema � wizard ? backend contract", () => {
+  it("accepts the exact payload the wizard produces", () => {
+    // Mirror of the body literal in `ui/app/pitch/new/page.tsx`
+    // (handleSubmit). Keep this object in lock-step with the wizard.
+    const wizardPayload = {
+      script: "Pitch script body.",
+      brandKitId: "kit-a",
+      options: {
+        targetSlideCount: 15,
+        audience: "CTOs",
+        tone: "casual" as const,
+      },
+    };
+    expect(() => DraftDeckBodySchema.parse(wizardPayload)).not.toThrow();
+  });
+
+  it("accepts a payload with audience/tone omitted (audience='' branch)", () => {
+    // The wizard sends `audience: undefined` when the input is empty and
+    // omits unset fields entirely. JSON.stringify drops `undefined`, so
+    // the wire payload simply lacks those keys.
+    const wirePayload = {
+      script: "x",
+      brandKitId: "kit-a",
+      options: { targetSlideCount: 10, tone: "formal" as const },
+    };
+    expect(() => DraftDeckBodySchema.parse(wirePayload)).not.toThrow();
+  });
+
+  it("rejects the legacy `slideCount` field (the regression we just fixed)", () => {
+    const stale = {
+      script: "x",
+      brandKitId: "kit-a",
+      options: { slideCount: 15 },
+    };
+    expect(() => DraftDeckBodySchema.parse(stale)).toThrow();
+  });
+
+  it("rejects unknown top-level fields (.strict)", () => {
+    expect(() =>
+      DraftDeckBodySchema.parse({
+        script: "x",
+        brandKitId: "kit-a",
+        rogueField: "boom",
+      }),
+    ).toThrow();
+  });
+
+  it("rejects unknown nested options fields (.strict)", () => {
+    expect(() =>
+      DraftDeckBodySchema.parse({
+        script: "x",
+        brandKitId: "kit-a",
+        options: { targetSlideCount: 10, rogue: 1 },
+      }),
+    ).toThrow();
+  });
+
+  it("enforces targetSlideCount bounds (1..80, integer)", () => {
+    const base = { script: "x", brandKitId: "kit-a" };
+    expect(() =>
+      DraftDeckBodySchema.parse({ ...base, options: { targetSlideCount: 0 } }),
+    ).toThrow();
+    expect(() =>
+      DraftDeckBodySchema.parse({ ...base, options: { targetSlideCount: 81 } }),
+    ).toThrow();
+    expect(() =>
+      DraftDeckBodySchema.parse({ ...base, options: { targetSlideCount: 1.5 } }),
     ).toThrow();
   });
 });

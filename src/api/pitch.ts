@@ -44,10 +44,12 @@ import {
 } from "../pitch/pitch-generator.js";
 import { submitSlideRegenerateTask } from "../pitch/pitch-regenerate.js";
 import { enqueueSlideImage } from "../pitch/pitch-image-service.js";
+import { renderDeckToHtml } from "../pitch/pitch-renderer.js";
 import {
   BrandKitSchema as PitchBrandKitSchema,
   DeckAspectRatioEnum,
   DeckToneEnum,
+  DraftDeckBodySchema,
   SlideSchema,
   type BrandKit as PitchBrandKit,
   type Slide,
@@ -239,22 +241,7 @@ const MoveSlideBody = z
   })
   .strict();
 
-const DraftDeckBody = z
-  .object({
-    script: z.string().min(1).max(50_000),
-    brandKitId: z.string().min(1),
-    title: z.string().min(1).max(160).optional(),
-    options: z
-      .object({
-        audience: z.string().max(120).optional(),
-        tone: DeckToneEnum.optional(),
-        estimatedMinutes: z.number().int().min(1).max(180).optional(),
-        targetSlideCount: z.number().int().min(1).max(80).optional(),
-      })
-      .strict()
-      .optional(),
-  })
-  .strict();
+const DraftDeckBody = DraftDeckBodySchema;
 
 const RegenerateSlideBody = z
   .object({
@@ -442,6 +429,49 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
     }
     const slides = deps.pitchRepo.listSlidesForDeck(deck.id);
     res.json({ deck, slides });
+  });
+
+  // Phase 4 / sub-issue #963 — Reveal HTML render endpoint.
+  router.get("/decks/:deckId/render", (req, res) => {
+    const mode = req.query.mode === "standalone" ? "standalone" : "embedded";
+    const deck = deps.pitchRepo.getDeck(req.params.deckId);
+    if (!deck) {
+      sendError(res, 404, "not_found", `deck ${req.params.deckId} not found`);
+      return;
+    }
+    const repoKit = deps.brandKitRepo.getById(deck.brand_kit_id);
+    if (!repoKit) {
+      sendError(
+        res,
+        404,
+        "not_found",
+        `brand kit ${deck.brand_kit_id} not found`,
+      );
+      return;
+    }
+    try {
+      const brandKit = repoToPitchBrandKit(repoKit);
+      const { html, slideCount } = renderDeckToHtml(deck, brandKit, mode);
+      audit("system", "pitch_deck_rendered", {
+        deckId: deck.id,
+        mode,
+        slideCount,
+      });
+      emit("pitch:deck:rendered", {
+        deckId: deck.id,
+        mode,
+        slideCount,
+      });
+      res.setHeader("Content-Type", "text/html; charset=utf-8");
+      // Render output is dynamic per-deck — never cache at the edge.
+      res.setHeader("Cache-Control", "no-store");
+      res.send(html);
+    } catch (err) {
+      logger.error(
+        `[Pitch API] GET /decks/${req.params.deckId}/render failed: ${errMessage(err)}`,
+      );
+      sendError(res, 500, "internal_error", errMessage(err));
+    }
   });
 
   router.patch("/decks/:deckId", (req, res) => {

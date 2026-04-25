@@ -352,3 +352,30 @@ export const SLIDE_TEMPLATES = [
   "mermaid",
 ] as const;
 export type SlideTemplate = (typeof SLIDE_TEMPLATES)[number];
+
+// ── REST contract — POST /api/admin/pitch/decks/draft ────────────────
+//
+// Single source of truth for the draft-deck request body. Imported by the
+// Phase-3 router (`src/api/pitch.ts`) AND by the Phase-4 wizard contract
+// test so any drift between the wizard payload and the backend Zod
+// validator fails CI rather than silently 400-ing in production.
+
+export const DraftDeckOptionsSchema = z
+  .object({
+    audience: z.string().max(120).optional(),
+    tone: DeckToneEnum.optional(),
+    estimatedMinutes: z.number().int().min(1).max(180).optional(),
+    targetSlideCount: z.number().int().min(1).max(80).optional(),
+  })
+  .strict();
+export type DraftDeckOptions = z.infer<typeof DraftDeckOptionsSchema>;
+
+export const DraftDeckBodySchema = z
+  .object({
+    script: z.string().min(1).max(50_000),
+    brandKitId: z.string().min(1),
+    title: z.string().min(1).max(160).optional(),
+    options: DraftDeckOptionsSchema.optional(),
+  })
+  .strict();
+export type DraftDeckBody = z.infer<typeof DraftDeckBodySchema>;

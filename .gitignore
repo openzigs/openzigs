@@ -174,3 +174,8 @@ test_output.txt
 post-start-snapshot.yml
 summary.txt
 
+
+# transient build/test capture files
+_step*.txt
+_test_out*.txt
+_build_out*.txt
