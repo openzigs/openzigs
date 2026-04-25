@@ -38,19 +38,61 @@ vi.mock("@/components/pitch/reveal-canvas", () => ({
 }));
 
 // Replace SlideRail with a minimal stand-in so we don't fight @dnd-kit here.
+// Exposes every action handler as its own button so tests can hit each
+// mutation path on the editor.
 vi.mock("@/components/pitch/slide-rail", () => ({
   SlideRail: ({
     items,
     onSelect,
+    onAddAbove,
+    onAddBelow,
+    onDuplicate,
+    onDelete,
+    onReorder,
   }: {
     items: { id: string; titlePreview: string }[];
     onSelect: (id: string) => void;
+    onAddAbove: (id: string) => void;
+    onAddBelow: (id: string) => void;
+    onDuplicate: (id: string) => void;
+    onDelete: (id: string) => void;
+    onReorder: (id: string, pos: number) => void | Promise<void>;
   }) => (
     <div data-testid="slide-rail-mock">
       {items.map((it) => (
-        <button key={it.id} onClick={() => onSelect(it.id)}>
-          {it.titlePreview}
-        </button>
+        <div key={it.id} data-testid={`slide-rail-item-${it.id}`}>
+          <button onClick={() => onSelect(it.id)}>{it.titlePreview}</button>
+          <button
+            data-testid={`slide-rail-add-above-${it.id}`}
+            onClick={() => onAddAbove(it.id)}
+          >
+            +above
+          </button>
+          <button
+            data-testid={`slide-rail-add-below-${it.id}`}
+            onClick={() => onAddBelow(it.id)}
+          >
+            +below
+          </button>
+          <button
+            data-testid={`slide-rail-duplicate-${it.id}`}
+            onClick={() => onDuplicate(it.id)}
+          >
+            dup
+          </button>
+          <button
+            data-testid={`slide-rail-delete-${it.id}`}
+            onClick={() => onDelete(it.id)}
+          >
+            del
+          </button>
+          <button
+            data-testid={`slide-rail-reorder-${it.id}`}
+            onClick={() => onReorder(it.id, 99)}
+          >
+            move
+          </button>
+        </div>
       ))}
     </div>
   ),
@@ -179,5 +221,94 @@ describe("PitchDeckEditorPage", () => {
         expect.objectContaining({ method: "PATCH" }),
       );
     });
+  });
+
+  it("cancels title edit on Escape without firing PATCH", async () => {
+    render(<PitchDeckEditorPage />, { wrapper });
+    await waitFor(() =>
+      expect(screen.getByTestId("pitch-editor-title")).toBeInTheDocument(),
+    );
+    fireEvent.click(screen.getByTestId("pitch-editor-title"));
+    const input = screen.getByTestId("pitch-editor-title-input");
+    fireEvent.change(input, { target: { value: "Throwaway" } });
+    fireEvent.keyDown(input, { key: "Escape" });
+    expect(screen.queryByTestId("pitch-editor-title-input")).toBeNull();
+    const patchCalls = vi
+      .mocked(fetchJson)
+      .mock.calls.filter(
+        ([, init]) =>
+          init && (init as RequestInit).method === "PATCH",
+      );
+    expect(patchCalls).toHaveLength(0);
+  });
+
+  it("invokes POST when adding a slide above", async () => {
+    render(<PitchDeckEditorPage />, { wrapper });
+    await waitFor(() => screen.getByTestId("slide-rail-add-above-s2"));
+    fireEvent.click(screen.getByTestId("slide-rail-add-above-s2"));
+    await waitFor(() =>
+      expect(vi.mocked(fetchJson)).toHaveBeenCalledWith(
+        "/api/admin/pitch/decks/deck-1/slides",
+        expect.objectContaining({ method: "POST" }),
+      ),
+    );
+  });
+
+  it("invokes POST when adding a slide below", async () => {
+    render(<PitchDeckEditorPage />, { wrapper });
+    await waitFor(() => screen.getByTestId("slide-rail-add-below-s1"));
+    fireEvent.click(screen.getByTestId("slide-rail-add-below-s1"));
+    await waitFor(() =>
+      expect(vi.mocked(fetchJson)).toHaveBeenCalledWith(
+        "/api/admin/pitch/decks/deck-1/slides",
+        expect.objectContaining({ method: "POST" }),
+      ),
+    );
+  });
+
+  it("invokes POST when duplicating a slide", async () => {
+    render(<PitchDeckEditorPage />, { wrapper });
+    await waitFor(() => screen.getByTestId("slide-rail-duplicate-s1"));
+    fireEvent.click(screen.getByTestId("slide-rail-duplicate-s1"));
+    await waitFor(() =>
+      expect(vi.mocked(fetchJson)).toHaveBeenCalledWith(
+        "/api/admin/pitch/decks/deck-1/slides",
+        expect.objectContaining({ method: "POST" }),
+      ),
+    );
+  });
+
+  it("invokes DELETE when deleting a slide", async () => {
+    render(<PitchDeckEditorPage />, { wrapper });
+    await waitFor(() => screen.getByTestId("slide-rail-delete-s2"));
+    fireEvent.click(screen.getByTestId("slide-rail-delete-s2"));
+    await waitFor(() =>
+      expect(vi.mocked(fetchJson)).toHaveBeenCalledWith(
+        "/api/admin/pitch/decks/deck-1/slides/s2",
+        expect.objectContaining({ method: "DELETE" }),
+      ),
+    );
+  });
+
+  it("invokes PUT when reordering a slide", async () => {
+    render(<PitchDeckEditorPage />, { wrapper });
+    await waitFor(() => screen.getByTestId("slide-rail-reorder-s1"));
+    fireEvent.click(screen.getByTestId("slide-rail-reorder-s1"));
+    await waitFor(() =>
+      expect(vi.mocked(fetchJson)).toHaveBeenCalledWith(
+        "/api/admin/pitch/decks/deck-1/slides/s1/move",
+        expect.objectContaining({ method: "PUT" }),
+      ),
+    );
+  });
+
+  it("renders an error message when the deck query fails", async () => {
+    vi.mocked(fetchJson).mockRejectedValueOnce(new Error("boom"));
+    render(<PitchDeckEditorPage />, { wrapper });
+    await waitFor(() =>
+      expect(
+        screen.getByText(/Could not load deck deck-1/),
+      ).toBeInTheDocument(),
+    );
   });
 });
