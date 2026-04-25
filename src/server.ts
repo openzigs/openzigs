@@ -332,6 +332,14 @@ const outboxRepo = new OutboxRepository(db);
 outboxRepo.migrate();
 const brandKitRepo = new BrandKitRepository(db);
 brandKitRepo.migrate();
+// Epic #951 (Studio Pitch) sub-issue #953: seed 8 starter Brand Kits.
+// Idempotent — only inserts kits whose id is not already in the DB.
+{
+  const { seedStarterBrandKits } = await import(
+    "./pitch/starter-brand-kits.js"
+  );
+  seedStarterBrandKits(brandKitRepo);
+}
 const postTemplateRepo = new PostTemplateRepository(db);
 postTemplateRepo.migrate();
 const outboxPoller = new OutboxPoller({
