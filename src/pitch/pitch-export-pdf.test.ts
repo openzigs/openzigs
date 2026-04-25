@@ -113,4 +113,20 @@ describe("exportDeckToPdf", () => {
     expect(out.filename).not.toContain("..");
     expect(out.filename.endsWith(".pdf")).toBe(true);
   });
+
+  // ── Phase 7 / sub-issue #977 — abort-signal early-exit ─────────────
+  it("rejects without spawning a subprocess when the AbortSignal is already aborted", async () => {
+    const spawnImpl = vi.fn();
+    const ac = new AbortController();
+    ac.abort();
+
+    await expect(
+      exportDeckToPdf(buildDeck(), buildKit(), {
+        spawnImpl: spawnImpl as never,
+        signal: ac.signal,
+      }),
+    ).rejects.toThrow(/aborted/i);
+
+    expect(spawnImpl).not.toHaveBeenCalled();
+  });
 });

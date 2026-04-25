@@ -18,7 +18,22 @@ export const HexColor = z
   .string()
   .regex(/^#[0-9a-f]{6}$/i, "must be #rrggbb hex color");
 
-/** Brand Kit (extended for Pitch — adds heading/body fonts + footer text). */
+/**
+ * Brand Kit (extended for Pitch — adds heading/body fonts + footer text).
+ *
+ * SECURITY (Phase 7 / sub-issue #977): the URL-typed fields below
+ * (`logoUrl`, `watermarkUrl`) are populated server-side from
+ * `kit.logoPath` / `kit.watermarkPath` in `src/api/pitch.ts` — they are
+ * NEVER set from a remote URL submitted by a client. If a future endpoint
+ * accepts a URL string for either field (or if a new URL-typed field is
+ * added below), the value MUST be validated through
+ * `isAllowedWebhookUrl` from `src/security/url-validation.ts` to prevent
+ * SSRF against internal-network metadata services.
+ *
+ * The `pitch-schema.test.ts` enumerates the URL fields the schema is
+ * allowed to carry — adding a new `z.string().url()` field will fail
+ * that test until the SSRF guard is wired in.
+ */
 export const BrandKitSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1).max(80),

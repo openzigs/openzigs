@@ -16,6 +16,7 @@ import {
   safeFilename,
   htmlToPdf,
   resizeImageForPptx,
+  assertWithinTmpdir,
   PPTX_IMAGE_MAX_BYTES,
 } from "./pitch-export-utils.js";
 
@@ -51,6 +52,99 @@ describe("safeFilename", () => {
     const out = safeFilename("../../etc/passwd", "x", "pdf");
     expect(out).not.toContain("/");
     expect(out).not.toContain("..");
+  });
+
+  // ── Filename-fuzz audit (Phase 7 / sub-issue #977) ──────────────────
+  // The five export endpoints all funnel through `safeFilename`. The
+  // payloads below are the canonical Content-Disposition smuggling
+  // vectors — control chars, null bytes, RTL override, unicode
+  // confusables, CRLF injection, and stacked traversal segments. Each
+  // one MUST come back with no path separators, no control chars, and
+  // no characters outside the [a-zA-Z0-9._-] allowlist.
+  const FILENAME_FUZZ: Array<[label: string, input: string]> = [
+    ["null byte", "evil\u0000.pdf"],
+    ["control char (BEL)", "evil\u0007.pdf"],
+    ["control char (BS)", "evil\u0008.pdf"],
+    ["RTL override", "evil\u202E.fdp.exe"],
+    ["unicode confusable (cyrillic a)", "deс\u0061k.pdf"],
+    ["CRLF header injection", "x\r\nSet-Cookie: bad=1"],
+    ["LF only", "x\nSet-Cookie: bad=1"],
+    ["double-dot traversal", "../../etc/passwd"],
+    ["UNC path", "\\\\evil.test\\share\\x"],
+    ["Windows drive swap", "C:\\Windows\\System32\\drivers\\etc\\hosts"],
+    ["semicolon injection", `x.pdf"; filename="evil.exe`],
+    ["quote escape", `x"\\";rm -rf /;`],
+    ["URL-encoded traversal", "%2e%2e%2fpasswd"],
+    ["zero-width space", "x\u200B.pdf"],
+    ["RIGHT-TO-LEFT MARK", "x\u200F.pdf"],
+    ["non-printable", "x\u0001\u0002\u0003.pdf"],
+    ["very long unicode", "深圳pdf".repeat(200)],
+  ];
+  for (const [label, input] of FILENAME_FUZZ) {
+    it(`fuzz — neutralizes ${label}`, () => {
+      const out = safeFilename(input, "fallback-id", ".pdf");
+      // Allowlist: only [a-zA-Z0-9._-] plus the trailing extension dot.
+      expect(out).toMatch(/^[a-zA-Z0-9._-]+$/);
+      // No separators, no control bytes, no traversal segments.
+      expect(out).not.toContain("/");
+      expect(out).not.toContain("\\");
+      expect(out).not.toContain("..");
+      // eslint-disable-next-line no-control-regex
+      expect(out).not.toMatch(/[\x00-\x1f\x7f]/);
+      expect(out).not.toMatch(/[\u200B-\u200F\u202E]/);
+      // Always ends in the requested extension.
+      expect(out.endsWith(".pdf")).toBe(true);
+      // Never starts with a leading dot (avoids hidden-file confusion).
+      expect(out.startsWith(".")).toBe(false);
+    });
+  }
+});
+
+// ── assertWithinTmpdir (file:// LFI guard, sub-issue #977) ─────────────
+
+describe("assertWithinTmpdir", () => {
+  it("accepts a path inside os.tmpdir()", () => {
+    expect(() => assertWithinTmpdir(`${tmpdir()}/openzigs-pitch-test.html`)).not.toThrow();
+  });
+
+  it("rejects a path equal to os.tmpdir() itself", () => {
+    expect(() => assertWithinTmpdir(tmpdir())).toThrow(/inside os\.tmpdir/);
+  });
+
+  it("rejects a path outside os.tmpdir()", () => {
+    const sep = process.platform === "win32" ? "\\" : "/";
+    const evil = process.platform === "win32" ? "C:\\Windows\\System32" : "/etc/passwd";
+    expect(() => assertWithinTmpdir(evil)).toThrow(/inside os\.tmpdir/);
+    // Sibling-prefix attack: `/tmpfoo` vs `/tmp`.
+    expect(() => assertWithinTmpdir(`${tmpdir()}foo${sep}bar`)).toThrow(
+      /inside os\.tmpdir/,
+    );
+  });
+
+  it("rejects a `..` traversal escaping os.tmpdir()", () => {
+    expect(() =>
+      assertWithinTmpdir(`${tmpdir()}/../../../etc/passwd`),
+    ).toThrow(/inside os\.tmpdir/);
+  });
+
+  it("rejects a symlink under tmpdir() that points outside (Phase 7 #984)", async () => {
+    // Skip on Windows: requires Administrator rights to create symlinks.
+    if (process.platform === "win32") return;
+    const { mkdtempSync, symlinkSync, rmSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const dir = mkdtempSync(`${tmpdir()}/openzigs-pitch-symlink-`);
+    // /tmp/openzigs-pitch-symlink-XXXX/escape -> / (root)
+    const linkPath = join(dir, "escape");
+    symlinkSync("/", linkPath);
+    try {
+      // A candidate whose parent is the planted symlink must be rejected
+      // because the parent's realpath resolves outside `tmpdir()`.
+      expect(() =>
+        assertWithinTmpdir(join(linkPath, "etc", "passwd")),
+      ).toThrow(/inside os\.tmpdir/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

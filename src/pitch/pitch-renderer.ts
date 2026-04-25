@@ -19,7 +19,12 @@
  * Logo + brand-kit asset URLs are assumed to have already been
  * sniffed + sharp-re-encoded by the Phase-3 upload route.
  */
-import DOMPurify from "isomorphic-dompurify";
+import {
+  escapeAttr,
+  escapeHtml,
+  safeUrl,
+  sanitizeRichText,
+} from "./pitch-sanitize.js";
 import type {
   BrandKit,
   Deck,
@@ -107,59 +112,16 @@ ${initScript}
 }
 
 // ── Sanitization helpers ───────────────────────────────────────────────
+// All sanitization config is centralized in `pitch-sanitize.ts`. Two thin
+// re-exports below keep call sites readable inside the template renderers.
 
-const FORBID_TAGS = ["script", "iframe", "object", "embed", "style", "link", "meta"];
-const FORBID_ATTR = [
-  "onerror",
-  "onload",
-  "onclick",
-  "onmouseover",
-  "onmouseout",
-  "onfocus",
-  "onblur",
-  "onchange",
-  "onsubmit",
-  "onkeydown",
-  "onkeyup",
-  "onkeypress",
-  "formaction",
-  "srcdoc",
-];
+/** Re-export of {@link sanitizeRichText} — kept under the legacy name used
+ *  by Phase 4 template renderers below. Exported for callers (and tests)
+ *  that already imported the renderer-local helper. */
+export const sanitize = sanitizeRichText;
 
-/** Sanitize an arbitrary user string for insertion as inner text/HTML. */
-export function sanitize(input: string | null | undefined): string {
-  if (input == null) return "";
-  return DOMPurify.sanitize(String(input), {
-    FORBID_TAGS,
-    FORBID_ATTR,
-  });
-}
-
-/** Strict text-only escape (no HTML allowed at all). Used for `<code>`. */
-function escapeHtml(input: string): string {
-  return input
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
-
-/** Escape a value for an HTML attribute. */
-function attr(input: string | null | undefined): string {
-  if (input == null) return "";
-  return escapeHtml(String(input));
-}
-
-/** Validate URLs allowed in `<img src>` etc. — only http(s) or relative paths. */
-function safeUrl(input: string | null | undefined): string | null {
-  if (!input) return null;
-  const v = String(input).trim();
-  if (!v) return null;
-  if (v.startsWith("/")) return v;
-  if (/^https?:\/\//i.test(v)) return v;
-  return null;
-}
+/** Re-export of {@link escapeAttr} for attribute-context call sites. */
+const attr = escapeAttr;
 
 // ── Brand-kit helpers ──────────────────────────────────────────────────
 

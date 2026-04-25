@@ -87,11 +87,11 @@ function renderSlideMd(slide: Slide, slideNumber: number): string {
     }
     case "comparison_table": {
       sections.push(`### ${slide.content.heading}`, "");
-      const head = ["", ...slide.content.columns];
+      const head = ["", ...slide.content.columns.map(escapeMdCell)];
       sections.push(`| ${head.join(" | ")} |`);
       sections.push(`| ${head.map(() => "---").join(" | ")} |`);
       for (const row of slide.content.rows) {
-        const cells = [row.label, ...row.cells];
+        const cells = [escapeMdCell(row.label), ...row.cells.map(escapeMdCell)];
         sections.push(`| ${cells.join(" | ")} |`);
       }
       break;
@@ -147,4 +147,22 @@ function renderSlideMd(slide: Slide, slideNumber: number): string {
 
   sections.push("", "---", "");
   return sections.join("\n");
+}
+
+/**
+ * Escape a cell value for inclusion in a Markdown pipe-table. The pipe
+ * character terminates a cell, so it must be backslash-escaped; embedded
+ * newlines (literal `\n` or `\r`) break the row apart and must be replaced
+ * with a `<br>` tag (rendered by every common Markdown engine). Backslashes
+ * are escaped first so we don't double-escape the escape character.
+ *
+ * Sub-issue #977 — Phase 6 review left this as a follow-up: untrusted
+ * `comparison_table` cells could otherwise inject extra columns or rows.
+ */
+export function escapeMdCell(value: string): string {
+  if (value === null || value === undefined) return "";
+  return String(value)
+    .replace(/\\/g, "\\\\")
+    .replace(/\|/g, "\\|")
+    .replace(/\r\n|\r|\n/g, "<br>");
 }

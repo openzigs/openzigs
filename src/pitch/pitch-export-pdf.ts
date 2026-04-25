@@ -44,6 +44,15 @@ export async function exportDeckToPdf(
   brandKit: BrandKit,
   opts: ExportPdfOpts = {},
 ): Promise<ExportPdfResult> {
+  // Defence-in-depth (#977): if the caller's AbortSignal is already in the
+  // aborted state, fail fast \u2014 don't render the deck HTML, don't spawn
+  // decktape, don't touch the disk. The downstream `htmlToPdf` helper also
+  // honours the signal, but we'd still pay for the renderer + tempfile
+  // setup before noticing.
+  if (opts.signal?.aborted) {
+    throw new Error("PDF export aborted");
+  }
+
   const { html } = renderDeckToHtml(deck, brandKit, "standalone");
   const buffer = await htmlToPdf(html, {
     timeoutMs: opts.timeoutMs ?? DEFAULT_PDF_TIMEOUT_MS,

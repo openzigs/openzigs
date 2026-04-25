@@ -19,6 +19,7 @@
   - [Agent Switching & In-Session Subagents](#agent-switching--in-session-subagents)
   - [Visual Workflow Graph](#visual-workflow-graph)
   - [Studio: Capture & Trim](#studio-capture--trim)
+  - [Studio → Pitch (AI Slide Decks)](#studio--pitch-ai-slide-decks)
 - [Advanced: Agent Chaining Patterns](#advanced-agent-chaining-patterns)
 - [Session Lifecycle & Infinite Context](#session-lifecycle--infinite-context)
 - [Copilot SDK Session History & Analytics](#copilot-sdk-session-history--analytics)
@@ -1849,6 +1850,66 @@ You can also use Studio tools from the chat interface via the **Media Director**
 - **"Analyze my latest screen recording for redundant sections"** → The AI calls `analyze-video-redundancy` and returns suggested cuts.
 - **"Trim the first 30 seconds from video X"** → The AI calls `trim-video` with the specified times.
 - **"Clean up my recording — remove dead air and repeated sections"** → The AI runs analysis first, then trims the suggested cuts sequentially.
+
+---
+
+### Studio → Pitch (AI Slide Decks)
+
+The **Pitch** workspace turns a script, brief, or research notes into a designed, brand-consistent slide deck — editable in-browser and exportable to PDF, PowerPoint, Markdown, static HTML, or a zipped offline bundle.
+
+#### Where to find it
+
+`Studio` dropdown in the top nav → **Pitch**. Routes:
+
+- `/pitch` — deck library
+- `/pitch/new` — wizard (script → brand kit → templates → generate)
+- `/pitch/[deckId]` — slide editor with live Reveal preview, properties panel, script panel
+- `/pitch/[deckId]/preview` — full-screen presenter preview
+
+#### Workflow at a glance
+
+1. **Draft** — paste a script or upload notes, pick a brand kit, choose target slide count + tone. The AI produces a structured deck with up to **80 slides** (`MAX_SLIDES_PER_DECK`) across 14 templates.
+2. **Edit** — click any slide field to edit it inline; the right rail loads the matching property editor. Drag slides to reorder, regenerate individual slides, or regenerate slide images via Flux.
+3. **Brand kits** — pick a starter kit (Modern Minimal, Corporate Blue, Vibrant Pitch, Editorial, Tech Dark, Warm Neutral) or create your own. Editable: heading + body fonts, accent colors, footer text, logo (≤ 2 MB PNG/JPEG/WebP). Logos are content-sniffed server-side.
+4. **Export** — five formats, all attachment downloads with `Cache-Control: no-store`:
+
+| Format | Endpoint | Notes |
+|---|---|---|
+| PDF | `GET /api/admin/pitch/decks/:deckId/export.pdf` | Decktape subprocess, 60 s wall clock, abort on disconnect |
+| PowerPoint | `GET …/export.pptx` | Native `pptxgenjs`, brand-kit theme, EXIF-stripped images |
+| Static HTML zip | `GET …/export.zip` | Reveal.js bundle + README, archiver level 9 |
+| Markdown | `GET …/export.md` | All 14 templates; pipes/newlines escaped in tables |
+| Speaker-notes PDF | `GET …/export.notes.pdf` | One section per slide, verbatim notes |
+
+> **Note — first PDF export downloads Chromium (~170 MB).** PDF export is implemented via `decktape`, which depends on a headless Chromium build. The Chromium binary is downloaded automatically on the first hit to either PDF endpoint and cached for subsequent calls. CI / Docker images that need PDF export should warm the cache during the build step, e.g. `npx decktape --version`, so the first user-facing export does not block on the download.
+
+#### Rate limits
+
+All Pitch routes are throttled per-IP with `express-rate-limit` (1 hour window, standard `RateLimit-*` + `Retry-After` headers, `429 { error: { code: "rate_limited" } }` on overflow):
+
+| Action | Limit / hour |
+|---|---:|
+| Draft deck (`POST /decks/draft`) | 10 |
+| Regenerate slide | 60 |
+| Enhance text | 60 |
+| Enqueue slide image | 30 |
+| Export PDF | 20 |
+| Export PowerPoint | 30 |
+| Export ZIP | 30 |
+| Export Markdown | 60 |
+| Export HTML | 60 |
+| Export speaker notes PDF | 20 |
+| All CRUD reads/patches | 600 |
+
+#### Security model
+
+- **Prompt-injection envelope** — user scripts are wrapped in `<DATA>…</DATA>` tags before being sent to the model; the system prompt instructs the model to treat the envelope contents as data, never as instructions, and the envelope itself is stripped from the model's output.
+- **XSS sanitization** — every user-supplied rich-text field passes through DOMPurify (`src/pitch/pitch-sanitize.ts`) with `script`, `iframe`, `object`, `embed`, `link`, `meta`, `base`, `form`, `style` tags forbidden, and all `on*`, `formaction`, `xlink:href`, `srcdoc`, `action`, `background`, `ping`, `style` attributes stripped. URLs are restricted to `https:` (and `data:image/...` for inline assets).
+- **Content Security Policy** — `/decks/:deckId/render` and `/decks/:deckId/export.html` ship a strict CSP that blocks inline scripts and external origins outside the Reveal CDN.
+- **SSRF defence** — every URL field on `BrandKitSchema` and `SlideImageSchema` is server-populated (logo upload, image asset pipeline). Any future URL field must run through `isAllowedWebhookUrl`.
+- **Filename containment** — exported filenames are matched against `^[a-zA-Z0-9._-]+$` and capped at 120 characters; temp files are `assertWithinTmpdir`-checked before any `file://` URL is constructed for the PDF subprocess.
+- **Abort signals** — closing the browser tab or aborting the request kills the underlying decktape process and skips work in the speaker-notes pipeline.
+- **Subprocess isolation** — decktape and `pptxgenjs` errors are logged with full detail server-side but the HTTP response carries a generic message; subprocess `stderr` never reaches the client.
 
 ---
 

@@ -27,6 +27,11 @@ export async function exportNotesToPdf(
   deck: Deck,
   opts: ExportNotesPdfOpts = {},
 ): Promise<ExportNotesPdfResult> {
+  // Defence-in-depth (#977): early-return if the signal is already aborted
+  // \u2014 mirrors `exportDeckToPdf`. Avoids the HTML-build + tempfile churn.
+  if (opts.signal?.aborted) {
+    throw new Error("Notes PDF export aborted");
+  }
   const html = buildNotesHtml(deck);
   const buffer = await htmlToPdf(html, {
     timeoutMs: opts.timeoutMs,

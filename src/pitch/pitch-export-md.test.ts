@@ -5,7 +5,7 @@
  * stay as plain text, and that empty fields don't produce empty headings.
  */
 import { describe, it, expect } from "vitest";
-import { exportDeckToMarkdown } from "./pitch-export-md.js";
+import { exportDeckToMarkdown, escapeMdCell } from "./pitch-export-md.js";
 import { DeckSchema, SlideSchema, type Deck, type Slide } from "./pitch-schema.js";
 
 function deckWith(slides: Slide[], overrides: Partial<Deck> = {}): Deck {
@@ -140,5 +140,57 @@ describe("exportDeckToMarkdown", () => {
       })]),
     ).buffer.toString("utf8");
     expect(text).not.toMatch(/^### \s*$/m);
+  });
+});
+
+// ── escapeMdCell (Phase 7 — sub-issue #977) ────────────────────────────
+
+describe("escapeMdCell", () => {
+  it("escapes pipe characters", () => {
+    expect(escapeMdCell("a | b")).toBe("a \\| b");
+  });
+
+  it("escapes backslashes BEFORE pipes (avoid double-escape)", () => {
+    expect(escapeMdCell("a\\b")).toBe("a\\\\b");
+    expect(escapeMdCell("a\\|b")).toBe("a\\\\\\|b");
+  });
+
+  it("converts newlines to <br>", () => {
+    expect(escapeMdCell("line1\nline2")).toBe("line1<br>line2");
+    expect(escapeMdCell("line1\r\nline2")).toBe("line1<br>line2");
+    expect(escapeMdCell("line1\rline2")).toBe("line1<br>line2");
+  });
+
+  it("returns empty string for null/undefined", () => {
+    expect(escapeMdCell(null as unknown as string)).toBe("");
+    expect(escapeMdCell(undefined as unknown as string)).toBe("");
+  });
+
+  it("regression — comparison_table with pipes/newlines does not break the table", () => {
+    const slide = makeSlide("comparison_table", {
+      heading: "Pricing",
+      columns: ["Plan | Tier", "Cost\nUSD"],
+      rows: [
+        { label: "Pro | Plus", cells: ["$10|month", "Yes\nincl. tax"] },
+      ],
+    });
+    const text = exportDeckToMarkdown(deckWith([slide])).buffer.toString("utf8");
+    // Each table row should have exactly N+1 unescaped pipes (where N is
+    // the number of columns) — i.e. no user-supplied raw pipe leaks
+    // through.
+    const tableLines = text
+      .split("\n")
+      .filter((l) => l.trim().startsWith("|"));
+    expect(tableLines.length).toBeGreaterThan(0);
+    for (const line of tableLines) {
+      // Count UNESCAPED pipes only.
+      const unescaped = line.replace(/\\\|/g, "").match(/\|/g) ?? [];
+      // 2 columns plus the row label = 3 user-cell columns, plus
+      // bounding pipes = 4 unescaped pipes per row.
+      expect(unescaped.length).toBe(4);
+    }
+    // The cell with newline must have been collapsed to <br>.
+    expect(text).toContain("Yes<br>incl. tax");
+    expect(text).toContain("Cost<br>USD");
   });
 });
