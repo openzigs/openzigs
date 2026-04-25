@@ -94,7 +94,11 @@ export default function NewPitchDeckPage() {
           script,
           brandKitId,
           options: {
-            slideCount,
+            // Field name MUST stay aligned with `DraftDeckBodySchema` in
+            // `src/pitch/pitch-schema.ts` — the backend body is `.strict()`
+            // and silently 400s on unknown keys. See contract test in
+            // `src/pitch/pitch-schema.test.ts`.
+            targetSlideCount: slideCount,
             audience: audience || undefined,
             tone,
           },

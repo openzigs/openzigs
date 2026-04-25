@@ -369,3 +369,199 @@ describe("sanitize() — exposed helper", () => {
     expect(sanitize(undefined)).toBe("");
   });
 });
+
+// ── Per-template XSS coverage ─────────────────────────────────────────
+//
+// Reviewer flagged that the original XSS suite only covered a handful of
+// templates. This loop guarantees every one of the 14 template kinds has
+// its own dedicated XSS test — drop a template, drop a test.
+//
+// Strategy: inject `<img src=x onerror="alert(1)">` into every DOMPurified
+// string field, then assert the rendered HTML contains neither `<script`
+// nor `onerror` nor `javascript:`.
+//
+// `code.code` and `mermaid.source` are intentionally HTML-escaped (not
+// DOMPurified) because no HTML markup is permitted inside those blocks.
+// The escaped output legitimately contains the substring `onerror`, so
+// for those two templates we keep the body benign and inject XSS only
+// into the surrounding DOMPurified fields. The escape behavior itself is
+// already covered by the dedicated tests above.
+
+const PER_TEMPLATE_XSS = '<img src=x onerror="alert(1)">';
+
+const PER_TEMPLATE_CASES: Array<{
+  template: string;
+  build: () => Slide;
+}> = [
+  {
+    template: "title",
+    build: () =>
+      s("title", {
+        title: PER_TEMPLATE_XSS,
+        subtitle: PER_TEMPLATE_XSS,
+        eyebrow: PER_TEMPLATE_XSS,
+      }),
+  },
+  {
+    template: "section_divider",
+    build: () =>
+      s("section_divider", {
+        section_number: 1,
+        title: PER_TEMPLATE_XSS,
+      }),
+  },
+  {
+    template: "bullet_list",
+    build: () =>
+      s("bullet_list", {
+        heading: PER_TEMPLATE_XSS,
+        bullets: [PER_TEMPLATE_XSS, PER_TEMPLATE_XSS],
+      }),
+  },
+  {
+    template: "two_column",
+    build: () =>
+      s("two_column", {
+        heading: PER_TEMPLATE_XSS,
+        left: PER_TEMPLATE_XSS,
+        right: PER_TEMPLATE_XSS,
+      }),
+  },
+  {
+    template: "image_caption",
+    // `image.alt` is HTML-attribute-escaped (not DOMPurified) — the
+    // escaped form keeps the substring `onerror`. Inject XSS only into
+    // the surrounding DOMPurified fields. The alt-escape behavior itself
+    // is well-covered by the dedicated tests above.
+    build: () =>
+      s("image_caption", {
+        image: {
+          prompt: "hero",
+          url: "https://x/y.png",
+          alt: "alt",
+        },
+        caption: PER_TEMPLATE_XSS,
+        heading: PER_TEMPLATE_XSS,
+      }),
+  },
+  {
+    template: "quote",
+    build: () =>
+      s("quote", {
+        quote: PER_TEMPLATE_XSS,
+        attribution: PER_TEMPLATE_XSS,
+        source: PER_TEMPLATE_XSS,
+      }),
+  },
+  {
+    template: "stats_kpi",
+    // `value` (max 20) and `delta` (max 20) are too short for our XSS
+    // payload, so we inject into `heading` and `label` instead. Both are
+    // DOMPurified, so XSS coverage is preserved.
+    build: () =>
+      s("stats_kpi", {
+        heading: PER_TEMPLATE_XSS,
+        kpis: [
+          { value: "1", label: PER_TEMPLATE_XSS, delta: "+5%" },
+          { value: "2", label: PER_TEMPLATE_XSS },
+        ],
+      }),
+  },
+  {
+    template: "comparison_table",
+    build: () =>
+      s("comparison_table", {
+        heading: PER_TEMPLATE_XSS,
+        columns: [PER_TEMPLATE_XSS, PER_TEMPLATE_XSS],
+        rows: [{ label: PER_TEMPLATE_XSS, cells: [PER_TEMPLATE_XSS, "ok"] }],
+      }),
+  },
+  {
+    template: "timeline",
+    build: () =>
+      s("timeline", {
+        heading: PER_TEMPLATE_XSS,
+        events: [
+          { when: PER_TEMPLATE_XSS, what: PER_TEMPLATE_XSS },
+          { when: "Q2", what: PER_TEMPLATE_XSS },
+        ],
+      }),
+  },
+  {
+    template: "full_bleed",
+    // `image.alt` is escape-only — see image_caption note above.
+    build: () =>
+      s("full_bleed", {
+        image: {
+          prompt: "hero",
+          url: "https://x/y.png",
+          alt: "alt",
+        },
+        overlay_text: PER_TEMPLATE_XSS,
+      }),
+  },
+  {
+    template: "code",
+    // `code.code` is HTML-escaped — see comment above. We inject XSS only
+    // into the DOMPurified `heading` field to keep the substring assertion
+    // meaningful.
+    build: () =>
+      s("code", {
+        heading: PER_TEMPLATE_XSS,
+        language: "ts",
+        code: "const x = 1;",
+      }),
+  },
+  {
+    template: "qa",
+    build: () =>
+      s("qa", {
+        heading: PER_TEMPLATE_XSS,
+        contact: PER_TEMPLATE_XSS,
+      }),
+  },
+  {
+    template: "chart",
+    build: () =>
+      s("chart", {
+        heading: PER_TEMPLATE_XSS,
+        chart_type: "bar",
+        series: [
+          {
+            name: PER_TEMPLATE_XSS,
+            data: [{ x: PER_TEMPLATE_XSS, y: 10 }],
+          },
+        ],
+      }),
+  },
+  {
+    template: "mermaid",
+    // `mermaid.source` is HTML-escaped — see comment above. Inject XSS
+    // into the DOMPurified `heading` field only.
+    build: () =>
+      s("mermaid", {
+        heading: PER_TEMPLATE_XSS,
+        diagram_type: "flowchart",
+        source: "graph TD;A-->B;",
+      }),
+  },
+];
+
+describe("renderDeckToHtml — per-template XSS hardening", () => {
+  // Sanity: every declared template kind is exercised exactly once.
+  it("covers all 14 template kinds", () => {
+    expect(PER_TEMPLATE_CASES).toHaveLength(14);
+    const kinds = new Set(PER_TEMPLATE_CASES.map((c) => c.template));
+    expect(kinds.size).toBe(14);
+  });
+
+  it.each(PER_TEMPLATE_CASES)(
+    "neutralizes XSS in $template template",
+    ({ build }) => {
+      const html = renderDeckToHtml(buildDeck([build()]), KIT, "embedded").html;
+      expect(html).not.toContain("<script");
+      expect(html).not.toContain("onerror");
+      expect(html).not.toContain("javascript:");
+    },
+  );
+});

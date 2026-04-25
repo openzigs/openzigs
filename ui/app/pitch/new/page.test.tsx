@@ -106,8 +106,12 @@ describe("NewPitchDeckPage wizard", () => {
     expect(body).toMatchObject({
       brandKitId: "kit-a",
       script: "Pitch script body.",
-      options: { slideCount: 15, audience: "CTOs", tone: "casual" },
+      options: { targetSlideCount: 15, audience: "CTOs", tone: "casual" },
     });
+    // Guard against regression: the backend `DraftDeckBody` schema is
+    // `.strict()` and rejects `slideCount`. If anyone re-introduces it,
+    // this assertion fails immediately.
+    expect(body.options).not.toHaveProperty("slideCount");
   });
 
   it("can go back to a previous step", async () => {

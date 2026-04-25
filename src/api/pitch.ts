@@ -49,6 +49,7 @@ import {
   BrandKitSchema as PitchBrandKitSchema,
   DeckAspectRatioEnum,
   DeckToneEnum,
+  DraftDeckBodySchema,
   SlideSchema,
   type BrandKit as PitchBrandKit,
   type Slide,
@@ -240,22 +241,7 @@ const MoveSlideBody = z
   })
   .strict();
 
-const DraftDeckBody = z
-  .object({
-    script: z.string().min(1).max(50_000),
-    brandKitId: z.string().min(1),
-    title: z.string().min(1).max(160).optional(),
-    options: z
-      .object({
-        audience: z.string().max(120).optional(),
-        tone: DeckToneEnum.optional(),
-        estimatedMinutes: z.number().int().min(1).max(180).optional(),
-        targetSlideCount: z.number().int().min(1).max(80).optional(),
-      })
-      .strict()
-      .optional(),
-  })
-  .strict();
+const DraftDeckBody = DraftDeckBodySchema;
 
 const RegenerateSlideBody = z
   .object({
