@@ -12,6 +12,13 @@ import { buildUrl, fetchJson } from "@/lib/api";
 import { showToast } from "@/components/toast";
 import { RevealCanvas } from "@/components/pitch/reveal-canvas";
 import { SlideRail, type SlideRailItem } from "@/components/pitch/slide-rail";
+import { PropertiesPanel } from "@/components/pitch/properties-panel";
+import { ScriptPanel } from "@/components/pitch/script-panel";
+import {
+  BrandKitPicker,
+  type BrandKitListEntry,
+} from "@/components/pitch/brand-kit-picker";
+import { BrandKitEditor } from "@/components/pitch/brand-kit-editor";
 
 interface DeckSlideRow {
   id: string;
@@ -80,12 +87,14 @@ export default function PitchDeckEditorPage() {
   const queryClient = useQueryClient();
   const { socket } = useSocket();
 
-  const [selectedField, setSelectedField] = useState<string | null>(null);
+  const [, setSelectedField] = useState<string | null>(null);
   const [selectedSlideId, setSelectedSlideId] = useState<string | null>(null);
   const [titleDraft, setTitleDraft] = useState<string | null>(null);
   const [titleEditing, setTitleEditing] = useState(false);
   const [saveState, setSaveState] = useState<SaveState>("idle");
-  const [scriptOpen, setScriptOpen] = useState(false);
+  const [brandKitDialogOpen, setBrandKitDialogOpen] = useState(false);
+  const [brandKitEditTarget, setBrandKitEditTarget] =
+    useState<BrandKitListEntry | null>(null);
 
   const deckQuery = useQuery({
     queryKey: ["pitch", "deck", deckId],
@@ -117,6 +126,19 @@ export default function PitchDeckEditorPage() {
       setSaveState("error");
       showToast("Could not rename deck.", "error");
     },
+  });
+
+  const brandKitChangeMutation = useMutation({
+    mutationFn: async (brandKitId: string) =>
+      fetchJson(`/api/admin/pitch/decks/${deckId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ brand_kit_id: brandKitId }),
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["pitch", "deck", deckId] });
+      queryClient.invalidateQueries({ queryKey: ["pitch", "render", deckId] });
+    },
+    onError: () => showToast("Could not change brand kit.", "error"),
   });
 
   const reorderMutation = useMutation({
@@ -329,14 +351,20 @@ export default function PitchDeckEditorPage() {
           )}
         </div>
         <div className="flex items-center gap-3">
-          <button
-            disabled
-            data-testid="pitch-editor-brand-kit"
-            title="Coming in Phase 5"
-            className="rounded border border-border px-2 py-1 text-xs opacity-50"
-          >
-            Brand kit
-          </button>
+          <BrandKitPicker
+            selectedId={deck.brand_kit_id}
+            onSelect={(id) =>
+              brandKitChangeMutation.mutate(id)
+            }
+            onEdit={(kit) => {
+              setBrandKitEditTarget(kit);
+              setBrandKitDialogOpen(true);
+            }}
+            onCreate={() => {
+              setBrandKitEditTarget(null);
+              setBrandKitDialogOpen(true);
+            }}
+          />
           <button
             disabled
             data-testid="pitch-editor-export"
@@ -405,44 +433,39 @@ export default function PitchDeckEditorPage() {
       </main>
 
       {/* Properties panel (right) */}
-      <aside
-        className="min-h-0 overflow-y-auto border-l border-border bg-card p-3 text-xs"
-        data-testid="pitch-editor-properties"
-      >
-        <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-          Properties
-        </h2>
-        <div data-testid="pitch-editor-selected-field">
-          Selected: {selectedField ?? "—"}
-        </div>
-        <p className="mt-3 text-[10px] text-muted-foreground">
-          Real property editors arrive in Phase 5 (#971).
-        </p>
-      </aside>
+      <PropertiesPanel
+        deckId={deckId}
+        selectedSlide={
+          selectedSlide
+            ? { id: selectedSlide.id, slide: selectedSlide.slide }
+            : null
+        }
+        brandKit={null}
+      />
 
       {/* Script panel (bottom, collapsible) */}
-      <section
-        className="col-span-3 border-t border-border bg-card"
+      <div
+        className="col-span-3"
         data-testid="pitch-editor-script-panel"
       >
-        <button
-          type="button"
-          data-testid="pitch-editor-script-toggle"
-          onClick={() => setScriptOpen((v) => !v)}
-          className="flex w-full items-center justify-between px-4 py-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground hover:bg-muted/50"
-        >
-          <span>Script</span>
-          <span>{scriptOpen ? "▼" : "▲"}</span>
-        </button>
-        {scriptOpen && (
-          <textarea
-            data-testid="pitch-editor-script-textarea"
-            readOnly
-            value={deck.metadata.source_script ?? ""}
-            className="h-32 w-full resize-none border-t border-border bg-background p-2 text-xs"
-          />
-        )}
-      </section>
+        <ScriptPanel
+          deckId={deckId}
+          brandKitId={deck.brand_kit_id}
+          script={deck.metadata.source_script ?? ""}
+          slides={slides.map((s) => ({ id: s.id, slide: s.slide }))}
+          selectedSlideId={selectedSlide?.id ?? null}
+          onSelectSlide={(id) => setSelectedSlideId(id)}
+        />
+      </div>
+
+      <BrandKitEditor
+        open={brandKitDialogOpen}
+        onOpenChange={setBrandKitDialogOpen}
+        kit={brandKitEditTarget}
+        onSaved={(id) => {
+          brandKitChangeMutation.mutate(id);
+        }}
+      />
     </div>
   );
 }

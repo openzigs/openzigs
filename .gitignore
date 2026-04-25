@@ -179,3 +179,13 @@ summary.txt
 _step*.txt
 _test_out*.txt
 _build_out*.txt
+
+# Vitest / coverage scratch artifacts (do not commit)
+vitest-out.*
+cov-*.txt
+cov-*.cjs
+coverage-output.txt
+ui/cov-*.txt
+ui/cov-*.cjs
+ui/coverage-output.txt
+ui/vitest-out.*
