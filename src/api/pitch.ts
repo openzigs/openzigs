@@ -45,6 +45,12 @@ import {
 import { submitSlideRegenerateTask } from "../pitch/pitch-regenerate.js";
 import { enqueueSlideImage } from "../pitch/pitch-image-service.js";
 import { renderDeckToHtml } from "../pitch/pitch-renderer.js";
+import { exportDeckToPdf } from "../pitch/pitch-export-pdf.js";
+import { exportDeckToPptx } from "../pitch/pitch-export-pptx.js";
+import { exportDeckToZip } from "../pitch/pitch-export-zip.js";
+import { exportDeckToMarkdown } from "../pitch/pitch-export-md.js";
+import { exportNotesToPdf } from "../pitch/pitch-export-notes.js";
+import { safeFilename } from "../pitch/pitch-export-utils.js";
 import {
   BrandKitSchema as PitchBrandKitSchema,
   DeckAspectRatioEnum,
@@ -76,6 +82,18 @@ export interface PitchRouterDeps {
   auditLogger?: AuditLogger;
   /** Socket.IO server. Mutating routes broadcast `pitch:*` events through it. */
   io?: SocketIOServer;
+  /**
+   * Phase 6 export overrides — tests inject these to mock subprocess /
+   * pptx / zip generation. Production wiring leaves them undefined and
+   * the modules use their real implementations.
+   */
+  exporters?: {
+    pdf?: typeof exportDeckToPdf;
+    pptx?: typeof exportDeckToPptx;
+    zip?: typeof exportDeckToZip;
+    md?: typeof exportDeckToMarkdown;
+    notes?: typeof exportNotesToPdf;
+  };
 }
 
 const DEFAULT_BRAND_KITS_DIR = join(homedir(), ".openzigs", "brand-kits");
@@ -471,6 +489,210 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
         `[Pitch API] GET /decks/${req.params.deckId}/render failed: ${errMessage(err)}`,
       );
       sendError(res, 500, "internal_error", errMessage(err));
+    }
+  });
+
+  // ────────────────────────────────────────────────────────────────────
+  // Phase 6 — Export endpoints (#972 #973 #974)
+  //
+  // All routes are GET so a browser can hit them directly with a normal
+  // download. Each route resolves the deck + brand kit, calls into the
+  // matching `pitch-export-*` module, sets a sanitized
+  // `Content-Disposition` header, and streams the buffer back. Audit log
+  // + Socket.IO emit fire on success. Hard 60s express timeout for the
+  // PDF routes (decktape's own wall-clock is enforced inside the helper
+  // — this is belt-and-braces for the HTTP layer).
+  // ────────────────────────────────────────────────────────────────────
+
+  const pdfExporter = deps.exporters?.pdf ?? exportDeckToPdf;
+  const pptxExporter = deps.exporters?.pptx ?? exportDeckToPptx;
+  const zipExporter = deps.exporters?.zip ?? exportDeckToZip;
+  const mdExporter = deps.exporters?.md ?? exportDeckToMarkdown;
+  const notesExporter = deps.exporters?.notes ?? exportNotesToPdf;
+
+  type DeckCtx = {
+    deck: ReturnType<PitchRepository["getDeck"]>;
+    brandKit: PitchBrandKit;
+  };
+  const loadDeckAndKit = (req: Request, res: Response): DeckCtx | null => {
+    const deck = deps.pitchRepo.getDeck(req.params.deckId);
+    if (!deck) {
+      sendError(res, 404, "not_found", `deck ${req.params.deckId} not found`);
+      return null;
+    }
+    const repoKit = deps.brandKitRepo.getById(deck.brand_kit_id);
+    if (!repoKit) {
+      sendError(res, 404, "not_found", `brand kit ${deck.brand_kit_id} not found`);
+      return null;
+    }
+    return { deck, brandKit: repoToPitchBrandKit(repoKit) };
+  };
+
+  /** Sanitized Content-Disposition header — never trusts user input directly. */
+  const setDownloadHeaders = (
+    res: Response,
+    contentType: string,
+    rawTitle: string,
+    deckId: string,
+    ext: string,
+  ): void => {
+    const filename = safeFilename(rawTitle, deckId, ext);
+    res.setHeader("Content-Type", contentType);
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+    res.setHeader("Cache-Control", "no-store");
+  };
+
+  router.get("/decks/:deckId/export.html", (req, res) => {
+    // Alias for `/render?mode=standalone` so the export menu is uniform.
+    const ctx = loadDeckAndKit(req, res);
+    if (!ctx?.deck) return;
+    try {
+      const { html, slideCount } = renderDeckToHtml(
+        ctx.deck,
+        ctx.brandKit,
+        "standalone",
+      );
+      audit("system", "pitch_deck_exported", {
+        deckId: ctx.deck.id,
+        format: "html",
+        slideCount,
+      });
+      emit("pitch:deck:exported", { deckId: ctx.deck.id, format: "html" });
+      res.setHeader("Content-Type", "text/html; charset=utf-8");
+      res.setHeader("Cache-Control", "no-store");
+      res.send(html);
+    } catch (err) {
+      logger.error(
+        `[Pitch API] GET /decks/${req.params.deckId}/export.html failed: ${errMessage(err)}`,
+      );
+      sendError(res, 500, "internal_error", errMessage(err));
+    }
+  });
+
+  router.get("/decks/:deckId/export.md", (req, res) => {
+    const ctx = loadDeckAndKit(req, res);
+    if (!ctx?.deck) return;
+    try {
+      const { buffer, contentType } = mdExporter(ctx.deck);
+      setDownloadHeaders(res, contentType, ctx.deck.title, ctx.deck.id, ".md");
+      audit("system", "pitch_deck_exported", {
+        deckId: ctx.deck.id,
+        format: "md",
+        bytes: buffer.byteLength,
+      });
+      emit("pitch:deck:exported", { deckId: ctx.deck.id, format: "md" });
+      res.send(buffer);
+    } catch (err) {
+      logger.error(
+        `[Pitch API] GET /decks/${req.params.deckId}/export.md failed: ${errMessage(err)}`,
+      );
+      sendError(res, 500, "internal_error", "markdown export failed");
+    }
+  });
+
+  router.get("/decks/:deckId/export.zip", async (req, res) => {
+    const ctx = loadDeckAndKit(req, res);
+    if (!ctx?.deck) return;
+    try {
+      const { buffer, contentType } = await zipExporter(ctx.deck, ctx.brandKit);
+      setDownloadHeaders(res, contentType, ctx.deck.title, ctx.deck.id, ".zip");
+      audit("system", "pitch_deck_exported", {
+        deckId: ctx.deck.id,
+        format: "zip",
+        bytes: buffer.byteLength,
+      });
+      emit("pitch:deck:exported", { deckId: ctx.deck.id, format: "zip" });
+      res.send(buffer);
+    } catch (err) {
+      logger.error(
+        `[Pitch API] GET /decks/${req.params.deckId}/export.zip failed: ${errMessage(err)}`,
+      );
+      sendError(res, 500, "internal_error", "zip export failed");
+    }
+  });
+
+  router.get("/decks/:deckId/export.pptx", async (req, res) => {
+    const ctx = loadDeckAndKit(req, res);
+    if (!ctx?.deck) return;
+    try {
+      const { buffer, contentType } = await pptxExporter(ctx.deck, ctx.brandKit);
+      setDownloadHeaders(res, contentType, ctx.deck.title, ctx.deck.id, ".pptx");
+      audit("system", "pitch_deck_exported", {
+        deckId: ctx.deck.id,
+        format: "pptx",
+        bytes: buffer.byteLength,
+      });
+      emit("pitch:deck:exported", { deckId: ctx.deck.id, format: "pptx" });
+      res.send(buffer);
+    } catch (err) {
+      logger.error(
+        `[Pitch API] GET /decks/${req.params.deckId}/export.pptx failed: ${errMessage(err)}`,
+      );
+      sendError(res, 500, "internal_error", "pptx export failed");
+    }
+  });
+
+  router.get("/decks/:deckId/export.pdf", async (req, res) => {
+    const ctx = loadDeckAndKit(req, res);
+    if (!ctx?.deck) return;
+    // Belt-and-braces — express response timeout matches decktape's hard cap.
+    req.setTimeout(60_000);
+    const ac = new AbortController();
+    req.once("close", () => {
+      if (!res.writableEnded) ac.abort();
+    });
+    try {
+      const { buffer, contentType } = await pdfExporter(ctx.deck, ctx.brandKit, {
+        signal: ac.signal,
+      });
+      setDownloadHeaders(res, contentType, ctx.deck.title, ctx.deck.id, ".pdf");
+      audit("system", "pitch_deck_exported", {
+        deckId: ctx.deck.id,
+        format: "pdf",
+        bytes: buffer.byteLength,
+      });
+      emit("pitch:deck:exported", { deckId: ctx.deck.id, format: "pdf" });
+      res.send(buffer);
+    } catch (err) {
+      logger.error(
+        `[Pitch API] GET /decks/${req.params.deckId}/export.pdf failed: ${errMessage(err)}`,
+      );
+      // Generic message — never leak subprocess stderr to clients.
+      sendError(res, 500, "internal_error", "pdf export failed");
+    }
+  });
+
+  router.get("/decks/:deckId/export.notes.pdf", async (req, res) => {
+    const ctx = loadDeckAndKit(req, res);
+    if (!ctx?.deck) return;
+    req.setTimeout(60_000);
+    const ac = new AbortController();
+    req.once("close", () => {
+      if (!res.writableEnded) ac.abort();
+    });
+    try {
+      const { buffer, contentType } = await notesExporter(ctx.deck, {
+        signal: ac.signal,
+      });
+      setDownloadHeaders(
+        res,
+        contentType,
+        `${ctx.deck.title}-notes`,
+        ctx.deck.id,
+        ".pdf",
+      );
+      audit("system", "pitch_deck_exported", {
+        deckId: ctx.deck.id,
+        format: "notes-pdf",
+        bytes: buffer.byteLength,
+      });
+      emit("pitch:deck:exported", { deckId: ctx.deck.id, format: "notes-pdf" });
+      res.send(buffer);
+    } catch (err) {
+      logger.error(
+        `[Pitch API] GET /decks/${req.params.deckId}/export.notes.pdf failed: ${errMessage(err)}`,
+      );
+      sendError(res, 500, "internal_error", "notes pdf export failed");
     }
   });
 
