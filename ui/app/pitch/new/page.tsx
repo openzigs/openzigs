@@ -24,7 +24,20 @@ const AUTH_TOKEN =
     : "";
 
 type WizardStep = "kit" | "script" | "options";
-type Tone = "formal" | "casual" | "persuasive";
+
+// Tone literals MUST match `DeckToneEnum` in `src/pitch/pitch-schema.ts`.
+// Backend uses `.strict()` validation and 400s on unknown values — the
+// contract test in `src/pitch/pitch-schema.test.ts` (DraftDeckBodySchema
+// block) iterates this set against the backend enum to catch drift.
+type Tone = "formal" | "casual" | "technical" | "sales" | "educational";
+
+const TONE_OPTIONS: ReadonlyArray<{ value: Tone; label: string }> = [
+  { value: "formal", label: "Formal" },
+  { value: "casual", label: "Casual" },
+  { value: "technical", label: "Technical" },
+  { value: "sales", label: "Sales / Persuasive" },
+  { value: "educational", label: "Educational" },
+];
 
 export default function NewPitchDeckPage() {
   const router = useRouter();
@@ -273,20 +286,23 @@ export default function NewPitchDeckPage() {
             <div className="mt-4">
               <span className="text-xs font-semibold">Tone</span>
               <div
-                className="mt-1 flex gap-3 text-sm"
+                className="mt-1 flex flex-wrap gap-3 text-sm"
                 data-testid="wizard-tone"
               >
-                {(["formal", "casual", "persuasive"] as Tone[]).map((t) => (
-                  <label key={t} className="inline-flex items-center gap-1">
+                {TONE_OPTIONS.map((opt) => (
+                  <label
+                    key={opt.value}
+                    className="inline-flex items-center gap-1"
+                  >
                     <input
                       type="radio"
                       name="tone"
-                      value={t}
-                      checked={tone === t}
-                      onChange={() => setTone(t)}
-                      data-testid={`wizard-tone-${t}`}
+                      value={opt.value}
+                      checked={tone === opt.value}
+                      onChange={() => setTone(opt.value)}
+                      data-testid={`wizard-tone-${opt.value}`}
                     />
-                    <span className="capitalize">{t}</span>
+                    <span>{opt.label}</span>
                   </label>
                 ))}
               </div>

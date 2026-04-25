@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   BrandKitSchema,
   DeckSchema,
+  DeckToneEnum,
   DraftDeckBodySchema,
   HexColor,
   SLIDE_TEMPLATES,
@@ -554,10 +555,37 @@ describe("DraftDeckBodySchema — wizard ↔ backend contract", () => {
       DraftDeckBodySchema.parse({ ...base, options: { targetSlideCount: 1.5 } }),
     ).toThrow();
   });
+
+  it("accepts every value in DeckToneEnum (wizard ↔ backend tone parity)", () => {
+    // If you add/remove a tone in `DeckToneEnum`, the wizard radio set
+    // in `ui/app/pitch/new/page.tsx` (TONE_OPTIONS) must be updated to
+    // match. The wizard test asserts the radio set; this test asserts
+    // each canonical value validates through the backend.
+    for (const tone of DeckToneEnum.options) {
+      expect(() =>
+        DraftDeckBodySchema.parse({
+          script: "x",
+          brandKitId: "kit-a",
+          options: { targetSlideCount: 10, tone },
+        }),
+      ).not.toThrow();
+    }
+  });
+
+  it('rejects tone:"persuasive" (regression: wizard-only legacy value)', () => {
+    // Pre-fix the wizard exposed a "persuasive" option that is not in
+    // `DeckToneEnum`. Selecting it produced a silent 400 from the
+    // `.strict()` backend validator. This guard prevents the legacy
+    // value from creeping back into either side.
+    expect(() =>
+      DraftDeckBodySchema.parse({
+        script: "x",
+        brandKitId: "kit-a",
+        options: { targetSlideCount: 10, tone: "persuasive" },
+      }),
+    ).toThrow();
+  });
 });
-
-
-// -- DraftDeckBodySchema � wizard ? backend contract -----------------------
 //
 // The Phase-3 backend POST /api/admin/pitch/decks/draft validator is
 // `.strict()` and silently 400s on unknown fields. The Phase-4 wizard
