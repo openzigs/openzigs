@@ -359,6 +359,38 @@ describe("SlideSchema — discriminated union covers all 14 templates", () => {
       ),
     ).not.toThrow();
   });
+
+  it("source_range — optional, round-trips when present (sub-issue #969)", () => {
+    // Absent ⇒ undefined.
+    const slideNoRange = SlideSchema.parse(
+      validSlide("title", { title: "Hello" }),
+    );
+    expect(slideNoRange.source_range).toBeUndefined();
+
+    // Present ⇒ preserved verbatim.
+    const base = validSlide("title", { title: "Hello" }) as Record<string, unknown>;
+    const slideWithRange = SlideSchema.parse({
+      ...base,
+      source_range: { start: 0, end: 42 },
+    });
+    expect(slideWithRange.source_range).toEqual({ start: 0, end: 42 });
+
+    // Negative offsets rejected.
+    expect(() =>
+      SlideSchema.parse({
+        ...base,
+        source_range: { start: -1, end: 5 },
+      }),
+    ).toThrow();
+
+    // Non-integer rejected.
+    expect(() =>
+      SlideSchema.parse({
+        ...base,
+        source_range: { start: 0.5, end: 5 },
+      }),
+    ).toThrow();
+  });
 });
 
 // ── DeckSchema ─────────────────────────────────────────────────────────────

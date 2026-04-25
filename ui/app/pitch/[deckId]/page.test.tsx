@@ -98,6 +98,47 @@ vi.mock("@/components/pitch/slide-rail", () => ({
   ),
 }));
 
+// Replace the new Phase-5 components with passive stand-ins so this shell
+// test stays focused on top-level wiring. Each mock surfaces only what the
+// shell needs to verify (mounted, received props).
+vi.mock("@/components/pitch/properties-panel", () => ({
+  PropertiesPanel: ({
+    selectedSlide,
+  }: {
+    selectedSlide: { id: string } | null;
+  }) => (
+    <aside data-testid="pitch-editor-properties">
+      <span data-testid="pitch-editor-properties-selected">
+        {selectedSlide?.id ?? "—"}
+      </span>
+    </aside>
+  ),
+}));
+
+vi.mock("@/components/pitch/script-panel", () => ({
+  ScriptPanel: ({ script }: { script: string }) => (
+    <div data-testid="pitch-editor-script-panel-mock">
+      <textarea
+        data-testid="pitch-editor-script-textarea"
+        readOnly
+        value={script}
+      />
+    </div>
+  ),
+}));
+
+vi.mock("@/components/pitch/brand-kit-picker", () => ({
+  BrandKitPicker: ({ selectedId }: { selectedId: string | null }) => (
+    <div data-testid="pitch-editor-brand-kit-picker">{selectedId}</div>
+  ),
+}));
+
+vi.mock("@/components/pitch/brand-kit-editor", () => ({
+  BrandKitEditor: ({ open }: { open: boolean }) => (
+    <div data-testid="pitch-editor-brand-kit-editor" data-open={open} />
+  ),
+}));
+
 import { fetchJson } from "@/lib/api";
 import PitchDeckEditorPage from "./page";
 
@@ -163,40 +204,34 @@ describe("PitchDeckEditorPage", () => {
     expect(screen.getByTestId("pitch-editor-canvas")).toBeInTheDocument();
     expect(screen.getByTestId("pitch-editor-properties")).toBeInTheDocument();
     expect(screen.getByTestId("pitch-editor-script-panel")).toBeInTheDocument();
+    expect(screen.getByTestId("pitch-editor-brand-kit-picker")).toBeInTheDocument();
     expect(screen.getByTestId("pitch-editor-title")).toHaveTextContent("My Deck");
   });
 
-  it("disables stub buttons for deferred features", async () => {
+  it("only disables export until Phase 6", async () => {
     render(<PitchDeckEditorPage />, { wrapper });
     await waitFor(() =>
       expect(screen.getByTestId("pitch-editor-shell")).toBeInTheDocument(),
     );
-    expect(screen.getByTestId("pitch-editor-brand-kit")).toBeDisabled();
     expect(screen.getByTestId("pitch-editor-export")).toBeDisabled();
   });
 
-  it("updates the selected indicator when a data-pitch-field element is clicked", async () => {
+  it("forwards canvas data-pitch-field clicks (selectedField is consumed by the properties panel)", async () => {
     render(<PitchDeckEditorPage />, { wrapper });
     await waitFor(() =>
       expect(screen.getByTestId("reveal-canvas-mock")).toBeInTheDocument(),
     );
-    expect(screen.getByTestId("pitch-editor-selected-field")).toHaveTextContent(
-      "Selected: —",
-    );
     const titleEl = document.querySelector('[data-pitch-field="title"]');
     expect(titleEl).toBeTruthy();
     fireEvent.click(titleEl!);
-    expect(screen.getByTestId("pitch-editor-selected-field")).toHaveTextContent(
-      "Selected: title",
-    );
+    // No throw — the click handler walks up looking for data-pitch-field.
   });
 
-  it("opens the script panel and shows source_script read-only", async () => {
+  it("renders the script panel mock with the deck's source script", async () => {
     render(<PitchDeckEditorPage />, { wrapper });
     await waitFor(() =>
       expect(screen.getByTestId("pitch-editor-script-panel")).toBeInTheDocument(),
     );
-    fireEvent.click(screen.getByTestId("pitch-editor-script-toggle"));
     const ta = screen.getByTestId(
       "pitch-editor-script-textarea",
     ) as HTMLTextAreaElement;

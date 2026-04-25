@@ -2,9 +2,10 @@
 
 import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { fetchJson, buildUrl } from "@/lib/api";
 import { showToast } from "@/components/toast";
+import { BrandKitEditor } from "@/components/pitch/brand-kit-editor";
 
 interface BrandKit {
   id: string;
@@ -48,6 +49,8 @@ export default function NewPitchDeckPage() {
   const [audience, setAudience] = useState<string>("");
   const [tone, setTone] = useState<Tone>("formal");
   const [submitting, setSubmitting] = useState(false);
+  const [createKitOpen, setCreateKitOpen] = useState(false);
+  const queryClient = useQueryClient();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const kitsQuery = useQuery({
@@ -183,9 +186,7 @@ export default function NewPitchDeckPage() {
             <button
               type="button"
               data-testid="wizard-create-kit-stub"
-              onClick={() =>
-                showToast("Brand kit creation arrives in Phase 5.", "info")
-              }
+              onClick={() => setCreateKitOpen(true)}
               className="mt-3 text-xs text-primary hover:underline"
             >
               + Create new kit
@@ -352,6 +353,15 @@ export default function NewPitchDeckPage() {
           )}
         </div>
       </div>
+      <BrandKitEditor
+        open={createKitOpen}
+        onOpenChange={setCreateKitOpen}
+        kit={null}
+        onSaved={(id) => {
+          setBrandKitId(id);
+          queryClient.invalidateQueries({ queryKey: ["pitch", "brand-kits"] });
+        }}
+      />
     </div>
   );
 }

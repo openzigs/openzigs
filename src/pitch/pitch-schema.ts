@@ -66,6 +66,18 @@ const Common = z.object({
   fragments: z.array(FragmentEnum).default([]),
   background_image_prompt: z.string().max(400).optional(),
   source_anchor: z.string().max(200).optional(),
+  /**
+   * Optional character offset range into the deck's source script that
+   * produced this slide. Enables bidirectional script ↔ slide highlight
+   * in the editor (sub-issue #969). Snake-case to match the rest of the
+   * pitch schema. Older slides without this field continue to validate.
+   */
+  source_range: z
+    .object({
+      start: z.number().int().nonnegative(),
+      end: z.number().int().nonnegative(),
+    })
+    .optional(),
 });
 
 /** Inline image — always carries a generation prompt; `url` is filled later. */
