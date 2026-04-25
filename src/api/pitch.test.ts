@@ -9,13 +9,14 @@
  *   - Brand kit endpoints incl. starter immutability + delete-blocked-when-referenced (#966)
  *   - Logo upload — happy path, reject non-image, reject oversize (#966)
  */
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach, beforeAll } from "vitest";
 import express, { type Express } from "express";
 import request from "supertest";
 import Database from "better-sqlite3";
 import { mkdtempSync, rmSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import sharp from "sharp";
 
 import { createPitchRouter, type PitchRouterDeps } from "./pitch.js";
 import { PitchRepository } from "../pitch/pitch-repository.js";
@@ -711,11 +712,21 @@ describe("Pitch REST router", () => {
   });
 
   describe("logo upload (#966)", () => {
-    // 1×1 PNG (valid signature)
-    const PNG_BYTES = Buffer.from(
-      "89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000d4944415478da6300010000000500010d0a2db40000000049454e44ae426082",
-      "hex",
-    );
+    // Real PNG bytes generated via sharp so the post-upload re-encode
+    // pipeline (PR #980 hardening) has valid input to work with.
+    let PNG_BYTES: Buffer;
+    beforeAll(async () => {
+      PNG_BYTES = await sharp({
+        create: {
+          width: 1,
+          height: 1,
+          channels: 4,
+          background: { r: 255, g: 0, b: 0, alpha: 1 },
+        },
+      })
+        .png()
+        .toBuffer();
+    });
 
     it("POST /brand-kits/:id/logo accepts a PNG and updates logoPath", async () => {
       const id = createCustomKit(harness);
@@ -971,6 +982,399 @@ describe("Pitch REST router", () => {
         "/api/admin/pitch/brand-kits/missing",
       );
       expect(res.status).toBe(404);
+    });
+  });
+
+  // ── Logo content-sniffing + sharp re-encode (PR #980 review) ────────
+
+  describe("logo content sniffing + re-encode", () => {
+    // Real PNG bytes from sharp — for the "lying jpeg" mismatch test we need
+    // sharp's `metadata()` to actually identify the bytes as PNG.
+    let PNG_BYTES: Buffer;
+    beforeAll(async () => {
+      PNG_BYTES = await sharp({
+        create: {
+          width: 1,
+          height: 1,
+          channels: 4,
+          background: { r: 0, g: 0, b: 255, alpha: 1 },
+        },
+      })
+        .png()
+        .toBuffer();
+    });
+
+    it("rejects non-image bytes labelled image/png (sniff mismatch)", async () => {
+      const id = createCustomKit(harness);
+      // Shell-script bytes claiming to be a PNG. `sharp` will fail to decode
+      // these and the route must reject before anything is written to disk.
+      const evil = Buffer.from("#!/bin/sh\nrm -rf /\n", "utf8");
+      const res = await request(harness.app)
+        .post(`/api/admin/pitch/brand-kits/${id}/logo`)
+        .attach("logo", evil, {
+          filename: "evil.png",
+          contentType: "image/png",
+        });
+      expect(res.status).toBe(400);
+      expect(res.body.error.code).toBe("bad_request");
+      const kit = harness.deps.brandKitRepo.getById(id);
+      expect(kit?.logoPath).toBeNull();
+    });
+
+    it("rejects mismatched format (PNG bytes labelled image/jpeg)", async () => {
+      const id = createCustomKit(harness);
+      const res = await request(harness.app)
+        .post(`/api/admin/pitch/brand-kits/${id}/logo`)
+        .attach("logo", PNG_BYTES, {
+          filename: "lying.jpg",
+          contentType: "image/jpeg",
+        });
+      expect(res.status).toBe(400);
+      expect(res.body.error.message).toMatch(/does not match claimed MIME/i);
+    });
+
+    it("rejects SVG uploads outright (stored-XSS sink)", async () => {
+      const id = createCustomKit(harness);
+      const svgXss = Buffer.from(
+        '<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>',
+        "utf8",
+      );
+      const res = await request(harness.app)
+        .post(`/api/admin/pitch/brand-kits/${id}/logo`)
+        .attach("logo", svgXss, {
+          filename: "evil.svg",
+          contentType: "image/svg+xml",
+        });
+      expect(res.status).toBe(400);
+      expect(res.body.error.code).toBe("bad_request");
+      expect(res.body.error.details?.allowed).not.toContain("image/svg+xml");
+    });
+
+    it("rejects GIF uploads (no longer in allow-list)", async () => {
+      const id = createCustomKit(harness);
+      const gif = Buffer.concat([
+        Buffer.from("GIF87a", "ascii"),
+        Buffer.from([0x01, 0x00, 0x01, 0x00, 0x80, 0x00, 0x00]),
+      ]);
+      const res = await request(harness.app)
+        .post(`/api/admin/pitch/brand-kits/${id}/logo`)
+        .attach("logo", gif, {
+          filename: "anim.gif",
+          contentType: "image/gif",
+        });
+      expect(res.status).toBe(400);
+    });
+  });
+
+  // ── Audit logging + Socket.IO emits (PR #980 review) ────────────────
+
+  describe("audit + Socket.IO wiring", () => {
+    interface MockedHarness extends TestHarness {
+      auditLog: ReturnType<typeof vi.fn>;
+      ioEmit: ReturnType<typeof vi.fn>;
+    }
+
+    function buildMockedHarness(): MockedHarness {
+      const base = buildHarness();
+      const auditLog = vi.fn().mockResolvedValue(undefined);
+      const ioEmit = vi.fn();
+      const auditLogger = { log: auditLog } as unknown as PitchRouterDeps["auditLogger"];
+      const io = { emit: ioEmit } as unknown as PitchRouterDeps["io"];
+      const newDeps: PitchRouterDeps = {
+        ...base.deps,
+        auditLogger,
+        io,
+      };
+      const app2 = express();
+      app2.use(express.json());
+      app2.use("/api/admin/pitch", createPitchRouter(newDeps));
+      return {
+        ...base,
+        app: app2,
+        deps: newDeps,
+        auditLog,
+        ioEmit,
+      };
+    }
+
+    let h: MockedHarness;
+    beforeEach(() => {
+      h = buildMockedHarness();
+    });
+    afterEach(() => {
+      h.cleanup();
+    });
+
+    it("emits pitch:deck:created + audit on POST /decks", async () => {
+      const kitId = createCustomKit(h);
+      const res = await request(h.app)
+        .post("/api/admin/pitch/decks")
+        .send({ title: "Em Deck", brand_kit_id: kitId });
+      expect(res.status).toBe(201);
+      expect(h.ioEmit).toHaveBeenCalledWith(
+        "pitch:deck:created",
+        expect.objectContaining({ deckId: expect.any(String) }),
+      );
+      expect(h.auditLog).toHaveBeenCalledWith(
+        expect.objectContaining({
+          category: "system",
+          event: "pitch_deck_created",
+        }),
+      );
+    });
+
+    it("emits pitch:deck:updated on PATCH /decks/:id", async () => {
+      const kitId = createCustomKit(h);
+      const { deckId } = createDeck(h, kitId);
+      h.ioEmit.mockClear();
+      h.auditLog.mockClear();
+      const res = await request(h.app)
+        .patch(`/api/admin/pitch/decks/${deckId}`)
+        .send({ title: "renamed" });
+      expect(res.status).toBe(200);
+      expect(h.ioEmit).toHaveBeenCalledWith(
+        "pitch:deck:updated",
+        expect.objectContaining({ deckId }),
+      );
+      expect(h.auditLog).toHaveBeenCalledWith(
+        expect.objectContaining({
+          category: "system",
+          event: "pitch_deck_updated",
+        }),
+      );
+    });
+
+    it("emits pitch:deck:deleted on DELETE /decks/:id", async () => {
+      const kitId = createCustomKit(h);
+      const { deckId } = createDeck(h, kitId);
+      h.ioEmit.mockClear();
+      h.auditLog.mockClear();
+      const res = await request(h.app).delete(
+        `/api/admin/pitch/decks/${deckId}`,
+      );
+      expect(res.status).toBe(200);
+      expect(h.ioEmit).toHaveBeenCalledWith(
+        "pitch:deck:deleted",
+        expect.objectContaining({ deckId }),
+      );
+      expect(h.auditLog).toHaveBeenCalledWith(
+        expect.objectContaining({ event: "pitch_deck_deleted" }),
+      );
+    });
+
+    it("emits pitch:slide:created/updated/moved/deleted across slide CRUD", async () => {
+      const kitId = createCustomKit(h);
+      const { deckId, slideId } = createDeck(h, kitId);
+      const secondSlide = SlideSchema.parse({
+        template: "title",
+        content: { title: "Second" },
+        speaker_notes: "",
+        transition: "slide",
+        fragments: [],
+      });
+      const created = await request(h.app)
+        .post(`/api/admin/pitch/decks/${deckId}/slides`)
+        .send({ slide: secondSlide });
+      expect(created.status).toBe(201);
+      expect(h.ioEmit).toHaveBeenCalledWith(
+        "pitch:slide:created",
+        expect.objectContaining({ deckId }),
+      );
+
+      const newId = created.body.slide.id;
+      h.ioEmit.mockClear();
+
+      const moved = await request(h.app)
+        .put(`/api/admin/pitch/decks/${deckId}/slides/${newId}/move`)
+        .send({ position: 0 });
+      expect(moved.status).toBe(200);
+      expect(h.ioEmit).toHaveBeenCalledWith(
+        "pitch:slide:moved",
+        expect.objectContaining({ deckId, slideId: newId }),
+      );
+
+      h.ioEmit.mockClear();
+      const patched = await request(h.app)
+        .patch(`/api/admin/pitch/decks/${deckId}/slides/${slideId}`)
+        .send({ slide: secondSlide });
+      expect(patched.status).toBe(200);
+      expect(h.ioEmit).toHaveBeenCalledWith(
+        "pitch:slide:updated",
+        expect.objectContaining({ deckId, slideId }),
+      );
+
+      h.ioEmit.mockClear();
+      const deleted = await request(h.app).delete(
+        `/api/admin/pitch/decks/${deckId}/slides/${slideId}`,
+      );
+      expect(deleted.status).toBe(200);
+      expect(h.ioEmit).toHaveBeenCalledWith(
+        "pitch:slide:deleted",
+        expect.objectContaining({ deckId, slideId }),
+      );
+    });
+
+    it("emits pitch:brand-kit:created/updated/deleted across brand-kit CRUD", async () => {
+      const create = await request(h.app)
+        .post("/api/admin/pitch/brand-kits")
+        .send({ name: "Auditable Kit" });
+      expect(create.status).toBe(201);
+      const id = create.body.brandKit.id;
+      expect(h.ioEmit).toHaveBeenCalledWith(
+        "pitch:brand-kit:created",
+        expect.objectContaining({ brandKitId: id }),
+      );
+
+      h.ioEmit.mockClear();
+      const patch = await request(h.app)
+        .patch(`/api/admin/pitch/brand-kits/${id}`)
+        .send({ name: "Renamed Kit" });
+      expect(patch.status).toBe(200);
+      expect(h.ioEmit).toHaveBeenCalledWith(
+        "pitch:brand-kit:updated",
+        expect.objectContaining({ brandKitId: id }),
+      );
+
+      h.ioEmit.mockClear();
+      const del = await request(h.app).delete(
+        `/api/admin/pitch/brand-kits/${id}`,
+      );
+      expect(del.status).toBe(200);
+      expect(h.ioEmit).toHaveBeenCalledWith(
+        "pitch:brand-kit:deleted",
+        expect.objectContaining({ brandKitId: id }),
+      );
+    });
+
+    it("emits pitch:slide:regenerate-queued (#962)", async () => {
+      const kitId = createCustomKit(h);
+      const { deckId, slideId } = createDeck(h, kitId);
+      submitSlideRegenerateTaskMock.mockReturnValue({ task: { id: "task-77" } });
+      h.ioEmit.mockClear();
+      const res = await request(h.app)
+        .post(`/api/admin/pitch/decks/${deckId}/slides/${slideId}/regenerate`)
+        .send({});
+      expect(res.status).toBe(202);
+      expect(h.ioEmit).toHaveBeenCalledWith(
+        "pitch:slide:regenerate-queued",
+        expect.objectContaining({ taskId: "task-77" }),
+      );
+      expect(h.auditLog).toHaveBeenCalledWith(
+        expect.objectContaining({
+          category: "tool",
+          event: "pitch_slide_regenerate_queued",
+        }),
+      );
+    });
+
+    it("emits pitch:image:queued for the image enqueue route (#962)", async () => {
+      const kitId = createCustomKit(h);
+      const { deckId, slideId } = createDeck(h, kitId);
+      enqueueSlideImageMock.mockReturnValue({
+        jobId: "job-1",
+        assetId: "asset-1",
+      });
+      h.ioEmit.mockClear();
+      const res = await request(h.app)
+        .post(`/api/admin/pitch/decks/${deckId}/slides/${slideId}/image`)
+        .send({ prompt: "a cat sitting", mode: "background" });
+      expect(res.status).toBe(202);
+      expect(h.ioEmit).toHaveBeenCalledWith(
+        "pitch:image:queued",
+        expect.objectContaining({ jobId: "job-1", assetId: "asset-1" }),
+      );
+      expect(h.auditLog).toHaveBeenCalledWith(
+        expect.objectContaining({
+          category: "tool",
+          event: "pitch_image_queued",
+        }),
+      );
+    });
+
+    it("emits pitch:draft:started + pitch:deck:created for /decks/draft (#962)", async () => {
+      const kitId = createCustomKit(h);
+      generateDeckMock.mockResolvedValue({
+        title: "Generated",
+        aspect_ratio: "16:9",
+        metadata: { source_script: "...", tone: "formal" },
+        slides: [
+          SlideSchema.parse({
+            template: "title",
+            content: { title: "Hi" },
+            speaker_notes: "",
+            transition: "slide",
+            fragments: [],
+          }),
+        ],
+      });
+      h.ioEmit.mockClear();
+      const res = await request(h.app)
+        .post("/api/admin/pitch/decks/draft")
+        .send({ script: "the story", brandKitId: kitId });
+      expect(res.status).toBe(201);
+      const events = h.ioEmit.mock.calls.map((c) => c[0]);
+      expect(events).toContain("pitch:draft:started");
+      expect(events).toContain("pitch:deck:created");
+    });
+
+    it("audit logs a security event when logo upload is rejected", async () => {
+      const id = createCustomKit(h);
+      h.auditLog.mockClear();
+      const res = await request(h.app)
+        .post(`/api/admin/pitch/brand-kits/${id}/logo`)
+        .attach("logo", Buffer.from("x"), {
+          filename: "x.bin",
+          contentType: "application/octet-stream",
+        });
+      expect(res.status).toBe(400);
+      expect(h.auditLog).toHaveBeenCalledWith(
+        expect.objectContaining({
+          category: "security",
+          event: "pitch_logo_upload_rejected",
+          level: "warn",
+        }),
+      );
+    });
+
+    it("audit logs a security event when starter brand-kit mutation is blocked", async () => {
+      h.auditLog.mockClear();
+      const res = await request(h.app)
+        .patch("/api/admin/pitch/brand-kits/starter-modern-minimal")
+        .send({ name: "no" });
+      expect(res.status).toBe(403);
+      expect(h.auditLog).toHaveBeenCalledWith(
+        expect.objectContaining({
+          category: "security",
+          event: "pitch_brand_kit_mutation_blocked",
+        }),
+      );
+    });
+  });
+
+  // ── Repo-side EXISTS check for brand-kit deletion (PR #980 review) ──
+
+  describe("brand-kit delete uses SQL EXISTS path", () => {
+    it("findFirstDeckIdByBrandKit returns referencing deck id (or null)", () => {
+      const kitId = createCustomKit(harness);
+      expect(harness.deps.pitchRepo.findFirstDeckIdByBrandKit(kitId)).toBeNull();
+      const { deckId } = createDeck(harness, kitId);
+      expect(harness.deps.pitchRepo.findFirstDeckIdByBrandKit(kitId)).toBe(deckId);
+      expect(
+        harness.deps.pitchRepo.findFirstDeckIdByBrandKit("non-existent"),
+      ).toBeNull();
+    });
+
+    it("DELETE /brand-kits/:id consults the EXISTS query (no full scan)", async () => {
+      const kitId = createCustomKit(harness);
+      createDeck(harness, kitId);
+      const spy = vi.spyOn(harness.deps.pitchRepo, "findFirstDeckIdByBrandKit");
+      const listSpy = vi.spyOn(harness.deps.pitchRepo, "listDecks");
+      const res = await request(harness.app).delete(
+        `/api/admin/pitch/brand-kits/${kitId}`,
+      );
+      expect(res.status).toBe(409);
+      expect(spy).toHaveBeenCalledWith(kitId);
+      expect(listSpy).not.toHaveBeenCalled();
     });
   });
 });

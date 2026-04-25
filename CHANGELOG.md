@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security (Epic #951 — Pitch Phase 3 review hardening, PR #980)
+
+- **Logo upload content-sniffing + re-encode (`src/api/pitch.ts`):** `POST /api/admin/pitch/brand-kits/:id/logo` now reads the uploaded bytes into memory, asks `sharp(buffer).metadata()` for the actual format, and rejects requests when the sniffed format does not match the claimed `Content-Type` or is not in the PNG / JPEG / WebP allowlist. **SVG and GIF uploads are no longer accepted** — both were stored-XSS / animation sinks for the upcoming Phase 4 Reveal renderer (option a from the review thread). Accepted rasters are re-encoded through `sharp` (PNG / JPEG@90 / WebP@90) with `resize({ width: 1024, height: 1024, fit: "inside", withoutEnlargement: true })`, which strips EXIF, embedded color profiles, and any non-image payload smuggled past the MIME check. Stale logos with a different extension are removed before the atomic rename so a kit only ever has one logo file on disk.
+
+### Added (Epic #951 — Pitch Phase 3 review hardening, PR #980)
+
+- **Audit logging on every Pitch mutation:** `PitchRouterDeps` now accepts an optional `auditLogger: AuditLogger`, wired from `src/server.ts`. Every mutating route emits a structured audit event — `system` for CRUD (`pitch_deck_created/updated/deleted`, `pitch_slide_created/updated/deleted/moved`, `pitch_brand_kit_*`), `tool` for AI calls (`pitch_deck_drafted`, `pitch_slide_regenerate_queued`, `pitch_slide_enhanced`, `pitch_slide_image_queued`), and `security` (warn) for upload rejections (`pitch_brand_kit_logo_rejected`) and starter-immutability blocks (`pitch_brand_kit_starter_blocked`).
+- **Socket.IO real-time events:** `PitchRouterDeps` now accepts an optional `io: Server`, also settable via the late-bound `setPitchIO()` helper (mirrors `setDirectorIO`). Every mutating route broadcasts `pitch:deck:created/updated/deleted`, `pitch:slide:created/updated/deleted/moved`, `pitch:brand-kit:created/updated/deleted`, `pitch:draft:started`, `pitch:slide:regenerate-queued`, and `pitch:image:queued` so future Pitch UI panels can stay in sync without polling.
+
+### Changed (Epic #951 — Pitch Phase 3 review hardening, PR #980)
+
+- **`DELETE /brand-kits/:id` no longer scans every deck.** Replaced the in-process `decks.find(d => d.brand_kit_id === id)` walk with a new `PitchRepository.findFirstDeckIdByBrandKit(brandKitId)` that runs `SELECT id FROM pitch_decks WHERE brand_kit_id = ? LIMIT 1`. O(decks) → O(1) on the index.
+
 ### Added (Epic #951 — Studio → Pitch Phase 3 REST API)
 
 - **REST router for Studio Pitch (#961, #959, #962, #966):** New `src/api/pitch.ts` exports `createPitchRouter({ pitchRepo, brandKitRepo, copilot, taskEngine, mediaQueueRepo, characterRepo?, brandKitsDir? })` mounted at `/api/admin/pitch` behind the standard `authMiddleware`. Ships 19 endpoints covering deck CRUD (`GET/POST /decks`, `GET/PATCH/DELETE /decks/:id`), slide CRUD (`POST /decks/:id/slides`, `PATCH/DELETE /decks/:id/slides/:slideId`, `PUT /decks/:id/slides/:slideId/move`), AI ops (`POST /decks/draft`, `POST /decks/:id/slides/:slideId/regenerate|enhance|image`), and brand kit management (`GET/POST /brand-kits`, `GET/PATCH/DELETE /brand-kits/:id`, `POST /brand-kits/:id/logo`). All bodies validated with Zod `.strict()` and structured `{ error: { code, message, details? } }` responses. Starter brand kits are immutable (PATCH/DELETE/logo → 403); brand kits referenced by a deck cannot be deleted (409 with `details.deckId`). Logo upload uses `multer` memoryStorage capped at 2 MB with image/* MIME enforcement, atomic write-to-temp-then-rename, and 413 on oversize. Last-slide deletion blocked with 409 to honour the `DeckSchema` ≥1-slide invariant. Rate-limiting deferred to Phase 7 (#977); `POST /decks/draft` returns synchronous JSON 201 (no SSE streaming — no existing SSE pattern in the codebase).

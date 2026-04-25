@@ -302,6 +302,18 @@ export class PitchRepository {
     return result.changes > 0;
   }
 
+  /**
+   * Cheap EXISTS probe used by the brand-kit delete guard so the router does
+   * not have to load every deck into memory just to check referential use.
+   * Returns the first referencing deck id, or null when none reference the kit.
+   */
+  findFirstDeckIdByBrandKit(brandKitId: string): string | null {
+    const row = this.db
+      .prepare(`SELECT id FROM pitch_decks WHERE brand_kit_id = ? LIMIT 1`)
+      .get(brandKitId) as { id: string } | undefined;
+    return row?.id ?? null;
+  }
+
   // ── Slides ────────────────────────────────────────────────────────────
 
   insertSlide(input: InsertSlideInput): SlideRecord {

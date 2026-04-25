@@ -112,7 +112,7 @@ import {
 import { createMemoryRouter } from "./api/memory.js";
 import { createAuthMiddleware } from "./auth/auth.js";
 import { createDirectorRouter, setDirectorIO } from "./api/director.js";
-import { createPitchRouter } from "./api/pitch.js";
+import { createPitchRouter, setPitchIO } from "./api/pitch.js";
 import { PitchRepository } from "./pitch/pitch-repository.js";
 import { createAudioRouter } from "./api/audio.js";
 import { createPresenterRouter } from "./api/presenter.js";
@@ -1679,6 +1679,7 @@ const pitchRouter = createPitchRouter({
   copilot,
   taskEngine,
   mediaQueueRepo,
+  auditLogger,
 });
 app.use("/api/admin/pitch", authMiddleware, pitchRouter);
 
@@ -2510,6 +2511,8 @@ const io = new SocketIOServer(httpServer, {
 
 // Bind Socket.IO to Director router for real-time produce activity events
 setDirectorIO(io);
+// Bind Socket.IO to Pitch router (Epic #951 Phase 3) for deck/slide/brand-kit events
+setPitchIO(io);
 // Bind Socket.IO to Admin router for skill update events
 setAdminIO(io);
 // Bind Socket.IO to Character router for training progress events

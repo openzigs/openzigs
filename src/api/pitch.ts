@@ -28,8 +28,11 @@ import { extname, join, resolve } from "node:path";
 import { Router, type Request, type Response } from "express";
 import multer from "multer";
 import { nanoid } from "nanoid";
+import sharp from "sharp";
+import type { Server as SocketIOServer } from "socket.io";
 import { z, type ZodTypeAny } from "zod";
 import { logger } from "../logging/logger.js";
+import { AuditLogger, type AuditCategory } from "../logging/audit-logger.js";
 import {
   BrandKitRepository,
   type BrandKit as RepoBrandKit,
@@ -67,25 +70,48 @@ export interface PitchRouterDeps {
   characterRepo?: CharacterRepository;
   /** Override for the brand-kit asset directory (tests). Defaults to `~/.openzigs/brand-kits`. */
   brandKitsDir?: string;
+  /** Audit log sink. Mutating routes emit categorized events through it. */
+  auditLogger?: AuditLogger;
+  /** Socket.IO server. Mutating routes broadcast `pitch:*` events through it. */
+  io?: SocketIOServer;
 }
 
 const DEFAULT_BRAND_KITS_DIR = join(homedir(), ".openzigs", "brand-kits");
 const STARTER_KIT_IDS = new Set(STARTER_BRAND_KITS.map((k) => k.id));
 const LOGO_MAX_BYTES = 2 * 1024 * 1024; // 2 MB cap (#966)
+// Allow-list per #966 acceptance criteria. SVG is intentionally excluded:
+// it is a stored-XSS / XXE carrier and the Phase 4 Reveal renderer would
+// embed it inline. Raster formats are re-encoded through `sharp` to strip
+// EXIF / embedded scripts and to resize to a sane max dimension.
 const ALLOWED_LOGO_MIMES = new Set([
   "image/png",
   "image/jpeg",
   "image/webp",
-  "image/svg+xml",
-  "image/gif",
 ]);
 const MIME_TO_EXT: Record<string, string> = {
   "image/png": "png",
   "image/jpeg": "jpg",
   "image/webp": "webp",
-  "image/svg+xml": "svg",
-  "image/gif": "gif",
 };
+/** sharp `metadata().format` value → canonical claimed MIME for sniff matching. */
+const SHARP_FORMAT_TO_MIME: Record<string, string> = {
+  png: "image/png",
+  jpeg: "image/jpeg",
+  jpg: "image/jpeg",
+  webp: "image/webp",
+};
+/** Max logo dimension after re-encode (#966 — keeps assets bounded for Reveal). */
+const LOGO_MAX_DIMENSION = 1024;
+
+/**
+ * Late-bound Socket.IO reference. The Phase-3 router is constructed before
+ * the HTTP server / Socket.IO server in `src/server.ts`, so production code
+ * sets the reference after `io` is built. Tests prefer `PitchRouterDeps.io`.
+ */
+let _pitchIO: SocketIOServer | null = null;
+export function setPitchIO(io: SocketIOServer): void {
+  _pitchIO = io;
+}
 
 // ── Error envelope helpers ─────────────────────────────────────────────
 
@@ -325,6 +351,32 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
   const router = Router();
   const brandKitsDir = deps.brandKitsDir ?? DEFAULT_BRAND_KITS_DIR;
 
+  // ── Audit + Socket.IO emit helpers ─────────────────────────────────
+  // Both sinks are optional so test harnesses can opt-in. Production
+  // wiring in `src/server.ts` always provides both.
+  const audit = (
+    category: AuditCategory,
+    event: string,
+    details: Record<string, unknown> = {},
+    level: "info" | "warn" | "error" | "security" = "info",
+  ): void => {
+    if (!deps.auditLogger) return;
+    void deps.auditLogger
+      .log({ level, category, event, details })
+      .catch((err) => {
+        logger.warn(`[Pitch API] audit log failed: ${errMessage(err)}`);
+      });
+  };
+  const emit = (event: string, payload: Record<string, unknown>): void => {
+    const target = deps.io ?? _pitchIO;
+    if (!target) return;
+    try {
+      target.emit(event, payload);
+    } catch (err) {
+      logger.warn(`[Pitch API] socket emit ${event} failed: ${errMessage(err)}`);
+    }
+  };
+
   // ────────────────────────────────────────────────────────────────────
   // Deck CRUD (#959)
   // ────────────────────────────────────────────────────────────────────
@@ -370,6 +422,11 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
         },
         slides: [{ id: nanoid(), slide: placeholder }],
       });
+      audit("system", "pitch_deck_created", {
+        deckId: deck.id,
+        brandKitId: deck.brand_kit_id,
+      });
+      emit("pitch:deck:created", { deckId: deck.id, deck });
       res.status(201).json({ deck });
     } catch (err) {
       logger.error(`[Pitch API] POST /decks failed: ${errMessage(err)}`);
@@ -422,6 +479,11 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
       sendError(res, 404, "not_found", `deck ${req.params.deckId} not found`);
       return;
     }
+    audit("system", "pitch_deck_updated", {
+      deckId: updated.id,
+      fields: Object.keys(body),
+    });
+    emit("pitch:deck:updated", { deckId: updated.id, deck: updated });
     res.json({ deck: updated });
   });
 
@@ -433,6 +495,8 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
       sendError(res, 404, "not_found", `deck ${req.params.deckId} not found`);
       return;
     }
+    audit("system", "pitch_deck_deleted", { deckId: req.params.deckId });
+    emit("pitch:deck:deleted", { deckId: req.params.deckId });
     res.json({ ok: true });
   });
 
@@ -477,6 +541,16 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
       }
 
       const final = deps.pitchRepo.getSlide(created.id);
+      audit("system", "pitch_slide_created", {
+        deckId: deck.id,
+        slideId: created.id,
+        position: insertAt,
+      });
+      emit("pitch:slide:created", {
+        deckId: deck.id,
+        slideId: created.id,
+        slide: final,
+      });
       res.status(201).json({ slide: final });
     } catch (err) {
       logger.error(`[Pitch API] POST /decks/:deckId/slides failed: ${errMessage(err)}`);
@@ -498,6 +572,16 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
       const updated = deps.pitchRepo.updateSlide(req.params.slideId, {
         slide: body.slide,
         position: body.position,
+      });
+      audit("system", "pitch_slide_updated", {
+        deckId: req.params.deckId,
+        slideId: req.params.slideId,
+        fields: Object.keys(body),
+      });
+      emit("pitch:slide:updated", {
+        deckId: req.params.deckId,
+        slideId: req.params.slideId,
+        slide: updated,
       });
       res.json({ slide: updated });
     } catch (err) {
@@ -531,6 +615,19 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
     ids.splice(target, 0, moved);
     try {
       deps.pitchRepo.reorderSlides(req.params.deckId, ids);
+      audit("system", "pitch_slide_moved", {
+        deckId: req.params.deckId,
+        slideId: req.params.slideId,
+        from: idx,
+        to: target,
+      });
+      emit("pitch:slide:moved", {
+        deckId: req.params.deckId,
+        slideId: req.params.slideId,
+        from: idx,
+        to: target,
+        slides: ids,
+      });
       res.json({ ok: true, slides: ids });
     } catch (err) {
       sendError(res, 400, "bad_request", errMessage(err));
@@ -561,6 +658,14 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
       req.params.deckId,
       after.map((s) => s.id),
     );
+    audit("system", "pitch_slide_deleted", {
+      deckId: req.params.deckId,
+      slideId: req.params.slideId,
+    });
+    emit("pitch:slide:deleted", {
+      deckId: req.params.deckId,
+      slideId: req.params.slideId,
+    });
     res.json({ ok: true });
   });
 
@@ -580,6 +685,14 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
     const brandKit = repoToPitchBrandKit(repoKit);
 
     try {
+      audit("tool", "pitch_draft_started", {
+        brandKitId: brandKit.id,
+        scriptLength: body.script.length,
+      });
+      emit("pitch:draft:started", {
+        brandKitId: brandKit.id,
+        scriptLength: body.script.length,
+      });
       const generated = await generateDeck({
         script: body.script,
         brandKit,
@@ -597,6 +710,12 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
         metadata: generated.metadata,
         slides: generated.slides.map((slide) => ({ id: nanoid(), slide })),
       });
+      audit("system", "pitch_deck_created", {
+        deckId: persisted.id,
+        brandKitId: persisted.brand_kit_id,
+        source: "draft",
+      });
+      emit("pitch:deck:created", { deckId: persisted.id, deck: persisted });
       res.status(201).json({ deck: persisted });
     } catch (err) {
       logger.error(`[Pitch API] POST /decks/draft failed: ${errMessage(err)}`);
@@ -623,6 +742,16 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
           deckId: req.params.deckId,
           slideId: req.params.slideId,
           hint: body.instruction,
+        });
+        audit("tool", "pitch_slide_regenerate_queued", {
+          deckId: req.params.deckId,
+          slideId: req.params.slideId,
+          taskId: submission.task.id,
+        });
+        emit("pitch:slide:regenerate-queued", {
+          deckId: req.params.deckId,
+          slideId: req.params.slideId,
+          taskId: submission.task.id,
         });
         res.status(202).json({ taskId: submission.task.id });
       } catch (err) {
@@ -662,6 +791,16 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
         copilot: deps.copilot,
       });
       const updated = deps.pitchRepo.updateSlide(slide.id, { slide: polished });
+      audit("tool", "pitch_slide_enhanced", {
+        deckId: req.params.deckId,
+        slideId: req.params.slideId,
+      });
+      emit("pitch:slide:updated", {
+        deckId: req.params.deckId,
+        slideId: req.params.slideId,
+        slide: updated,
+        source: "enhance",
+      });
       res.json({ slide: updated });
     } catch (err) {
       logger.error(`[Pitch API] enhance slide failed: ${errMessage(err)}`);
@@ -696,6 +835,20 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
         height: body.height,
         mediaQueueRepo: deps.mediaQueueRepo,
         characterRepo: deps.characterRepo,
+      });
+      audit("tool", "pitch_image_queued", {
+        deckId: req.params.deckId,
+        slideId: req.params.slideId,
+        jobId: result.jobId,
+        assetId: result.assetId,
+        mode: body.mode,
+      });
+      emit("pitch:image:queued", {
+        deckId: req.params.deckId,
+        slideId: req.params.slideId,
+        jobId: result.jobId,
+        assetId: result.assetId,
+        mode: body.mode,
       });
       res.status(202).json({ jobId: result.jobId, assetId: result.assetId });
     } catch (err) {
@@ -740,6 +893,14 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
         outroTemplateId: null,
       });
       res.status(201).json({ brandKit: { ...created, isStarter: false } });
+      audit("system", "pitch_brand_kit_created", {
+        brandKitId: created.id,
+        name: created.name,
+      });
+      emit("pitch:brand-kit:created", {
+        brandKitId: created.id,
+        brandKit: { ...created, isStarter: false },
+      });
     } catch (err) {
       // Likely UNIQUE name collision.
       sendError(res, 409, "conflict", errMessage(err));
@@ -759,6 +920,12 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
 
   router.patch("/brand-kits/:id", (req, res) => {
     if (STARTER_KIT_IDS.has(req.params.id)) {
+      audit(
+        "security",
+        "pitch_brand_kit_mutation_blocked",
+        { brandKitId: req.params.id, reason: "starter_immutable" },
+        "warn",
+      );
       sendError(res, 403, "forbidden", "starter brand kits are immutable");
       return;
     }
@@ -770,6 +937,14 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
       sendError(res, 404, "not_found", `brand kit ${req.params.id} not found`);
       return;
     }
+    audit("system", "pitch_brand_kit_updated", {
+      brandKitId: req.params.id,
+      fields: Object.keys(body),
+    });
+    emit("pitch:brand-kit:updated", {
+      brandKitId: req.params.id,
+      brandKit: { ...updated, isStarter: false },
+    });
     res.json({
       brandKit: { ...updated, isStarter: false },
     });
@@ -777,18 +952,25 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
 
   router.delete("/brand-kits/:id", (req, res) => {
     if (STARTER_KIT_IDS.has(req.params.id)) {
+      audit(
+        "security",
+        "pitch_brand_kit_mutation_blocked",
+        { brandKitId: req.params.id, reason: "starter_immutable" },
+        "warn",
+      );
       sendError(res, 403, "forbidden", "starter brand kits cannot be deleted");
       return;
     }
-    const decks = deps.pitchRepo.listDecks();
-    const referencingDeck = decks.find((d) => d.brand_kit_id === req.params.id);
-    if (referencingDeck) {
+    const referencingDeckId = deps.pitchRepo.findFirstDeckIdByBrandKit(
+      req.params.id,
+    );
+    if (referencingDeckId) {
       sendError(
         res,
         409,
         "conflict",
-        `brand kit is referenced by deck ${referencingDeck.id}`,
-        { deckId: referencingDeck.id },
+        `brand kit is referenced by deck ${referencingDeckId}`,
+        { deckId: referencingDeckId },
       );
       return;
     }
@@ -797,6 +979,8 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
       sendError(res, 404, "not_found", `brand kit ${req.params.id} not found`);
       return;
     }
+    audit("system", "pitch_brand_kit_deleted", { brandKitId: req.params.id });
+    emit("pitch:brand-kit:deleted", { brandKitId: req.params.id });
     res.json({ ok: true });
   });
 
@@ -812,6 +996,12 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
       // Permit logo updates on starter kits is debatable; the issue says
       // PATCH on starter → 403, and logo upload is effectively a PATCH.
       if (STARTER_KIT_IDS.has(req.params.id)) {
+        audit(
+          "security",
+          "pitch_brand_kit_mutation_blocked",
+          { brandKitId: req.params.id, reason: "starter_immutable" },
+          "warn",
+        );
         sendError(res, 403, "forbidden", "starter brand kits are immutable");
         return;
       }
@@ -821,7 +1011,20 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
         sendError(res, 400, "bad_request", "logo file is required (multipart field 'logo')");
         return;
       }
+      // Step 1: Reject by claimed MIME first — cheap, keeps the deny-list tight.
+      // SVG and GIF are intentionally NOT in the allow-list (stored-XSS / large
+      // animated payload sinks for the Phase 4 Reveal renderer).
       if (!ALLOWED_LOGO_MIMES.has(file.mimetype)) {
+        audit(
+          "security",
+          "pitch_logo_upload_rejected",
+          {
+            brandKitId: req.params.id,
+            reason: "mime_not_allowed",
+            claimedMime: file.mimetype,
+          },
+          "warn",
+        );
         sendError(
           res,
           400,
@@ -833,11 +1036,111 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
       }
       if (file.size > LOGO_MAX_BYTES) {
         // Defence in depth — multer should have rejected this already.
+        audit(
+          "security",
+          "pitch_logo_upload_rejected",
+          {
+            brandKitId: req.params.id,
+            reason: "oversize",
+            size: file.size,
+          },
+          "warn",
+        );
         sendError(res, 413, "bad_request", "logo exceeds 2 MB cap");
         return;
       }
 
+      // Step 2: Content-sniff with `sharp`. The client `Content-Type` header
+      // is attacker-controlled — verify the actual bytes match the claim.
+      // `sharp` parses the file header so an HTML / shell / PE payload
+      // mislabelled as `image/png` will throw or report a non-image format.
+      let sniffedFormat: string | undefined;
+      let sniffedWidth: number | undefined;
+      let sniffedHeight: number | undefined;
       try {
+        const meta = await sharp(file.buffer).metadata();
+        sniffedFormat = meta.format;
+        sniffedWidth = meta.width;
+        sniffedHeight = meta.height;
+      } catch (err) {
+        audit(
+          "security",
+          "pitch_logo_upload_rejected",
+          {
+            brandKitId: req.params.id,
+            reason: "sniff_failed",
+            claimedMime: file.mimetype,
+            error: errMessage(err),
+          },
+          "warn",
+        );
+        sendError(
+          res,
+          400,
+          "bad_request",
+          "logo bytes are not a recognisable image",
+        );
+        return;
+      }
+      const sniffedMime = sniffedFormat
+        ? SHARP_FORMAT_TO_MIME[sniffedFormat]
+        : undefined;
+      if (!sniffedMime || sniffedMime !== file.mimetype) {
+        audit(
+          "security",
+          "pitch_logo_upload_rejected",
+          {
+            brandKitId: req.params.id,
+            reason: "mime_mismatch",
+            claimedMime: file.mimetype,
+            sniffedFormat,
+          },
+          "warn",
+        );
+        sendError(
+          res,
+          400,
+          "bad_request",
+          `logo content does not match claimed MIME ${file.mimetype}`,
+          { sniffedFormat: sniffedFormat ?? null },
+        );
+        return;
+      }
+
+      try {
+        // Step 3: Re-encode through sharp. This strips EXIF, ICC profiles,
+        // embedded XMP / scripts, and clamps the dimensions. The output is
+        // written in the same format family as the (verified) input so the
+        // brand kit retains its intended look.
+        const pipeline = sharp(file.buffer).resize({
+          width: LOGO_MAX_DIMENSION,
+          height: LOGO_MAX_DIMENSION,
+          fit: "inside",
+          withoutEnlargement: true,
+        });
+        let reencoded: Buffer;
+        switch (sniffedFormat) {
+          case "png":
+            reencoded = await pipeline.png().toBuffer();
+            break;
+          case "jpeg":
+          case "jpg":
+            reencoded = await pipeline.jpeg({ quality: 90 }).toBuffer();
+            break;
+          case "webp":
+            reencoded = await pipeline.webp({ quality: 90 }).toBuffer();
+            break;
+          default:
+            // Unreachable — gated by SHARP_FORMAT_TO_MIME above.
+            sendError(
+              res,
+              400,
+              "bad_request",
+              `unsupported sniffed format ${sniffedFormat}`,
+            );
+            return;
+        }
+
         const ext =
           MIME_TO_EXT[file.mimetype] ??
           (extname(file.originalname || "").replace(/^\./, "") || "bin");
@@ -845,7 +1148,7 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
         await mkdir(kitDir, { recursive: true });
         const finalPath = join(kitDir, `logo.${ext}`);
         const tmpPath = `${finalPath}.tmp-${nanoid(8)}`;
-        await writeFile(tmpPath, file.buffer);
+        await writeFile(tmpPath, reencoded);
         // Clean up any stale logo with a different extension before rename.
         for (const oldExt of Object.values(MIME_TO_EXT)) {
           const old = join(kitDir, `logo.${oldExt}`);
@@ -863,9 +1166,28 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
         const updated = deps.brandKitRepo.update(kit.id, {
           logoPath: finalPath,
         });
+        audit("system", "pitch_brand_kit_logo_updated", {
+          brandKitId: kit.id,
+          path: finalPath,
+          originalSize: file.size,
+          reencodedSize: reencoded.length,
+          sniffedFormat,
+          width: sniffedWidth,
+          height: sniffedHeight,
+        });
+        emit("pitch:brand-kit:updated", {
+          brandKitId: kit.id,
+          brandKit: { ...(updated ?? kit), isStarter: false },
+          source: "logo",
+        });
         res.json({
           brandKit: { ...(updated ?? kit), isStarter: false },
-          logo: { path: finalPath, size: file.size, mime: file.mimetype },
+          logo: {
+            path: finalPath,
+            size: reencoded.length,
+            mime: file.mimetype,
+            originalSize: file.size,
+          },
         });
       } catch (err) {
         logger.error(`[Pitch API] logo upload failed: ${errMessage(err)}`);
