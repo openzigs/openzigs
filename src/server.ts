@@ -112,6 +112,8 @@ import {
 import { createMemoryRouter } from "./api/memory.js";
 import { createAuthMiddleware } from "./auth/auth.js";
 import { createDirectorRouter, setDirectorIO } from "./api/director.js";
+import { createPitchRouter, setPitchIO } from "./api/pitch.js";
+import { PitchRepository } from "./pitch/pitch-repository.js";
 import { createAudioRouter } from "./api/audio.js";
 import { createPresenterRouter } from "./api/presenter.js";
 import { createSocialRouter, dispatchApprovedReply } from "./api/social.js";
@@ -332,6 +334,9 @@ const outboxRepo = new OutboxRepository(db);
 outboxRepo.migrate();
 const brandKitRepo = new BrandKitRepository(db);
 brandKitRepo.migrate();
+// Epic #951 (Studio Pitch) sub-issue #956: pitch decks/slides/assets repo.
+const pitchRepo = new PitchRepository(db);
+pitchRepo.migrate();
 // Epic #951 (Studio Pitch) sub-issue #953: seed 8 starter Brand Kits.
 // Idempotent — only inserts kits whose id is not already in the DB.
 {
@@ -1667,6 +1672,17 @@ const directorRouter = createDirectorRouter({
 });
 app.use("/api/admin/director", authMiddleware, directorRouter);
 
+// Epic #951 (Studio Pitch) Phase 3 — REST router for decks/slides/brand kits.
+const pitchRouter = createPitchRouter({
+  pitchRepo,
+  brandKitRepo,
+  copilot,
+  taskEngine,
+  mediaQueueRepo,
+  auditLogger,
+});
+app.use("/api/admin/pitch", authMiddleware, pitchRouter);
+
 // ── Render → Knowledge ingestion hook + DB persistence ──
 // After each successful render: persist the output path so it survives
 // restarts, then ingest the narration text into the knowledge base.
@@ -2495,6 +2511,8 @@ const io = new SocketIOServer(httpServer, {
 
 // Bind Socket.IO to Director router for real-time produce activity events
 setDirectorIO(io);
+// Bind Socket.IO to Pitch router (Epic #951 Phase 3) for deck/slide/brand-kit events
+setPitchIO(io);
 // Bind Socket.IO to Admin router for skill update events
 setAdminIO(io);
 // Bind Socket.IO to Character router for training progress events
