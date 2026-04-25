@@ -2578,6 +2578,9 @@ describe("Director API router", () => {
           watermark_path TEXT,
           intro_template_id TEXT,
           outro_template_id TEXT,
+          font_heading TEXT,
+          font_body TEXT,
+          footer_text TEXT,
           created_at TEXT NOT NULL,
           updated_at TEXT NOT NULL
         );

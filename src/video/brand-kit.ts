@@ -1,6 +1,8 @@
 /**
  * Brand Kit System — CRUD for brand visual identity presets.
  * Issue #523: Store brand colors, fonts, logo, watermark, and template references.
+ * Issue #955 (Epic #951 / Studio Pitch): extended with `font_heading`,
+ * `font_body`, and `footer_text` columns via idempotent ALTER TABLE migrations.
  */
 import type Database from "better-sqlite3";
 
@@ -11,6 +13,12 @@ export interface BrandKit {
   secondaryColor: string;
   accentColor: string;
   fontFamily: string;
+  /** Heading font family (Pitch Brand Kit). Null on legacy rows. */
+  fontHeading: string | null;
+  /** Body font family (Pitch Brand Kit). Null on legacy rows. */
+  fontBody: string | null;
+  /** Optional footer line (Pitch Brand Kit). Null when unset. */
+  footerText: string | null;
   logoPath: string | null;
   watermarkPath: string | null;
   introTemplateId: string | null;
@@ -26,6 +34,9 @@ interface BrandKitRow {
   secondary_color: string;
   accent_color: string;
   font_family: string;
+  font_heading: string | null;
+  font_body: string | null;
+  footer_text: string | null;
   logo_path: string | null;
   watermark_path: string | null;
   intro_template_id: string | null;
@@ -42,6 +53,9 @@ function rowToKit(row: BrandKitRow): BrandKit {
     secondaryColor: row.secondary_color,
     accentColor: row.accent_color,
     fontFamily: row.font_family,
+    fontHeading: row.font_heading,
+    fontBody: row.font_body,
+    footerText: row.footer_text,
     logoPath: row.logo_path,
     watermarkPath: row.watermark_path,
     introTemplateId: row.intro_template_id,
@@ -71,15 +85,43 @@ export class BrandKitRepository {
         updated_at TEXT NOT NULL
       );
     `);
+
+    // Issue #955 — additive forward-compat columns. Each ALTER is wrapped in
+    // try/catch so re-running migrate() against an already-migrated DB is a
+    // no-op (mirrors src/webhooks/webhook-repository.ts pattern).
+    const additiveColumns = [
+      "ALTER TABLE brand_kits ADD COLUMN font_heading TEXT",
+      "ALTER TABLE brand_kits ADD COLUMN font_body TEXT",
+      "ALTER TABLE brand_kits ADD COLUMN footer_text TEXT",
+    ];
+    for (const ddl of additiveColumns) {
+      try {
+        this.db.exec(ddl);
+      } catch (err) {
+        if (!/duplicate column name/i.test(String(err))) {
+          throw err;
+        }
+      }
+    }
   }
 
-  create(kit: Omit<BrandKit, "createdAt" | "updatedAt">): BrandKit {
+  create(
+    kit: Omit<
+      BrandKit,
+      "createdAt" | "updatedAt" | "fontHeading" | "fontBody" | "footerText"
+    > &
+      Partial<Pick<BrandKit, "fontHeading" | "fontBody" | "footerText">>,
+  ): BrandKit {
     const now = new Date().toISOString();
+    const fontHeading = kit.fontHeading ?? null;
+    const fontBody = kit.fontBody ?? null;
+    const footerText = kit.footerText ?? null;
     this.db
       .prepare(
         `INSERT INTO brand_kits (id, name, primary_color, secondary_color, accent_color, font_family,
+        font_heading, font_body, footer_text,
         logo_path, watermark_path, intro_template_id, outro_template_id, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         kit.id,
@@ -88,6 +130,9 @@ export class BrandKitRepository {
         kit.secondaryColor,
         kit.accentColor,
         kit.fontFamily,
+        fontHeading,
+        fontBody,
+        footerText,
         kit.logoPath ?? null,
         kit.watermarkPath ?? null,
         kit.introTemplateId ?? null,
@@ -95,7 +140,14 @@ export class BrandKitRepository {
         now,
         now,
       );
-    return { ...kit, createdAt: now, updatedAt: now };
+    return {
+      ...kit,
+      fontHeading,
+      fontBody,
+      footerText,
+      createdAt: now,
+      updatedAt: now,
+    };
   }
 
   getById(id: string): BrandKit | null {
@@ -126,6 +178,16 @@ export class BrandKitRepository {
       secondaryColor: fields.secondaryColor ?? existing.secondaryColor,
       accentColor: fields.accentColor ?? existing.accentColor,
       fontFamily: fields.fontFamily ?? existing.fontFamily,
+      fontHeading:
+        fields.fontHeading !== undefined
+          ? fields.fontHeading
+          : existing.fontHeading,
+      fontBody:
+        fields.fontBody !== undefined ? fields.fontBody : existing.fontBody,
+      footerText:
+        fields.footerText !== undefined
+          ? fields.footerText
+          : existing.footerText,
       logoPath:
         fields.logoPath !== undefined ? fields.logoPath : existing.logoPath,
       watermarkPath:
@@ -145,7 +207,8 @@ export class BrandKitRepository {
     this.db
       .prepare(
         `UPDATE brand_kits SET name = ?, primary_color = ?, secondary_color = ?, accent_color = ?,
-        font_family = ?, logo_path = ?, watermark_path = ?, intro_template_id = ?,
+        font_family = ?, font_heading = ?, font_body = ?, footer_text = ?,
+        logo_path = ?, watermark_path = ?, intro_template_id = ?,
         outro_template_id = ?, updated_at = ? WHERE id = ?`,
       )
       .run(
@@ -154,6 +217,9 @@ export class BrandKitRepository {
         merged.secondaryColor,
         merged.accentColor,
         merged.fontFamily,
+        merged.fontHeading,
+        merged.fontBody,
+        merged.footerText,
         merged.logoPath,
         merged.watermarkPath,
         merged.introTemplateId,

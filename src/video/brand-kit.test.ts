@@ -123,11 +123,74 @@ describe("BrandKitRepository", () => {
   // ── migrate idempotency ────────────────────────────────
 
   describe("migrate", () => {
-    it("is idempotent", () => {
+    it("is idempotent (CREATE TABLE + ALTER TABLE)", () => {
+      // Sub-issue #955: extra ALTER TABLE statements added font_heading,
+      // font_body, footer_text. Calling migrate() repeatedly must not throw.
+      repo.migrate();
       repo.migrate();
       repo.migrate();
       repo.create(sampleKit);
       expect(repo.getById("kit-1")).not.toBeNull();
+    });
+  });
+
+  // ── Pitch Brand Kit fields (issue #955) ────────────────
+
+  describe("Pitch Brand Kit columns (font_heading, font_body, footer_text)", () => {
+    it("defaults the three new fields to null when omitted on create", () => {
+      const created = repo.create(sampleKit);
+      expect(created.fontHeading).toBeNull();
+      expect(created.fontBody).toBeNull();
+      expect(created.footerText).toBeNull();
+      const fetched = repo.getById("kit-1")!;
+      expect(fetched.fontHeading).toBeNull();
+      expect(fetched.fontBody).toBeNull();
+      expect(fetched.footerText).toBeNull();
+    });
+
+    it("persists new fields on create round-trip", () => {
+      repo.create({
+        ...sampleKit,
+        fontHeading: "Space Grotesk",
+        fontBody: "IBM Plex Sans",
+        footerText: "© 2026 Acme Corp",
+      });
+      const fetched = repo.getById("kit-1")!;
+      expect(fetched.fontHeading).toBe("Space Grotesk");
+      expect(fetched.fontBody).toBe("IBM Plex Sans");
+      expect(fetched.footerText).toBe("© 2026 Acme Corp");
+    });
+
+    it("update can set new fields without disturbing existing values", () => {
+      repo.create(sampleKit);
+      const updated = repo.update("kit-1", {
+        fontHeading: "Inter",
+        fontBody: "Inter",
+      })!;
+      expect(updated.fontHeading).toBe("Inter");
+      expect(updated.fontBody).toBe("Inter");
+      expect(updated.fontFamily).toBe("Roboto"); // legacy field untouched
+      expect(updated.primaryColor).toBe("#ff0000");
+    });
+
+    it("update can clear new fields back to null", () => {
+      repo.create({ ...sampleKit, fontHeading: "X", fontBody: "Y", footerText: "Z" });
+      const cleared = repo.update("kit-1", {
+        fontHeading: null,
+        fontBody: null,
+        footerText: null,
+      })!;
+      expect(cleared.fontHeading).toBeNull();
+      expect(cleared.fontBody).toBeNull();
+      expect(cleared.footerText).toBeNull();
+    });
+
+    it("does not break legacy callers that omit the new fields entirely", () => {
+      // The original sampleKit shape (pre-#955) — must still create + read OK.
+      repo.create(sampleKit);
+      const updated = repo.update("kit-1", { name: "Renamed" })!;
+      expect(updated.name).toBe("Renamed");
+      expect(updated.fontHeading).toBeNull();
     });
   });
 });
