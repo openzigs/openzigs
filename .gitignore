@@ -185,6 +185,8 @@ vitest-out.*
 cov-*.txt
 cov-*.cjs
 coverage-output.txt
+coverage_out.txt
+pr*-comments.txt
 ui/cov-*.txt
 ui/cov-*.cjs
 ui/coverage-output.txt

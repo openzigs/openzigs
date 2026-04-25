@@ -1,6 +1,6 @@
 import { render, screen } from "@testing-library/react";
 import { describe, it, expect, vi } from "vitest";
-import { NavBar } from "./nav-bar";
+import { NavBar, NAV_GROUPS } from "./nav-bar";
 
 // Mock next/navigation
 vi.mock("next/navigation", () => ({
@@ -40,5 +40,16 @@ describe("NavBar", () => {
 
     const chatLink = screen.getByText("Chat");
     expect(chatLink.className).not.toContain("bg-primary");
+  });
+
+  it("includes a Pitch link in the Studio group pointing at /pitch", async () => {
+    // Radix dropdown content is rendered inside a portal that doesn't
+    // open in jsdom without user-event keyboard nav. Asserting against
+    // the source-of-truth NAV_GROUPS is faster and equivalent — the
+    // render path is the same `Link` wired into every group item.
+    const studio = NAV_GROUPS.find((g) => g.label === "Studio");
+    expect(studio).toBeDefined();
+    const pitch = studio!.items.find((it) => it.href === "/pitch");
+    expect(pitch).toEqual({ href: "/pitch", label: "Pitch" });
   });
 });

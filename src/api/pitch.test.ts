@@ -1433,4 +1433,147 @@ describe("Pitch REST router", () => {
       expect(listSpy).not.toHaveBeenCalled();
     });
   });
+
+  // ── Phase 6 — Export endpoints (#972 #973 #974) ─────────────────────
+
+  describe("export endpoints (Phase 6)", () => {
+    function buildExportHarness() {
+      const pdf = vi.fn().mockResolvedValue({
+        buffer: Buffer.from("%PDF-1.4 stub"),
+        filename: "ignored.pdf",
+        contentType: "application/pdf",
+      });
+      const pptx = vi.fn().mockResolvedValue({
+        buffer: Buffer.from("PK\x03\x04 pptx"),
+        filename: "ignored.pptx",
+        contentType:
+          "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+      });
+      const zip = vi.fn().mockResolvedValue({
+        buffer: Buffer.from("PK\x03\x04 zip"),
+        filename: "ignored.zip",
+        contentType: "application/zip",
+      });
+      const md = vi.fn().mockReturnValue({
+        buffer: Buffer.from("# md"),
+        filename: "ignored.md",
+        contentType: "text/markdown; charset=utf-8",
+      });
+      const notes = vi.fn().mockResolvedValue({
+        buffer: Buffer.from("%PDF-1.4 notes"),
+        filename: "ignored-notes.pdf",
+        contentType: "application/pdf",
+      });
+
+      const exporters = { pdf, pptx, zip, md, notes };
+      const newDeps: PitchRouterDeps = { ...harness.deps, exporters };
+      const app = express();
+      app.use(express.json());
+      app.use("/api/admin/pitch", createPitchRouter(newDeps));
+      return { app, exporters };
+    }
+
+    async function setupDeck(): Promise<string> {
+      const kitId = createCustomKit(harness);
+      const { deckId } = createDeck(harness, kitId, "Export Demo");
+      return deckId;
+    }
+
+    it("GET export.md returns markdown with sanitized filename", async () => {
+      const deckId = await setupDeck();
+      const { app, exporters } = buildExportHarness();
+      const res = await request(app).get(`/api/admin/pitch/decks/${deckId}/export.md`);
+      expect(res.status).toBe(200);
+      expect(res.headers["content-type"]).toContain("text/markdown");
+      expect(res.headers["content-disposition"]).toBe(
+        'attachment; filename="Export_Demo.md"',
+      );
+      expect(exporters.md).toHaveBeenCalledOnce();
+    });
+
+    it("GET export.zip streams a zip buffer", async () => {
+      const deckId = await setupDeck();
+      const { app, exporters } = buildExportHarness();
+      const res = await request(app).get(`/api/admin/pitch/decks/${deckId}/export.zip`);
+      expect(res.status).toBe(200);
+      expect(res.headers["content-type"]).toContain("application/zip");
+      expect(res.headers["content-disposition"]).toBe(
+        'attachment; filename="Export_Demo.zip"',
+      );
+      expect(exporters.zip).toHaveBeenCalledOnce();
+    });
+
+    it("GET export.pptx streams a pptx buffer", async () => {
+      const deckId = await setupDeck();
+      const { app, exporters } = buildExportHarness();
+      const res = await request(app).get(`/api/admin/pitch/decks/${deckId}/export.pptx`);
+      expect(res.status).toBe(200);
+      expect(res.headers["content-type"]).toContain("presentationml");
+      expect(exporters.pptx).toHaveBeenCalledOnce();
+    });
+
+    it("GET export.pdf streams a pdf buffer", async () => {
+      const deckId = await setupDeck();
+      const { app, exporters } = buildExportHarness();
+      const res = await request(app).get(`/api/admin/pitch/decks/${deckId}/export.pdf`);
+      expect(res.status).toBe(200);
+      expect(res.headers["content-type"]).toContain("application/pdf");
+      expect(exporters.pdf).toHaveBeenCalledOnce();
+    });
+
+    it("GET export.notes.pdf streams a notes pdf buffer with -notes suffix", async () => {
+      const deckId = await setupDeck();
+      const { app, exporters } = buildExportHarness();
+      const res = await request(app).get(
+        `/api/admin/pitch/decks/${deckId}/export.notes.pdf`,
+      );
+      expect(res.status).toBe(200);
+      expect(res.headers["content-type"]).toContain("application/pdf");
+      expect(res.headers["content-disposition"]).toBe(
+        'attachment; filename="Export_Demo-notes.pdf"',
+      );
+      expect(exporters.notes).toHaveBeenCalledOnce();
+    });
+
+    it("GET export.html returns standalone HTML", async () => {
+      const deckId = await setupDeck();
+      const { app } = buildExportHarness();
+      const res = await request(app).get(`/api/admin/pitch/decks/${deckId}/export.html`);
+      expect(res.status).toBe(200);
+      expect(res.headers["content-type"]).toContain("text/html");
+      expect(res.text).toContain("<!doctype html>");
+    });
+
+    it("returns 404 for unknown deck on every export route", async () => {
+      const { app } = buildExportHarness();
+      for (const ext of ["pdf", "pptx", "zip", "md", "notes.pdf", "html"]) {
+        const res = await request(app).get(`/api/admin/pitch/decks/missing/export.${ext}`);
+        expect(res.status, `ext=${ext}`).toBe(404);
+      }
+    });
+
+    it("returns 500 with generic message when an exporter throws", async () => {
+      const deckId = await setupDeck();
+      const exporters = {
+        pdf: vi.fn().mockRejectedValue(new Error("decktape exited 1")),
+        pptx: vi.fn().mockRejectedValue(new Error("pptxgen blew up")),
+        zip: vi.fn().mockRejectedValue(new Error("archiver fail")),
+        md: vi.fn().mockImplementation(() => {
+          throw new Error("md fail");
+        }),
+        notes: vi.fn().mockRejectedValue(new Error("notes fail")),
+      };
+      const newDeps: PitchRouterDeps = { ...harness.deps, exporters };
+      const app = express();
+      app.use(express.json());
+      app.use("/api/admin/pitch", createPitchRouter(newDeps));
+
+      for (const ext of ["pdf", "pptx", "zip", "md", "notes.pdf"]) {
+        const res = await request(app).get(`/api/admin/pitch/decks/${deckId}/export.${ext}`);
+        expect(res.status, `ext=${ext}`).toBe(500);
+        // Generic — never leak the underlying message.
+        expect(res.body.error.message, `ext=${ext}`).not.toMatch(/decktape|pptxgen|archiver/);
+      }
+    });
+  });
 });

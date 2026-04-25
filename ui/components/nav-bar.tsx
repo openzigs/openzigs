@@ -27,7 +27,7 @@ type NavGroup = {
   items: NavLink[];
 };
 
-const NAV_GROUPS: NavGroup[] = [
+export const NAV_GROUPS: NavGroup[] = [
   {
     label: "Studio",
     icon: <Film className="h-3.5 w-3.5" />,
@@ -35,6 +35,7 @@ const NAV_GROUPS: NavGroup[] = [
       { href: "/director", label: "Director" },
       { href: "/director/analytics", label: "YT Analytics" },
       { href: "/analytics", label: "Analytics" },
+      { href: "/pitch", label: "Pitch" },
       { href: "/presenter", label: "Presenter" },
       { href: "/gallery", label: "Gallery" },
       { href: "/characters", label: "Characters" },
