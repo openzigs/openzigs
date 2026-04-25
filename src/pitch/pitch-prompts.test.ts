@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   buildDraftSystemPrompt,
   buildRegenerateSystemPrompt,
+  findSlideIndex,
 } from "./pitch-prompts.js";
 import type { BrandKit, Deck, Slide } from "./pitch-schema.js";
 
@@ -139,5 +140,39 @@ describe("buildRegenerateSystemPrompt", () => {
     expect(
       buildRegenerateSystemPrompt(DECK, BULLET_SLIDE, "make it punchier"),
     ).toMatchSnapshot();
+  });
+
+  it("regression #957: works when caller passes a deep clone of the slide (not the same reference)", () => {
+    // Round-trip the slide through JSON to break reference equality.
+    const cloned = JSON.parse(JSON.stringify(BULLET_SLIDE)) as Slide;
+    expect(cloned).not.toBe(BULLET_SLIDE);
+    const prompt = buildRegenerateSystemPrompt(DECK, cloned);
+    // Previous slide is the title slide — so we know the locator found the
+    // bullet-list slide at index 1, not at -1 (which would have made
+    // "Previous" read as "(none — this is the first slide)").
+    expect(prompt).toContain("Previous: title:");
+    expect(prompt).toContain("Next:     (none");
+  });
+});
+
+describe("findSlideIndex", () => {
+  it("matches by reference identity", () => {
+    expect(findSlideIndex(DECK, BULLET_SLIDE)).toBe(1);
+  });
+
+  it("matches by structural equality when the reference is foreign", () => {
+    const cloned = JSON.parse(JSON.stringify(TITLE_SLIDE)) as Slide;
+    expect(findSlideIndex(DECK, cloned)).toBe(0);
+  });
+
+  it("returns -1 when the slide is not part of the deck", () => {
+    const stranger: Slide = {
+      template: "qa",
+      content: { heading: "Questions?" },
+      speaker_notes: "",
+      transition: "slide",
+      fragments: [],
+    };
+    expect(findSlideIndex(DECK, stranger)).toBe(-1);
   });
 });
