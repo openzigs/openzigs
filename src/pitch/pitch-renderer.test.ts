@@ -565,3 +565,83 @@ describe("renderDeckToHtml — per-template XSS hardening", () => {
     },
   );
 });
+
+// ────────────────────────────────────────────────────────────────────────
+// Sub-issue #992 — per-slide background image map
+// ────────────────────────────────────────────────────────────────────────
+describe("renderDeckToHtml — backgroundImageUrlBySlideIndex (#992)", () => {
+  const titleSlide = (): Slide =>
+    s("title", { title: "Hello", subtitle: "Sub" });
+  const bulletSlide = (): Slide =>
+    s("bullet_list", { heading: "H", bullets: ["a"] });
+
+  it("emits data-background-image on the matching <section> when a safe URL is supplied", () => {
+    const deck = buildDeck([titleSlide(), bulletSlide()]);
+    const map = new Map<number, string>([
+      [0, "/api/admin/pitch/decks/d/assets/a1"],
+    ]);
+    const html = renderDeckToHtml(deck, KIT, "embedded", {
+      backgroundImageUrlBySlideIndex: map,
+    }).html;
+    expect(html).toContain(
+      'data-background-image="/api/admin/pitch/decks/d/assets/a1"',
+    );
+    expect(html).toContain('data-background-size="cover"');
+    expect(html).toContain('data-background-position="center"');
+  });
+
+  it("does NOT emit data-background-image when the option is omitted (backwards compat)", () => {
+    const deck = buildDeck([titleSlide()]);
+    const html = renderDeckToHtml(deck, KIT, "embedded").html;
+    expect(html).not.toContain("data-background-image");
+  });
+
+  it("does NOT emit data-background-image when the slide index is not in the map", () => {
+    const deck = buildDeck([titleSlide(), bulletSlide()]);
+    const map = new Map<number, string>([
+      [1, "/api/admin/pitch/decks/d/assets/a-second-only"],
+    ]);
+    const html = renderDeckToHtml(deck, KIT, "embedded", {
+      backgroundImageUrlBySlideIndex: map,
+    }).html;
+    // Only the second slide gets the attribute.
+    const matches = html.match(/data-background-image="[^"]*"/g) ?? [];
+    expect(matches).toHaveLength(1);
+    expect(matches[0]).toContain("a-second-only");
+  });
+
+  it("silently drops a `javascript:` URL", () => {
+    const deck = buildDeck([titleSlide()]);
+    const map = new Map<number, string>([[0, "javascript:alert(1)"]]);
+    const html = renderDeckToHtml(deck, KIT, "embedded", {
+      backgroundImageUrlBySlideIndex: map,
+    }).html;
+    expect(html).not.toContain("javascript:");
+    expect(html).not.toContain("data-background-image");
+  });
+
+  it("silently drops a `data:` URL", () => {
+    const deck = buildDeck([titleSlide()]);
+    const map = new Map<number, string>([
+      [0, "data:image/png;base64,xxxx"],
+    ]);
+    const html = renderDeckToHtml(deck, KIT, "embedded", {
+      backgroundImageUrlBySlideIndex: map,
+    }).html;
+    expect(html).not.toContain("data-background-image");
+  });
+
+  it("works for non-title templates too", () => {
+    const deck = buildDeck([bulletSlide()]);
+    const map = new Map<number, string>([
+      [0, "https://cdn.example.com/x.png"],
+    ]);
+    const html = renderDeckToHtml(deck, KIT, "embedded", {
+      backgroundImageUrlBySlideIndex: map,
+    }).html;
+    expect(html).toContain(
+      'data-background-image="https://cdn.example.com/x.png"',
+    );
+  });
+});
+

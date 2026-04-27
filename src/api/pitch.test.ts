@@ -13,9 +13,9 @@ import { describe, it, expect, vi, beforeEach, afterEach, beforeAll } from "vite
 import express, { type Express } from "express";
 import request from "supertest";
 import Database from "better-sqlite3";
-import { mkdtempSync, rmSync, existsSync } from "node:fs";
+import { mkdtempSync, rmSync, existsSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import sharp from "sharp";
 
 import { createPitchRouter, type PitchRouterDeps } from "./pitch.js";
@@ -1609,6 +1609,318 @@ describe("Pitch REST router", () => {
       );
       expect(notesRes.status).toBe(503);
       expect(notesRes.body.error.code).toBe("pdf_export_unavailable");
+    });
+  });
+
+  // ─────────────────────────────────────────────────────────────────
+  // Sub-issue #992 — asset-serve endpoint
+  // ─────────────────────────────────────────────────────────────────
+  describe("asset-serve endpoint (#992)", () => {
+    let assetsBaseDir: string;
+    let app: Express;
+    let deckId: string;
+    let slideId: string;
+
+    beforeEach(() => {
+      assetsBaseDir = mkdtempSync(join(tmpdir(), "pitch-assets-"));
+      const newDeps: PitchRouterDeps = { ...harness.deps, assetsBaseDir };
+      app = express();
+      app.use(express.json());
+      app.use("/api/admin/pitch", createPitchRouter(newDeps));
+      const kitId = createCustomKit(harness, "asset bg kit");
+      const ids = createDeck(harness, kitId, "Asset Deck");
+      deckId = ids.deckId;
+      slideId = ids.slideId;
+    });
+
+    afterEach(() => {
+      try {
+        rmSync(assetsBaseDir, { recursive: true, force: true });
+      } catch {
+        /* best effort */
+      }
+    });
+
+    function writeAsset(opts: {
+      assetId: string;
+      slideId: string | null;
+      kind: "background" | "image";
+      created_at?: string;
+      bytes?: Buffer;
+      relativePath?: string;
+    }): string {
+      const bytes = opts.bytes ?? Buffer.from([0x89, 0x50, 0x4e, 0x47]);
+      const rel =
+        opts.relativePath ?? `${deckId}/${opts.assetId}.png`;
+      const abs = join(assetsBaseDir, rel);
+      mkdirSync(dirname(abs), { recursive: true });
+      writeFileSync(abs, bytes);
+      harness.deps.pitchRepo.insertAsset({
+        id: opts.assetId,
+        deck_id: deckId,
+        slide_id: opts.slideId,
+        kind: opts.kind,
+        source: "fluxq",
+        prompt: "test",
+        local_path: abs,
+        mime: "image/png",
+        width: 16,
+        height: 16,
+        created_at: opts.created_at ?? "2026-04-25T00:00:00Z",
+      });
+      return abs;
+    }
+
+    it("serves the asset bytes with Content-Type and no-store cache", async () => {
+      const bytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+      writeAsset({
+        assetId: "asset-good",
+        slideId,
+        kind: "background",
+        bytes,
+      });
+
+      const res = await request(app).get(
+        `/api/admin/pitch/decks/${deckId}/assets/asset-good`,
+      );
+      expect(res.status).toBe(200);
+      expect(res.headers["content-type"]).toMatch(/image\/png/);
+      expect(res.headers["cache-control"]).toBe("no-store");
+      expect(Buffer.from(res.body).equals(bytes)).toBe(true);
+    });
+
+    it("returns 404 when the asset id does not exist", async () => {
+      const res = await request(app).get(
+        `/api/admin/pitch/decks/${deckId}/assets/does-not-exist`,
+      );
+      expect(res.status).toBe(404);
+      expect(res.body.error.code).toBe("not_found");
+    });
+
+    it("returns 404 when the asset belongs to a different deck", async () => {
+      const otherKit = createCustomKit(harness, "other kit");
+      const otherIds = createDeck(harness, otherKit, "Other Deck");
+      writeAsset({
+        assetId: "asset-other",
+        slideId: otherIds.slideId,
+        kind: "background",
+      });
+      // The repo row was created with deck_id=this.deckId (writeAsset hard-codes it),
+      // so to actually exercise the cross-deck guard we directly insert into the
+      // OTHER deck and try to fetch it via THIS deck's URL.
+      const otherAbs = join(assetsBaseDir, `${otherIds.deckId}-cross.png`);
+      writeFileSync(otherAbs, Buffer.from([1, 2, 3]));
+      harness.deps.pitchRepo.insertAsset({
+        id: "asset-cross-deck",
+        deck_id: otherIds.deckId,
+        slide_id: otherIds.slideId,
+        kind: "background",
+        source: "fluxq",
+        prompt: null,
+        local_path: otherAbs,
+        mime: "image/png",
+        width: 16,
+        height: 16,
+        created_at: "2026-04-25T00:00:00Z",
+      });
+      const res = await request(app).get(
+        `/api/admin/pitch/decks/${deckId}/assets/asset-cross-deck`,
+      );
+      expect(res.status).toBe(404);
+    });
+
+    it("returns 404 when the asset's local_path escapes assetsBaseDir", async () => {
+      const escape = mkdtempSync(join(tmpdir(), "pitch-escape-"));
+      const escAbs = join(escape, "evil.png");
+      writeFileSync(escAbs, Buffer.from([9, 9, 9]));
+      harness.deps.pitchRepo.insertAsset({
+        id: "asset-escape",
+        deck_id: deckId,
+        slide_id: slideId,
+        kind: "background",
+        source: "fluxq",
+        prompt: null,
+        local_path: escAbs,
+        mime: "image/png",
+        width: 16,
+        height: 16,
+        created_at: "2026-04-25T00:00:00Z",
+      });
+      const res = await request(app).get(
+        `/api/admin/pitch/decks/${deckId}/assets/asset-escape`,
+      );
+      expect(res.status).toBe(404);
+      try {
+        rmSync(escape, { recursive: true, force: true });
+      } catch {
+        /* best effort */
+      }
+    });
+
+    it("returns 404 when the file on disk is missing even though the row exists", async () => {
+      const phantom = join(assetsBaseDir, `${deckId}/asset-phantom.png`);
+      // intentionally do NOT write the file
+      harness.deps.pitchRepo.insertAsset({
+        id: "asset-phantom",
+        deck_id: deckId,
+        slide_id: slideId,
+        kind: "background",
+        source: "fluxq",
+        prompt: null,
+        local_path: phantom,
+        mime: "image/png",
+        width: 16,
+        height: 16,
+        created_at: "2026-04-25T00:00:00Z",
+      });
+      const res = await request(app).get(
+        `/api/admin/pitch/decks/${deckId}/assets/asset-phantom`,
+      );
+      expect(res.status).toBe(404);
+    });
+
+    it("the /render endpoint emits data-background-image referencing the asset URL", async () => {
+      writeAsset({
+        assetId: "asset-bg-render",
+        slideId,
+        kind: "background",
+      });
+      const res = await request(app).get(
+        `/api/admin/pitch/decks/${deckId}/render`,
+      );
+      expect(res.status).toBe(200);
+      expect(res.text).toContain(
+        `data-background-image="/api/admin/pitch/decks/${deckId}/assets/asset-bg-render"`,
+      );
+    });
+
+    it("the /render endpoint picks the most-recent background per slide", async () => {
+      writeAsset({
+        assetId: "asset-old",
+        slideId,
+        kind: "background",
+        created_at: "2026-04-01T00:00:00Z",
+      });
+      writeAsset({
+        assetId: "asset-new",
+        slideId,
+        kind: "background",
+        created_at: "2026-04-25T00:00:00Z",
+      });
+      const res = await request(app).get(
+        `/api/admin/pitch/decks/${deckId}/render`,
+      );
+      expect(res.status).toBe(200);
+      expect(res.text).toContain("asset-new");
+      expect(res.text).not.toContain("asset-old");
+    });
+  });
+
+  // ─────────────────────────────────────────────────────────────────
+  // Sub-issue #992 — buildBackgroundImageUrlMap pure-function tests
+  // ─────────────────────────────────────────────────────────────────
+  describe("buildBackgroundImageUrlMap (#992)", () => {
+    it("returns an empty map when there are no assets", async () => {
+      const { buildBackgroundImageUrlMap } = await import("./pitch.js");
+      expect(
+        buildBackgroundImageUrlMap("d", [{ id: "s1", position: 0 }], []).size,
+      ).toBe(0);
+    });
+
+    it("ignores assets whose kind is not background", async () => {
+      const { buildBackgroundImageUrlMap } = await import("./pitch.js");
+      const map = buildBackgroundImageUrlMap(
+        "d",
+        [{ id: "s1", position: 0 }],
+        [
+          {
+            id: "a1",
+            slide_id: "s1",
+            kind: "image",
+            created_at: "2026-04-25T00:00:00Z",
+          },
+        ],
+      );
+      expect(map.size).toBe(0);
+    });
+
+    it("ignores assets whose slide_id is null or unknown", async () => {
+      const { buildBackgroundImageUrlMap } = await import("./pitch.js");
+      const map = buildBackgroundImageUrlMap(
+        "d",
+        [{ id: "s1", position: 0 }],
+        [
+          {
+            id: "a1",
+            slide_id: null,
+            kind: "background",
+            created_at: "2026-04-25T00:00:00Z",
+          },
+          {
+            id: "a2",
+            slide_id: "s-unknown",
+            kind: "background",
+            created_at: "2026-04-25T00:00:00Z",
+          },
+        ],
+      );
+      expect(map.size).toBe(0);
+    });
+
+    it("picks the latest background per slide and keys by position", async () => {
+      const { buildBackgroundImageUrlMap } = await import("./pitch.js");
+      const map = buildBackgroundImageUrlMap(
+        "deck-7",
+        [
+          { id: "s-alpha", position: 0 },
+          { id: "s-beta", position: 1 },
+        ],
+        [
+          {
+            id: "a-old",
+            slide_id: "s-alpha",
+            kind: "background",
+            created_at: "2026-04-01T00:00:00Z",
+          },
+          {
+            id: "a-new",
+            slide_id: "s-alpha",
+            kind: "background",
+            created_at: "2026-04-25T00:00:00Z",
+          },
+          {
+            id: "a-beta",
+            slide_id: "s-beta",
+            kind: "background",
+            created_at: "2026-04-10T00:00:00Z",
+          },
+        ],
+      );
+      expect(map.get(0)).toBe(
+        "/api/admin/pitch/decks/deck-7/assets/a-new",
+      );
+      expect(map.get(1)).toBe(
+        "/api/admin/pitch/decks/deck-7/assets/a-beta",
+      );
+    });
+
+    it("URL-encodes the deck and asset ids", async () => {
+      const { buildBackgroundImageUrlMap } = await import("./pitch.js");
+      const map = buildBackgroundImageUrlMap(
+        "deck/with space",
+        [{ id: "slide?", position: 0 }],
+        [
+          {
+            id: "a&special",
+            slide_id: "slide?",
+            kind: "background",
+            created_at: "2026-04-25T00:00:00Z",
+          },
+        ],
+      );
+      expect(map.get(0)).toBe(
+        "/api/admin/pitch/decks/deck%2Fwith%20space/assets/a%26special",
+      );
     });
   });
 });

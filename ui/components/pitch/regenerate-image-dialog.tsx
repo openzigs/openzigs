@@ -44,7 +44,30 @@ export interface RegenerateImageDialogProps {
   initialPrompt: string;
   /** "background" for full-bleed/title, "inline" for image_caption etc. */
   mode: "background" | "inline";
+  /**
+   * Sub-issue #992 — when set, render a small thumbnail of the current
+   * image with a "Replace?" caption above the prompt. Caller is
+   * responsible for supplying a safe URL (root-relative path or http(s)).
+   * `javascript:` / `data:` etc. are silently dropped client-side as
+   * defense-in-depth on top of the server-side `safeUrl` check.
+   */
+  currentImageUrl?: string;
   onQueued?: (jobId: string, assetId: string) => void;
+}
+
+/**
+ * Strict client-side URL allowlist for the thumbnail preview — mirrors
+ * `safeUrl` in `src/pitch/pitch-sanitize.ts`. Allows root-relative paths
+ * and `http(s)://`; everything else is rejected and the thumbnail is
+ * suppressed.
+ */
+function safePreviewUrl(input: string | undefined): string | null {
+  if (!input) return null;
+  const v = input.trim();
+  if (!v) return null;
+  if (v.startsWith("/")) return v;
+  if (/^https?:\/\//i.test(v)) return v;
+  return null;
 }
 
 export const RegenerateImageDialog = ({
@@ -54,6 +77,7 @@ export const RegenerateImageDialog = ({
   slideId,
   initialPrompt,
   mode,
+  currentImageUrl,
   onQueued,
 }: RegenerateImageDialogProps) => {
   const [prompt, setPrompt] = useState(initialPrompt);
@@ -128,6 +152,23 @@ export const RegenerateImageDialog = ({
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-3 text-xs">
+          {(() => {
+            const previewUrl = safePreviewUrl(currentImageUrl);
+            if (!previewUrl) return null;
+            return (
+              <div data-testid="pitch-regen-image-current">
+                <span className="mb-1 block font-semibold">
+                  Replace?
+                </span>
+                <img
+                  src={previewUrl}
+                  alt="Current image"
+                  data-testid="pitch-regen-image-current-thumb"
+                  className="max-h-32 w-auto rounded border border-border"
+                />
+              </div>
+            );
+          })()}
           <label className="block">
             <span className="mb-1 block font-semibold">Prompt</span>
             <textarea

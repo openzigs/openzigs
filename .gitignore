@@ -191,3 +191,6 @@ ui/cov-*.txt
 ui/cov-*.cjs
 ui/coverage-output.txt
 ui/vitest-out.*
+
+# Transient PR body drafts written by gh CLI flows
+pr_body*.md

@@ -41,6 +41,21 @@ export interface RenderOpts {
   theme?: string;
   /** Standalone mode only — set to `false` to skip the inline init script. */
   autoInit?: boolean;
+  /**
+   * Per-slide background-image URLs to emit as Reveal.js
+   * `data-background-image` attributes on the `<section>` (sub-issue #992).
+   *
+   * Keyed by slide index (the Deck JSON does not carry per-slide row
+   * IDs — see `assembleDeck` in `pitch-repository.ts`). The caller
+   * (route handlers in `src/api/pitch.ts`) joins the `pitch_slides`
+   * table to the `pitch_assets` rows to produce the position→URL map.
+   * When omitted or empty the renderer behaves exactly as before — pure
+   * additive change.
+   *
+   * Each URL is re-validated through `safeUrl` here so an unsafe value
+   * (e.g. `javascript:`) is silently dropped rather than emitted.
+   */
+  backgroundImageUrlBySlideIndex?: ReadonlyMap<number, string>;
 }
 
 export interface RenderResult {
@@ -63,7 +78,10 @@ export function renderDeckToHtml(
   mode: RenderMode = "embedded",
   opts: RenderOpts = {},
 ): RenderResult {
-  const slidesHtml = deck.slides.map((slide) => renderSlide(slide)).join("\n");
+  const bgMap = opts.backgroundImageUrlBySlideIndex;
+  const slidesHtml = deck.slides
+    .map((slide, index) => renderSlide(slide, bgMap?.get(index)))
+    .join("\n");
   const wrapperStyle = brandKitInlineStyle(brandKit);
   const footer = brandKit.footerText
     ? `<footer class="pitch-footer">${sanitize(brandKit.footerText)}</footer>`
@@ -157,8 +175,8 @@ function standaloneStyles(): string {
 
 // ── Per-template renderers ─────────────────────────────────────────────
 
-function renderSlide(slide: Slide): string {
-  const sectionAttrs = sectionAttributes(slide);
+function renderSlide(slide: Slide, backgroundUrl?: string): string {
+  const sectionAttrs = sectionAttributes(slide, backgroundUrl);
   const body = renderTemplateBody(slide);
   const notes = slide.speaker_notes
     ? `<aside class="notes">${sanitize(slide.speaker_notes)}</aside>`
@@ -166,14 +184,24 @@ function renderSlide(slide: Slide): string {
   return `<section ${sectionAttrs}>${body}${notes}</section>`;
 }
 
-function sectionAttributes(slide: Slide): string {
+function sectionAttributes(slide: Slide, backgroundUrl?: string): string {
   const parts: string[] = [`data-template="${attr(slide.template)}"`];
   if (slide.transition && slide.transition !== "slide") {
     parts.push(`data-transition="${attr(slide.transition)}"`);
   }
-  // background_image_url is intentionally NOT honored here — the schema only
-  // carries `background_image_prompt` until the image service fills in a
-  // sanitized URL on a separate field elsewhere.
+  // Sub-issue #992 — background image URL is supplied by the caller (looked
+  // up from `pitch_assets` kind=background). Re-validate through `safeUrl`
+  // so a tampered URL never reaches the rendered HTML. When the URL is
+  // missing, malformed, or `safeUrl`-rejected, the section is emitted
+  // without the attribute and Reveal.js falls back to the theme background.
+  if (backgroundUrl) {
+    const safe = safeUrl(backgroundUrl);
+    if (safe) {
+      parts.push(`data-background-image="${attr(safe)}"`);
+      parts.push(`data-background-size="cover"`);
+      parts.push(`data-background-position="center"`);
+    }
+  }
   return parts.join(" ");
 }
 
