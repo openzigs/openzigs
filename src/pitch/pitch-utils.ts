@@ -72,6 +72,79 @@ export async function accumulateStream(
 }
 
 /**
+ * Repair LLM-emitted slide payloads that include a partial `image`-shaped
+ * object (any of `prompt` / `url` / `alt`) but are missing the required
+ * fields. Walks every slide's `content` recursively and, for any nested
+ * object that "looks like an image", fills the missing fields with safe
+ * defaults derived from the surrounding slide so Zod validation passes.
+ *
+ * Models routinely emit `"image": {}` or `"image": { "url": null }` for
+ * optional image slots; this stops the whole deck from failing validation
+ * over a missing prompt/alt the user never asked for.
+ */
+export function normalizeImageBlocks(payload: unknown): void {
+  if (!payload || typeof payload !== "object") return;
+  const root = payload as { slides?: unknown };
+  if (Array.isArray(root.slides)) {
+    for (const slide of root.slides) normalizeSlide(slide);
+    return;
+  }
+  // Single slide payload (regenerate-slide path).
+  normalizeSlide(payload);
+}
+
+function normalizeSlide(slide: unknown): void {
+  if (!slide || typeof slide !== "object") return;
+  const s = slide as Record<string, unknown>;
+  const content = s.content;
+  if (!content || typeof content !== "object") return;
+  const headingHint =
+    pickString(content, ["heading", "title", "caption", "overlay_text"]) ??
+    pickString(s, ["template"]) ??
+    "slide";
+  repairImageFields(content as Record<string, unknown>, headingHint);
+}
+
+function pickString(
+  obj: Record<string, unknown> | unknown,
+  keys: string[],
+): string | undefined {
+  if (!obj || typeof obj !== "object") return undefined;
+  const o = obj as Record<string, unknown>;
+  for (const k of keys) {
+    const v = o[k];
+    if (typeof v === "string" && v.trim()) return v.trim();
+  }
+  return undefined;
+}
+
+function looksLikeImage(v: unknown): v is Record<string, unknown> {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return false;
+  const o = v as Record<string, unknown>;
+  return "prompt" in o || "url" in o || "alt" in o;
+}
+
+function repairImageFields(
+  container: Record<string, unknown>,
+  headingHint: string,
+): void {
+  for (const [key, value] of Object.entries(container)) {
+    if (!looksLikeImage(value)) continue;
+    const img = value as Record<string, unknown>;
+    const fallback = `${headingHint} — ${key.replace(/_/g, " ")}`.slice(0, 200);
+    if (typeof img.prompt !== "string" || img.prompt.trim().length < 3) {
+      img.prompt = fallback;
+    }
+    if (typeof img.alt !== "string") {
+      img.alt = fallback;
+    }
+    if (!("url" in img) || (typeof img.url !== "string" && img.url !== null)) {
+      img.url = null;
+    }
+  }
+}
+
+/**
  * Try to JSON.parse the (possibly fenced) `raw` payload and validate it
  * against `schema`. Throws a descriptive Error on failure — callers handle
  * the retry policy themselves.

@@ -35,7 +35,8 @@ import {
   MAX_USER_SCRIPT_BYTES,
   accumulateStream,
   buildRetryHint,
-  parseAndValidate,
+  normalizeImageBlocks,
+  stripCodeFences,
   wrapUserScript,
 } from "./pitch-utils.js";
 
@@ -191,14 +192,14 @@ export async function regenerateSlide(opts: RegenerateSlideOpts): Promise<Slide>
   let lastError: unknown = null;
   let raw = await callOnceForSlide(opts, userPrompt, systemPrompt);
   try {
-    return parseAndValidate(raw, SlideSchema);
+    return parseRawDeck(raw, SlideSchema);
   } catch (err) {
     lastError = err;
   }
 
   const retryPrompt = [userPrompt, "", buildRetryHint(lastError)].join("\n");
   raw = await callOnceForSlide(opts, retryPrompt, systemPrompt);
-  return parseAndValidate(raw, SlideSchema);
+  return parseRawDeck(raw, SlideSchema);
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -251,7 +252,7 @@ function assembleDeck(raw: string, opts: GenerateDeckOpts): Deck {
   // bound) so we can truncate down to MAX_SLIDES_PER_DECK as a defence-in-
   // depth step rather than throwing the whole draft away. The final
   // `DeckSchema.parse()` below re-applies the strict `max(80)` limit.
-  const parsed = parseAndValidate(raw, DeckSchema.partial({
+  const parsed = parseRawDeck(raw, DeckSchema.partial({
     id: true,
     brand_kit_id: true,
     created_at: true,
@@ -297,4 +298,29 @@ function assembleDeck(raw: string, opts: GenerateDeckOpts): Deck {
 
   // Final validation — guarantees we hand back a fully-typed Deck.
   return DeckSchema.parse(deck);
+}
+
+/**
+ * Parse the raw LLM payload, repair partial `image` blocks the model often
+ * emits with missing `prompt`/`alt`, then validate against `schema`. Mirrors
+ * `parseAndValidate` but inserts a normalization pass between JSON.parse and
+ * Zod validation so a `"image": {}` from the model doesn't 500 the request.
+ */
+function parseRawDeck<S extends z.ZodTypeAny>(
+  raw: string,
+  schema: S,
+): z.infer<S> {
+  const cleaned = stripCodeFences(raw);
+  if (!cleaned) {
+    throw new Error("pitch: model returned empty output");
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(cleaned);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    throw new Error(`pitch: model output is not valid JSON: ${msg}`);
+  }
+  normalizeImageBlocks(parsed);
+  return schema.parse(parsed) as z.infer<S>;
 }
