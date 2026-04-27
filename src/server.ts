@@ -114,6 +114,8 @@ import { createAuthMiddleware } from "./auth/auth.js";
 import { createDirectorRouter, setDirectorIO } from "./api/director.js";
 import { createPitchRouter, setPitchIO } from "./api/pitch.js";
 import { PitchRepository } from "./pitch/pitch-repository.js";
+import { ShareTokenRepository } from "./pitch/share-token-repository.js";
+import { createPublicShareRouter } from "./api/public-share.js";
 import { createAudioRouter } from "./api/audio.js";
 import { createPresenterRouter } from "./api/presenter.js";
 import { createSocialRouter, dispatchApprovedReply } from "./api/social.js";
@@ -337,6 +339,9 @@ brandKitRepo.migrate();
 // Epic #951 (Studio Pitch) sub-issue #956: pitch decks/slides/assets repo.
 const pitchRepo = new PitchRepository(db);
 pitchRepo.migrate();
+// Epic #990 (Pitch Pro) sub-issue #1000: public share-link tokens.
+const shareTokenRepo = new ShareTokenRepository(db);
+shareTokenRepo.migrate();
 // Epic #951 (Studio Pitch) sub-issue #953: seed 8 starter Brand Kits.
 // Idempotent — only inserts kits whose id is not already in the DB.
 {
@@ -1679,9 +1684,22 @@ const pitchRouter = createPitchRouter({
   copilot,
   taskEngine,
   mediaQueueRepo,
+  shareTokenRepo,
   auditLogger,
 });
 app.use("/api/admin/pitch", authMiddleware, pitchRouter);
+
+// Epic #990 sub-issue #1000 — PUBLIC share-link router. Mounted OUTSIDE the
+// admin auth chain so unauthenticated visitors can hit `/p/:token`. The
+// router applies its own per-IP rate limit and returns generic 404s for
+// every failure mode to prevent token enumeration.
+const publicShareRouter = createPublicShareRouter({
+  pitchRepo,
+  brandKitRepo,
+  shareTokenRepo,
+  auditLogger,
+});
+app.use("/p", publicShareRouter);
 
 // ── Render → Knowledge ingestion hook + DB persistence ──
 // After each successful render: persist the output path so it survives

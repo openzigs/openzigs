@@ -265,7 +265,7 @@ describe("PitchDeckEditorPage", () => {
     );
     // With the dropdown mocked to pass-through, every menu item renders
     // unconditionally — verify each format is present.
-    for (const fmt of ["pdf", "pptx", "md", "notes", "zip"]) {
+    for (const fmt of ["pdf", "pptx", "html", "md", "notes", "zip"]) {
       expect(
         screen.getByTestId(`pitch-editor-export-${fmt}`),
       ).toBeInTheDocument();
@@ -438,6 +438,75 @@ describe("PitchDeckEditorPage", () => {
       expect(
         screen.getByText(/Could not load deck deck-1/),
       ).toBeInTheDocument(),
+    );
+  });
+
+  // ────────────────────────────────────────────────────────────────
+  // Phase 2 — Present / Share / HTML export (#994, #999, #1000)
+  // ────────────────────────────────────────────────────────────────
+
+  it("includes an HTML item in the export dropdown that downloads .html (#994)", async () => {
+    const exportBlob = new Blob(["<html></html>"], { type: "text/html" });
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url.includes("/render")) {
+        return {
+          ok: true,
+          status: 200,
+          text: async () => sampleHtml,
+        } as unknown as Response;
+      }
+      return {
+        ok: true,
+        status: 200,
+        headers: {
+          get: (k: string) =>
+            k.toLowerCase() === "content-disposition"
+              ? 'attachment; filename="my-deck.html"'
+              : null,
+        },
+        blob: async () => exportBlob,
+      } as unknown as Response;
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    render(<PitchDeckEditorPage />, { wrapper });
+    await waitFor(() =>
+      expect(screen.getByTestId("pitch-editor-export-html")).toBeInTheDocument(),
+    );
+    fireEvent.click(screen.getByTestId("pitch-editor-export-html"));
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.stringContaining("/api/admin/pitch/decks/deck-1/export.html"),
+        expect.any(Object),
+      ),
+    );
+  });
+
+  it("renders a Present anchor with target=_blank and rel=noopener noreferrer (#999)", async () => {
+    render(<PitchDeckEditorPage />, { wrapper });
+    const present = await screen.findByTestId("pitch-editor-present");
+    expect(present.tagName).toBe("A");
+    expect(present).toHaveAttribute("target", "_blank");
+    expect(present).toHaveAttribute("rel", "noopener noreferrer");
+    const href = present.getAttribute("href") ?? "";
+    expect(href).toContain(
+      "/api/admin/pitch/decks/deck-1/render?mode=present",
+    );
+  });
+
+  it("renders a Share button that opens the ShareDialog (#1000)", async () => {
+    render(<PitchDeckEditorPage />, { wrapper });
+    const shareBtn = await screen.findByTestId("pitch-editor-share");
+    fireEvent.click(shareBtn);
+    // Dialog mounts and immediately fetches the existing token list.
+    await waitFor(() =>
+      expect(
+        vi
+          .mocked(fetchJson)
+          .mock.calls.some(
+            ([url]) => url === "/api/admin/pitch/decks/deck-1/share",
+          ),
+      ).toBe(true),
     );
   });
 });
