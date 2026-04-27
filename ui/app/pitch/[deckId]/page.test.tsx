@@ -139,6 +139,35 @@ vi.mock("@/components/pitch/brand-kit-editor", () => ({
   ),
 }));
 
+// Replace the Radix DropdownMenu with a transparent passthrough so menu
+// items render unconditionally — Radix's portal-based rendering does not
+// behave reliably in jsdom (no pointer events) and we only care about the
+// shell wiring here.
+vi.mock("@/components/ui/dropdown-menu", () => {
+  const Pass = ({ children }: { children: ReactNode }) => <>{children}</>;
+  return {
+    DropdownMenu: Pass,
+    DropdownMenuTrigger: ({ children }: { children: ReactNode }) => (
+      <>{children}</>
+    ),
+    DropdownMenuContent: Pass,
+    DropdownMenuItem: ({
+      children,
+      onSelect,
+      ...rest
+    }: {
+      children: ReactNode;
+      onSelect?: () => void;
+    } & Record<string, unknown>) => (
+      <button onClick={() => onSelect?.()} {...rest}>
+        {children}
+      </button>
+    ),
+    DropdownMenuLabel: Pass,
+    DropdownMenuSeparator: () => null,
+  };
+});
+
 import { fetchJson } from "@/lib/api";
 import PitchDeckEditorPage from "./page";
 
@@ -192,6 +221,17 @@ describe("PitchDeckEditorPage", () => {
       status: 200,
       text: async () => sampleHtml,
     }) as unknown as typeof fetch;
+    // jsdom does not implement URL.createObjectURL/revokeObjectURL.
+    // The export-download helper schedules a `revokeObjectURL` via
+    // `setTimeout(..., 1000)` that fires AFTER the test has resolved, so
+    // the stubs must remain installed for the duration of the suite —
+    // never restore them.
+    type UrlWithBlob = typeof URL & {
+      createObjectURL: (blob: Blob) => string;
+      revokeObjectURL: (url: string) => void;
+    };
+    (URL as UrlWithBlob).createObjectURL = vi.fn(() => "blob:mock");
+    (URL as UrlWithBlob).revokeObjectURL = vi.fn();
   });
 
   it("renders all four editor zones once data loads", async () => {
@@ -213,7 +253,61 @@ describe("PitchDeckEditorPage", () => {
     await waitFor(() =>
       expect(screen.getByTestId("pitch-editor-shell")).toBeInTheDocument(),
     );
-    expect(screen.getByTestId("pitch-editor-export")).toBeDisabled();
+    // Phase 6 shipped — the export trigger is now an enabled dropdown.
+    const trigger = screen.getByTestId("pitch-editor-export");
+    expect(trigger).not.toBeDisabled();
+  });
+
+  it("opens the export menu and lists every export format", async () => {
+    render(<PitchDeckEditorPage />, { wrapper });
+    await waitFor(() =>
+      expect(screen.getByTestId("pitch-editor-shell")).toBeInTheDocument(),
+    );
+    // With the dropdown mocked to pass-through, every menu item renders
+    // unconditionally — verify each format is present.
+    for (const fmt of ["pdf", "pptx", "md", "notes", "zip"]) {
+      expect(
+        screen.getByTestId(`pitch-editor-export-${fmt}`),
+      ).toBeInTheDocument();
+    }
+  });
+
+  it("downloads the requested format when an export menu item is selected", async () => {
+    const exportBlob = new Blob(["%PDF-1.4 stub"], { type: "application/pdf" });
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url.includes("/render")) {
+        return {
+          ok: true,
+          status: 200,
+          text: async () => sampleHtml,
+        } as unknown as Response;
+      }
+      return {
+        ok: true,
+        status: 200,
+        headers: {
+          get: (k: string) =>
+            k.toLowerCase() === "content-disposition"
+              ? 'attachment; filename="my-deck.pdf"'
+              : null,
+        },
+        blob: async () => exportBlob,
+      } as unknown as Response;
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    render(<PitchDeckEditorPage />, { wrapper });
+    await waitFor(() =>
+      expect(screen.getByTestId("pitch-editor-shell")).toBeInTheDocument(),
+    );
+    fireEvent.click(screen.getByTestId("pitch-editor-export-pdf"));
+
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.stringContaining("/api/admin/pitch/decks/deck-1/export.pdf"),
+        expect.any(Object),
+      ),
+    );
   });
 
   it("forwards canvas data-pitch-field clicks (selectedField is consumed by the properties panel)", async () => {

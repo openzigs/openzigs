@@ -269,6 +269,52 @@ describe("generateDeck", () => {
     // Truncated from the FRONT — slide 0 should still be the first one.
     expect(deck.slides[0].template).toBe("bullet_list");
   });
+
+  it("retries with an explicit count instruction when the model returns the wrong slide count", async () => {
+    // First payload: valid schema but only 2 slides when 5 were asked for.
+    // Retry payload: 5 slides matching the target.
+    const fiveSlides = [
+      VALID_SLIDES[0],
+      VALID_SLIDES[0],
+      VALID_SLIDES[0],
+      VALID_SLIDES[0],
+      VALID_SLIDES[1],
+    ];
+    const retryPayload = JSON.stringify({
+      title: "Retry Deck",
+      aspect_ratio: "16:9",
+      slides: fiveSlides,
+      metadata: { source_script: "x", tone: "formal" },
+    });
+    const { copilot, chat } = mockCopilot([VALID_DECK_PAYLOAD, retryPayload]);
+    const deck = await generateDeck({
+      script: "x",
+      brandKit: KIT,
+      options: { targetSlideCount: 5 },
+      copilot,
+      clock: FROZEN_CLOCK,
+    });
+    expect(chat).toHaveBeenCalledTimes(2);
+    expect(deck.slides).toHaveLength(5);
+    const retryMsg = chat.mock.calls[1][0] as string;
+    expect(retryMsg).toContain("You returned 2 slides");
+    expect(retryMsg).toContain("exactly 5");
+  });
+
+  it("returns the first-pass deck when the retry also misses the slide count target", async () => {
+    // Both passes return 2 slides instead of the requested 5. We accept the
+    // first pass rather than 500ing the user.
+    const { copilot, chat } = mockCopilot([VALID_DECK_PAYLOAD, VALID_DECK_PAYLOAD]);
+    const deck = await generateDeck({
+      script: "x",
+      brandKit: KIT,
+      options: { targetSlideCount: 5 },
+      copilot,
+      clock: FROZEN_CLOCK,
+    });
+    expect(chat).toHaveBeenCalledTimes(2);
+    expect(deck.slides).toHaveLength(2);
+  });
 });
 
 describe("regenerateSlide", () => {

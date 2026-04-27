@@ -42,6 +42,13 @@ export interface SlideRailProps {
   onAddBelow: (slideId: string) => void;
   onDuplicate: (slideId: string) => void;
   onDelete: (slideId: string) => void;
+  /**
+   * Optional — when present, surfaces a "Regenerate text" menu item that
+   * fires the per-slide LLM regenerate task. Wired in the editor shell
+   * (`ui/app/pitch/[deckId]/page.tsx`) to POST
+   * `/decks/:deckId/slides/:slideId/regenerate`.
+   */
+  onRegenerate?: (slideId: string) => void;
 }
 
 export const SlideRail = ({
@@ -53,6 +60,7 @@ export const SlideRail = ({
   onAddBelow,
   onDuplicate,
   onDelete,
+  onRegenerate,
 }: SlideRailProps) => {
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
   // Local copy so we can do optimistic reorder + rollback on failure.
@@ -123,6 +131,7 @@ export const SlideRail = ({
                   onAddAbove={onAddAbove}
                   onAddBelow={onAddBelow}
                   onDuplicate={onDuplicate}
+                  onRegenerate={onRegenerate}
                   onRequestDelete={(id) => setPendingDelete(id)}
                 />
               ))}
@@ -152,6 +161,7 @@ interface RowProps {
   onAddAbove: (id: string) => void;
   onAddBelow: (id: string) => void;
   onDuplicate: (id: string) => void;
+  onRegenerate?: (id: string) => void;
   onRequestDelete: (id: string) => void;
 }
 
@@ -163,6 +173,7 @@ const SlideRailRow = ({
   onAddAbove,
   onAddBelow,
   onDuplicate,
+  onRegenerate,
   onRequestDelete,
 }: RowProps) => {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
@@ -220,6 +231,14 @@ const SlideRailRow = ({
             <DropdownMenuItem onSelect={() => onDuplicate(item.id)}>
               Duplicate
             </DropdownMenuItem>
+            {onRegenerate && (
+              <DropdownMenuItem
+                data-testid={`slide-rail-regenerate-${item.id}`}
+                onSelect={() => onRegenerate(item.id)}
+              >
+                Regenerate text
+              </DropdownMenuItem>
+            )}
             <DropdownMenuItem
               onSelect={() => onRequestDelete(item.id)}
               className="text-red-500 focus:text-red-500"

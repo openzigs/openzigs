@@ -19,6 +19,12 @@ import {
   type BrandKitListEntry,
 } from "@/components/pitch/brand-kit-picker";
 import { BrandKitEditor } from "@/components/pitch/brand-kit-editor";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 interface DeckSlideRow {
   id: string;
@@ -79,6 +85,62 @@ async function fetchRenderHtml(deckId: string): Promise<string> {
     throw new Error(`render failed: ${res.status}`);
   }
   return res.text();
+}
+
+interface ExportFormat {
+  id: "pdf" | "pptx" | "md" | "notes" | "zip";
+  label: string;
+  /** Path appended to `/api/admin/pitch/decks/:deckId`. */
+  suffix: string;
+}
+
+const EXPORT_FORMATS: ReadonlyArray<ExportFormat> = [
+  { id: "pdf", label: "PDF", suffix: "/export.pdf" },
+  { id: "pptx", label: "PowerPoint (.pptx)", suffix: "/export.pptx" },
+  { id: "md", label: "Markdown", suffix: "/export.md" },
+  { id: "notes", label: "Speaker Notes (PDF)", suffix: "/export.notes.pdf" },
+  { id: "zip", label: "ZIP Bundle", suffix: "/export.zip" },
+];
+
+/**
+ * Trigger an authenticated download via fetch \u2192 blob \u2192 anchor click.
+ * We can't just `window.open` the URL because the API requires the bearer
+ * token in the `Authorization` header, not a query string. On non-2xx the
+ * backend's structured `{ error: { message } }` envelope is surfaced.
+ */
+async function downloadExport(
+  deckId: string,
+  format: ExportFormat,
+): Promise<void> {
+  const url = buildUrl(`/api/admin/pitch/decks/${deckId}${format.suffix}`);
+  const headers: HeadersInit = AUTH_TOKEN
+    ? { Authorization: `Bearer ${AUTH_TOKEN}` }
+    : {};
+  const res = await fetch(url, { headers });
+  if (!res.ok) {
+    let detail = `HTTP ${res.status}`;
+    try {
+      const body = (await res.json()) as { error?: { message?: string } };
+      if (body?.error?.message) detail = body.error.message;
+    } catch {
+      // not JSON \u2014 fall back to status text
+      if (res.statusText) detail = res.statusText;
+    }
+    throw new Error(detail);
+  }
+  const blob = await res.blob();
+  const objectUrl = URL.createObjectURL(blob);
+  const cd = res.headers.get("Content-Disposition") ?? "";
+  const match = /filename="?([^";]+)"?/i.exec(cd);
+  const filename = match?.[1] ?? `deck-${deckId}${format.suffix.replace("/export", "")}`;
+  const a = document.createElement("a");
+  a.href = objectUrl;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  // Revoke async so the browser has time to start the download.
+  setTimeout(() => URL.revokeObjectURL(objectUrl), 1_000);
 }
 
 export default function PitchDeckEditorPage() {
@@ -215,6 +277,20 @@ export default function PitchDeckEditorPage() {
       queryClient.invalidateQueries({ queryKey: ["pitch", "render", deckId] });
     },
     onError: () => showToast("Duplicate slide failed.", "error"),
+  });
+
+  const regenerateSlideMutation = useMutation({
+    mutationFn: async (slideId: string) =>
+      fetchJson<{ taskId: string }>(
+        `/api/admin/pitch/decks/${deckId}/slides/${slideId}/regenerate`,
+        { method: "POST", body: JSON.stringify({}) },
+      ),
+    onSuccess: () => showToast("Regenerating slide text\u2026", "success"),
+    onError: (err) =>
+      showToast(
+        `Regenerate failed: ${err instanceof Error ? err.message : String(err)}`,
+        "error",
+      ),
   });
 
   // ── Socket subscriptions ─────────────────────────────────────────────
@@ -365,14 +441,37 @@ export default function PitchDeckEditorPage() {
               setBrandKitDialogOpen(true);
             }}
           />
-          <button
-            disabled
-            data-testid="pitch-editor-export"
-            title="Coming in Phase 6"
-            className="rounded border border-border px-2 py-1 text-xs opacity-50"
-          >
-            Export
-          </button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button
+                type="button"
+                data-testid="pitch-editor-export"
+                className="rounded border border-border px-2 py-1 text-xs hover:bg-muted/40"
+              >
+                Export
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              {EXPORT_FORMATS.map((fmt) => (
+                <DropdownMenuItem
+                  key={fmt.id}
+                  data-testid={`pitch-editor-export-${fmt.id}`}
+                  onSelect={async () => {
+                    try {
+                      await downloadExport(deckId, fmt);
+                    } catch (err) {
+                      showToast(
+                        `Export failed: ${err instanceof Error ? err.message : String(err)}`,
+                        "error",
+                      );
+                    }
+                  }}
+                >
+                  {fmt.label}
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
           <span
             data-testid="pitch-editor-save-state"
             data-state={saveState}
@@ -408,6 +507,7 @@ export default function PitchDeckEditorPage() {
         }}
         onDuplicate={(slideId) => duplicateSlideMutation.mutate(slideId)}
         onDelete={(slideId) => deleteSlideMutation.mutate(slideId)}
+        onRegenerate={(slideId) => regenerateSlideMutation.mutate(slideId)}
       />
 
       {/* Canvas */}

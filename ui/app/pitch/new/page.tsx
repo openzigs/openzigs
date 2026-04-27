@@ -17,7 +17,7 @@ interface BrandKitsResponse {
 }
 
 const SCRIPT_BYTE_CAP = 50_000;
-const DRAFT_TIMEOUT_MS = 90_000;
+const DRAFT_TIMEOUT_MS = 240_000;
 
 const AUTH_TOKEN =
   typeof process !== "undefined"
@@ -121,14 +121,32 @@ export default function NewPitchDeckPage() {
         }),
       });
       if (!res.ok) {
-        const text = await res.text();
-        throw new Error(text || `HTTP ${res.status}`);
+        // Try to surface the backend's structured `{ error: { message } }`
+        // envelope; fall back to plain text so we never throw "undefined".
+        let detail = `HTTP ${res.status}`;
+        try {
+          const body = (await res.json()) as {
+            error?: { message?: string };
+          };
+          if (body?.error?.message) detail = body.error.message;
+        } catch {
+          const text = await res.text().catch(() => "");
+          if (text) detail = text;
+        }
+        throw new Error(detail);
       }
       const data = (await res.json()) as { deck: { id: string } };
       router.push(`/pitch/${data.deck.id}`);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      showToast(`Could not draft deck: ${msg}`, "error");
+      if (err instanceof DOMException && err.name === "AbortError") {
+        showToast(
+          `Generation timed out after ${Math.round(DRAFT_TIMEOUT_MS / 1000)}s. The model may be cold-starting — please try again.`,
+          "error",
+        );
+      } else {
+        const msg = err instanceof Error ? err.message : String(err);
+        showToast(`Could not draft deck: ${msg}`, "error");
+      }
     } finally {
       clearTimeout(timer);
       setSubmitting(false);
@@ -254,7 +272,7 @@ export default function NewPitchDeckPage() {
             <div className="mt-3">
               <label className="text-xs font-semibold">Slide count target</label>
               <div className="mt-1 flex gap-2" data-testid="wizard-slide-count">
-                {[5, 10, 15, 20].map((n) => (
+                {[5, 8, 10, 15, 20].map((n) => (
                   <button
                     key={n}
                     type="button"
@@ -352,6 +370,23 @@ export default function NewPitchDeckPage() {
             </button>
           )}
         </div>
+        {submitting && step === "options" && (
+          <div
+            data-testid="wizard-progress"
+            role="status"
+            aria-live="polite"
+            className="mt-4 flex items-start gap-2 rounded border border-primary/30 bg-primary/5 p-3 text-xs text-foreground"
+          >
+            <span
+              className="mt-0.5 inline-block h-3 w-3 shrink-0 animate-spin rounded-full border-2 border-primary border-t-transparent"
+              aria-hidden="true"
+            />
+            <span>
+              Generating ~{slideCount} slides &mdash; this can take up to 3 minutes
+              while the model warms up. Please don&apos;t close this tab.
+            </span>
+          </div>
+        )}
       </div>
       <BrandKitEditor
         open={createKitOpen}

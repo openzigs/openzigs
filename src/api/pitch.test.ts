@@ -1575,5 +1575,40 @@ describe("Pitch REST router", () => {
         expect(res.body.error.message, `ext=${ext}`).not.toMatch(/decktape|pptxgen|archiver/);
       }
     });
+
+    it("returns 503 pdf_export_unavailable when decktape spawn fails (ENOENT)", async () => {
+      const deckId = await setupDeck();
+      // Mimic what `child_process.spawn` rejects with when the binary is
+      // missing — message includes 'spawn decktape ENOENT' AND `code` is
+      // set to 'ENOENT'. Either signal alone is sufficient for the
+      // detection helper; we set both to prove the contract.
+      const enoentErr = Object.assign(new Error("spawn decktape ENOENT"), {
+        code: "ENOENT",
+      });
+      const exporters = {
+        pdf: vi.fn().mockRejectedValue(enoentErr),
+        pptx: vi.fn(),
+        zip: vi.fn(),
+        md: vi.fn(),
+        notes: vi.fn().mockRejectedValue(enoentErr),
+      };
+      const newDeps: PitchRouterDeps = { ...harness.deps, exporters };
+      const app = express();
+      app.use(express.json());
+      app.use("/api/admin/pitch", createPitchRouter(newDeps));
+
+      const pdfRes = await request(app).get(
+        `/api/admin/pitch/decks/${deckId}/export.pdf`,
+      );
+      expect(pdfRes.status).toBe(503);
+      expect(pdfRes.body.error.code).toBe("pdf_export_unavailable");
+      expect(pdfRes.body.error.message).toMatch(/decktape/i);
+
+      const notesRes = await request(app).get(
+        `/api/admin/pitch/decks/${deckId}/export.notes.pdf`,
+      );
+      expect(notesRes.status).toBe(503);
+      expect(notesRes.body.error.code).toBe("pdf_export_unavailable");
+    });
   });
 });

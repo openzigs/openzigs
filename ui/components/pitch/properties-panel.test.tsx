@@ -171,4 +171,44 @@ describe("PropertiesPanel", () => {
       screen.getByTestId("pitch-properties-unknown-template"),
     ).toBeInTheDocument();
   });
+
+  it("renders the speaker-notes textarea and PATCHes when edited", async () => {
+    vi.mocked(fetchJson).mockResolvedValue({});
+    render(
+      <PropertiesPanel
+        deckId="d"
+        selectedSlide={{
+          id: "s1",
+          slide: {
+            template: "title",
+            content: { title: "Hi" },
+            speaker_notes: "initial",
+          },
+        }}
+      />,
+      { wrapper },
+    );
+    const ta = (await screen.findByTestId(
+      "pitch-properties-speaker-notes",
+    )) as HTMLTextAreaElement;
+    expect(ta.value).toBe("initial");
+
+    fireEvent.change(ta, { target: { value: "new notes" } });
+    expect((screen.getByTestId(
+      "pitch-properties-speaker-notes",
+    ) as HTMLTextAreaElement).value).toBe("new notes");
+
+    await act(async () => {
+      vi.advanceTimersByTime(401);
+    });
+    await waitFor(() =>
+      expect(vi.mocked(fetchJson)).toHaveBeenCalledWith(
+        "/api/admin/pitch/decks/d/slides/s1",
+        expect.objectContaining({
+          method: "PATCH",
+          body: expect.stringContaining("\"speaker_notes\":\"new notes\""),
+        }),
+      ),
+    );
+  });
 });
