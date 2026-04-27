@@ -129,7 +129,7 @@ describe("renderDeckToHtml", () => {
 
   it("embedded mode emits a fragment, not a full document", () => {
     const out = renderDeckToHtml(buildDeck([ALL_TEMPLATES[0]]), KIT, "embedded");
-    expect(out.html.startsWith("<div class=\"pitch-deck-wrap\"")).toBe(true);
+    expect(out.html).toContain('class="pitch-deck-wrap pitch-deck-wrap--embedded"');
     expect(out.html).not.toContain("<!doctype");
     expect(out.html).not.toContain("<html");
   });
@@ -179,14 +179,14 @@ describe("renderDeckToHtml", () => {
 
   it("omits logo when brand kit has no logoUrl", () => {
     const out = renderDeckToHtml(buildDeck([ALL_TEMPLATES[0]]), KIT_NO_LOGO, "embedded");
-    expect(out.html).not.toContain('class="pitch-logo"');
+    expect(out.html).not.toContain('<img class="pitch-logo"');
   });
 
   it("emits footer when present, omits when null", () => {
     const withFooter = renderDeckToHtml(buildDeck([ALL_TEMPLATES[0]]), KIT, "embedded");
     expect(withFooter.html).toContain("© Test Co");
     const without = renderDeckToHtml(buildDeck([ALL_TEMPLATES[0]]), KIT_NO_LOGO, "embedded");
-    expect(without.html).not.toContain("pitch-footer");
+    expect(without.html).not.toContain('<footer class="pitch-footer"');
   });
 
   it("emits speaker notes inside <aside class=\"notes\">", () => {
@@ -350,7 +350,7 @@ describe("renderDeckToHtml — XSS hardening", () => {
     };
     const html = renderDeckToHtml(buildDeck([ALL_TEMPLATES[0]]), evilKit, "embedded").html;
     expect(html).not.toContain("javascript:");
-    expect(html).not.toContain("pitch-logo");
+    expect(html).not.toContain('<img class="pitch-logo"');
   });
 
   it("allows relative-path logo URLs (already-uploaded assets)", () => {
@@ -642,6 +642,76 @@ describe("renderDeckToHtml — backgroundImageUrlBySlideIndex (#992)", () => {
     expect(html).toContain(
       'data-background-image="https://cdn.example.com/x.png"',
     );
+  });
+});
+
+// ── Sub-issue #996: single-slide thumbnail render ──────────────────────
+describe("renderDeckToHtml — slideIndex filter (#996)", () => {
+  it("renders only the slide at the given index", () => {
+    const deck = buildDeck(ALL_TEMPLATES);
+    const out = renderDeckToHtml(deck, KIT, "embedded", { slideIndex: 2 });
+    expect(out.slideCount).toBe(1);
+    // ALL_TEMPLATES[2] is bullet_list per the seed list above.
+    expect(out.html).toContain('data-template="bullet_list"');
+    expect(out.html).not.toContain('data-template="title"');
+    expect(out.html).not.toContain('data-template="section_divider"');
+  });
+
+  it("yields zero slides for an out-of-range index instead of throwing", () => {
+    const deck = buildDeck(ALL_TEMPLATES);
+    const out = renderDeckToHtml(deck, KIT, "embedded", {
+      slideIndex: 999,
+    });
+    expect(out.slideCount).toBe(0);
+    expect(out.html).not.toContain("<section ");
+  });
+
+  it("filters the bg-URL map alongside so only the surviving slide keeps its background", () => {
+    const deck = buildDeck(ALL_TEMPLATES);
+    const map = new Map<number, string>([
+      [0, "https://cdn.example.com/zero.png"],
+      [2, "https://cdn.example.com/two.png"],
+    ]);
+    const out = renderDeckToHtml(deck, KIT, "embedded", {
+      slideIndex: 2,
+      backgroundImageUrlBySlideIndex: map,
+    });
+    expect(out.html).toContain('data-background-image="https://cdn.example.com/two.png"');
+    expect(out.html).not.toContain("zero.png");
+  });
+});
+
+// ── Sub-issue #997: polished embedded chrome ───────────────────────────
+describe("renderDeckToHtml — embedded chrome (#997)", () => {
+  it("emits the embedded chrome wrapper class and inline style block", () => {
+    const out = renderDeckToHtml(buildDeck([ALL_TEMPLATES[0]]), KIT, "embedded");
+    expect(out.html).toContain('class="pitch-deck-wrap pitch-deck-wrap--embedded"');
+    expect(out.html).toContain("<style>");
+    // Brand chrome assertions: border + drop shadow + brand var override.
+    expect(out.html).toContain("border: 2px solid var(--pitch-primary");
+    expect(out.html).toContain("box-shadow: 0 8px 24px rgba(0,0,0,0.25)");
+    expect(out.html).toContain("--r-heading-color: var(--pitch-primary)");
+  });
+
+  it("uses `--present` modifier class for present mode while keeping fragment output", () => {
+    const out = renderDeckToHtml(buildDeck([ALL_TEMPLATES[0]]), KIT, "present");
+    expect(out.html).toContain('class="pitch-deck-wrap pitch-deck-wrap--present"');
+    expect(out.html).not.toContain("<!doctype");
+  });
+
+  it("renders brand colors at full saturation via inline CSS variables", () => {
+    const out = renderDeckToHtml(buildDeck([ALL_TEMPLATES[0]]), KIT, "embedded");
+    expect(out.html).toContain(`--pitch-primary:${KIT.primaryColor}`);
+    expect(out.html).toContain(`--pitch-secondary:${KIT.secondaryColor}`);
+    expect(out.html).toContain(`--pitch-accent:${KIT.accentColor}`);
+  });
+
+  it("renders the brand footer text inside the embedded chrome", () => {
+    const out = renderDeckToHtml(buildDeck([ALL_TEMPLATES[0]]), KIT, "embedded");
+    if (KIT.footerText) {
+      expect(out.html).toContain('class="pitch-footer"');
+      expect(out.html).toContain(KIT.footerText);
+    }
   });
 });
 

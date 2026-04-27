@@ -33,6 +33,10 @@ import type { CharacterRepository } from "../characters/character-repository.js"
 import type { MediaQueueRepository } from "../queue/media-queue-repository.js";
 import type { Slide, SlideImage } from "./pitch-schema.js";
 import { enqueueSlideImage, type ImageSlot } from "./pitch-image-service.js";
+import {
+  resolveImageStyle,
+  type ImageStyle,
+} from "./image-style-prompts.js";
 
 /** A persisted slide carries both the SlideRecord identity and the Slide payload. */
 export interface SlideForFanout {
@@ -47,6 +51,12 @@ export interface FanOutImageGenerationOpts {
   characterRepo?: CharacterRepository;
   /** Per-deck cap on simultaneous in-flight createJob calls. Defaults to 4. */
   concurrency?: number;
+  /**
+   * Deck-level image-style preset (sub-issue #998). Per-slide
+   * `slide.image_style` overrides this when set; otherwise every enqueue
+   * uses this prefix. Undefined = no preset.
+   */
+  imageStyle?: ImageStyle;
   /**
    * Optional hook invoked synchronously after each successful enqueue.
    * Used by the API layer to emit `pitch:image:queued` and audit log.
@@ -81,6 +91,8 @@ interface PlannedJob {
   slot: ImageSlot;
   kind: "image" | "background";
   prompt: string;
+  /** Per-slide override (already resolved); deck-level applied in caller. */
+  perSlideStyle?: ImageStyle;
 }
 
 /** Pure: scan a deck and return the list of jobs that *would* be enqueued. */
@@ -92,6 +104,7 @@ export function planImageJobs(slides: SlideForFanout[]): {
   let skipped = 0;
 
   for (const { id: slideId, slide } of slides) {
+    const perSlideStyle = slide.image_style;
     // 1. Background prompt (any template).
     const bgPrompt = slide.background_image_prompt?.trim();
     if (bgPrompt && bgPrompt.length >= 3) {
@@ -106,6 +119,7 @@ export function planImageJobs(slides: SlideForFanout[]): {
         slot: "image",
         kind: "background",
         prompt: bgPrompt,
+        ...(perSlideStyle ? { perSlideStyle } : {}),
       });
     }
 
@@ -113,7 +127,13 @@ export function planImageJobs(slides: SlideForFanout[]): {
     if (slide.template === "bullet_list") {
       const img = slide.content.image;
       if (img && shouldEnqueueImage(img)) {
-        plan.push({ slideId, slot: "image", kind: "image", prompt: img.prompt });
+        plan.push({
+          slideId,
+          slot: "image",
+          kind: "image",
+          prompt: img.prompt,
+          ...(perSlideStyle ? { perSlideStyle } : {}),
+        });
       } else if (img) {
         skipped += 1;
       }
@@ -121,7 +141,13 @@ export function planImageJobs(slides: SlideForFanout[]): {
       const left = slide.content.left_image;
       const right = slide.content.right_image;
       if (left && shouldEnqueueImage(left)) {
-        plan.push({ slideId, slot: "left_image", kind: "image", prompt: left.prompt });
+        plan.push({
+          slideId,
+          slot: "left_image",
+          kind: "image",
+          prompt: left.prompt,
+          ...(perSlideStyle ? { perSlideStyle } : {}),
+        });
       } else if (left) {
         skipped += 1;
       }
@@ -131,6 +157,7 @@ export function planImageJobs(slides: SlideForFanout[]): {
           slot: "right_image",
           kind: "image",
           prompt: right.prompt,
+          ...(perSlideStyle ? { perSlideStyle } : {}),
         });
       } else if (right) {
         skipped += 1;
@@ -138,14 +165,26 @@ export function planImageJobs(slides: SlideForFanout[]): {
     } else if (slide.template === "image_caption") {
       const img = slide.content.image;
       if (shouldEnqueueImage(img)) {
-        plan.push({ slideId, slot: "image", kind: "image", prompt: img.prompt });
+        plan.push({
+          slideId,
+          slot: "image",
+          kind: "image",
+          prompt: img.prompt,
+          ...(perSlideStyle ? { perSlideStyle } : {}),
+        });
       } else {
         skipped += 1;
       }
     } else if (slide.template === "full_bleed") {
       const img = slide.content.image;
       if (shouldEnqueueImage(img)) {
-        plan.push({ slideId, slot: "image", kind: "image", prompt: img.prompt });
+        plan.push({
+          slideId,
+          slot: "image",
+          kind: "image",
+          prompt: img.prompt,
+          ...(perSlideStyle ? { perSlideStyle } : {}),
+        });
       } else {
         skipped += 1;
       }
@@ -184,6 +223,10 @@ export async function fanOutImageGeneration(
       const job = plan[idx];
       if (!job) return;
       try {
+        const effectiveStyle = resolveImageStyle(
+          job.perSlideStyle,
+          opts.imageStyle,
+        );
         const result = enqueueSlideImage({
           deckId: opts.deckId,
           slideId: job.slideId,
@@ -192,6 +235,7 @@ export async function fanOutImageGeneration(
           slot: job.slot,
           mediaQueueRepo: opts.mediaQueueRepo,
           ...(opts.characterRepo ? { characterRepo: opts.characterRepo } : {}),
+          ...(effectiveStyle ? { imageStyle: effectiveStyle } : {}),
         });
         enqueued += 1;
         opts.onEnqueued?.({
