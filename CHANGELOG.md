@@ -9,15 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **Pitch script condensation now runs map-stage chunks in parallel (4 concurrent) and uses `gpt-4o-mini` by default** — ~5× faster (459 KB script: ~10 min → ~1–2 min). Output order is preserved (workers write into positional summary slots so the reduce stage and resulting script remain deterministic). New exported constants `CONDENSE_MAP_CONCURRENCY` and `DEFAULT_CONDENSE_MODEL` in `src/pitch/pitch-condense.ts`; callers can still override the model per-call.
+- **Pitch script condensation now runs map-stage chunks in parallel (4 concurrent)** — ~5× faster (459 KB script: ~10 min → ~1–2 min). Output order is preserved (workers write into positional summary slots so the reduce stage and resulting script remain deterministic). New exported constant `CONDENSE_MAP_CONCURRENCY` in `src/pitch/pitch-condense.ts`.
 
 ### Added
 
+- **Pitch wizard: choose the LLM for condensation and draft generation** via the standard model picker on the Options step (defaults to your Copilot account's selected model). `POST /api/admin/pitch/script/condense` now accepts an optional `model` field and `POST /api/admin/pitch/decks/draft` accepts `options.model`; both forward the override to the Copilot wrapper.
 - **Pitch — AI-condensed large script uploads (up to 2 MB).** The Pitch wizard now accepts `.md` / `.txt` files up to 2 MB; oversize content is staged in a "Condense with AI" panel (explicit user click required — no auto-billing of LLM tokens) and run through a map-reduce summarisation pass before the existing `/decks/draft` pipeline. The persisted `source_script` cap stays at 50 KB — the condense step is the escape valve.
 - **New endpoint `POST /api/admin/pitch/script/condense`** (auth-gated through the `/api/admin/pitch` mount-point). 20 requests/hour/IP via a new `condenseLimiter`, audit-logged on success (`category: system, event: pitch.script.condensed`) and on 429 (`category: security, event: pitch.rate_limit_exceeded`). Per-route `express.json({ limit: "2.5mb" })` middleware (the global 1 MB parser skips this prefix in `src/app.ts` — every other pitch route keeps its 1 MB cap). Returns `413 { error: "script_too_large", maxBytes: 2_000_000 }` for over-ceiling input and `502 { error: "condense_failed", detail }` on LLM failure.
 
 ### Fixed (Epic #951 — Studio → Pitch Walkthrough Bug Batch)
 
+- Pitch script condense no longer forces `gpt-4o-mini` (which is unavailable in the GitHub Copilot SDK and caused every condense call to 502); falls back to the wrapper default model unless the caller (or wizard model picker) supplies an override.
 - Pitch deck draft no longer aborts before LLM completes (timeout raised to 240s, progress UI added).
 - Pitch export menu wired up (PDF, PPTX, Markdown, Speaker Notes, ZIP).
 - Pitch slide regenerate-text action exposed in slide menu.

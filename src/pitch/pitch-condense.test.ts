@@ -20,7 +20,6 @@ import {
   CONDENSE_HARD_CEILING_BYTES,
   DEFAULT_CONDENSE_TARGET_BYTES,
   CONDENSE_CHUNK_CHARS,
-  DEFAULT_CONDENSE_MODEL,
 } from "./pitch-condense.js";
 import type { CopilotWrapper } from "../copilot/copilot-wrapper.js";
 
@@ -185,13 +184,30 @@ describe("condenseScript", () => {
     expect(result.originalBytes).toBe(text.length);
   });
 
-  it("passes DEFAULT_CONDENSE_MODEL when no model override is provided", async () => {
+  it("omits `model` from the chat opts when no override is provided (lets wrapper default win)", async () => {
+    // Regression: PR #987 hard-coded `model: "gpt-4o-mini"`, which the
+    // GitHub Copilot SDK rejects with `Model "gpt-4o-mini" is not
+    // available`, causing every condense call to 502. The wrapper has
+    // its own default (`gpt-4.1`) — so when the caller doesn't override
+    // the model, we must NOT forward one.
     const text = "P".repeat(50);
     const { copilot, chat } = fakeCopilot(["ok"]);
     await condenseScript(text, copilot, { targetBytes: 30 });
     expect(chat).toHaveBeenCalledTimes(1);
     const opts = chat.mock.calls[0][1];
-    expect(opts.model).toBe(DEFAULT_CONDENSE_MODEL);
+    expect(opts).not.toHaveProperty("model");
+  });
+
+  it("forwards an explicit `model` override into the chat opts", async () => {
+    const text = "P".repeat(50);
+    const { copilot, chat } = fakeCopilot(["ok"]);
+    await condenseScript(text, copilot, {
+      targetBytes: 30,
+      model: "claude-sonnet-4",
+    });
+    expect(chat).toHaveBeenCalledTimes(1);
+    const opts = chat.mock.calls[0][1];
+    expect(opts.model).toBe("claude-sonnet-4");
   });
 
   it("preserves chunk order even when LLM responses resolve out of order", async () => {

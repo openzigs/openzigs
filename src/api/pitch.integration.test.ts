@@ -637,6 +637,37 @@ describe("Pitch — Phase 7 integration (sub-issue #976)", () => {
       expect(res.body.error.code).toBe("validation_error");
     });
 
+    it("forwards an explicit `model` override into condenseScript opts", async () => {
+      condenseScriptMock.mockResolvedValue({
+        condensed: "ok",
+        originalBytes: 5,
+        condensedBytes: 2,
+        chunks: 1,
+      });
+      const res = await request(h.app)
+        .post("/api/admin/pitch/script/condense")
+        .send({ text: "abc", model: "claude-sonnet-4" });
+      expect(res.status).toBe(200);
+      expect(condenseScriptMock).toHaveBeenCalledTimes(1);
+      const opts = condenseScriptMock.mock.calls[0][2] as { model?: string };
+      expect(opts.model).toBe("claude-sonnet-4");
+    });
+
+    it("forwards `options.model` from POST /decks/draft into generateDeck", async () => {
+      generateDeckMock.mockResolvedValue(makeDraftedDeck());
+      const res = await request(h.app)
+        .post("/api/admin/pitch/decks/draft")
+        .send({
+          script: "model passthrough",
+          brandKitId: "starter-modern-minimal",
+          options: { model: "claude-sonnet-4" },
+        });
+      expect(res.status).toBe(201);
+      expect(generateDeckMock).toHaveBeenCalledTimes(1);
+      const callArgs = generateDeckMock.mock.calls[0][0] as { model?: string };
+      expect(callArgs.model).toBe("claude-sonnet-4");
+    });
+
     it("trips the 20/hr rate limiter and emits a security audit (PR #984)", async () => {
       condenseScriptMock.mockResolvedValue({
         condensed: "ok",

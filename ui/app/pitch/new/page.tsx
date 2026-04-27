@@ -6,6 +6,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { fetchJson, buildUrl } from "@/lib/api";
 import { showToast } from "@/components/toast";
 import { BrandKitEditor } from "@/components/pitch/brand-kit-editor";
+import { InlineModelPicker } from "@/components/model-picker-select";
 
 interface BrandKit {
   id: string;
@@ -57,6 +58,11 @@ export default function NewPitchDeckPage() {
   const [slideCount, setSlideCount] = useState<number>(10);
   const [audience, setAudience] = useState<string>("");
   const [tone, setTone] = useState<Tone>("formal");
+  // Optional LLM override for both the condense + draft endpoints.
+  // Empty string → omit `model` from the POST body so the wrapper's
+  // own default model is used (PR #987 hard-coded `gpt-4o-mini` and
+  // 502'd because the SDK doesn't expose it).
+  const [model, setModel] = useState<string>("");
   const [submitting, setSubmitting] = useState(false);
   const [createKitOpen, setCreateKitOpen] = useState(false);
   // Condense panel state — set when the user drops/pastes content over
@@ -128,7 +134,10 @@ export default function NewPitchDeckPage() {
       const res = await fetch(url, {
         method: "POST",
         headers,
-        body: JSON.stringify({ text: pendingCondense.text }),
+        body: JSON.stringify({
+          text: pendingCondense.text,
+          ...(model ? { model } : {}),
+        }),
       });
       if (res.status === 413) {
         showToast("File exceeds 2 MB hard cap.", "error");
@@ -225,6 +234,7 @@ export default function NewPitchDeckPage() {
             targetSlideCount: slideCount,
             audience: audience || undefined,
             tone,
+            ...(model ? { model } : {}),
           },
         }),
       });
@@ -448,7 +458,23 @@ export default function NewPitchDeckPage() {
         {step === "options" && (
           <div data-testid="wizard-step-options">
             <h2 className="text-sm font-semibold">Generation options</h2>
-            <div className="mt-3">
+            <div className="mt-3" data-testid="wizard-model-picker-row">
+              <label className="text-xs font-semibold" htmlFor="wizard-model">
+                AI model (optional)
+              </label>
+              <div className="mt-1">
+                <InlineModelPicker
+                  value={model}
+                  onChange={setModel}
+                />
+              </div>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Defaults to your account&rsquo;s selected Copilot model.
+                Override if you want a faster/cheaper model for
+                condensation and drafting.
+              </p>
+            </div>
+            <div className="mt-4">
               <label className="text-xs font-semibold">Slide count target</label>
               <div className="mt-1 flex gap-2" data-testid="wizard-slide-count">
                 {[5, 8, 10, 15, 20].map((n) => (

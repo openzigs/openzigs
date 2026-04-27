@@ -218,6 +218,22 @@ describe("generateDeck", () => {
     expect(opts.agent).toBe("pitch-writer");
   });
 
+  it("omits `model` from chat opts when no override is provided (wrapper default wins)", async () => {
+    // Regression guard \u2014 mirrors the condense-side fix (PR fix/pitch-
+    // condense-model-picker). Forcing a model that isn't in the SDK's
+    // catalogue (e.g. `gpt-4o-mini`) 502s every call. When the caller
+    // doesn't supply `model`, we MUST NOT forward one.
+    const { copilot, chat } = mockCopilot([VALID_DECK_PAYLOAD]);
+    await generateDeck({
+      script: "x",
+      brandKit: KIT,
+      copilot,
+      clock: FROZEN_CLOCK,
+    });
+    const opts = chat.mock.calls[0][1] as Record<string, unknown>;
+    expect(opts).not.toHaveProperty("model");
+  });
+
   it("uses the system clock when `clock` is not supplied (created_at is a recent ISO string)", async () => {
     const { copilot } = mockCopilot([VALID_DECK_PAYLOAD]);
     const before = Date.now();

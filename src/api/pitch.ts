@@ -1092,6 +1092,9 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
     .object({
       text: z.string().min(1).max(CONDENSE_HARD_CEILING_BYTES),
       targetBytes: z.number().int().min(5_000).max(50_000).optional(),
+      /** Optional LLM model override forwarded to the Copilot wrapper.
+       *  When omitted, the wrapper's selected default is used. */
+      model: z.string().min(1).max(100).optional(),
     })
     .strict();
 
@@ -1145,6 +1148,7 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
       try {
         const result = await condenseScript(body.text, deps.copilot, {
           targetBytes,
+          ...(body.model ? { model: body.model } : {}),
         });
         audit("system", "pitch.script.condensed", {
           originalBytes: result.originalBytes,
@@ -1194,6 +1198,7 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
         brandKit,
         options: body.options,
         copilot: deps.copilot,
+        ...(body.options?.model ? { model: body.options.model } : {}),
       });
 
       // Persist via repo, overriding the title if the caller supplied one.
