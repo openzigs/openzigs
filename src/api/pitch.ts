@@ -24,7 +24,7 @@
 import { mkdir, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
-import { extname, join, resolve } from "node:path";
+import { extname, join, relative, resolve } from "node:path";
 import { Router, type Request, type Response } from "express";
 import express from "express";
 import multer from "multer";
@@ -85,6 +85,13 @@ export interface PitchRouterDeps {
   characterRepo?: CharacterRepository;
   /** Override for the brand-kit asset directory (tests). Defaults to `~/.openzigs/brand-kits`. */
   brandKitsDir?: string;
+  /**
+   * Override for the pitch slide-asset directory (tests). Defaults to
+   * `~/.openzigs/pitch/assets` — must match `pitch-image-service.ts`
+   * because the asset-serve route below containment-checks against it
+   * (sub-issue #992).
+   */
+  assetsBaseDir?: string;
   /** Audit log sink. Mutating routes emit categorized events through it. */
   auditLogger?: AuditLogger;
   /** Socket.IO server. Mutating routes broadcast `pitch:*` events through it. */
@@ -104,6 +111,7 @@ export interface PitchRouterDeps {
 }
 
 const DEFAULT_BRAND_KITS_DIR = join(homedir(), ".openzigs", "brand-kits");
+const DEFAULT_ASSETS_DIR = join(homedir(), ".openzigs", "pitch", "assets");
 const STARTER_KIT_IDS = new Set(STARTER_BRAND_KITS.map((k) => k.id));
 const LOGO_MAX_BYTES = 2 * 1024 * 1024; // 2 MB cap (#966)
 // Allow-list per #966 acceptance criteria. SVG is intentionally excluded:
@@ -209,6 +217,55 @@ function toFileUrl(p: string): string {
   // Naive cross-platform file:// builder (sufficient for our local cache).
   const norm = p.replace(/\\/g, "/");
   return norm.startsWith("/") ? `file://${norm}` : `file:///${norm}`;
+}
+
+/**
+ * Sub-issue #992 — build a slide-index → background-asset URL map for
+ * the renderer. Picks the most-recently-created `kind="background"`
+ * asset per slide so re-generations win. The renderer keys by index
+ * (Deck JSON has no per-slide row IDs — see `assembleDeck` in
+ * `pitch-repository.ts`), so we resolve `asset.slide_id` →
+ * `slideRecord.position` here. URLs are root-relative paths into this
+ * router; the renderer re-validates them through `safeUrl` before
+ * emission.
+ */
+export function buildBackgroundImageUrlMap(
+  deckId: string,
+  slides: ReadonlyArray<{ id: string; position: number }>,
+  assets: ReadonlyArray<{
+    id: string;
+    slide_id: string | null;
+    kind: string;
+    created_at: string;
+  }>,
+): Map<number, string> {
+  const positionBySlideId = new Map<string, number>();
+  for (const s of slides) positionBySlideId.set(s.id, s.position);
+  const latestByPosition = new Map<
+    number,
+    { id: string; created_at: string }
+  >();
+  for (const asset of assets) {
+    if (asset.kind !== "background") continue;
+    if (!asset.slide_id) continue;
+    const position = positionBySlideId.get(asset.slide_id);
+    if (position === undefined) continue;
+    const prior = latestByPosition.get(position);
+    if (!prior || asset.created_at > prior.created_at) {
+      latestByPosition.set(position, {
+        id: asset.id,
+        created_at: asset.created_at,
+      });
+    }
+  }
+  const out = new Map<number, string>();
+  for (const [position, asset] of latestByPosition) {
+    out.set(
+      position,
+      `/api/admin/pitch/decks/${encodeURIComponent(deckId)}/assets/${encodeURIComponent(asset.id)}`,
+    );
+  }
+  return out;
 }
 
 // ── Body schemas ────────────────────────────────────────────────────────
@@ -363,6 +420,7 @@ function buildPlaceholderTitleSlide(title: string): Slide {
 export function createPitchRouter(deps: PitchRouterDeps): Router {
   const router = Router();
   const brandKitsDir = deps.brandKitsDir ?? DEFAULT_BRAND_KITS_DIR;
+  const assetsBaseDir = resolve(deps.assetsBaseDir ?? DEFAULT_ASSETS_DIR);
 
   // ── Audit + Socket.IO emit helpers ─────────────────────────────────
   // Both sinks are optional so test harnesses can opt-in. Production
@@ -524,6 +582,62 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
     res.json({ deck, slides });
   });
 
+  // ────────────────────────────────────────────────────────────────────
+  // Sub-issue #992 — Asset-serve endpoint
+  //
+  // Serves bytes for a `pitch_assets` row (typically a flux-generated
+  // background or inline image). Used by:
+  //   - the `/render` background URL map (this PR)
+  //   - future client-side previews (e.g. the regenerate dialog
+  //     thumbnail)
+  //
+  // Hardening:
+  //   - Asset must belong to the URL's deck (404 otherwise — no leakage
+  //     of which assetIds exist across decks).
+  //   - The resolved `local_path` must lie under `assetsBaseDir`. We
+  //     never trust the row blindly; defense-in-depth against any future
+  //     code path that might write a path traversal into the table.
+  //   - `Cache-Control: no-store` so a regenerated asset isn't served
+  //     stale.
+  // ────────────────────────────────────────────────────────────────────
+  router.get("/decks/:deckId/assets/:assetId", crudLimiter, (req, res) => {
+    const { deckId, assetId } = req.params;
+    const assets = deps.pitchRepo.listAssetsForDeck(deckId);
+    const asset = assets.find((a) => a.id === assetId);
+    if (!asset) {
+      sendError(res, 404, "not_found", "asset not found");
+      return;
+    }
+    // `listAssetsForDeck` already scopes to deckId, but be explicit.
+    if (asset.deck_id !== deckId) {
+      sendError(res, 404, "not_found", "asset not found");
+      return;
+    }
+    const absPath = resolve(asset.local_path);
+    const rel = relative(assetsBaseDir, absPath);
+    if (rel.startsWith("..") || resolve(assetsBaseDir, rel) !== absPath) {
+      audit(
+        "security",
+        "pitch_asset_path_outside_root",
+        { deckId, assetId, absPath, assetsBaseDir },
+        "warn",
+      );
+      sendError(res, 404, "not_found", "asset not found");
+      return;
+    }
+    if (!existsSync(absPath)) {
+      sendError(res, 404, "not_found", "asset file missing");
+      return;
+    }
+    res.setHeader("Content-Type", asset.mime || "application/octet-stream");
+    res.setHeader("Cache-Control", "no-store");
+    res.sendFile(absPath, (err) => {
+      if (err && !res.headersSent) {
+        sendError(res, 500, "internal_error", "asset send failed");
+      }
+    });
+  });
+
   // Phase 4 / sub-issue #963 — Reveal HTML render endpoint.
   router.get("/decks/:deckId/render", htmlLimiter, (req, res) => {
     const mode = req.query.mode === "standalone" ? "standalone" : "embedded";
@@ -544,7 +658,14 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
     }
     try {
       const brandKit = repoToPitchBrandKit(repoKit);
-      const { html, slideCount } = renderDeckToHtml(deck, brandKit, mode);
+      const backgroundImageUrlBySlideIndex = buildBackgroundImageUrlMap(
+        deck.id,
+        deps.pitchRepo.listSlidesForDeck(deck.id),
+        deps.pitchRepo.listAssetsForDeck(deck.id),
+      );
+      const { html, slideCount } = renderDeckToHtml(deck, brandKit, mode, {
+        backgroundImageUrlBySlideIndex,
+      });
       audit("system", "pitch_deck_rendered", {
         deckId: deck.id,
         mode,
@@ -664,10 +785,16 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
     const ctx = loadDeckAndKit(req, res);
     if (!ctx?.deck) return;
     try {
+      const backgroundImageUrlBySlideIndex = buildBackgroundImageUrlMap(
+        ctx.deck.id,
+        deps.pitchRepo.listSlidesForDeck(ctx.deck.id),
+        deps.pitchRepo.listAssetsForDeck(ctx.deck.id),
+      );
       const { html, slideCount } = renderDeckToHtml(
         ctx.deck,
         ctx.brandKit,
         "standalone",
+        { backgroundImageUrlBySlideIndex },
       );
       audit("system", "pitch_deck_exported", {
         deckId: ctx.deck.id,

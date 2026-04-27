@@ -243,4 +243,110 @@ describe("RegenerateImageDialog", () => {
     fireEvent.change(ta, { target: { value: "a brand new prompt" } });
     expect(ta.value).toBe("a brand new prompt");
   });
+
+  // Sub-issue #992 — current-image preview prop
+  describe("currentImageUrl preview (#992)", () => {
+    it("renders thumbnail and 'Replace?' label when a safe URL is supplied", () => {
+      vi.mocked(fetchJson).mockResolvedValue({ characters: [] });
+      render(
+        <RegenerateImageDialog
+          open
+          onOpenChange={vi.fn()}
+          deckId="d"
+          slideId="s"
+          initialPrompt="prompt here"
+          mode="background"
+          currentImageUrl="/api/admin/pitch/decks/d/assets/a1"
+        />,
+        { wrapper },
+      );
+      const wrap = screen.getByTestId("pitch-regen-image-current");
+      expect(wrap).toBeInTheDocument();
+      expect(wrap).toHaveTextContent("Replace?");
+      const thumb = screen.getByTestId(
+        "pitch-regen-image-current-thumb",
+      ) as HTMLImageElement;
+      expect(thumb.getAttribute("src")).toBe(
+        "/api/admin/pitch/decks/d/assets/a1",
+      );
+    });
+
+    it("does not render the thumbnail when currentImageUrl is omitted", () => {
+      vi.mocked(fetchJson).mockResolvedValue({ characters: [] });
+      render(
+        <RegenerateImageDialog
+          open
+          onOpenChange={vi.fn()}
+          deckId="d"
+          slideId="s"
+          initialPrompt="prompt here"
+          mode="background"
+        />,
+        { wrapper },
+      );
+      expect(
+        screen.queryByTestId("pitch-regen-image-current"),
+      ).not.toBeInTheDocument();
+    });
+
+    it("silently drops a thumbnail with an unsafe URL scheme", () => {
+      vi.mocked(fetchJson).mockResolvedValue({ characters: [] });
+      render(
+        <RegenerateImageDialog
+          open
+          onOpenChange={vi.fn()}
+          deckId="d"
+          slideId="s"
+          initialPrompt="prompt here"
+          mode="background"
+          currentImageUrl="javascript:alert(1)"
+        />,
+        { wrapper },
+      );
+      expect(
+        screen.queryByTestId("pitch-regen-image-current"),
+      ).not.toBeInTheDocument();
+    });
+
+    it("accepts an https URL", () => {
+      vi.mocked(fetchJson).mockResolvedValue({ characters: [] });
+      render(
+        <RegenerateImageDialog
+          open
+          onOpenChange={vi.fn()}
+          deckId="d"
+          slideId="s"
+          initialPrompt="prompt here"
+          mode="background"
+          currentImageUrl="https://cdn.example.com/x.png"
+        />,
+        { wrapper },
+      );
+      const thumb = screen.getByTestId(
+        "pitch-regen-image-current-thumb",
+      ) as HTMLImageElement;
+      expect(thumb.getAttribute("src")).toBe(
+        "https://cdn.example.com/x.png",
+      );
+    });
+
+    it("treats whitespace-only URL as missing", () => {
+      vi.mocked(fetchJson).mockResolvedValue({ characters: [] });
+      render(
+        <RegenerateImageDialog
+          open
+          onOpenChange={vi.fn()}
+          deckId="d"
+          slideId="s"
+          initialPrompt="prompt here"
+          mode="background"
+          currentImageUrl="   "
+        />,
+        { wrapper },
+      );
+      expect(
+        screen.queryByTestId("pitch-regen-image-current"),
+      ).not.toBeInTheDocument();
+    });
+  });
 });

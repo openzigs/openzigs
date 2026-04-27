@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Pitch deck rendering now displays per-slide background images** regenerated via the title-slide property editor. The Reveal `<section>` for each slide now emits a `data-background-image` attribute (plus `data-background-size="cover"` and `data-background-position="center"`) when a `kind="background"` asset exists for that slide; the latest asset by `created_at` wins. Backwards-compatible — when no background asset is present the renderer behaves exactly as before. (#992)
+- **New endpoint `GET /api/admin/pitch/decks/:deckId/assets/:assetId`** serves slide asset bytes (typically flux-generated backgrounds) directly from disk. Hardened against path traversal (resolved `local_path` must lie under `assetsBaseDir`), cross-deck leakage (asset must belong to the URL's deck), and stale caches (`Cache-Control: no-store`). Rate-limited via the existing `crudLimiter` and auth-gated through the `/api/admin/pitch` mount point. (#992)
+- **Regenerate-image dialog "Replace?" preview.** When the dialog is opened with a `currentImageUrl` prop it now renders a small thumbnail of the existing image with a "Replace?" caption above the prompt, so the user can confirm what they're about to overwrite. Client-side URL allowlist mirrors the server-side `safeUrl` check. (#992)
+
 ### Changed
 
 - **Pitch condense reuses one Copilot SDK session per parallel worker slot** (4 sessions for a 16-chunk document) instead of creating and destroying a fresh session per chunk. Eliminates the 16× "session started / session ended" churn observed in logs. Sessions are destroyed in a `finally` block guaranteeing cleanup on success and failure paths alike.
