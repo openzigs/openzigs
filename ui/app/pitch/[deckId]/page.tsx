@@ -14,6 +14,8 @@ import { RevealCanvas } from "@/components/pitch/reveal-canvas";
 import { SlideRail, type SlideRailItem } from "@/components/pitch/slide-rail";
 import { PropertiesPanel } from "@/components/pitch/properties-panel";
 import { ScriptPanel } from "@/components/pitch/script-panel";
+import { GenerateAllImagesButton } from "@/components/pitch/generate-all-images-button";
+import { useSlideImageStatus } from "@/components/pitch/use-slide-image-status";
 import {
   BrandKitPicker,
   type BrandKitListEntry,
@@ -308,6 +310,7 @@ export default function PitchDeckEditorPage() {
       "pitch:slide:updated",
       "pitch:slide:deleted",
       "pitch:slide:moved",
+      "pitch:image:ready",
     ];
     events.forEach((evt) => socket.on(evt, invalidateAll));
     return () => {
@@ -319,6 +322,25 @@ export default function PitchDeckEditorPage() {
 
   const deck = deckQuery.data?.deck;
   const slides = deckQuery.data?.slides ?? [];
+
+  // Track per-slide image generation status (#993). Drives the rail badges
+  // and the "Generate all images" button progress counter.
+  const { slideStatus: imageSlideStatus } = useSlideImageStatus(deckId);
+
+  const retryAllImages = async () => {
+    try {
+      await fetchJson(
+        `/api/admin/pitch/decks/${deckId}/images/generate-all`,
+        { method: "POST", body: JSON.stringify({}) },
+      );
+      showToast("Retrying image generation\u2026", "success");
+    } catch (err) {
+      showToast(
+        `Retry failed: ${err instanceof Error ? err.message : String(err)}`,
+        "error",
+      );
+    }
+  };
 
   const railItems: SlideRailItem[] = useMemo(
     () =>
@@ -441,6 +463,10 @@ export default function PitchDeckEditorPage() {
               setBrandKitDialogOpen(true);
             }}
           />
+          <GenerateAllImagesButton
+            deckId={deckId}
+            onShowToast={(msg, kind) => showToast(msg, kind)}
+          />
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <button
@@ -450,8 +476,7 @@ export default function PitchDeckEditorPage() {
               >
                 Export
               </button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
+            </DropdownMenuTrigger>            <DropdownMenuContent align="end">
               {EXPORT_FORMATS.map((fmt) => (
                 <DropdownMenuItem
                   key={fmt.id}
@@ -508,6 +533,10 @@ export default function PitchDeckEditorPage() {
         onDuplicate={(slideId) => duplicateSlideMutation.mutate(slideId)}
         onDelete={(slideId) => deleteSlideMutation.mutate(slideId)}
         onRegenerate={(slideId) => regenerateSlideMutation.mutate(slideId)}
+        imageStatusOf={imageSlideStatus}
+        onRetryImage={() => {
+          void retryAllImages();
+        }}
       />
 
       {/* Canvas */}

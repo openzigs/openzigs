@@ -51,6 +51,7 @@ import {
 } from "../pitch/pitch-condense.js";
 import { submitSlideRegenerateTask } from "../pitch/pitch-regenerate.js";
 import { enqueueSlideImage } from "../pitch/pitch-image-service.js";
+import { fanOutImageGeneration } from "../pitch/image-fanout.js";
 import { renderDeckToHtml } from "../pitch/pitch-renderer.js";
 import { exportDeckToPdf } from "../pitch/pitch-export-pdf.js";
 import { exportDeckToPptx } from "../pitch/pitch-export-pptx.js";
@@ -157,6 +158,7 @@ type ErrorCode =
   | "conflict"
   | "bad_request"
   | "internal_error"
+  | "rate_limited"
   | "pdf_export_unavailable";
 
 function sendError(
@@ -506,6 +508,10 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
   const regenerateLimiter = buildLimiter(60, "slide regenerate");
   const enhanceLimiter = buildLimiter(60, "slide enhance");
   const imageLimiter = buildLimiter(30, "slide image");
+  // Bulk fan-out is a heavyweight action — cap at 12/hr/IP. Per-deck the
+  // sub-issue spec calls for "max 1 / 5s per deck" idempotency; that
+  // tighter cap is enforced separately via an in-memory map below.
+  const generateAllLimiter = buildLimiter(12, "generate-all images");
   const pdfLimiter = buildLimiter(20, "PDF export");
   const pptxLimiter = buildLimiter(30, "PPTX export");
   const zipLimiter = buildLimiter(30, "ZIP export");
@@ -1344,6 +1350,59 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
         source: "draft",
       });
       emit("pitch:deck:created", { deckId: persisted.id, deck: persisted });
+
+      // Sub-issue #995 — auto-fan-out flux jobs for every image-bearing
+      // slide. Default is opt-in (`autoGenerateImages` defaults to `true`
+      // in the Zod schema). We *intentionally* do NOT await the fan-out
+      // — the user gets a fast 201 response and the UI subscribes to
+      // `pitch:image:queued` / `pitch:image:ready` over Socket.IO.
+      const autoGen = body.options?.autoGenerateImages ?? true;
+      if (autoGen) {
+        const slidesForFanout = deps.pitchRepo
+          .listSlidesForDeck(persisted.id)
+          .map((s) => ({ id: s.id, slide: s.slide }));
+        // Schedule on next tick so the HTTP response is flushed first.
+        void (async () => {
+          try {
+            const result = await fanOutImageGeneration({
+              deckId: persisted.id,
+              slides: slidesForFanout,
+              mediaQueueRepo: deps.mediaQueueRepo,
+              ...(deps.characterRepo ? { characterRepo: deps.characterRepo } : {}),
+              concurrency: 4,
+              onEnqueued: (info) => {
+                emit("pitch:image:queued", {
+                  deckId: persisted.id,
+                  slideId: info.slideId,
+                  jobId: info.jobId,
+                  assetId: info.assetId,
+                  source: "auto_draft",
+                });
+              },
+              onEnqueueError: (info) => {
+                emit("pitch:image:failed", {
+                  deckId: persisted.id,
+                  slideId: info.slideId,
+                  error: info.error,
+                  source: "auto_draft",
+                });
+              },
+            });
+            audit("system", "pitch.images.bulk_enqueued", {
+              deckId: persisted.id,
+              source: "auto_draft",
+              enqueued: result.enqueued,
+              skipped: result.skipped,
+              total: result.total,
+            });
+          } catch (err) {
+            logger.error(
+              `[Pitch API] auto-fan-out failed: ${errMessage(err)}`,
+            );
+          }
+        })();
+      }
+
       res.status(201).json({ deck: persisted });
     } catch (err) {
       logger.error(`[Pitch API] POST /decks/draft failed: ${errMessage(err)}`);
@@ -1485,6 +1544,89 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
       sendError(res, 400, "bad_request", errMessage(err));
     }
   });
+
+  // ────────────────────────────────────────────────────────────────────
+  // Bulk fan-out — sub-issue #991 ("Generate all images" toolbar button)
+  // Idempotent: slides whose image already has a URL are counted as
+  // `skipped`. Per-deck cooldown of 5 s prevents accidental double-fire.
+  // ────────────────────────────────────────────────────────────────────
+  const lastBulkAtByDeck = new Map<string, number>();
+  const BULK_COOLDOWN_MS = 5_000;
+  const GenerateAllImagesBody = z.object({}).strict();
+
+  router.post(
+    "/decks/:deckId/images/generate-all",
+    generateAllLimiter,
+    async (req, res) => {
+      const body = parseBody(GenerateAllImagesBody, res, req);
+      if (!body) return;
+      const deckId = req.params.deckId;
+      const deck = deps.pitchRepo.getDeck(deckId);
+      if (!deck) {
+        sendError(res, 404, "not_found", `deck ${deckId} not found`);
+        return;
+      }
+
+      const now = Date.now();
+      const last = lastBulkAtByDeck.get(deckId) ?? 0;
+      if (now - last < BULK_COOLDOWN_MS) {
+        const retryMs = BULK_COOLDOWN_MS - (now - last);
+        res.setHeader("Retry-After", Math.ceil(retryMs / 1000).toString());
+        sendError(res, 429, "rate_limited", "generate-all cooldown active");
+        return;
+      }
+      lastBulkAtByDeck.set(deckId, now);
+
+      const slidesForFanout = deps.pitchRepo
+        .listSlidesForDeck(deckId)
+        .map((s) => ({ id: s.id, slide: s.slide }));
+
+      try {
+        const result = await fanOutImageGeneration({
+          deckId,
+          slides: slidesForFanout,
+          mediaQueueRepo: deps.mediaQueueRepo,
+          ...(deps.characterRepo ? { characterRepo: deps.characterRepo } : {}),
+          concurrency: 4,
+          onEnqueued: (info) => {
+            emit("pitch:image:queued", {
+              deckId,
+              slideId: info.slideId,
+              jobId: info.jobId,
+              assetId: info.assetId,
+              source: "bulk_button",
+            });
+          },
+          onEnqueueError: (info) => {
+            emit("pitch:image:failed", {
+              deckId,
+              slideId: info.slideId,
+              error: info.error,
+              source: "bulk_button",
+            });
+          },
+        });
+        audit("tool", "pitch.images.bulk_enqueued", {
+          deckId,
+          source: "bulk_button",
+          enqueued: result.enqueued,
+          skipped: result.skipped,
+          total: result.total,
+        });
+        res.status(200).json(result);
+      } catch (err) {
+        logger.error(
+          `[Pitch API] generate-all failed: ${errMessage(err)}`,
+        );
+        sendError(
+          res,
+          503,
+          "internal_error",
+          `generate-all failed: ${errMessage(err)}`,
+        );
+      }
+    },
+  );
 
   // ────────────────────────────────────────────────────────────────────
   // Brand kits (#966)

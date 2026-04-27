@@ -177,4 +177,51 @@ describe("SlideRail", () => {
     fireEvent.click(within(dialog).getByText("Delete"));
     expect(baseHandlers.onDelete).toHaveBeenCalledWith("s2");
   });
+
+  // ── #993 image-status badges ────────────────────────────────────────
+
+  it("renders no image-status badge when status is idle", () => {
+    render(<SlideRail items={items} {...baseHandlers} />);
+    expect(
+      screen.queryByTestId(/^slide-rail-image-status-/),
+    ).not.toBeInTheDocument();
+  });
+
+  it("renders queued / ready / failed badges from imageStatusOf (#993)", () => {
+    const statusMap: Record<string, "queued" | "ready" | "failed"> = {
+      s1: "queued",
+      s2: "ready",
+      s3: "failed",
+    };
+    render(
+      <SlideRail
+        items={items}
+        {...baseHandlers}
+        imageStatusOf={(id) => statusMap[id] ?? "idle"}
+      />,
+    );
+    expect(
+      screen.getByTestId("slide-rail-image-status-1"),
+    ).toHaveAttribute("data-status", "queued");
+    expect(
+      screen.getByTestId("slide-rail-image-status-2"),
+    ).toHaveAttribute("data-status", "ready");
+    expect(
+      screen.getByTestId("slide-rail-image-status-3"),
+    ).toHaveAttribute("data-status", "failed");
+  });
+
+  it("clicking a failed badge invokes onRetryImage with slide id (#993)", () => {
+    const onRetryImage = vi.fn();
+    render(
+      <SlideRail
+        items={items}
+        {...baseHandlers}
+        imageStatusOf={() => "failed"}
+        onRetryImage={onRetryImage}
+      />,
+    );
+    fireEvent.click(screen.getByTestId("slide-rail-image-status-1"));
+    expect(onRetryImage).toHaveBeenCalledWith("s1");
+  });
 });

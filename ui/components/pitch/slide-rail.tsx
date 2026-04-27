@@ -16,7 +16,7 @@ import {
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { MoreVertical } from "lucide-react";
+import { MoreVertical, Loader2, CheckCircle2, AlertCircle } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -49,6 +49,17 @@ export interface SlideRailProps {
    * `/decks/:deckId/slides/:slideId/regenerate`.
    */
   onRegenerate?: (slideId: string) => void;
+  /**
+   * Optional — when present, renders an image-status badge on each row
+   * driven by Socket.IO `pitch:image:*` events (#993). Returns the
+   * worst-of slot status for the slide.
+   */
+  imageStatusOf?: (slideId: string) => "idle" | "queued" | "ready" | "failed";
+  /**
+   * Optional — invoked when the user clicks a failed-status badge to
+   * retry image generation for the slide.
+   */
+  onRetryImage?: (slideId: string) => void;
 }
 
 export const SlideRail = ({
@@ -61,6 +72,8 @@ export const SlideRail = ({
   onDuplicate,
   onDelete,
   onRegenerate,
+  imageStatusOf,
+  onRetryImage,
 }: SlideRailProps) => {
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
   // Local copy so we can do optimistic reorder + rollback on failure.
@@ -133,6 +146,8 @@ export const SlideRail = ({
                   onDuplicate={onDuplicate}
                   onRegenerate={onRegenerate}
                   onRequestDelete={(id) => setPendingDelete(id)}
+                  imageStatus={imageStatusOf?.(item.id) ?? "idle"}
+                  onRetryImage={onRetryImage}
                 />
               ))}
             </ul>
@@ -163,6 +178,8 @@ interface RowProps {
   onDuplicate: (id: string) => void;
   onRegenerate?: (id: string) => void;
   onRequestDelete: (id: string) => void;
+  imageStatus: "idle" | "queued" | "ready" | "failed";
+  onRetryImage?: (id: string) => void;
 }
 
 const SlideRailRow = ({
@@ -175,6 +192,8 @@ const SlideRailRow = ({
   onDuplicate,
   onRegenerate,
   onRequestDelete,
+  imageStatus,
+  onRetryImage,
 }: RowProps) => {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
     useSortable({ id: item.id });
@@ -201,8 +220,17 @@ const SlideRailRow = ({
     >
       <div className="flex items-start justify-between gap-1">
         <div className="min-w-0 flex-1">
-          <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
-            {index + 1} · {item.template}
+          <div className="flex items-center gap-1 text-[10px] uppercase tracking-wide text-muted-foreground">
+            <span>
+              {index + 1} · {item.template}
+            </span>
+            <ImageStatusBadge
+              status={imageStatus}
+              slideIndex={index + 1}
+              onRetry={
+                onRetryImage ? () => onRetryImage(item.id) : undefined
+              }
+            />
           </div>
           <div className="mt-0.5 truncate font-medium text-foreground">
             {item.titlePreview || "Untitled"}
@@ -253,3 +281,59 @@ const SlideRailRow = ({
 };
 
 export default SlideRail;
+
+/**
+ * Tiny image-status pill for the rail row (#993). Hidden when status is
+ * `idle`. When `failed`, the pill becomes a clickable retry trigger.
+ */
+interface BadgeProps {
+  status: "idle" | "queued" | "ready" | "failed";
+  slideIndex: number;
+  onRetry?: () => void;
+}
+
+const ImageStatusBadge = ({ status, slideIndex, onRetry }: BadgeProps) => {
+  if (status === "idle") return null;
+  const common = "ml-1 inline-flex h-3 w-3 items-center justify-center";
+  if (status === "queued") {
+    return (
+      <span
+        data-testid={`slide-rail-image-status-${slideIndex}`}
+        data-status="queued"
+        title="Image generating"
+        className={common}
+      >
+        <Loader2 className="h-3 w-3 animate-spin text-amber-500" />
+      </span>
+    );
+  }
+  if (status === "ready") {
+    return (
+      <span
+        data-testid={`slide-rail-image-status-${slideIndex}`}
+        data-status="ready"
+        title="Image ready"
+        className={common}
+      >
+        <CheckCircle2 className="h-3 w-3 text-emerald-500" />
+      </span>
+    );
+  }
+  // failed
+  return (
+    <button
+      type="button"
+      data-testid={`slide-rail-image-status-${slideIndex}`}
+      data-status="failed"
+      title="Image generation failed — click to retry"
+      onClick={(e) => {
+        e.stopPropagation();
+        onRetry?.();
+      }}
+      onPointerDown={(e) => e.stopPropagation()}
+      className={`${common} text-red-500 hover:text-red-400`}
+    >
+      <AlertCircle className="h-3 w-3" />
+    </button>
+  );
+};
