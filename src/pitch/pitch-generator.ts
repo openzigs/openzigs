@@ -18,6 +18,7 @@
 import { nanoid } from "nanoid";
 import { z } from "zod";
 import type { CopilotWrapper } from "../copilot/copilot-wrapper.js";
+import { logger } from "../logging/logger.js";
 import {
   DeckSchema,
   SlideSchema,
@@ -117,19 +118,59 @@ export async function generateDeck(opts: GenerateDeckOpts): Promise<Deck> {
     wrapUserScript(opts.script ?? ""),
   ].join("\n");
 
-  // Initial call — parse + validate; on failure, retry ONCE with the error.
+  // Initial call \u2014 parse + validate; on failure OR slide-count mismatch
+  // (when the caller asked for a specific count), retry ONCE with a
+  // targeted hint. The retry budget is shared across both failure modes.
   let lastError: unknown = null;
+  let lastDeck: Deck | null = null;
   let raw = await callOnce(opts, userPrompt, systemPrompt);
   try {
-    return assembleDeck(raw, opts);
+    const deck = assembleDeck(raw, opts);
+    if (
+      opts.options?.targetSlideCount === undefined ||
+      deck.slides.length === targetSlideCount
+    ) {
+      return deck;
+    }
+    // Wrong slide count \u2014 fall through to retry with explicit count
+    // instruction. Preserve the partial deck so a second failure can
+    // still hand back something usable instead of throwing.
+    lastDeck = deck;
   } catch (err) {
     lastError = err;
   }
 
-  // Retry pass — embed the validation error so the model can self-correct.
-  const retryPrompt = [userPrompt, "", buildRetryHint(lastError)].join("\n");
+  // Retry pass \u2014 either embed the validation error so the model can
+  // self-correct, OR explicitly call out the slide-count miss.
+  const retryReason =
+    lastError !== null
+      ? buildRetryHint(lastError)
+      : `You returned ${lastDeck?.slides.length ?? "?"} slides, but I asked for exactly ${targetSlideCount}. Return EXACTLY ${targetSlideCount} slides \u2014 no more, no fewer.`;
+  const retryPrompt = [userPrompt, "", retryReason].join("\n");
   raw = await callOnce(opts, retryPrompt, systemPrompt);
-  return assembleDeck(raw, opts);
+  try {
+    const deck = assembleDeck(raw, opts);
+    if (
+      opts.options?.targetSlideCount !== undefined &&
+      deck.slides.length !== targetSlideCount
+    ) {
+      logger.warn(
+        `[pitch-generator] retry produced ${deck.slides.length} slides, target was ${targetSlideCount}; returning anyway`,
+      );
+    }
+    return deck;
+  } catch (err) {
+    // Second attempt failed validation. If the FIRST attempt produced a
+    // valid (but wrong-count) deck, hand that back rather than 500ing the
+    // user \u2014 a deck with the wrong slide count is still usable.
+    if (lastDeck) {
+      logger.warn(
+        `[pitch-generator] retry failed (${err instanceof Error ? err.message : String(err)}); returning first-pass deck with ${lastDeck.slides.length}/${targetSlideCount} slides`,
+      );
+      return lastDeck;
+    }
+    throw err;
+  }
 }
 
 /**

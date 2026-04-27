@@ -142,7 +142,8 @@ type ErrorCode =
   | "forbidden"
   | "conflict"
   | "bad_request"
-  | "internal_error";
+  | "internal_error"
+  | "pdf_export_unavailable";
 
 function sendError(
   res: Response,
@@ -599,6 +600,26 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
   const mdExporter = deps.exporters?.md ?? exportDeckToMarkdown;
   const notesExporter = deps.exporters?.notes ?? exportNotesToPdf;
 
+  /**
+   * True if the error looks like a Decktape/Chromium spawn failure
+   * (binary missing, not executable, headless launch crashed). We surface
+   * these as 503 with a structured body so the UI can prompt the user to
+   * warm the cache instead of showing a generic "PDF export failed" toast.
+   */
+  const isPdfToolUnavailable = (err: unknown): boolean => {
+    const code = (err as NodeJS.ErrnoException | undefined)?.code;
+    if (code === "ENOENT" || code === "EACCES" || code === "ENOTDIR") return true;
+    const msg = errMessage(err).toLowerCase();
+    return (
+      msg.includes("enoent") ||
+      msg.includes("spawn decktape") ||
+      msg.includes("decktape: not found") ||
+      msg.includes("chromium") && msg.includes("failed")
+    );
+  };
+  const PDF_UNAVAILABLE_DETAIL =
+    "Decktape/Chromium failed to start. Run `npx decktape --version` to warm the cache.";
+
   type DeckCtx = {
     deck: ReturnType<PitchRepository["getDeck"]>;
     brandKit: PitchBrandKit;
@@ -762,6 +783,10 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
       logger.error(
         `[Pitch API] GET /decks/${req.params.deckId}/export.pdf failed: ${errMessage(err)}`,
       );
+      if (isPdfToolUnavailable(err)) {
+        sendError(res, 503, "pdf_export_unavailable", PDF_UNAVAILABLE_DETAIL);
+        return;
+      }
       // Generic message — never leak subprocess stderr to clients.
       sendError(res, 500, "internal_error", "pdf export failed");
     }
@@ -797,6 +822,10 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
       logger.error(
         `[Pitch API] GET /decks/${req.params.deckId}/export.notes.pdf failed: ${errMessage(err)}`,
       );
+      if (isPdfToolUnavailable(err)) {
+        sendError(res, 503, "pdf_export_unavailable", PDF_UNAVAILABLE_DETAIL);
+        return;
+      }
       sendError(res, 500, "internal_error", "notes pdf export failed");
     }
   });

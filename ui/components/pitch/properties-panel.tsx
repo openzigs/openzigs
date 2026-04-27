@@ -193,6 +193,29 @@ export const PropertiesPanel = ({
             deckId={deckId}
             brandKit={brandKit ?? null}
           />
+          <div className="mt-4 border-t border-border pt-3">
+            <label
+              htmlFor="pitch-properties-speaker-notes"
+              className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-muted-foreground"
+            >
+              Speaker notes
+            </label>
+            <textarea
+              id="pitch-properties-speaker-notes"
+              data-testid="pitch-properties-speaker-notes"
+              value={draft.speaker_notes ?? ""}
+              onChange={(e) =>
+                handleEditorChange({
+                  ...draft,
+                  speaker_notes: e.target.value,
+                } as PitchSlideShape)
+              }
+              rows={4}
+              maxLength={2000}
+              placeholder="Notes shown only to the presenter\u2026"
+              className="w-full resize-y rounded border border-border bg-background px-2 py-1 text-xs"
+            />
+          </div>
         </>
       ) : (
         <div

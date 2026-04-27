@@ -82,7 +82,10 @@ const TitleEditor = ({ slide, onChange, deckId }: PropertyEditorProps<TitleSlide
         onOpenChange={setOpen}
         deckId={deckId}
         slideId={(slide as TitleSlide & { id?: string }).id ?? ""}
-        initialPrompt={slide.background_image_prompt ?? c.title ?? ""}
+        // Bug #6 \u2014 prefill with the textarea's current value, not the
+        // slide title. Falling back to title made an edit to the bg-prompt
+        // appear to be ignored.
+        initialPrompt={slide.background_image_prompt ?? ""}
         mode="background"
       />
     </div>

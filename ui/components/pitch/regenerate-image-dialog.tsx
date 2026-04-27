@@ -12,11 +12,12 @@
  * doesn't pay for the dropdown when the user never opens the dialog.
  */
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -60,6 +61,18 @@ export const RegenerateImageDialog = ({
   const [loraId, setLoraId] = useState<string>("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Bug #6 — the dialog stays mounted while `open=false`, so `useState`'s
+  // lazy initializer only runs once and the prompt would be stuck at the
+  // value held when the editor first rendered. Re-sync from `initialPrompt`
+  // every time the dialog re-opens so the user's most recent textarea edit
+  // is what actually gets prefilled.
+  useEffect(() => {
+    if (open) {
+      setPrompt(initialPrompt);
+      setError(null);
+    }
+  }, [open, initialPrompt]);
 
   const charactersQuery = useQuery({
     queryKey: ["pitch", "characters"],
@@ -109,6 +122,10 @@ export const RegenerateImageDialog = ({
       >
         <DialogHeader>
           <DialogTitle>Regenerate image</DialogTitle>
+          <DialogDescription>
+            Provide a new prompt to regenerate this image. The current
+            asset stays in place until the new render finishes.
+          </DialogDescription>
         </DialogHeader>
         <div className="space-y-3 text-xs">
           <label className="block">

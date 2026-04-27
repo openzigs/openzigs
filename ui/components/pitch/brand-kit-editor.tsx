@@ -21,6 +21,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -241,6 +242,11 @@ export const BrandKitEditor = ({
           <DialogTitle>
             {isCreate ? "New brand kit" : isStarter ? "Starter brand kit" : "Edit brand kit"}
           </DialogTitle>
+          <DialogDescription>
+            Define brand colors, fonts, and footer text. New decks pick
+            up these defaults; existing decks are unaffected until you
+            switch their brand kit.
+          </DialogDescription>
         </DialogHeader>
 
         {isStarter && (

@@ -24,6 +24,7 @@ vi.mock("@/components/ui/dialog", () => ({
   DialogHeader: ({ children }: { children: ReactNode }) => <>{children}</>,
   DialogFooter: ({ children }: { children: ReactNode }) => <>{children}</>,
   DialogTitle: ({ children }: { children: ReactNode }) => <h3>{children}</h3>,
+  DialogDescription: ({ children }: { children: ReactNode }) => <p>{children}</p>,
 }));
 
 import { fetchJson } from "@/lib/api";

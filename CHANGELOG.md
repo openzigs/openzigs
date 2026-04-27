@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed (Epic #951 — Studio → Pitch Walkthrough Bug Batch)
+
+- Pitch deck draft no longer aborts before LLM completes (timeout raised to 240s, progress UI added).
+- Pitch export menu wired up (PDF, PPTX, Markdown, Speaker Notes, ZIP).
+- Pitch slide regenerate-text action exposed in slide menu.
+- Per-slide speaker notes now editable in properties panel.
+- Pitch generator now respects slide-count target with explicit retry.
+- Regenerate-image dialog uses field's current prompt value.
+
+### Added (Epic #951 — Studio → Pitch Walkthrough Bug Batch)
+
+- Structured 503 response when Decktape/Chromium unavailable.
+- `aria-describedby` on pitch dialogs for screen readers.
+
 ### Security (Epic #951 — Studio → Pitch Phase 7)
 
 - **Per-route rate limiting (#977):** Every Pitch route now wears an `express-rate-limit` instance built by an in-router `buildLimiter(max, label)` factory (1-hour window, standard `RateLimit-*` + `Retry-After` headers, `429 { error: { code: "rate_limited" } }` on overflow). Limits: draft 10/hr, regenerate 60/hr, enhance 60/hr, image enqueue 30/hr, PDF 20/hr, PPTX 30/hr, ZIP 30/hr, MD 60/hr, HTML 60/hr, speaker-notes PDF 20/hr, CRUD 600/hr.
