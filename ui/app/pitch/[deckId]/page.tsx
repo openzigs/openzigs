@@ -7,6 +7,7 @@ import {
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
+import { FileCode, Play, Share2 } from "lucide-react";
 import { useSocket } from "@/lib/socket-context";
 import { buildUrl, fetchJson } from "@/lib/api";
 import { showToast } from "@/components/toast";
@@ -16,6 +17,7 @@ import { PropertiesPanel } from "@/components/pitch/properties-panel";
 import { ScriptPanel } from "@/components/pitch/script-panel";
 import { GenerateAllImagesButton } from "@/components/pitch/generate-all-images-button";
 import { useSlideImageStatus } from "@/components/pitch/use-slide-image-status";
+import { ShareDialog } from "@/components/pitch/share-dialog";
 import {
   BrandKitPicker,
   type BrandKitListEntry,
@@ -90,15 +92,18 @@ async function fetchRenderHtml(deckId: string): Promise<string> {
 }
 
 interface ExportFormat {
-  id: "pdf" | "pptx" | "md" | "notes" | "zip";
+  id: "pdf" | "pptx" | "html" | "md" | "notes" | "zip";
   label: string;
   /** Path appended to `/api/admin/pitch/decks/:deckId`. */
   suffix: string;
+  /** Render-time icon (lucide). Optional so non-icon items still work. */
+  icon?: typeof FileCode;
 }
 
 const EXPORT_FORMATS: ReadonlyArray<ExportFormat> = [
   { id: "pdf", label: "PDF", suffix: "/export.pdf" },
   { id: "pptx", label: "PowerPoint (.pptx)", suffix: "/export.pptx" },
+  { id: "html", label: "HTML", suffix: "/export.html", icon: FileCode },
   { id: "md", label: "Markdown", suffix: "/export.md" },
   { id: "notes", label: "Speaker Notes (PDF)", suffix: "/export.notes.pdf" },
   { id: "zip", label: "ZIP Bundle", suffix: "/export.zip" },
@@ -145,6 +150,56 @@ async function downloadExport(
   setTimeout(() => URL.revokeObjectURL(objectUrl), 1_000);
 }
 
+/**
+ * Toolbar "Present" button (sub-issue #999). Opens the Reveal renderer
+ * in a new tab in presenter mode. The auth token is appended as a query
+ * param because `window.open` / anchor navigation can't carry an
+ * `Authorization` header. The link is disabled while there are unsaved
+ * edits so a presenter never demos a half-saved deck.
+ */
+function PresentButton({
+  deckId,
+  disabled,
+}: {
+  deckId: string;
+  disabled: boolean;
+}) {
+  const baseUrl = buildUrl(
+    `/api/admin/pitch/decks/${deckId}/render?mode=present`,
+  );
+  const href = AUTH_TOKEN
+    ? `${baseUrl}${baseUrl.includes("?") ? "&" : "?"}token=${encodeURIComponent(AUTH_TOKEN)}`
+    : baseUrl;
+  const className =
+    "inline-flex items-center gap-1 rounded border border-border px-2 py-1 text-xs hover:bg-muted/40";
+  if (disabled) {
+    return (
+      <button
+        type="button"
+        disabled
+        title="Save your changes first"
+        data-testid="pitch-editor-present"
+        className={`${className} cursor-not-allowed opacity-50`}
+      >
+        <Play className="h-3.5 w-3.5" />
+        Present
+      </button>
+    );
+  }
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      data-testid="pitch-editor-present"
+      className={className}
+    >
+      <Play className="h-3.5 w-3.5" />
+      Present
+    </a>
+  );
+}
+
 export default function PitchDeckEditorPage() {
   const params = useParams<{ deckId: string }>();
   const deckId = params.deckId;
@@ -159,6 +214,7 @@ export default function PitchDeckEditorPage() {
   const [brandKitDialogOpen, setBrandKitDialogOpen] = useState(false);
   const [brandKitEditTarget, setBrandKitEditTarget] =
     useState<BrandKitListEntry | null>(null);
+  const [shareDialogOpen, setShareDialogOpen] = useState(false);
 
   const deckQuery = useQuery({
     queryKey: ["pitch", "deck", deckId],
@@ -467,6 +523,16 @@ export default function PitchDeckEditorPage() {
             deckId={deckId}
             onShowToast={(msg, kind) => showToast(msg, kind)}
           />
+          <PresentButton deckId={deckId} disabled={saveState !== "idle"} />
+          <button
+            type="button"
+            data-testid="pitch-editor-share"
+            onClick={() => setShareDialogOpen(true)}
+            className="inline-flex items-center gap-1 rounded border border-border px-2 py-1 text-xs hover:bg-muted/40"
+          >
+            <Share2 className="h-3.5 w-3.5" />
+            Share
+          </button>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <button
@@ -585,6 +651,12 @@ export default function PitchDeckEditorPage() {
           selectedSlideId={selectedSlide?.id ?? null}
           onSelectSlide={(id) => setSelectedSlideId(id)}
         />
+      <ShareDialog
+        deckId={deckId}
+        open={shareDialogOpen}
+        onOpenChange={setShareDialogOpen}
+        onShowToast={(msg, kind) => showToast(msg, kind)}
+      />
       </div>
 
       <BrandKitEditor

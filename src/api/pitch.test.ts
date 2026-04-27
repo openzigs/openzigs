@@ -22,6 +22,7 @@ import { createPitchRouter, type PitchRouterDeps } from "./pitch.js";
 import { PitchRepository } from "../pitch/pitch-repository.js";
 import { BrandKitRepository } from "../video/brand-kit.js";
 import { seedStarterBrandKits } from "../pitch/starter-brand-kits.js";
+import { ShareTokenRepository } from "../pitch/share-token-repository.js";
 import {
   DeckSchema,
   SlideSchema,
@@ -106,6 +107,9 @@ function buildHarness(): TestHarness {
   pitchRepo.migrate();
   seedStarterBrandKits(brandKitRepo);
 
+  const shareTokenRepo = new ShareTokenRepository(db, FROZEN);
+  shareTokenRepo.migrate();
+
   const brandKitsDir = mkdtempSync(join(tmpdir(), "pitch-test-"));
 
   const deps: PitchRouterDeps = {
@@ -121,6 +125,7 @@ function buildHarness(): TestHarness {
     mediaQueueRepo: {
       createJob: vi.fn(),
     } as unknown as PitchRouterDeps["mediaQueueRepo"],
+    shareTokenRepo,
     brandKitsDir,
   };
 
@@ -2054,6 +2059,120 @@ describe("Pitch REST router", () => {
       expect(map.get(0)).toBe(
         "/api/admin/pitch/decks/deck%2Fwith%20space/assets/a%26special",
       );
+    });
+  });
+
+  // ──────────────────────────────────────────────────────────────────
+  // Share-token admin routes (sub-issue #1000)
+  // ──────────────────────────────────────────────────────────────────
+
+  describe("Share-token admin routes (#1000)", () => {
+    async function makeShareDeck(): Promise<string> {
+      const kit = harness.deps.brandKitRepo.getAll()[0];
+      const create = await request(harness.app)
+        .post("/api/admin/pitch/decks")
+        .send({ title: "Share Deck", brand_kit_id: kit.id });
+      return create.body.deck.id as string;
+    }
+
+    it("POST /decks/:deckId/share issues a token (43 chars, base64url)", async () => {
+      const deckId = await makeShareDeck();
+      const res = await request(harness.app)
+        .post(`/api/admin/pitch/decks/${deckId}/share`)
+        .send({});
+      expect(res.status).toBe(201);
+      expect(res.body.token).toMatch(/^[A-Za-z0-9_-]{43}$/);
+      expect(res.body.url).toBe(`/p/${res.body.token}`);
+      expect(res.body.expiresAt).toBeNull();
+      expect(res.headers["cache-control"]).toBe("no-store");
+    });
+
+    it("POST /decks/:deckId/share computes expiresAt when expiresInDays is set", async () => {
+      const deckId = await makeShareDeck();
+      const res = await request(harness.app)
+        .post(`/api/admin/pitch/decks/${deckId}/share`)
+        .send({ expiresInDays: 7 });
+      expect(res.status).toBe(201);
+      expect(typeof res.body.expiresAt).toBe("number");
+      expect(res.body.expiresAt - res.body.createdAt).toBe(
+        7 * 24 * 60 * 60 * 1000,
+      );
+    });
+
+    it("POST /decks/:deckId/share rejects unknown deck with 404", async () => {
+      const res = await request(harness.app)
+        .post("/api/admin/pitch/decks/does-not-exist/share")
+        .send({});
+      expect(res.status).toBe(404);
+    });
+
+    it("POST /decks/:deckId/share rejects unknown body fields (.strict())", async () => {
+      const deckId = await makeShareDeck();
+      const res = await request(harness.app)
+        .post(`/api/admin/pitch/decks/${deckId}/share`)
+        .send({ extra: "nope" });
+      expect(res.status).toBe(400);
+    });
+
+    it("GET /decks/:deckId/share lists tokens newest-first with revocation state", async () => {
+      const deckId = await makeShareDeck();
+      const a = await request(harness.app)
+        .post(`/api/admin/pitch/decks/${deckId}/share`)
+        .send({});
+      const b = await request(harness.app)
+        .post(`/api/admin/pitch/decks/${deckId}/share`)
+        .send({});
+      // Revoke `a` so we can assert revokedAt surfaces.
+      await request(harness.app)
+        .post(`/api/admin/pitch/decks/${deckId}/share/${a.body.token}/revoke`)
+        .send({});
+      const list = await request(harness.app).get(
+        `/api/admin/pitch/decks/${deckId}/share`,
+      );
+      expect(list.status).toBe(200);
+      expect(list.body.tokens).toHaveLength(2);
+      const tokens = list.body.tokens as Array<{
+        token: string;
+        revokedAt: number | null;
+      }>;
+      const aRow = tokens.find((t) => t.token === a.body.token);
+      const bRow = tokens.find((t) => t.token === b.body.token);
+      expect(aRow?.revokedAt).not.toBeNull();
+      expect(bRow?.revokedAt).toBeNull();
+    });
+
+    it("GET /decks/:deckId/share returns 404 for unknown deck", async () => {
+      const res = await request(harness.app).get(
+        "/api/admin/pitch/decks/does-not-exist/share",
+      );
+      expect(res.status).toBe(404);
+    });
+
+    it("POST revoke flips revokedAt and is idempotent (second call → 404)", async () => {
+      const deckId = await makeShareDeck();
+      const issued = await request(harness.app)
+        .post(`/api/admin/pitch/decks/${deckId}/share`)
+        .send({});
+      const first = await request(harness.app)
+        .post(
+          `/api/admin/pitch/decks/${deckId}/share/${issued.body.token}/revoke`,
+        )
+        .send({});
+      const second = await request(harness.app)
+        .post(
+          `/api/admin/pitch/decks/${deckId}/share/${issued.body.token}/revoke`,
+        )
+        .send({});
+      expect(first.status).toBe(200);
+      expect(second.status).toBe(404);
+    });
+
+    it("POST revoke rejects malformed tokens with 400", async () => {
+      const deckId = await makeShareDeck();
+      const res = await request(harness.app)
+        .post(`/api/admin/pitch/decks/${deckId}/share/!!!shortbad/revoke`)
+        .send({});
+      expect(res.status).toBe(400);
     });
   });
 });

@@ -60,6 +60,10 @@ import { exportDeckToMarkdown } from "../pitch/pitch-export-md.js";
 import { exportNotesToPdf } from "../pitch/pitch-export-notes.js";
 import { safeFilename } from "../pitch/pitch-export-utils.js";
 import {
+  ShareTokenRepository,
+  hashTokenPrefix,
+} from "../pitch/share-token-repository.js";
+import {
   BrandKitSchema as PitchBrandKitSchema,
   DeckAspectRatioEnum,
   DeckToneEnum,
@@ -84,6 +88,12 @@ export interface PitchRouterDeps {
   mediaQueueRepo: MediaQueueRepository;
   /** Optional — used by `enqueueSlideImage` for LoRA trigger word resolution. */
   characterRepo?: CharacterRepository;
+  /**
+   * Sub-issue #1000 — public share-link tokens. Optional in test harnesses
+   * that don't exercise the share routes; production wiring in `src/server.ts`
+   * always provides it.
+   */
+  shareTokenRepo?: ShareTokenRepository;
   /** Override for the brand-kit asset directory (tests). Defaults to `~/.openzigs/brand-kits`. */
   brandKitsDir?: string;
   /**
@@ -194,7 +204,7 @@ function parseBody<T extends ZodTypeAny>(
 
 // ── Brand kit DTO conversion (RepoBrandKit ↔ PitchBrandKit) ────────────
 
-function repoToPitchBrandKit(kit: RepoBrandKit): PitchBrandKit {
+export function repoToPitchBrandKit(kit: RepoBrandKit): PitchBrandKit {
   // The Pitch BrandKit Zod schema requires `logoUrl` to be a valid URL or
   // null. The repository stores a filesystem path — convert local paths to
   // a `file://` URL for downstream consumers (LLM prompt, exporters).
@@ -520,6 +530,10 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
   const notesLimiter = buildLimiter(20, "speaker-notes PDF");
   const crudLimiter = buildLimiter(600, "API");
   const condenseLimiter = buildLimiter(20, "script condense");
+  // Issuing share tokens is cheap but security-sensitive — keep the per-IP
+  // ceiling tight so a stolen admin token can't be used to spray hundreds
+  // of public links before the operator notices.
+  const shareLimiter = buildLimiter(60, "share-token");
 
   // ────────────────────────────────────────────────────────────────────
   // Deck CRUD (#959)
@@ -1965,6 +1979,143 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
         logger.error(`[Pitch API] logo upload failed: ${errMessage(err)}`);
         sendError(res, 500, "internal_error", errMessage(err));
       }
+    },
+  );
+
+  // ────────────────────────────────────────────────────────────────────
+  // Public share-link admin routes (sub-issue #1000)
+  //
+  // Owner-side surface for issuing / listing / revoking opaque tokens.
+  // The actual public read is served by `createPublicShareRouter` mounted
+  // at `/p` OUTSIDE the admin auth chain. We deliberately:
+  //   - Never echo the raw token in audit logs (only `hashTokenPrefix`).
+  //   - Validate the deck exists before issuing, so dangling tokens to
+  //     unknown decks are impossible.
+  //   - Enforce `:token` looks structurally sane on revoke before
+  //     touching the DB — mirrors the public router's defence-in-depth.
+  // ────────────────────────────────────────────────────────────────────
+
+  const IssueShareTokenBody = z
+    .object({
+      // Optional days-until-expiry (1..365). Omit / null → no expiry.
+      expiresInDays: z.number().int().positive().max(365).optional(),
+    })
+    .strict();
+
+  const TOKEN_PATTERN = /^[A-Za-z0-9_-]+$/;
+  function isWellFormedToken(t: unknown): t is string {
+    return (
+      typeof t === "string" &&
+      t.length >= 16 &&
+      t.length <= 128 &&
+      TOKEN_PATTERN.test(t)
+    );
+  }
+
+  router.post("/decks/:deckId/share", shareLimiter, (req, res) => {
+    if (!deps.shareTokenRepo) {
+      sendError(res, 500, "internal_error", "share-token repository not configured");
+      return;
+    }
+    const deck = deps.pitchRepo.getDeck(req.params.deckId);
+    if (!deck) {
+      sendError(res, 404, "not_found", `deck ${req.params.deckId} not found`);
+      return;
+    }
+    const body = parseBody(IssueShareTokenBody, res, req);
+    if (!body) return;
+    try {
+      const row = deps.shareTokenRepo.issue({
+        deckId: deck.id,
+        expiresInDays: body.expiresInDays,
+      });
+      audit(
+        "security",
+        "pitch_share_token_issued",
+        {
+          deckId: deck.id,
+          tokenIdHash: hashTokenPrefix(row.token),
+          expiresAt: row.expires_at,
+        },
+      );
+      // Note: we DO return the raw token here — this is the only chance the
+      // owner has to copy it. The endpoint sits behind admin auth so the
+      // caller is already trusted; we mark it `Cache-Control: no-store` so
+      // intermediaries (and the browser) don't persist it.
+      res.setHeader("Cache-Control", "no-store");
+      res.status(201).json({
+        token: row.token,
+        url: `/p/${row.token}`,
+        createdAt: row.created_at,
+        expiresAt: row.expires_at,
+      });
+    } catch (err) {
+      logger.error(
+        `[Pitch API] POST /decks/${deck.id}/share failed: ${errMessage(err)}`,
+      );
+      sendError(res, 500, "internal_error", "could not issue share token");
+    }
+  });
+
+  router.get("/decks/:deckId/share", shareLimiter, (req, res) => {
+    if (!deps.shareTokenRepo) {
+      sendError(res, 500, "internal_error", "share-token repository not configured");
+      return;
+    }
+    const deck = deps.pitchRepo.getDeck(req.params.deckId);
+    if (!deck) {
+      sendError(res, 404, "not_found", `deck ${req.params.deckId} not found`);
+      return;
+    }
+    const rows = deps.shareTokenRepo.list(deck.id);
+    res.setHeader("Cache-Control", "no-store");
+    res.json({
+      tokens: rows.map((r) => ({
+        // We DO surface the raw token in this owner-only listing so the
+        // dialog can render copy/revoke controls. The route is admin-auth
+        // gated and `Cache-Control: no-store` so the value never persists.
+        token: r.token,
+        createdAt: r.created_at,
+        expiresAt: r.expires_at,
+        revokedAt: r.revoked_at,
+      })),
+    });
+  });
+
+  router.post(
+    "/decks/:deckId/share/:token/revoke",
+    shareLimiter,
+    (req, res) => {
+      if (!deps.shareTokenRepo) {
+        sendError(res, 500, "internal_error", "share-token repository not configured");
+        return;
+      }
+      const deck = deps.pitchRepo.getDeck(req.params.deckId);
+      if (!deck) {
+        sendError(res, 404, "not_found", `deck ${req.params.deckId} not found`);
+        return;
+      }
+      if (!isWellFormedToken(req.params.token)) {
+        sendError(res, 400, "bad_request", "malformed token");
+        return;
+      }
+      const ok = deps.shareTokenRepo.revoke(req.params.token);
+      if (!ok) {
+        // Don't leak whether the token was unknown vs already-revoked —
+        // both map to a benign 404 from the owner's perspective.
+        sendError(res, 404, "not_found", "token not found or already revoked");
+        return;
+      }
+      audit(
+        "security",
+        "pitch_share_token_revoked",
+        {
+          deckId: deck.id,
+          tokenIdHash: hashTokenPrefix(req.params.token),
+        },
+      );
+      res.setHeader("Cache-Control", "no-store");
+      res.json({ ok: true });
     },
   );
 
