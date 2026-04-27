@@ -1879,11 +1879,11 @@ The persisted `source_script` field is capped at **50 KB** so the LLM draft pass
 
 - The file picker / drag-and-drop accepts `.txt` / `.md` files up to **2 MB** (the hard ceiling).
 - Files ≤ 50 KB load directly into the script box.
-- Files between 50 KB and 2 MB stage a **Condense with AI** panel showing the file name, size, and an estimated `1 LLM call per ~30 KB` (a 459 KB user-guide → ~16 chunks, expect ~30s end-to-end). Click **Condense** to confirm — the wizard never auto-spends LLM tokens.
+- Files between 50 KB and 2 MB stage a **Condense with AI** panel showing the file name, size, and an estimated `1 LLM call per ~30 KB` (a 459 KB user-guide → ~16 chunks). Map-stage chunks run **4 in parallel** against the fast `gpt-4o-mini` model — expect **~30–90s end-to-end** for a 459 KB script (was ~10–16 minutes when chunks ran serially against `gpt-4.1`). Click **Condense** to confirm — the wizard never auto-spends LLM tokens.
 - The condensed text drops into the textarea so you can review / edit before clicking Next. A small chip records the original → condensed sizes for transparency.
 - Files > 2 MB are rejected with a toast.
 
-The condense pipeline is map-reduce: each ~30 KB chunk is summarized with a faithful-summary prompt, then concatenated; if the concatenation is still over the 40 KB target, a single reduce pass folds the section summaries into one coherent script. The result is fed into the unchanged `/decks/draft` pipeline.
+The condense pipeline is map-reduce: each ~30 KB chunk is summarized with a faithful-summary prompt (running up to 4 chunks concurrently — see `CONDENSE_MAP_CONCURRENCY`), then concatenated; if the concatenation is still over the 40 KB target, a single reduce pass folds the section summaries into one coherent script. Default model is `gpt-4o-mini` (`DEFAULT_CONDENSE_MODEL`) — callers can override via the `model` option. The result is fed into the unchanged `/decks/draft` pipeline.
 
 | Format | Endpoint | Notes |
 |---|---|---|

@@ -20,6 +20,7 @@ import {
   CONDENSE_HARD_CEILING_BYTES,
   DEFAULT_CONDENSE_TARGET_BYTES,
   CONDENSE_CHUNK_CHARS,
+  DEFAULT_CONDENSE_MODEL,
 } from "./pitch-condense.js";
 import type { CopilotWrapper } from "../copilot/copilot-wrapper.js";
 
@@ -182,5 +183,55 @@ describe("condenseScript", () => {
     expect(chat).toHaveBeenCalled();
     expect(result.chunks).toBeGreaterThan(0);
     expect(result.originalBytes).toBe(text.length);
+  });
+
+  it("passes DEFAULT_CONDENSE_MODEL when no model override is provided", async () => {
+    const text = "P".repeat(50);
+    const { copilot, chat } = fakeCopilot(["ok"]);
+    await condenseScript(text, copilot, { targetBytes: 30 });
+    expect(chat).toHaveBeenCalledTimes(1);
+    const opts = chat.mock.calls[0][1];
+    expect(opts.model).toBe(DEFAULT_CONDENSE_MODEL);
+  });
+
+  it("preserves chunk order even when LLM responses resolve out of order", async () => {
+    // 4 paragraph blocks ~20k chars each → 4 distinct map chunks.
+    const para = (label: string): string => `${label}\n\n` + "X".repeat(20_000);
+    const text = [para("A"), para("B"), para("C"), para("D")].join("\n\n");
+
+    // Build a chat mock that returns a stream which resolves with a
+    // per-call delay tuned so chunk-3 finishes first and chunk-1 last.
+    // Index in the prompt is the 1-based chunk number — we extract it
+    // and key the delay table off it. This proves we write summaries by
+    // *input index*, not by completion order.
+    const delaysByIndex: Record<number, number> = { 1: 40, 2: 25, 3: 5, 4: 15 };
+    const labelByIndex: Record<number, string> = {
+      1: "summary one",
+      2: "summary two",
+      3: "summary three",
+      4: "summary four",
+    };
+    const chat = vi.fn().mockImplementation((prompt: string) => {
+      const m = prompt.match(/section \((\d+) of \d+\)/);
+      const idx = m ? Number(m[1]) : 0;
+      const delay = delaysByIndex[idx] ?? 0;
+      const label = labelByIndex[idx] ?? "";
+      return (async function* () {
+        await new Promise((r) => setTimeout(r, delay));
+        yield label;
+      })();
+    });
+    const copilot = { chat } as unknown as CopilotWrapper;
+
+    const result = await condenseScript(text, copilot, { targetBytes: 50_000 });
+
+    expect(chat).toHaveBeenCalledTimes(4);
+    expect(result.chunks).toBe(4);
+    // Order MUST follow input chunk order, NOT completion order.
+    expect(result.condensed).toBe(
+      ["summary one", "summary two", "summary three", "summary four"].join(
+        "\n\n",
+      ),
+    );
   });
 });

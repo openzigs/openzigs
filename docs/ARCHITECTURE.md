@@ -6947,7 +6947,7 @@ flowchart LR
 | File | Responsibility |
 |---|---|
 | `src/api/pitch.ts` | 24 routes, per-route rate-limit factory `buildLimiter(max, label)`, CSP on render/HTML export, 80-slide cap |
-| `src/pitch/pitch-condense.ts` | Map-reduce LLM summariser used by `POST /script/condense`. `condenseScript()` chunks raw text on paragraph boundaries, summarises each chunk via the Copilot wrapper, optionally runs a reduce pass to fit `targetBytes` (default 40 KB). 2 MB hard ceiling rejected before any LLM call. |
+| `src/pitch/pitch-condense.ts` | Map-reduce LLM summariser used by `POST /script/condense`. `condenseScript()` chunks raw text on paragraph boundaries, then summarises chunks **in parallel with bounded concurrency** (`CONDENSE_MAP_CONCURRENCY` = 4) via the Copilot wrapper. Default model is the fast `gpt-4o-mini` (`DEFAULT_CONDENSE_MODEL`) — ~5× faster than `gpt-4.1` for faithful-summary work. Output order matches input chunk order (workers write into a positional `summaries[i]` slot). Optionally runs a reduce pass to fit `targetBytes` (default 40 KB). 2 MB hard ceiling rejected before any LLM call. |
 | `src/pitch/pitch-schema.ts` | All Zod schemas. `BrandKitSchema`/`SlideImageSchema` URL fields are server-populated only |
 | `src/pitch/pitch-sanitize.ts` | Centralised DOMPurify; `sanitizeRichText/escapeHtml/escapeAttr/safeUrl`. Forbids `script`/`iframe`/`object`/`embed`/`link`/`meta`/`base`/`form`/`style` and all `on*`/`formaction`/`xlink:href`/`srcdoc`/`action`/`background`/`ping`/`style` attributes |
 | `src/pitch/pitch-utils.ts` | `wrapUserScript`: wraps user input in `<DATA>...</DATA>` envelope and strips any envelope tokens from the body |
