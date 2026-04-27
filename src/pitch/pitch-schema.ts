@@ -396,6 +396,14 @@ export const DraftDeckOptionsSchema = z
     /** Optional LLM model override forwarded to the Copilot wrapper.
      *  When omitted, the wrapper's selected default is used. */
     model: z.string().min(1).max(100).optional(),
+    /**
+     * When true (default), the `/decks/draft` handler fans out one flux
+     * image-generation job per image-bearing slide immediately after the
+     * deck is persisted (sub-issue #995). Set to `false` for tests or
+     * when the caller wants the historical behaviour where the user must
+     * trigger generation manually.
+     */
+    autoGenerateImages: z.boolean().default(true),
   })
   .strict();
 export type DraftDeckOptions = z.infer<typeof DraftDeckOptionsSchema>;

@@ -34,6 +34,7 @@ const generateDeckMock = vi.fn();
 const regenerateSlideMock = vi.fn();
 const submitSlideRegenerateTaskMock = vi.fn();
 const enqueueSlideImageMock = vi.fn();
+const fanOutImageGenerationMock = vi.fn();
 
 vi.mock("../pitch/pitch-generator.js", () => ({
   generateDeck: (...a: unknown[]) => generateDeckMock(...a),
@@ -47,6 +48,10 @@ vi.mock("../pitch/pitch-regenerate.js", () => ({
 
 vi.mock("../pitch/pitch-image-service.js", () => ({
   enqueueSlideImage: (...a: unknown[]) => enqueueSlideImageMock(...a),
+}));
+
+vi.mock("../pitch/image-fanout.js", () => ({
+  fanOutImageGeneration: (...a: unknown[]) => fanOutImageGenerationMock(...a),
 }));
 
 vi.mock("../logging/logger.js", () => ({
@@ -186,6 +191,12 @@ describe("Pitch REST router", () => {
     regenerateSlideMock.mockReset();
     submitSlideRegenerateTaskMock.mockReset();
     enqueueSlideImageMock.mockReset();
+    fanOutImageGenerationMock.mockReset();
+    fanOutImageGenerationMock.mockResolvedValue({
+      enqueued: 0,
+      skipped: 0,
+      total: 0,
+    });
     harness = buildHarness();
   });
 
@@ -671,6 +682,128 @@ describe("Pitch REST router", () => {
         .post(`/api/admin/pitch/decks/${deckId}/slides/${slideId}/image`)
         .send({ prompt: "x", mode: "wrong" });
       expect(res.status).toBe(400);
+    });
+  });
+
+  // ── #995 + #991 — bulk image fan-out ────────────────────────────────
+
+  describe("bulk image fan-out (#995, #991)", () => {
+    it("POST /decks/draft kicks off fanOutImageGeneration by default (#995)", async () => {
+      const kitId = createCustomKit(harness);
+      generateDeckMock.mockResolvedValue({
+        id: "x",
+        title: "T",
+        brand_kit_id: kitId,
+        aspect_ratio: "16:9",
+        slides: [buildSampleSlide()],
+        metadata: { source_script: "s", tone: "formal" },
+        created_at: "2026-01-01T00:00:00Z",
+        updated_at: "2026-01-01T00:00:00Z",
+      });
+      fanOutImageGenerationMock.mockResolvedValue({
+        enqueued: 1,
+        skipped: 0,
+        total: 1,
+      });
+      const res = await request(harness.app)
+        .post("/api/admin/pitch/decks/draft")
+        .send({ script: "x", brandKitId: kitId });
+      expect(res.status).toBe(201);
+      // Allow the next-tick fan-out to run.
+      await new Promise((r) => setImmediate(r));
+      expect(fanOutImageGenerationMock).toHaveBeenCalledTimes(1);
+      const args = fanOutImageGenerationMock.mock.calls[0]?.[0] as {
+        deckId: string;
+        concurrency: number;
+      };
+      expect(args.deckId).toBe(res.body.deck.id);
+      expect(args.concurrency).toBe(4);
+    });
+
+    it("POST /decks/draft skips fan-out when autoGenerateImages=false", async () => {
+      const kitId = createCustomKit(harness);
+      generateDeckMock.mockResolvedValue({
+        id: "x",
+        title: "T",
+        brand_kit_id: kitId,
+        aspect_ratio: "16:9",
+        slides: [buildSampleSlide()],
+        metadata: { source_script: "s", tone: "formal" },
+        created_at: "2026-01-01T00:00:00Z",
+        updated_at: "2026-01-01T00:00:00Z",
+      });
+      const res = await request(harness.app)
+        .post("/api/admin/pitch/decks/draft")
+        .send({
+          script: "x",
+          brandKitId: kitId,
+          options: { autoGenerateImages: false },
+        });
+      expect(res.status).toBe(201);
+      await new Promise((r) => setImmediate(r));
+      expect(fanOutImageGenerationMock).not.toHaveBeenCalled();
+    });
+
+    it("POST /decks/:id/images/generate-all returns counts (#991)", async () => {
+      const kitId = createCustomKit(harness);
+      const { deckId } = createDeck(harness, kitId);
+      fanOutImageGenerationMock.mockResolvedValue({
+        enqueued: 3,
+        skipped: 1,
+        total: 4,
+      });
+      const res = await request(harness.app)
+        .post(`/api/admin/pitch/decks/${deckId}/images/generate-all`)
+        .send({});
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ enqueued: 3, skipped: 1, total: 4 });
+      expect(fanOutImageGenerationMock).toHaveBeenCalledTimes(1);
+    });
+
+    it("POST .../images/generate-all returns 404 for unknown deck", async () => {
+      const res = await request(harness.app)
+        .post("/api/admin/pitch/decks/missing/images/generate-all")
+        .send({});
+      expect(res.status).toBe(404);
+      expect(fanOutImageGenerationMock).not.toHaveBeenCalled();
+    });
+
+    it("POST .../images/generate-all rejects non-empty body (.strict())", async () => {
+      const kitId = createCustomKit(harness);
+      const { deckId } = createDeck(harness, kitId);
+      const res = await request(harness.app)
+        .post(`/api/admin/pitch/decks/${deckId}/images/generate-all`)
+        .send({ extraField: 1 });
+      expect(res.status).toBe(400);
+    });
+
+    it("POST .../images/generate-all enforces 5s per-deck cooldown", async () => {
+      const kitId = createCustomKit(harness);
+      const { deckId } = createDeck(harness, kitId);
+      fanOutImageGenerationMock.mockResolvedValue({
+        enqueued: 0,
+        skipped: 0,
+        total: 0,
+      });
+      const r1 = await request(harness.app)
+        .post(`/api/admin/pitch/decks/${deckId}/images/generate-all`)
+        .send({});
+      expect(r1.status).toBe(200);
+      const r2 = await request(harness.app)
+        .post(`/api/admin/pitch/decks/${deckId}/images/generate-all`)
+        .send({});
+      expect(r2.status).toBe(429);
+      expect(fanOutImageGenerationMock).toHaveBeenCalledTimes(1);
+    });
+
+    it("POST .../images/generate-all returns 503 when fan-out throws", async () => {
+      const kitId = createCustomKit(harness);
+      const { deckId } = createDeck(harness, kitId);
+      fanOutImageGenerationMock.mockRejectedValue(new Error("flux down"));
+      const res = await request(harness.app)
+        .post(`/api/admin/pitch/decks/${deckId}/images/generate-all`)
+        .send({});
+      expect(res.status).toBe(503);
     });
   });
 
