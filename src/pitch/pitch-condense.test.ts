@@ -46,8 +46,10 @@ function fakeCopilot(outputs: string[]): {
     i += 1;
     return streamOf(out);
   });
+  const hasSession = vi.fn().mockReturnValue(false);
+  const destroySession = vi.fn().mockResolvedValue(undefined);
   return {
-    copilot: { chat } as unknown as CopilotWrapper,
+    copilot: { chat, hasSession, destroySession } as unknown as CopilotWrapper,
     chat,
   };
 }
@@ -237,7 +239,11 @@ describe("condenseScript", () => {
         yield label;
       })();
     });
-    const copilot = { chat } as unknown as CopilotWrapper;
+    const copilot = {
+      chat,
+      hasSession: vi.fn().mockReturnValue(false),
+      destroySession: vi.fn().mockResolvedValue(undefined),
+    } as unknown as CopilotWrapper;
 
     const result = await condenseScript(text, copilot, { targetBytes: 50_000 });
 

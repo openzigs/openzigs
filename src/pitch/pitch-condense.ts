@@ -23,6 +23,7 @@
  * with `vi.fn()` returning canned summaries without dragging in the deck
  * generator's prompt builders.
  */
+import { randomUUID } from "node:crypto";
 import type { CopilotWrapper } from "../copilot/copilot-wrapper.js";
 import { logger } from "../logging/logger.js";
 import { accumulateStream } from "./pitch-utils.js";
@@ -121,9 +122,23 @@ export async function condenseScript(
 
   // Preserve input order — workers write into `summaries[i]` by index.
   // The reduce step below relies on positional ordering.
+  const poolSize = Math.min(CONDENSE_MAP_CONCURRENCY, chunks.length);
+
+  // Allocate one SDK session per worker slot so the Copilot SDK session
+  // is created ONCE per worker and reused across all sequential chunks
+  // it processes — avoids 16 session-create/destroy cycles for a 16-chunk
+  // document (would be 4 instead).  Sessions are always destroyed in the
+  // finally block regardless of success or failure.
+  const baseId = opts.sessionId ?? randomUUID();
+  const workerSessionIds = Array.from(
+    { length: poolSize },
+    (_, i) => `${baseId}-w${i}`,
+  );
+
   const summaries: Array<string | undefined> = new Array(chunks.length);
   let nextIndex = 0;
-  const worker = async (): Promise<void> => {
+  const worker = async (workerIdx: number): Promise<void> => {
+    const conversationId = workerSessionIds[workerIdx];
     for (;;) {
       const i = nextIndex++;
       if (i >= chunks.length) return;
@@ -133,13 +148,23 @@ export async function condenseScript(
         userPrompt,
         MAP_SYSTEM_PROMPT,
         opts,
+        conversationId,
       );
     }
   };
-  const poolSize = Math.min(CONDENSE_MAP_CONCURRENCY, chunks.length);
+
   // If any worker rejects, Promise.all surfaces the first failure and
   // we propagate it — current behaviour is "fail the whole call".
-  await Promise.all(Array.from({ length: poolSize }, () => worker()));
+  try {
+    await Promise.all(Array.from({ length: poolSize }, (_, i) => worker(i)));
+  } finally {
+    // Clean up worker sessions regardless of success or failure.
+    for (const sid of workerSessionIds) {
+      if (copilot.hasSession(sid)) {
+        copilot.destroySession(sid).catch(() => { /* best-effort */ });
+      }
+    }
+  }
 
   let condensed = (summaries as string[]).join("\n\n");
   let condensedBytes = Buffer.byteLength(condensed, "utf8");
@@ -156,12 +181,20 @@ export async function condenseScript(
       "",
       condensed,
     ].join("\n");
-    condensed = await callLLMWithRetry(
-      copilot,
-      reduceUserPrompt,
-      reduceSystemPrompt,
-      opts,
-    );
+    const reduceSessionId = `${baseId}-reduce`;
+    try {
+      condensed = await callLLMWithRetry(
+        copilot,
+        reduceUserPrompt,
+        reduceSystemPrompt,
+        opts,
+        reduceSessionId,
+      );
+    } finally {
+      if (copilot.hasSession(reduceSessionId)) {
+        copilot.destroySession(reduceSessionId).catch(() => { /* best-effort */ });
+      }
+    }
     condensedBytes = Buffer.byteLength(condensed, "utf8");
   }
 
@@ -223,6 +256,7 @@ async function callLLMWithRetry(
   userPrompt: string,
   systemPrompt: string,
   opts: CondenseScriptOpts,
+  conversationId: string,
 ): Promise<string> {
   // Initial attempt + 1 retry on empty/whitespace response. Same retry
   // budget shape as `pitch-generator.ts`. Only forward `model` when the
@@ -230,13 +264,16 @@ async function callLLMWithRetry(
   // default avoids 502s when a hard-coded model isn't available in the
   // Copilot SDK catalogue (see PR #987 fallout: `gpt-4o-mini` was
   // rejected by the SDK).
+  // `conversationId` is always provided by the caller so the SDK session
+  // is reused across retries and sequential chunks (see session-per-worker
+  // allocation in `condenseScript`).
   let lastError: unknown = null;
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
       const stream = copilot.chat(userPrompt, {
         tools: [],
         ...(opts.model ? { model: opts.model } : {}),
-        ...(opts.sessionId ? { conversationId: opts.sessionId } : {}),
+        conversationId,
         systemMessage: { mode: "replace", content: systemPrompt },
         agent: CONDENSE_AGENT_NAME,
       } as Parameters<CopilotWrapper["chat"]>[1]);

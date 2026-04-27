@@ -390,6 +390,14 @@ export default function NewPitchDeckPage() {
                 <div className="mt-1 text-muted-foreground">
                   Condense with AI (~5–15s per chunk, 4 in parallel).
                 </div>
+                <div className="mt-2">
+                  <label className="text-xs font-semibold text-foreground">
+                    AI model
+                  </label>
+                  <div className="mt-1">
+                    <InlineModelPicker value={model} onChange={setModel} />
+                  </div>
+                </div>
                 <div className="mt-2 flex gap-2">
                   <button
                     type="button"
@@ -463,15 +471,11 @@ export default function NewPitchDeckPage() {
                 AI model (optional)
               </label>
               <div className="mt-1">
-                <InlineModelPicker
-                  value={model}
-                  onChange={setModel}
-                />
+                <InlineModelPicker value={model} onChange={setModel} />
               </div>
               <p className="mt-1 text-xs text-muted-foreground">
-                Defaults to your account&rsquo;s selected Copilot model.
-                Override if you want a faster/cheaper model for
-                condensation and drafting.
+                Defaults to your account&rsquo;s selected Copilot model. Also
+                applies to condensation if you go back and re-condense.
               </p>
             </div>
             <div className="mt-4">

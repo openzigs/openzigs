@@ -9,7 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Pitch condense reuses one Copilot SDK session per parallel worker slot** (4 sessions for a 16-chunk document) instead of creating and destroying a fresh session per chunk. Eliminates the 16× "session started / session ended" churn observed in logs. Sessions are destroyed in a `finally` block guaranteeing cleanup on success and failure paths alike.
+- **Pitch wizard model picker moved to the Script step** (inside the "Condense with AI" panel) in addition to the Options step, so the model choice is visible at the point of use.
 - **Pitch script condensation now runs map-stage chunks in parallel (4 concurrent)** — ~5× faster (459 KB script: ~10 min → ~1–2 min). Output order is preserved (workers write into positional summary slots so the reduce stage and resulting script remain deterministic). New exported constant `CONDENSE_MAP_CONCURRENCY` in `src/pitch/pitch-condense.ts`.
+
+### Fixed
+
+- **Pitch deck draft no longer 500s on partial `image` blocks emitted by the LLM** (e.g. `"image": {}` or `"image": { "url": null }`). New `normalizeImageBlocks()` pass in `src/pitch/pitch-utils.ts` walks every slide's `content`, finds objects that "look like an image" (have any of `prompt` / `url` / `alt`), and backfills missing required fields with safe defaults derived from the surrounding slide heading. Applied to both full-deck draft (`assembleDeck`) and per-slide regeneration.
 
 ### Added
 
