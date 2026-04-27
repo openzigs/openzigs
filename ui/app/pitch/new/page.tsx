@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useRef, useState, type ClipboardEvent } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { fetchJson, buildUrl } from "@/lib/api";
@@ -17,6 +17,15 @@ interface BrandKitsResponse {
 }
 
 const SCRIPT_BYTE_CAP = 50_000;
+// Hard cap on raw file uploads / oversize content fed into the AI
+// condensation endpoint (`POST /api/admin/pitch/script/condense`). This
+// MUST stay in sync with `CONDENSE_HARD_CEILING_BYTES` in
+// `src/pitch/pitch-condense.ts` — the backend rejects > 2 MB with 413.
+const FILE_BYTE_CAP = 2_000_000;
+// Direct-paste cap on the textarea. We let users paste up to 200 KB
+// without hitting the file-drop flow; anything above the script cap but
+// under this still triggers the "Condense with AI" panel.
+const RAW_PASTE_BYTE_CAP = 200_000;
 const DRAFT_TIMEOUT_MS = 240_000;
 
 const AUTH_TOKEN =
@@ -50,6 +59,17 @@ export default function NewPitchDeckPage() {
   const [tone, setTone] = useState<Tone>("formal");
   const [submitting, setSubmitting] = useState(false);
   const [createKitOpen, setCreateKitOpen] = useState(false);
+  // Condense panel state — set when the user drops/pastes content over
+  // the 50 KB draft cap but under the 2 MB hard ceiling. The user must
+  // explicitly click "Condense" (LLM cost transparency — we never
+  // auto-bill them tokens).
+  const [pendingCondense, setPendingCondense] = useState<
+    { name: string; bytes: number; text: string } | null
+  >(null);
+  const [condensing, setCondensing] = useState(false);
+  const [condenseInfo, setCondenseInfo] = useState<
+    { originalBytes: number; condensedBytes: number; chunks: number } | null
+  >(null);
   const queryClient = useQueryClient();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -76,12 +96,100 @@ export default function NewPitchDeckPage() {
       showToast("Only .txt or .md files are accepted.", "error");
       return;
     }
-    if (file.size > SCRIPT_BYTE_CAP) {
-      showToast("Script exceeds the 50 KB cap.", "error");
+    if (file.size > FILE_BYTE_CAP) {
+      showToast(
+        `File exceeds the ${(FILE_BYTE_CAP / 1_000_000).toFixed(0)} MB hard cap.`,
+        "error",
+      );
       return;
     }
     const text = await file.text();
-    setScript(text);
+    const bytes = new Blob([text]).size;
+    if (bytes <= SCRIPT_BYTE_CAP) {
+      // Small enough to use directly — no LLM call needed.
+      setScript(text);
+      setPendingCondense(null);
+      setCondenseInfo(null);
+      return;
+    }
+    // Over the draft cap but under the hard ceiling — stage for explicit
+    // user-confirmed condensation.
+    setPendingCondense({ name: file.name, bytes, text });
+    setCondenseInfo(null);
+  };
+
+  const handleCondense = async () => {
+    if (!pendingCondense) return;
+    setCondensing(true);
+    try {
+      const url = buildUrl("/api/admin/pitch/script/condense");
+      const headers: HeadersInit = { "Content-Type": "application/json" };
+      if (AUTH_TOKEN) headers["Authorization"] = `Bearer ${AUTH_TOKEN}`;
+      const res = await fetch(url, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ text: pendingCondense.text }),
+      });
+      if (res.status === 413) {
+        showToast("File exceeds 2 MB hard cap.", "error");
+        return;
+      }
+      if (!res.ok) {
+        let detail = `HTTP ${res.status}`;
+        try {
+          const body = (await res.json()) as {
+            detail?: string;
+            error?: { message?: string } | string;
+          };
+          if (body?.detail) detail = body.detail;
+          else if (typeof body?.error === "string") detail = body.error;
+          else if (body?.error && typeof body.error === "object" && body.error.message)
+            detail = body.error.message;
+        } catch {
+          /* fall through */
+        }
+        showToast(`Could not condense script: ${detail}`, "error");
+        return;
+      }
+      const data = (await res.json()) as {
+        condensed: string;
+        originalBytes: number;
+        condensedBytes: number;
+        chunks: number;
+      };
+      setScript(data.condensed);
+      setCondenseInfo({
+        originalBytes: data.originalBytes,
+        condensedBytes: data.condensedBytes,
+        chunks: data.chunks,
+      });
+      setPendingCondense(null);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      showToast(`Could not condense script: ${msg}`, "error");
+    } finally {
+      setCondensing(false);
+    }
+  };
+
+  const handlePaste = (e: ClipboardEvent<HTMLTextAreaElement>) => {
+    const pasted = e.clipboardData.getData("text");
+    if (!pasted) return;
+    const bytes = new Blob([pasted]).size;
+    // Only intercept oversize pastes — below RAW_PASTE_BYTE_CAP we let
+    // the textarea handle it normally.
+    if (bytes <= RAW_PASTE_BYTE_CAP) return;
+    if (bytes > FILE_BYTE_CAP) {
+      e.preventDefault();
+      showToast(
+        `Pasted content exceeds the ${(FILE_BYTE_CAP / 1_000_000).toFixed(0)} MB hard cap.`,
+        "error",
+      );
+      return;
+    }
+    e.preventDefault();
+    setPendingCondense({ name: "clipboard.txt", bytes, text: pasted });
+    setCondenseInfo(null);
   };
 
   const handleSubmit = async () => {
@@ -216,7 +324,8 @@ export default function NewPitchDeckPage() {
           <div data-testid="wizard-step-script">
             <h2 className="text-sm font-semibold">Provide your script</h2>
             <p className="mb-3 text-xs text-muted-foreground">
-              Paste up to 50 KB of text or drop a `.txt`/`.md` file.
+              Paste up to 50 KB, or drop a `.txt`/`.md` file up to 2 MB and we&apos;ll
+              condense it with AI.
             </p>
             <div
               data-testid="wizard-dropzone"
@@ -248,10 +357,76 @@ export default function NewPitchDeckPage() {
                 }}
               />
             </div>
+            {pendingCondense && (
+              <div
+                data-testid="wizard-condense-panel"
+                role="region"
+                aria-label="Condense oversize script with AI"
+                className="mb-2 rounded border border-primary/40 bg-primary/5 p-3 text-xs"
+              >
+                <div className="font-semibold text-foreground">
+                  AI condense required
+                </div>
+                <div className="mt-1 text-muted-foreground">
+                  <span data-testid="wizard-condense-filename">
+                    {pendingCondense.name}
+                  </span>{" "}
+                  &mdash;{" "}
+                  <span data-testid="wizard-condense-bytes">
+                    {(pendingCondense.bytes / 1000).toFixed(1)} KB
+                  </span>
+                  . Exceeds the 50 KB draft cap.
+                </div>
+                <div className="mt-1 text-muted-foreground">
+                  Condense (uses ~30s and 1 LLM call per ~30 KB).
+                </div>
+                <div className="mt-2 flex gap-2">
+                  <button
+                    type="button"
+                    data-testid="wizard-condense-confirm"
+                    onClick={handleCondense}
+                    disabled={condensing}
+                    className="inline-flex items-center gap-2 rounded bg-primary px-3 py-1 text-xs font-semibold text-primary-foreground disabled:opacity-50"
+                  >
+                    {condensing && (
+                      <span
+                        data-testid="wizard-condense-spinner"
+                        className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-current border-t-transparent"
+                      />
+                    )}
+                    {condensing
+                      ? `Condensing ${(pendingCondense.bytes / 1000).toFixed(1)} KB script — ${Math.max(
+                          1,
+                          Math.ceil(pendingCondense.bytes / 30_000),
+                        )} chunks…`
+                      : "Condense with AI"}
+                  </button>
+                  <button
+                    type="button"
+                    data-testid="wizard-condense-cancel"
+                    onClick={() => setPendingCondense(null)}
+                    disabled={condensing}
+                    className="rounded border border-border px-3 py-1 text-xs disabled:opacity-50"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
+            {condenseInfo && (
+              <div
+                data-testid="wizard-condense-chip"
+                className="mb-2 inline-flex items-center rounded-full border border-primary/40 bg-primary/10 px-2 py-0.5 text-[11px] text-foreground"
+              >
+                Condensed from {(condenseInfo.originalBytes / 1000).toFixed(1)} KB
+                → {(condenseInfo.condensedBytes / 1000).toFixed(1)} KB via AI
+              </div>
+            )}
             <textarea
               data-testid="wizard-script-textarea"
               value={script}
               onChange={(e) => setScript(e.target.value)}
+              onPaste={handlePaste}
               placeholder="Paste your script…"
               className="h-48 w-full resize-y rounded border border-border bg-background p-2 text-sm"
             />

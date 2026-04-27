@@ -1873,6 +1873,18 @@ The **Pitch** workspace turns a script, brief, or research notes into a designed
 3. **Brand kits** — pick a starter kit (Modern Minimal, Corporate Blue, Vibrant Pitch, Editorial, Tech Dark, Warm Neutral) or create your own. Editable: heading + body fonts, accent colors, footer text, logo (≤ 2 MB PNG/JPEG/WebP). Logos are content-sniffed server-side.
 4. **Export** — five formats, all attachment downloads with `Cache-Control: no-store`:
 
+#### Large script uploads
+
+The persisted `source_script` field is capped at **50 KB** so the LLM draft pass stays cheap and the audit trail stays bounded. Real-world inputs (specs, user-guide markdown) are routinely 200 KB – 2 MB. The wizard handles this with an explicit AI condensation step:
+
+- The file picker / drag-and-drop accepts `.txt` / `.md` files up to **2 MB** (the hard ceiling).
+- Files ≤ 50 KB load directly into the script box.
+- Files between 50 KB and 2 MB stage a **Condense with AI** panel showing the file name, size, and an estimated `1 LLM call per ~30 KB` (a 459 KB user-guide → ~16 chunks, expect ~30s end-to-end). Click **Condense** to confirm — the wizard never auto-spends LLM tokens.
+- The condensed text drops into the textarea so you can review / edit before clicking Next. A small chip records the original → condensed sizes for transparency.
+- Files > 2 MB are rejected with a toast.
+
+The condense pipeline is map-reduce: each ~30 KB chunk is summarized with a faithful-summary prompt, then concatenated; if the concatenation is still over the 40 KB target, a single reduce pass folds the section summaries into one coherent script. The result is fed into the unchanged `/decks/draft` pipeline.
+
 | Format | Endpoint | Notes |
 |---|---|---|
 | PDF | `GET /api/admin/pitch/decks/:deckId/export.pdf` | Decktape subprocess, 60 s wall clock, abort on disconnect |
@@ -1890,6 +1902,7 @@ All Pitch routes are throttled per-IP with `express-rate-limit` (1 hour window, 
 | Action | Limit / hour |
 |---|---:|
 | Draft deck (`POST /decks/draft`) | 10 |
+| Condense oversize script (`POST /script/condense`) | 20 |
 | Regenerate slide | 60 |
 | Enhance text | 60 |
 | Enqueue slide image | 30 |

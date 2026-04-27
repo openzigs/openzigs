@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Pitch — AI-condensed large script uploads (up to 2 MB).** The Pitch wizard now accepts `.md` / `.txt` files up to 2 MB; oversize content is staged in a "Condense with AI" panel (explicit user click required — no auto-billing of LLM tokens) and run through a map-reduce summarisation pass before the existing `/decks/draft` pipeline. The persisted `source_script` cap stays at 50 KB — the condense step is the escape valve.
+- **New endpoint `POST /api/admin/pitch/script/condense`** (auth-gated through the `/api/admin/pitch` mount-point). 20 requests/hour/IP via a new `condenseLimiter`, audit-logged on success (`category: system, event: pitch.script.condensed`) and on 429 (`category: security, event: pitch.rate_limit_exceeded`). Per-route `express.json({ limit: "2.5mb" })` middleware (the global 1 MB parser skips this prefix in `src/app.ts` — every other pitch route keeps its 1 MB cap). Returns `413 { error: "script_too_large", maxBytes: 2_000_000 }` for over-ceiling input and `502 { error: "condense_failed", detail }` on LLM failure.
+
 ### Fixed (Epic #951 — Studio → Pitch Walkthrough Bug Batch)
 
 - Pitch deck draft no longer aborts before LLM completes (timeout raised to 240s, progress UI added).

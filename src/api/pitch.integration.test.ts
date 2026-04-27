@@ -49,6 +49,7 @@ const generateDeckMock = vi.fn();
 const regenerateSlideMock = vi.fn();
 const submitSlideRegenerateTaskMock = vi.fn();
 const enqueueSlideImageMock = vi.fn();
+const condenseScriptMock = vi.fn();
 
 vi.mock("../pitch/pitch-generator.js", () => ({
   generateDeck: (...a: unknown[]) => generateDeckMock(...a),
@@ -62,6 +63,16 @@ vi.mock("../pitch/pitch-regenerate.js", () => ({
 vi.mock("../pitch/pitch-image-service.js", () => ({
   enqueueSlideImage: (...a: unknown[]) => enqueueSlideImageMock(...a),
 }));
+vi.mock("../pitch/pitch-condense.js", async () => {
+  const actual =
+    await vi.importActual<typeof import("../pitch/pitch-condense.js")>(
+      "../pitch/pitch-condense.js",
+    );
+  return {
+    ...actual,
+    condenseScript: (...a: unknown[]) => condenseScriptMock(...a),
+  };
+});
 vi.mock("../logging/logger.js", () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
@@ -184,7 +195,14 @@ function buildHarness(): Harness {
   };
 
   const app = express();
-  app.use(express.json());
+  // Mirror the production global JSON parser setup in `src/app.ts`: skip
+  // the global 1 MB parser for `/script/condense` so the route's own
+  // 2.5 MB body parser handles oversize uploads (the production server
+  // does the same thing via `skipGlobalParser`).
+  app.use((req, res, next) => {
+    if (req.path.startsWith("/api/admin/pitch/script/condense")) return next();
+    express.json({ limit: "1mb" })(req, res, next);
+  });
   app.use("/api/admin/pitch", createPitchRouter(deps));
 
   return {
@@ -240,6 +258,7 @@ describe("Pitch — Phase 7 integration (sub-issue #976)", () => {
     regenerateSlideMock.mockReset();
     submitSlideRegenerateTaskMock.mockReset();
     enqueueSlideImageMock.mockReset();
+    condenseScriptMock.mockReset();
     h = buildHarness();
   });
 
@@ -542,6 +561,118 @@ describe("Pitch — Phase 7 integration (sub-issue #976)", () => {
       expect(res.status).toBe(409);
       expect(res.body.error.code).toBe("conflict");
       expect(res.body.error.message).toMatch(/80/);
+    });
+  });
+
+  // ── /script/condense — AI map-reduce condensation endpoint ───────
+
+  describe("POST /script/condense (feat: AI script condensation)", () => {
+    it("happy path: 200 with { condensed, originalBytes, condensedBytes, chunks }", async () => {
+      // Stub the condense module to return a tiny summary so the test
+      // is fast and deterministic. The route still validates the body
+      // and shapes the response — that's what we're asserting here.
+      condenseScriptMock.mockResolvedValue({
+        condensed: "tiny summary",
+        originalBytes: 200_000,
+        condensedBytes: 12,
+        chunks: 7,
+      });
+      const text = "P".repeat(200_000);
+      const res = await request(h.app)
+        .post("/api/admin/pitch/script/condense")
+        .send({ text });
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({
+        condensed: "tiny summary",
+        originalBytes: 200_000,
+        condensedBytes: 12,
+        chunks: 7,
+      });
+      expect(condenseScriptMock).toHaveBeenCalledTimes(1);
+      // Audit emitted with category=system + event=pitch.script.condensed.
+      const condenseAudits = h.auditLog.mock.calls.filter(
+        ([entry]) =>
+          (entry as { event?: string }).event === "pitch.script.condensed",
+      );
+      expect(condenseAudits.length).toBe(1);
+      expect(
+        (condenseAudits[0][0] as { details: Record<string, unknown> }).details,
+      ).toMatchObject({
+        originalBytes: 200_000,
+        condensedBytes: 12,
+        chunks: 7,
+      });
+    });
+
+    it("rejects > 2 MB with structured 413 envelope", async () => {
+      const oversize = "x".repeat(2_000_001);
+      const res = await request(h.app)
+        .post("/api/admin/pitch/script/condense")
+        .send({ text: oversize });
+      expect(res.status).toBe(413);
+      expect(res.body).toEqual({
+        error: "script_too_large",
+        maxBytes: 2_000_000,
+      });
+      expect(condenseScriptMock).not.toHaveBeenCalled();
+    });
+
+    it("returns 502 with structured envelope when LLM throws", async () => {
+      condenseScriptMock.mockRejectedValue(new Error("upstream LLM down"));
+      const res = await request(h.app)
+        .post("/api/admin/pitch/script/condense")
+        .send({ text: "x".repeat(60_000) });
+      expect(res.status).toBe(502);
+      expect(res.body).toEqual({
+        error: "condense_failed",
+        detail: "upstream LLM down",
+      });
+    });
+
+    it("rejects unknown body fields (Zod .strict())", async () => {
+      const res = await request(h.app)
+        .post("/api/admin/pitch/script/condense")
+        .send({ text: "ok", unknown: 1 });
+      expect(res.status).toBe(400);
+      expect(res.body.error.code).toBe("validation_error");
+    });
+
+    it("trips the 20/hr rate limiter and emits a security audit (PR #984)", async () => {
+      condenseScriptMock.mockResolvedValue({
+        condensed: "ok",
+        originalBytes: 5,
+        condensedBytes: 2,
+        chunks: 1,
+      });
+      // Drive to the cap.
+      for (let i = 0; i < 20; i++) {
+        const r = await request(h.app)
+          .post("/api/admin/pitch/script/condense")
+          .send({ text: "abc" });
+        expect(r.status).not.toBe(429);
+      }
+      h.auditLog.mockClear();
+      const tripped = await request(h.app)
+        .post("/api/admin/pitch/script/condense")
+        .send({ text: "abc" });
+      expect(tripped.status).toBe(429);
+      expect(tripped.body).toEqual({
+        error: { code: "rate_limited", message: expect.any(String) },
+      });
+      // The 429 emits a security-category audit event matching the
+      // existing pitch.rate_limit_exceeded shape.
+      const securityCalls = h.auditLog.mock.calls.filter(
+        ([entry]) =>
+          (entry as { category?: string }).category === "security" &&
+          (entry as { event?: string }).event === "pitch.rate_limit_exceeded",
+      );
+      expect(securityCalls.length).toBeGreaterThanOrEqual(1);
+      expect(
+        (securityCalls[0][0] as { details: Record<string, unknown> }).details,
+      ).toMatchObject({
+        route: expect.stringContaining("/script/condense"),
+        limit: 20,
+      });
     });
   });
 });

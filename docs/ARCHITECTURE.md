@@ -6921,6 +6921,7 @@ flowchart LR
   UI[UI ui/app/pitch/*] -->|REST| Router[src/api/pitch.ts]
   Router --> Limiters[express-rate-limit per route]
   Limiters --> Schema[pitch-schema.ts Zod validation]
+  Schema --> Condense[pitch-condense.ts map-reduce summarizer]
   Schema --> Generator[pitch-generator.ts wrap+envelope+LLM]
   Schema --> Repo[pitch-repository.ts SQLite]
   Schema --> Image[pitch-image-service.ts Flux queue]
@@ -6930,11 +6931,23 @@ flowchart LR
   Sock --> UI
 ```
 
+### Condense endpoint (script pre-processing)
+
+`POST /api/admin/pitch/script/condense` accepts up to **2 MB** of raw script text (`.md`/`.txt` upload from the wizard) and returns text under the 50 KB `DraftDeckBodySchema.script` cap so it can be fed straight into the existing `/decks/draft` pipeline.
+
+- **Body parser:** the global 1 MB JSON parser in `src/app.ts` skips the `/api/admin/pitch/script/condense` prefix; the route mounts its own `express.json({ limit: "2.5mb" })` so other pitch routes keep their 1 MB cap (defence-in-depth against widening the global attack surface).
+- **Map-reduce:** input is split into ~30 000-character chunks on paragraph (`\n\n`) boundaries, each summarised by the Copilot LLM with a faithful-summary system prompt. If the concatenated summaries are still over the 40 KB target, a single reduce pass folds them into one script.
+- **Cost shape:** `chunks = ceil(originalChars / 30_000)`. A 459 KB input → ~16 map calls + (typically) 1 reduce call. Each call has a 1-retry budget on empty/malformed responses.
+- **Rate limit:** 20 / hour / IP (separate `condenseLimiter` built by the same `buildLimiter` factory; 429s emit the `pitch.rate_limit_exceeded` security audit event).
+- **Errors:** `413 { error: "script_too_large", maxBytes: 2_000_000 }` for over-ceiling input; `502 { error: "condense_failed", detail }` for LLM failures (stack never leaked).
+- **Audit:** `category: system, event: pitch.script.condensed` with `{ originalBytes, condensedBytes, chunks, targetBytes }`.
+
 ### Key components
 
 | File | Responsibility |
 |---|---|
 | `src/api/pitch.ts` | 24 routes, per-route rate-limit factory `buildLimiter(max, label)`, CSP on render/HTML export, 80-slide cap |
+| `src/pitch/pitch-condense.ts` | Map-reduce LLM summariser used by `POST /script/condense`. `condenseScript()` chunks raw text on paragraph boundaries, summarises each chunk via the Copilot wrapper, optionally runs a reduce pass to fit `targetBytes` (default 40 KB). 2 MB hard ceiling rejected before any LLM call. |
 | `src/pitch/pitch-schema.ts` | All Zod schemas. `BrandKitSchema`/`SlideImageSchema` URL fields are server-populated only |
 | `src/pitch/pitch-sanitize.ts` | Centralised DOMPurify; `sanitizeRichText/escapeHtml/escapeAttr/safeUrl`. Forbids `script`/`iframe`/`object`/`embed`/`link`/`meta`/`base`/`form`/`style` and all `on*`/`formaction`/`xlink:href`/`srcdoc`/`action`/`background`/`ping`/`style` attributes |
 | `src/pitch/pitch-utils.ts` | `wrapUserScript`: wraps user input in `<DATA>...</DATA>` envelope and strips any envelope tokens from the body |
