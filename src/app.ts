@@ -223,7 +223,11 @@ export const createApp = (
   const skipGlobalParser = (p: string) =>
     p.startsWith("/api/queue") ||
     p.startsWith("/api/social/webhooks") ||
-    p.startsWith("/api/admin/creative/enhance-prompt");
+    p.startsWith("/api/admin/creative/enhance-prompt") ||
+    // /api/admin/pitch/script/condense accepts up to 2 MB of raw script
+    // text; the global 1 MB parser would 413 before the route's own
+    // express.json({ limit: "2.5mb" }) middleware can run.
+    p.startsWith("/api/admin/pitch/script/condense");
   app.use((req, res, next) => {
     if (skipGlobalParser(req.path)) return next();
     express.json({ limit: "1mb" })(req, res, next);

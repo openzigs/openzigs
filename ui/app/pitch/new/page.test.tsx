@@ -173,4 +173,123 @@ describe("NewPitchDeckPage wizard", () => {
     const body = JSON.parse(String((init as RequestInit).body));
     expect(body.options.tone).toBe("sales");
   });
+
+  // ── AI script condensation (feat: 2 MB upload + condense flow) ──
+
+  describe("AI script condensation", () => {
+    /** Drive the wizard to the script step. */
+    async function gotoScriptStep() {
+      render(<NewPitchDeckPage />, { wrapper });
+      await waitFor(() => screen.getByTestId("wizard-kit-kit-a"));
+      fireEvent.click(screen.getByTestId("wizard-kit-kit-a"));
+      fireEvent.click(screen.getByTestId("wizard-next"));
+    }
+
+    it("shows the condense panel when a > 50 KB file is dropped", async () => {
+      await gotoScriptStep();
+      const big = "X".repeat(200_000);
+      const file = new File([big], "big.md", { type: "text/markdown" });
+      const dropzone = screen.getByTestId("wizard-dropzone");
+      fireEvent.drop(dropzone, {
+        dataTransfer: { files: [file] },
+      });
+      await waitFor(() =>
+        expect(
+          screen.getByTestId("wizard-condense-panel"),
+        ).toBeInTheDocument(),
+      );
+      expect(screen.getByTestId("wizard-condense-filename")).toHaveTextContent(
+        "big.md",
+      );
+      // 200 KB → "200.0 KB" displayed.
+      expect(screen.getByTestId("wizard-condense-bytes")).toHaveTextContent(
+        /200\.0 KB/,
+      );
+      // The textarea must NOT be auto-populated — explicit click required.
+      expect(screen.getByTestId("wizard-script-textarea")).toHaveValue("");
+    });
+
+    it("posts to /script/condense and populates the textarea on confirm", async () => {
+      // Override the default fetch mock for this test to return a
+      // condensation envelope.
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        text: async () => "{}",
+        json: async () => ({
+          condensed: "tiny condensed summary",
+          originalBytes: 200_000,
+          condensedBytes: 22,
+          chunks: 7,
+        }),
+      }) as unknown as typeof fetch;
+
+      await gotoScriptStep();
+      const big = "X".repeat(200_000);
+      const file = new File([big], "spec.md", { type: "text/markdown" });
+      fireEvent.drop(screen.getByTestId("wizard-dropzone"), {
+        dataTransfer: { files: [file] },
+      });
+      await waitFor(() =>
+        expect(
+          screen.getByTestId("wizard-condense-confirm"),
+        ).toBeInTheDocument(),
+      );
+
+      fireEvent.click(screen.getByTestId("wizard-condense-confirm"));
+
+      await waitFor(() =>
+        expect(screen.getByTestId("wizard-script-textarea")).toHaveValue(
+          "tiny condensed summary",
+        ),
+      );
+      // Chip with original/condensed sizes.
+      expect(screen.getByTestId("wizard-condense-chip")).toBeInTheDocument();
+      // The condense panel disappears once the request succeeds.
+      expect(screen.queryByTestId("wizard-condense-panel")).toBeNull();
+
+      const fetchCalls = (
+        global.fetch as unknown as { mock: { calls: unknown[][] } }
+      ).mock.calls;
+      const [url, init] = fetchCalls[0]!;
+      expect(String(url)).toContain("/api/admin/pitch/script/condense");
+      expect((init as RequestInit).method).toBe("POST");
+      const body = JSON.parse(String((init as RequestInit).body));
+      expect(body).toEqual({ text: big });
+    });
+
+    it("rejects > 2 MB file with a toast and no fetch", async () => {
+      const { showToast } = await import("@/components/toast");
+      vi.mocked(showToast).mockClear();
+
+      await gotoScriptStep();
+      const oversize = "X".repeat(2_000_001);
+      const file = new File([oversize], "huge.md", {
+        type: "text/markdown",
+      });
+      fireEvent.drop(screen.getByTestId("wizard-dropzone"), {
+        dataTransfer: { files: [file] },
+      });
+      await waitFor(() =>
+        expect(vi.mocked(showToast)).toHaveBeenCalled(),
+      );
+      // No condense panel; no POST issued.
+      expect(screen.queryByTestId("wizard-condense-panel")).toBeNull();
+    });
+
+    it("does NOT show the condense panel when a small file is dropped", async () => {
+      await gotoScriptStep();
+      const small = "small content";
+      const file = new File([small], "small.md", { type: "text/markdown" });
+      fireEvent.drop(screen.getByTestId("wizard-dropzone"), {
+        dataTransfer: { files: [file] },
+      });
+      await waitFor(() =>
+        expect(screen.getByTestId("wizard-script-textarea")).toHaveValue(
+          small,
+        ),
+      );
+      expect(screen.queryByTestId("wizard-condense-panel")).toBeNull();
+    });
+  });
 });

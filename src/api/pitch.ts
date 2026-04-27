@@ -26,6 +26,7 @@ import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { extname, join, resolve } from "node:path";
 import { Router, type Request, type Response } from "express";
+import express from "express";
 import multer from "multer";
 import { nanoid } from "nanoid";
 import rateLimit, { type RateLimitRequestHandler } from "express-rate-limit";
@@ -43,6 +44,11 @@ import {
   generateDeck,
   regenerateSlide,
 } from "../pitch/pitch-generator.js";
+import {
+  condenseScript,
+  CONDENSE_HARD_CEILING_BYTES,
+  DEFAULT_CONDENSE_TARGET_BYTES,
+} from "../pitch/pitch-condense.js";
 import { submitSlideRegenerateTask } from "../pitch/pitch-regenerate.js";
 import { enqueueSlideImage } from "../pitch/pitch-image-service.js";
 import { renderDeckToHtml } from "../pitch/pitch-renderer.js";
@@ -449,6 +455,7 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
   const htmlLimiter = buildLimiter(60, "HTML export");
   const notesLimiter = buildLimiter(20, "speaker-notes PDF");
   const crudLimiter = buildLimiter(600, "API");
+  const condenseLimiter = buildLimiter(20, "script condense");
 
   // ────────────────────────────────────────────────────────────────────
   // Deck CRUD (#959)
@@ -1070,6 +1077,97 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
   // ────────────────────────────────────────────────────────────────────
   // AI endpoints (#962)
   // ────────────────────────────────────────────────────────────────────
+
+  // ── POST /script/condense — AI map-reduce summarization ──────────
+  // Pre-processing escape valve for oversize script uploads (up to 2 MB).
+  // The persisted `source_script` cap stays at 50 KB; this route runs the
+  // raw input through `condenseScript` and returns text suitable for the
+  // existing `/decks/draft` pipeline.
+  //
+  // Body limit is bumped to 2.5 MB ON THIS ROUTE ONLY via per-route
+  // `express.json`; the global parser in `src/app.ts` skips this prefix
+  // (see `skipGlobalParser`). Do NOT widen the global limit — every other
+  // pitch route still uses the 1 MB cap.
+  const CondenseScriptBody = z
+    .object({
+      text: z.string().min(1).max(CONDENSE_HARD_CEILING_BYTES),
+      targetBytes: z.number().int().min(5_000).max(50_000).optional(),
+    })
+    .strict();
+
+  router.post(
+    "/script/condense",
+    condenseLimiter,
+    express.json({ limit: "2.5mb" }),
+    // Catch the body-parser's `entity.too.large` synchronously so the
+    // client gets a stable structured envelope instead of the default
+    // PayloadTooLargeError HTML page.
+    (
+      err: (Error & { type?: string; status?: number }) | null,
+      _req: Request,
+      res: Response,
+      next: (e?: unknown) => void,
+    ) => {
+      if (err && (err.type === "entity.too.large" || err.status === 413)) {
+        res
+          .status(413)
+          .json({ error: "script_too_large", maxBytes: CONDENSE_HARD_CEILING_BYTES });
+        return;
+      }
+      next(err ?? undefined);
+    },
+    async (req: Request, res: Response) => {
+      const parsed = CondenseScriptBody.safeParse(req.body);
+      if (!parsed.success) {
+        // The Zod `max()` rejection for an oversize text field is also a
+        // 413 (semantically a payload-too-large), not a 400.
+        const tooLarge = parsed.error.issues.some(
+          (i) => i.path[0] === "text" && i.code === "too_big",
+        );
+        if (tooLarge) {
+          res
+            .status(413)
+            .json({ error: "script_too_large", maxBytes: CONDENSE_HARD_CEILING_BYTES });
+          return;
+        }
+        sendError(res, 400, "validation_error", "Request body failed validation", {
+          issues: parsed.error.issues.map((i) => ({
+            path: i.path.join("."),
+            message: i.message,
+            code: i.code,
+          })),
+        });
+        return;
+      }
+      const body = parsed.data;
+      const targetBytes = body.targetBytes ?? DEFAULT_CONDENSE_TARGET_BYTES;
+
+      try {
+        const result = await condenseScript(body.text, deps.copilot, {
+          targetBytes,
+        });
+        audit("system", "pitch.script.condensed", {
+          originalBytes: result.originalBytes,
+          condensedBytes: result.condensedBytes,
+          chunks: result.chunks,
+          targetBytes,
+        });
+        res.status(200).json(result);
+      } catch (err) {
+        const detail = errMessage(err);
+        // The hard-ceiling guard inside `condenseScript` is also reachable
+        // here if the per-route body parser somehow let through > 2 MB.
+        if (/hard ceiling/i.test(detail)) {
+          res
+            .status(413)
+            .json({ error: "script_too_large", maxBytes: CONDENSE_HARD_CEILING_BYTES });
+          return;
+        }
+        logger.error(`[Pitch API] POST /script/condense failed: ${detail}`);
+        res.status(502).json({ error: "condense_failed", detail });
+      }
+    },
+  );
 
   router.post("/decks/draft", draftLimiter, async (req, res) => {
     const body = parseBody(DraftDeckBody, res, req);
