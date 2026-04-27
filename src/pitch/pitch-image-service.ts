@@ -22,7 +22,7 @@
  * Phase 3 can promote this to a SQLite table if needed).
  */
 import { copyFile, mkdir, rm, stat } from "node:fs/promises";
-import { extname, join } from "node:path";
+import { extname, join, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import { homedir } from "node:os";
 import { randomUUID } from "node:crypto";
@@ -247,10 +247,32 @@ async function persistCompletedAsset(
   opts: RegisterImageCompletionOpts,
 ): Promise<void> {
   const baseDir = opts.baseDir ?? join(homedir(), ".openzigs", "pitch", "assets");
+  // Defence-in-depth: `binding.deckId` originates from a URL parameter and
+  // `binding.assetId` is a server-generated UUID, but CodeQL (and good
+  // hygiene) demand we contain every joined path inside `baseDir`. Reject
+  // anything that would resolve outside the assets root.
+  const baseDirResolved = resolve(baseDir);
   const sourcePath = resolveSourcePath(job.resultUrl as string);
   const ext = (extname(sourcePath) || ".png").toLowerCase();
-  const targetDir = join(baseDir, binding.deckId);
-  const targetPath = join(targetDir, `${binding.assetId}${ext}`);
+  const targetDirCandidate = resolve(baseDirResolved, binding.deckId);
+  const targetPathCandidate = resolve(
+    targetDirCandidate,
+    `${binding.assetId}${ext}`,
+  );
+  const baseDirPrefix = baseDirResolved + sep;
+  if (
+    !(
+      targetDirCandidate === baseDirResolved ||
+      targetDirCandidate.startsWith(baseDirPrefix)
+    ) ||
+    !targetPathCandidate.startsWith(baseDirPrefix)
+  ) {
+    throw new Error(
+      `pitch-image-service: refusing to write outside assets root (deckId=${binding.deckId})`,
+    );
+  }
+  const targetDir = targetDirCandidate;
+  const targetPath = targetPathCandidate;
 
   await mkdir(targetDir, { recursive: true });
   await copyFile(sourcePath, targetPath);
