@@ -378,7 +378,7 @@ export default function NewPitchDeckPage() {
                   . Exceeds the 50 KB draft cap.
                 </div>
                 <div className="mt-1 text-muted-foreground">
-                  Condense (uses ~30s and 1 LLM call per ~30 KB).
+                  Condense with AI (~5–15s per chunk, 4 in parallel).
                 </div>
                 <div className="mt-2 flex gap-2">
                   <button
@@ -395,10 +395,14 @@ export default function NewPitchDeckPage() {
                       />
                     )}
                     {condensing
-                      ? `Condensing ${(pendingCondense.bytes / 1000).toFixed(1)} KB script — ${Math.max(
-                          1,
-                          Math.ceil(pendingCondense.bytes / 30_000),
-                        )} chunks…`
+                      ? (() => {
+                          const chunks = Math.max(
+                            1,
+                            Math.ceil(pendingCondense.bytes / 30_000),
+                          );
+                          const etaSec = Math.ceil(chunks / 4) * 10;
+                          return `Condensing ${(pendingCondense.bytes / 1000).toFixed(1)} KB script — ${chunks} chunks (~${etaSec}s)…`;
+                        })()
                       : "Condense with AI"}
                   </button>
                   <button

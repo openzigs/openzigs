@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Pitch script condensation now runs map-stage chunks in parallel (4 concurrent) and uses `gpt-4o-mini` by default** — ~5× faster (459 KB script: ~10 min → ~1–2 min). Output order is preserved (workers write into positional summary slots so the reduce stage and resulting script remain deterministic). New exported constants `CONDENSE_MAP_CONCURRENCY` and `DEFAULT_CONDENSE_MODEL` in `src/pitch/pitch-condense.ts`; callers can still override the model per-call.
+
 ### Added
 
 - **Pitch — AI-condensed large script uploads (up to 2 MB).** The Pitch wizard now accepts `.md` / `.txt` files up to 2 MB; oversize content is staged in a "Condense with AI" panel (explicit user click required — no auto-billing of LLM tokens) and run through a map-reduce summarisation pass before the existing `/decks/draft` pipeline. The persisted `source_script` cap stays at 50 KB — the condense step is the escape valve.

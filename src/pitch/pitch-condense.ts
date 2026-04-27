@@ -40,6 +40,17 @@ export const CONDENSE_HARD_CEILING_BYTES = 2_000_000;
  *  (a 459 KB input → ~16 chunks → 16 + 1 reduce LLM calls). */
 export const CONDENSE_CHUNK_CHARS = 30_000;
 
+/** Maximum number of map-stage chunks summarised in parallel. Bounded
+ *  to avoid hammering the Copilot endpoint and to keep per-session token
+ *  burst predictable. 4 keeps a 16-chunk job to ~4 sequential waves. */
+export const CONDENSE_MAP_CONCURRENCY = 4;
+
+/** Default model used for condensation. The map/reduce task is faithful
+ *  summarisation — `gpt-4o-mini` is 5–10× faster and cheaper than the
+ *  wrapper-default `gpt-4.1` while remaining plenty accurate. Callers can
+ *  still override via {@link CondenseScriptOpts.model}. */
+export const DEFAULT_CONDENSE_MODEL = "gpt-4o-mini";
+
 /** Agent name used on the Copilot wrapper call. */
 const CONDENSE_AGENT_NAME = "pitch-condense";
 
@@ -108,25 +119,35 @@ export async function condenseScript(
     };
   }
 
-  // ── Map stage ────────────────────────────────────────────────────
+  // ── Map stage (bounded-concurrency parallel) ────────────────────
   const chunks = splitIntoChunks(text, CONDENSE_CHUNK_CHARS);
   logger.info(
-    `[pitch-condense] map stage: ${chunks.length} chunks, originalBytes=${originalBytes}, targetBytes=${targetBytes}`,
+    `[pitch-condense] map stage: ${chunks.length} chunks, originalBytes=${originalBytes}, targetBytes=${targetBytes}, concurrency=${CONDENSE_MAP_CONCURRENCY}`,
   );
 
-  const summaries: string[] = [];
-  for (let i = 0; i < chunks.length; i++) {
-    const userPrompt = buildMapUserPrompt(chunks[i], i + 1, chunks.length);
-    const summary = await callLLMWithRetry(
-      copilot,
-      userPrompt,
-      MAP_SYSTEM_PROMPT,
-      opts,
-    );
-    summaries.push(summary);
-  }
+  // Preserve input order — workers write into `summaries[i]` by index.
+  // The reduce step below relies on positional ordering.
+  const summaries: Array<string | undefined> = new Array(chunks.length);
+  let nextIndex = 0;
+  const worker = async (): Promise<void> => {
+    for (;;) {
+      const i = nextIndex++;
+      if (i >= chunks.length) return;
+      const userPrompt = buildMapUserPrompt(chunks[i], i + 1, chunks.length);
+      summaries[i] = await callLLMWithRetry(
+        copilot,
+        userPrompt,
+        MAP_SYSTEM_PROMPT,
+        opts,
+      );
+    }
+  };
+  const poolSize = Math.min(CONDENSE_MAP_CONCURRENCY, chunks.length);
+  // If any worker rejects, Promise.all surfaces the first failure and
+  // we propagate it — current behaviour is "fail the whole call".
+  await Promise.all(Array.from({ length: poolSize }, () => worker()));
 
-  let condensed = summaries.join("\n\n");
+  let condensed = (summaries as string[]).join("\n\n");
   let condensedBytes = Buffer.byteLength(condensed, "utf8");
 
   // ── Reduce stage (only if concat is still over target) ───────────
@@ -211,12 +232,13 @@ async function callLLMWithRetry(
 ): Promise<string> {
   // Initial attempt + 1 retry on empty/whitespace response. Same retry
   // budget shape as `pitch-generator.ts`.
+  const model = opts.model ?? DEFAULT_CONDENSE_MODEL;
   let lastError: unknown = null;
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
       const stream = copilot.chat(userPrompt, {
         tools: [],
-        ...(opts.model ? { model: opts.model } : {}),
+        model,
         ...(opts.sessionId ? { conversationId: opts.sessionId } : {}),
         systemMessage: { mode: "replace", content: systemPrompt },
         agent: CONDENSE_AGENT_NAME,
