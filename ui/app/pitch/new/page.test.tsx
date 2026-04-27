@@ -292,4 +292,120 @@ describe("NewPitchDeckPage wizard", () => {
       expect(screen.queryByTestId("wizard-condense-panel")).toBeNull();
     });
   });
+
+  // ── AI model picker (fix: pitch-condense-model-picker) ──────────
+
+  describe("AI model picker", () => {
+    it("includes the chosen model in the condense AND draft request bodies", async () => {
+      // Route fetchJson by URL: brand-kits → kitsResponse, /api/models →
+      // a small models list so the InlineModelPicker has options.
+      vi.mocked(fetchJson).mockImplementation(async (url: string) => {
+        if (url.startsWith("/api/models")) {
+          return {
+            models: [
+              { id: "gpt-4.1", name: "GPT-4.1" },
+              { id: "claude-sonnet-4", name: "Claude Sonnet 4" },
+            ],
+            selectedModel: "gpt-4.1",
+          };
+        }
+        return kitsResponse;
+      });
+
+      // Two responses: one for /script/condense, one for /decks/draft.
+      const fetchMock = vi.fn();
+      fetchMock.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        text: async () => "{}",
+        json: async () => ({
+          condensed: "tiny",
+          originalBytes: 200_000,
+          condensedBytes: 4,
+          chunks: 1,
+        }),
+      });
+      fetchMock.mockResolvedValueOnce({
+        ok: true,
+        status: 201,
+        text: async () => "{}",
+        json: async () => ({ deck: { id: "deck-model" } }),
+      });
+      global.fetch = fetchMock as unknown as typeof fetch;
+
+      // Navigate kit → script.
+      render(<NewPitchDeckPage />, { wrapper });
+      await waitFor(() => screen.getByTestId("wizard-kit-kit-a"));
+      fireEvent.click(screen.getByTestId("wizard-kit-kit-a"));
+      fireEvent.click(screen.getByTestId("wizard-next"));
+
+      // Drop an oversize file to stage a condense request.
+      const big = "Y".repeat(200_000);
+      const file = new File([big], "spec.md", { type: "text/markdown" });
+      fireEvent.drop(screen.getByTestId("wizard-dropzone"), {
+        dataTransfer: { files: [file] },
+      });
+      await waitFor(() =>
+        expect(
+          screen.getByTestId("wizard-condense-confirm"),
+        ).toBeInTheDocument(),
+      );
+
+      // Advance to options to set the model BEFORE condensing — but the
+      // picker only exists on step 3. Round-trip: go to options, pick
+      // model, go back, condense, advance again, generate.
+      // Simpler: the picker state persists across step changes since
+      // it's hoisted on the page. Go to options first, pick model, then
+      // back to script step to condense.
+      fireEvent.change(screen.getByTestId("wizard-script-textarea"), {
+        target: { value: "placeholder" },
+      });
+      fireEvent.click(screen.getByTestId("wizard-next"));
+      // Wait for the model picker query to resolve and options to render.
+      await waitFor(() =>
+        expect(
+          screen.getByTestId("wizard-model-picker-row"),
+        ).toBeInTheDocument(),
+      );
+      const select = screen
+        .getByTestId("wizard-model-picker-row")
+        .querySelector("select");
+      expect(select).not.toBeNull();
+      await waitFor(() => {
+        // Wait for the models list to populate the <select>.
+        expect(select!.querySelectorAll("option").length).toBeGreaterThan(1);
+      });
+      fireEvent.change(select!, { target: { value: "claude-sonnet-4" } });
+
+      // Back to script step → condense (now should include model).
+      fireEvent.click(screen.getByTestId("wizard-back"));
+      fireEvent.click(screen.getByTestId("wizard-condense-confirm"));
+      await waitFor(() =>
+        expect(screen.getByTestId("wizard-script-textarea")).toHaveValue(
+          "tiny",
+        ),
+      );
+
+      // Forward to options and submit draft.
+      fireEvent.click(screen.getByTestId("wizard-next"));
+      fireEvent.click(screen.getByTestId("wizard-generate"));
+      await waitFor(() =>
+        expect(pushMock).toHaveBeenCalledWith("/pitch/deck-model"),
+      );
+
+      const calls = fetchMock.mock.calls as Array<[string, RequestInit]>;
+      const condenseCall = calls.find(([url]) =>
+        String(url).includes("/script/condense"),
+      );
+      const draftCall = calls.find(([url]) =>
+        String(url).includes("/decks/draft"),
+      );
+      expect(condenseCall).toBeDefined();
+      expect(draftCall).toBeDefined();
+      const condenseBody = JSON.parse(String(condenseCall![1].body));
+      const draftBody = JSON.parse(String(draftCall![1].body));
+      expect(condenseBody.model).toBe("claude-sonnet-4");
+      expect(draftBody.options.model).toBe("claude-sonnet-4");
+    });
+  });
 });

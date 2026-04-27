@@ -393,6 +393,9 @@ export const DraftDeckOptionsSchema = z
     tone: DeckToneEnum.optional(),
     estimatedMinutes: z.number().int().min(1).max(180).optional(),
     targetSlideCount: z.number().int().min(1).max(80).optional(),
+    /** Optional LLM model override forwarded to the Copilot wrapper.
+     *  When omitted, the wrapper's selected default is used. */
+    model: z.string().min(1).max(100).optional(),
   })
   .strict();
 export type DraftDeckOptions = z.infer<typeof DraftDeckOptionsSchema>;

@@ -45,12 +45,6 @@ export const CONDENSE_CHUNK_CHARS = 30_000;
  *  burst predictable. 4 keeps a 16-chunk job to ~4 sequential waves. */
 export const CONDENSE_MAP_CONCURRENCY = 4;
 
-/** Default model used for condensation. The map/reduce task is faithful
- *  summarisation — `gpt-4o-mini` is 5–10× faster and cheaper than the
- *  wrapper-default `gpt-4.1` while remaining plenty accurate. Callers can
- *  still override via {@link CondenseScriptOpts.model}. */
-export const DEFAULT_CONDENSE_MODEL = "gpt-4o-mini";
-
 /** Agent name used on the Copilot wrapper call. */
 const CONDENSE_AGENT_NAME = "pitch-condense";
 
@@ -231,14 +225,17 @@ async function callLLMWithRetry(
   opts: CondenseScriptOpts,
 ): Promise<string> {
   // Initial attempt + 1 retry on empty/whitespace response. Same retry
-  // budget shape as `pitch-generator.ts`.
-  const model = opts.model ?? DEFAULT_CONDENSE_MODEL;
+  // budget shape as `pitch-generator.ts`. Only forward `model` when the
+  // caller explicitly overrides it — letting the wrapper pick its own
+  // default avoids 502s when a hard-coded model isn't available in the
+  // Copilot SDK catalogue (see PR #987 fallout: `gpt-4o-mini` was
+  // rejected by the SDK).
   let lastError: unknown = null;
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
       const stream = copilot.chat(userPrompt, {
         tools: [],
-        model,
+        ...(opts.model ? { model: opts.model } : {}),
         ...(opts.sessionId ? { conversationId: opts.sessionId } : {}),
         systemMessage: { mode: "replace", content: systemPrompt },
         agent: CONDENSE_AGENT_NAME,

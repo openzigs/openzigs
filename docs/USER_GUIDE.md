@@ -1868,7 +1868,7 @@ The **Pitch** workspace turns a script, brief, or research notes into a designed
 
 #### Workflow at a glance
 
-1. **Draft** — paste a script or upload notes, pick a brand kit, choose target slide count + tone. The AI produces a structured deck with up to **80 slides** (`MAX_SLIDES_PER_DECK`) across 14 templates.
+1. **Draft** — paste a script or upload notes, pick a brand kit, choose target slide count + tone, and (optionally) pick the LLM via the **AI model** picker on the Options step. Defaults to your Copilot account's selected model; override for a faster/cheaper model on both the condense and draft passes. The AI produces a structured deck with up to **80 slides** (`MAX_SLIDES_PER_DECK`) across 14 templates.
 2. **Edit** — click any slide field to edit it inline; the right rail loads the matching property editor. Drag slides to reorder, regenerate individual slides, or regenerate slide images via Flux.
 3. **Brand kits** — pick a starter kit (Modern Minimal, Corporate Blue, Vibrant Pitch, Editorial, Tech Dark, Warm Neutral) or create your own. Editable: heading + body fonts, accent colors, footer text, logo (≤ 2 MB PNG/JPEG/WebP). Logos are content-sniffed server-side.
 4. **Export** — five formats, all attachment downloads with `Cache-Control: no-store`:
@@ -1879,11 +1879,11 @@ The persisted `source_script` field is capped at **50 KB** so the LLM draft pass
 
 - The file picker / drag-and-drop accepts `.txt` / `.md` files up to **2 MB** (the hard ceiling).
 - Files ≤ 50 KB load directly into the script box.
-- Files between 50 KB and 2 MB stage a **Condense with AI** panel showing the file name, size, and an estimated `1 LLM call per ~30 KB` (a 459 KB user-guide → ~16 chunks). Map-stage chunks run **4 in parallel** against the fast `gpt-4o-mini` model — expect **~30–90s end-to-end** for a 459 KB script (was ~10–16 minutes when chunks ran serially against `gpt-4.1`). Click **Condense** to confirm — the wizard never auto-spends LLM tokens.
+- Files between 50 KB and 2 MB stage a **Condense with AI** panel showing the file name, size, and an estimated `1 LLM call per ~30 KB` (a 459 KB user-guide → ~16 chunks). Map-stage chunks run **4 in parallel** — expect **~30–90s end-to-end** for a 459 KB script (was ~10–16 minutes when chunks ran serially). Click **Condense** to confirm — the wizard never auto-spends LLM tokens. The model used for condensation honours the wizard's **AI model** picker (defaults to the wrapper-selected model).
 - The condensed text drops into the textarea so you can review / edit before clicking Next. A small chip records the original → condensed sizes for transparency.
 - Files > 2 MB are rejected with a toast.
 
-The condense pipeline is map-reduce: each ~30 KB chunk is summarized with a faithful-summary prompt (running up to 4 chunks concurrently — see `CONDENSE_MAP_CONCURRENCY`), then concatenated; if the concatenation is still over the 40 KB target, a single reduce pass folds the section summaries into one coherent script. Default model is `gpt-4o-mini` (`DEFAULT_CONDENSE_MODEL`) — callers can override via the `model` option. The result is fed into the unchanged `/decks/draft` pipeline.
+The condense pipeline is map-reduce: each ~30 KB chunk is summarized with a faithful-summary prompt (running up to 4 chunks concurrently — see `CONDENSE_MAP_CONCURRENCY`), then concatenated; if the concatenation is still over the 40 KB target, a single reduce pass folds the section summaries into one coherent script. The model defaults to the Copilot wrapper's selected model; pass `model` in the `/script/condense` body or `options.model` in `/decks/draft` to override (the wizard's AI model picker wires both). The result is fed into the unchanged `/decks/draft` pipeline.
 
 | Format | Endpoint | Notes |
 |---|---|---|
