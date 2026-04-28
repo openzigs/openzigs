@@ -35,6 +35,7 @@ import type { MediaJob, MediaJobPayload } from "../queue/types.js";
 import type { PitchRepository } from "./pitch-repository.js";
 import type { Slide, SlideAsset } from "./pitch-schema.js";
 import { injectCharacterLora } from "../api/inject-character-lora.js";
+import { applyStylePreset, type ImageStyle } from "./image-style-prompts.js";
 
 /** Slots inside a slide's `content` object that can hold a `SlideImage`. */
 export type ImageSlot = "image" | "left_image" | "right_image";
@@ -62,6 +63,15 @@ export interface EnqueueSlideImageOpts {
   characterRepo?: CharacterRepository;
   /** Project ID for queue grouping (falls back to `pitch:{deckId}`). */
   projectId?: string;
+  /**
+   * Optional image-style preset (sub-issue #998). When set, the matching
+   * prompt prefix from `IMAGE_STYLE_PROMPTS` is prepended to `prompt`
+   * BEFORE the LoRA-trigger expansion runs. Callers are expected to
+   * resolve per-slide vs deck-level precedence with `resolveImageStyle`
+   * before invoking this function so a single preset is applied at most
+   * once per job.
+   */
+  imageStyle?: ImageStyle;
 }
 
 export interface EnqueueSlideImageResult {
@@ -120,8 +130,14 @@ export function enqueueSlideImage(opts: EnqueueSlideImageOpts): EnqueueSlideImag
   const slot: ImageSlot = opts.slot ?? "image";
   const assetId = randomUUID();
 
+  // Sub-issue #998 — prepend the style preset prefix exactly once before
+  // the payload is built. injectCharacterLora may further mutate the prompt
+  // by prepending LoRA trigger words, so style → LoRA → user-prompt is the
+  // final left-to-right order in the payload.
+  const styledPrompt = applyStylePreset(opts.prompt, opts.imageStyle);
+
   const payload: MediaJobPayload = {
-    prompt: opts.prompt,
+    prompt: styledPrompt,
     width: opts.width ?? DEFAULT_WIDTH,
     height: opts.height ?? DEFAULT_HEIGHT,
   };
@@ -147,7 +163,7 @@ export function enqueueSlideImage(opts: EnqueueSlideImageOpts): EnqueueSlideImag
     assetId,
     kind: opts.kind,
     slot,
-    prompt: opts.prompt,
+    prompt: styledPrompt,
   });
 
   return { jobId: job.id, assetId, payload };

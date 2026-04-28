@@ -603,6 +603,10 @@ export default function PitchDeckEditorPage() {
         onRetryImage={() => {
           void retryAllImages();
         }}
+        thumbnails={{
+          deckId,
+          ...(AUTH_TOKEN ? { token: AUTH_TOKEN } : {}),
+        }}
       />
 
       {/* Canvas */}

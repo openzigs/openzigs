@@ -12,6 +12,10 @@
  * timeline, full_bleed, code, qa, chart, mermaid.
  */
 import { z } from "zod";
+import { ImageStyleEnum } from "./image-style-prompts.js";
+
+export { ImageStyleEnum } from "./image-style-prompts.js";
+export type { ImageStyle } from "./image-style-prompts.js";
 
 /** Hex color: `#rrggbb`. */
 export const HexColor = z
@@ -93,6 +97,13 @@ const Common = z.object({
       end: z.number().int().nonnegative(),
     })
     .optional(),
+  /**
+   * Optional per-slide image-style preset override (sub-issue #998).
+   * Beats the deck-level `metadata.image_style` when set. Snake-case to
+   * match the rest of the slide schema; the wizard/UI maps it from the
+   * camelCase `imageStyle` deck option.
+   */
+  image_style: ImageStyleEnum.optional(),
 });
 
 /** Inline image — always carries a generation prompt; `url` is filled later. */
@@ -339,6 +350,12 @@ export const DeckSchema = z.object({
     audience: z.string().max(120).optional(),
     tone: DeckToneEnum.default("formal"),
     estimated_minutes: z.number().int().min(1).max(180).optional(),
+    /**
+     * Deck-wide image-style preset (sub-issue #998). When set, every
+     * image enqueue in this deck inherits the matching prompt prefix
+     * unless a slide carries its own `image_style` override.
+     */
+    image_style: ImageStyleEnum.optional(),
   }),
   created_at: z.string(),
   updated_at: z.string(),
@@ -404,6 +421,12 @@ export const DraftDeckOptionsSchema = z
      * trigger generation manually.
      */
     autoGenerateImages: z.boolean().default(true),
+    /**
+     * Deck-wide image-style preset (sub-issue #998). Forwarded into the
+     * persisted `metadata.image_style` and applied as a prompt prefix on
+     * every queued FluxQ job.
+     */
+    imageStyle: ImageStyleEnum.optional(),
   })
   .strict();
 export type DraftDeckOptions = z.infer<typeof DraftDeckOptionsSchema>;

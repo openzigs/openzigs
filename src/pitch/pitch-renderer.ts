@@ -34,28 +34,21 @@ import type {
 
 // ── Public surface ──────────────────────────────────────────────────────
 
-export type RenderMode = "embedded" | "standalone";
+export type RenderMode = "embedded" | "present" | "standalone";
 
 export interface RenderOpts {
   /** Standalone mode only — Reveal.js theme. Default: `black`. */
   theme?: string;
   /** Standalone mode only — set to `false` to skip the inline init script. */
   autoInit?: boolean;
-  /**
-   * Per-slide background-image URLs to emit as Reveal.js
-   * `data-background-image` attributes on the `<section>` (sub-issue #992).
-   *
-   * Keyed by slide index (the Deck JSON does not carry per-slide row
-   * IDs — see `assembleDeck` in `pitch-repository.ts`). The caller
-   * (route handlers in `src/api/pitch.ts`) joins the `pitch_slides`
-   * table to the `pitch_assets` rows to produce the position→URL map.
-   * When omitted or empty the renderer behaves exactly as before — pure
-   * additive change.
-   *
-   * Each URL is re-validated through `safeUrl` here so an unsafe value
-   * (e.g. `javascript:`) is silently dropped rather than emitted.
-   */
   backgroundImageUrlBySlideIndex?: ReadonlyMap<number, string>;
+  /**
+   * Sub-issue #996 — when set, render only the slide at this 0-based
+   * index in `deck.slides`. Out-of-range indices yield an empty deck
+   * (zero slides) instead of throwing so a stale slide-rail tile cannot
+   * 500 the server. The bg-URL map is filtered alongside.
+   */
+  slideIndex?: number;
 }
 
 export interface RenderResult {
@@ -79,23 +72,53 @@ export function renderDeckToHtml(
   opts: RenderOpts = {},
 ): RenderResult {
   const bgMap = opts.backgroundImageUrlBySlideIndex;
-  const slidesHtml = deck.slides
-    .map((slide, index) => renderSlide(slide, bgMap?.get(index)))
+
+  // Sub-issue #996 — single-slide thumbnail filter. We slice the slide
+  // array (and the bg-URL map) instead of mutating either input. An
+  // out-of-range index becomes an empty deck so a stale slide id from the
+  // rail does not 500 the server.
+  let slidesToRender: readonly Slide[] = deck.slides;
+  let bgMapToUse: ReadonlyMap<number, string> | undefined = bgMap;
+  if (opts.slideIndex !== undefined) {
+    const idx = opts.slideIndex;
+    if (idx < 0 || idx >= deck.slides.length) {
+      slidesToRender = [];
+      bgMapToUse = undefined;
+    } else {
+      slidesToRender = [deck.slides[idx] as Slide];
+      const url = bgMap?.get(idx);
+      bgMapToUse = url ? new Map([[0, url]]) : undefined;
+    }
+  }
+
+  const slidesHtml = slidesToRender
+    .map((slide, index) => renderSlide(slide, bgMapToUse?.get(index)))
     .join("\n");
   const wrapperStyle = brandKitInlineStyle(brandKit);
   const footer = brandKit.footerText
     ? `<footer class="pitch-footer">${sanitize(brandKit.footerText)}</footer>`
     : "";
+  const watermark = brandKit.watermarkUrl
+    ? `<div class="pitch-watermark" aria-hidden="true" style="background-image:url(${attr(
+        safeUrl(brandKit.watermarkUrl) ?? "",
+      )})"></div>`
+    : "";
   const logoTag = brandKitLogoTag(brandKit);
 
   const reveal = `<div class="reveal" data-deck-id="${attr(deck.id)}" data-aspect="${attr(
     deck.aspect_ratio,
-  )}"><div class="slides">${slidesHtml}</div>${footer}${logoTag}</div>`;
+  )}"><div class="slides">${slidesHtml}</div>${footer}${watermark}${logoTag}</div>`;
 
-  if (mode === "embedded") {
+  if (mode === "embedded" || mode === "present") {
+    // Sub-issue #997 — polished embedded chrome. Wrapper class lets the
+    // hosting Next.js page apply width/height; the inline <style> block
+    // ships the slide-frame chrome (border, shadow, padding) plus the
+    // brand-color CSS variables at full saturation. Sanitisation already
+    // ran for every interpolated string above; the <style> body itself
+    // is a static literal so no XSS surface is introduced here.
     return {
-      html: `<div class="pitch-deck-wrap" style="${wrapperStyle}">${reveal}</div>`,
-      slideCount: deck.slides.length,
+      html: `<style>${embeddedChromeStyles()}</style><div class="pitch-deck-wrap pitch-deck-wrap--${mode}" style="${wrapperStyle}">${reveal}</div>`,
+      slideCount: slidesToRender.length,
     };
   }
 
@@ -125,7 +148,7 @@ ${reveal}
 ${initScript}
 </body>
 </html>`,
-    slideCount: deck.slides.length,
+    slideCount: slidesToRender.length,
   };
 }
 
@@ -170,6 +193,100 @@ function standaloneStyles(): string {
 .reveal .pitch-kpi { display:inline-block; padding: 1rem 1.5rem; margin: .5rem; border: 1px solid var(--pitch-accent); border-radius: 8px; }
 .reveal table { border-collapse: collapse; width: 100%; }
 .reveal table td, .reveal table th { border: 1px solid currentColor; padding: .25rem .5rem; }
+`.trim();
+}
+
+/**
+ * Sub-issue #997 — chrome for the in-app embedded preview.
+ *
+ * The wrapper class is `pitch-deck-wrap--embedded` (or `--present`); the
+ * styles below intentionally apply to BOTH so the preview and the
+ * fullscreen present-mode renderer pick up the same brand chrome and
+ * brand colors at full saturation. The Reveal.js dark default desaturates
+ * heading colors via `text-shadow` + `--r-heading-color`; we override the
+ * Reveal CSS variables with the brand kit's primary/secondary/accent so
+ * deck imagery feels on-brand.
+ *
+ * The block is a static string literal — no user-supplied value is
+ * concatenated in, so this introduces no XSS surface beyond the existing
+ * `<style>` tag emitted in standalone mode.
+ */
+function embeddedChromeStyles(): string {
+  return `
+.pitch-deck-wrap { box-sizing: border-box; padding: 16px; background: transparent; }
+.pitch-deck-wrap--embedded .reveal,
+.pitch-deck-wrap--present .reveal {
+  border: 2px solid var(--pitch-primary, #2563eb);
+  border-radius: 12px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.25);
+  padding: 24px;
+  background: var(--pitch-secondary, #f8fafc);
+  position: relative;
+  overflow: hidden;
+}
+.pitch-deck-wrap .reveal {
+  --r-heading-color: var(--pitch-primary);
+  --r-link-color: var(--pitch-accent);
+  --r-selection-background-color: var(--pitch-accent);
+  --r-main-color: var(--pitch-primary);
+  font-family: var(--pitch-font-body, sans-serif);
+}
+.pitch-deck-wrap .reveal h1,
+.pitch-deck-wrap .reveal h2,
+.pitch-deck-wrap .reveal h3,
+.pitch-deck-wrap .reveal h4 {
+  font-family: var(--pitch-font-heading, sans-serif);
+  color: var(--pitch-primary);
+  text-shadow: none;
+}
+.pitch-deck-wrap .reveal .pitch-accent { color: var(--pitch-accent); }
+.pitch-deck-wrap .reveal .pitch-footer {
+  position: absolute;
+  bottom: 12px;
+  left: 24px;
+  right: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-top: 1px solid var(--pitch-accent);
+  padding-top: 8px;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--pitch-primary);
+  opacity: 0.85;
+}
+.pitch-deck-wrap .reveal .pitch-logo {
+  position: absolute;
+  top: 12px;
+  right: 16px;
+  max-height: 32px;
+  opacity: 0.9;
+}
+.pitch-deck-wrap .reveal .pitch-watermark {
+  position: absolute;
+  inset: 0;
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: 40%;
+  opacity: 0.05;
+  pointer-events: none;
+  filter: grayscale(1);
+}
+.pitch-deck-wrap .reveal .pitch-kpi {
+  display: inline-block;
+  padding: 1rem 1.5rem;
+  margin: .5rem;
+  border: 1px solid var(--pitch-accent);
+  border-radius: 8px;
+  background: rgba(255,255,255,0.04);
+}
+.pitch-deck-wrap .reveal table { border-collapse: collapse; width: 100%; }
+.pitch-deck-wrap .reveal table td,
+.pitch-deck-wrap .reveal table th {
+  border: 1px solid var(--pitch-accent);
+  padding: .25rem .5rem;
+}
 `.trim();
 }
 

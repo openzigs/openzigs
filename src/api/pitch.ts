@@ -660,7 +660,13 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
 
   // Phase 4 / sub-issue #963 — Reveal HTML render endpoint.
   router.get("/decks/:deckId/render", htmlLimiter, (req, res) => {
-    const mode = req.query.mode === "standalone" ? "standalone" : "embedded";
+    const rawMode = req.query.mode;
+    const mode: "embedded" | "present" | "standalone" =
+      rawMode === "standalone"
+        ? "standalone"
+        : rawMode === "present"
+          ? "present"
+          : "embedded";
     const deck = deps.pitchRepo.getDeck(req.params.deckId);
     if (!deck) {
       sendError(res, 404, "not_found", `deck ${req.params.deckId} not found`);
@@ -683,13 +689,36 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
         deps.pitchRepo.listSlidesForDeck(deck.id),
         deps.pitchRepo.listAssetsForDeck(deck.id),
       );
-      const { html, slideCount } = renderDeckToHtml(deck, brandKit, mode, {
+      // Sub-issue #996 — single-slide thumbnail filter. The query
+      // parameter is the slide ROW id (not its position) so the slide-rail
+      // can pass the same id it shows in `data-testid`. We resolve it to
+      // the array index here because `renderDeckToHtml` keys on index.
+      // Unknown slide ids fall through to a full-deck render so a stale
+      // tile cannot 404 the whole page.
+      const rawSlide = req.query.slide;
+      let slideIndex: number | undefined;
+      if (typeof rawSlide === "string" && rawSlide.length > 0) {
+        const slideRows = deps.pitchRepo.listSlidesForDeck(deck.id);
+        const idx = slideRows.findIndex((s) => s.id === rawSlide);
+        if (idx >= 0) slideIndex = idx;
+      }
+      const renderOpts: Parameters<typeof renderDeckToHtml>[3] = {
         backgroundImageUrlBySlideIndex,
-      });
+      };
+      if (slideIndex !== undefined) {
+        renderOpts.slideIndex = slideIndex;
+      }
+      const { html, slideCount } = renderDeckToHtml(
+        deck,
+        brandKit,
+        mode,
+        renderOpts,
+      );
       audit("system", "pitch_deck_rendered", {
         deckId: deck.id,
         mode,
         slideCount,
+        ...(slideIndex !== undefined ? { slideIndex } : {}),
       });
       emit("pitch:deck:rendered", {
         deckId: deck.id,
@@ -1350,12 +1379,19 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
 
       // Persist via repo, overriding the title if the caller supplied one.
       const finalTitle = body.title ?? generated.title;
+      // Sub-issue #998 — the wizard's `imageStyle` lives on the request
+      // options envelope; persist it onto the deck metadata so subsequent
+      // bulk re-generation (and the per-slide single-image POST) can
+      // resolve it without forcing the client to re-send.
+      const persistedMetadata = body.options?.imageStyle
+        ? { ...generated.metadata, image_style: body.options.imageStyle }
+        : generated.metadata;
       const persisted = deps.pitchRepo.insertDeck({
         id: nanoid(),
         title: finalTitle,
         brand_kit_id: brandKit.id,
         aspect_ratio: generated.aspect_ratio,
-        metadata: generated.metadata,
+        metadata: persistedMetadata,
         slides: generated.slides.map((slide) => ({ id: nanoid(), slide })),
       });
       audit("system", "pitch_deck_created", {
@@ -1383,6 +1419,9 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
               slides: slidesForFanout,
               mediaQueueRepo: deps.mediaQueueRepo,
               ...(deps.characterRepo ? { characterRepo: deps.characterRepo } : {}),
+              ...(body.options?.imageStyle
+                ? { imageStyle: body.options.imageStyle }
+                : {}),
               concurrency: 4,
               onEnqueued: (info) => {
                 emit("pitch:image:queued", {
@@ -1526,6 +1565,18 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
       ? `${body.loraTriggerWord} ${body.prompt}`
       : body.prompt;
 
+    // Sub-issue #998 \u2014 resolve effective style: per-slide override beats
+    // the deck-level default persisted on `metadata.image_style`.
+    const deckForStyle = deps.pitchRepo.getDeck(req.params.deckId);
+    const deckMeta = deckForStyle?.metadata as
+      | { image_style?: string }
+      | undefined;
+    const effectiveImageStyle =
+      slide.slide.image_style ??
+      (typeof deckMeta?.image_style === "string"
+        ? (deckMeta.image_style as never)
+        : undefined);
+
     try {
       const result = enqueueSlideImage({
         deckId: req.params.deckId,
@@ -1537,6 +1588,7 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
         height: body.height,
         mediaQueueRepo: deps.mediaQueueRepo,
         characterRepo: deps.characterRepo,
+        ...(effectiveImageStyle ? { imageStyle: effectiveImageStyle } : {}),
       });
       audit("tool", "pitch_image_queued", {
         deckId: req.params.deckId,
@@ -1595,12 +1647,24 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
         .listSlidesForDeck(deckId)
         .map((s) => ({ id: s.id, slide: s.slide }));
 
+      // Sub-issue #998 — honour the deck-level image-style preset
+      // persisted on `metadata.image_style` so re-running generate-all
+      // produces visually consistent imagery with the original draft.
+      const deckMeta = deck.metadata as { image_style?: string } | undefined;
+      const deckImageStyle =
+        typeof deckMeta?.image_style === "string"
+          ? deckMeta.image_style
+          : undefined;
+
       try {
         const result = await fanOutImageGeneration({
           deckId,
           slides: slidesForFanout,
           mediaQueueRepo: deps.mediaQueueRepo,
           ...(deps.characterRepo ? { characterRepo: deps.characterRepo } : {}),
+          ...(deckImageStyle
+            ? { imageStyle: deckImageStyle as never }
+            : {}),
           concurrency: 4,
           onEnqueued: (info) => {
             emit("pitch:image:queued", {

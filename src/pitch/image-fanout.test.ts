@@ -406,3 +406,93 @@ describe("fanOutImageGeneration", () => {
     expect(typeof enqueueSlideImage).toBe("function");
   });
 });
+
+// ── Sub-issue #998: image-style preset prefix ──────────────────────────
+describe("fanOutImageGeneration — image style preset (#998)", () => {
+  it("prefixes the deck-level style onto every enqueued prompt", async () => {
+    const repo = mockQueueRepo();
+    const slides: SlideForFanout[] = [
+      makeSlide(
+        {
+          ...baseCommon,
+          template: "image_caption",
+          content: {
+            image: { prompt: "a phoenix rising", url: null, alt: "x" },
+            caption: "c",
+          },
+        },
+        "s1",
+      ),
+    ];
+    const result = await fanOutImageGeneration({
+      deckId: "deck-style",
+      slides,
+      mediaQueueRepo: repo,
+      imageStyle: "cinematic",
+    });
+    expect(result.enqueued).toBe(1);
+    expect(repo.createJob).toHaveBeenCalledTimes(1);
+    const payload = repo.createJob.mock.calls[0]![0]!.payload as {
+      prompt: string;
+    };
+    expect(payload.prompt.toLowerCase()).toContain("cinematic");
+    expect(payload.prompt).toContain("a phoenix rising");
+    expect(payload.prompt.indexOf("a phoenix rising")).toBeGreaterThan(0);
+  });
+
+  it("per-slide image_style overrides deck-level preset", async () => {
+    const repo = mockQueueRepo();
+    const slides: SlideForFanout[] = [
+      makeSlide(
+        {
+          ...baseCommon,
+          template: "image_caption",
+          image_style: "minimal_vector",
+          content: {
+            image: { prompt: "logo mark", url: null, alt: "x" },
+            caption: "c",
+          },
+        },
+        "s1",
+      ),
+    ];
+    await fanOutImageGeneration({
+      deckId: "deck-style-2",
+      slides,
+      mediaQueueRepo: repo,
+      imageStyle: "cinematic",
+    });
+    const payload = repo.createJob.mock.calls[0]![0]!.payload as {
+      prompt: string;
+    };
+    // The minimal_vector prefix wins over the deck-level cinematic.
+    expect(payload.prompt.toLowerCase()).toContain("vector");
+    expect(payload.prompt.toLowerCase()).not.toContain("cinematic");
+  });
+
+  it("no preset → prompt is unchanged (backwards compatible)", async () => {
+    const repo = mockQueueRepo();
+    const slides: SlideForFanout[] = [
+      makeSlide(
+        {
+          ...baseCommon,
+          template: "image_caption",
+          content: {
+            image: { prompt: "raw prompt only", url: null, alt: "x" },
+            caption: "c",
+          },
+        },
+        "s1",
+      ),
+    ];
+    await fanOutImageGeneration({
+      deckId: "deck-no-style",
+      slides,
+      mediaQueueRepo: repo,
+    });
+    const payload = repo.createJob.mock.calls[0]![0]!.payload as {
+      prompt: string;
+    };
+    expect(payload.prompt).toBe("raw prompt only");
+  });
+});

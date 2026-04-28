@@ -58,6 +58,17 @@ export default function NewPitchDeckPage() {
   const [slideCount, setSlideCount] = useState<number>(10);
   const [audience, setAudience] = useState<string>("");
   const [tone, setTone] = useState<Tone>("formal");
+  // Sub-issue #998 — deck-level image style preset; passed through to
+  // `/decks/draft` options.imageStyle, persisted on deck metadata, and
+  // re-applied by `/images/generate-all`. Empty string == “no preset”.
+  const [imageStyle, setImageStyle] = useState<
+    ""
+    | "cinematic"
+    | "illustration"
+    | "3d_render"
+    | "corporate_photo"
+    | "minimal_vector"
+  >("");
   // Optional LLM override for both the condense + draft endpoints.
   // Empty string → omit `model` from the POST body so the wrapper's
   // own default model is used (PR #987 hard-coded `gpt-4o-mini` and
@@ -234,6 +245,7 @@ export default function NewPitchDeckPage() {
             targetSlideCount: slideCount,
             audience: audience || undefined,
             tone,
+            ...(imageStyle ? { imageStyle } : {}),
             ...(model ? { model } : {}),
           },
         }),
@@ -534,6 +546,36 @@ export default function NewPitchDeckPage() {
                   </label>
                 ))}
               </div>
+            </div>
+            <div className="mt-4">
+              <label
+                htmlFor="wizard-image-style"
+                className="text-xs font-semibold"
+              >
+                Image style
+              </label>
+              <select
+                id="wizard-image-style"
+                data-testid="wizard-image-style"
+                value={imageStyle}
+                onChange={(e) =>
+                  setImageStyle(
+                    e.target.value as typeof imageStyle,
+                  )
+                }
+                className="mt-1 w-full rounded border border-border bg-background p-2 text-sm"
+              >
+                <option value="">No preset</option>
+                <option value="cinematic">Cinematic</option>
+                <option value="illustration">Illustration</option>
+                <option value="3d_render">3D render</option>
+                <option value="corporate_photo">Corporate photo</option>
+                <option value="minimal_vector">Minimal vector</option>
+              </select>
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                Applied to every generated slide image. Per-slide overrides
+                can be set later in the editor.
+              </p>
             </div>
           </div>
         )}

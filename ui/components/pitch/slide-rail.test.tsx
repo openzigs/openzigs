@@ -224,4 +224,48 @@ describe("SlideRail", () => {
     fireEvent.click(screen.getByTestId("slide-rail-image-status-1"));
     expect(onRetryImage).toHaveBeenCalledWith("s1");
   });
+
+  // ── #996 real iframe-based slide thumbnails ─────────────────────────
+
+  it("renders no thumbnail wrapper when `thumbnails` prop is omitted", () => {
+    render(<SlideRail items={items} {...baseHandlers} />);
+    expect(
+      screen.queryByTestId("slide-rail-thumbnail-s1"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("renders a thumbnail wrapper per row when `thumbnails` prop is provided (#996)", () => {
+    // Stub IntersectionObserver — not present in jsdom.
+    const observe = vi.fn();
+    const disconnect = vi.fn();
+    (globalThis as { IntersectionObserver?: unknown }).IntersectionObserver =
+      vi.fn().mockImplementation(() => ({
+        observe,
+        disconnect,
+        unobserve: vi.fn(),
+        takeRecords: () => [],
+      }));
+    render(
+      <SlideRail
+        items={items}
+        {...baseHandlers}
+        thumbnails={{ deckId: "deck-x", token: "t-secret" }}
+      />,
+    );
+    expect(
+      screen.getByTestId("slide-rail-thumbnail-s1"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByTestId("slide-rail-thumbnail-s2"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByTestId("slide-rail-thumbnail-s3"),
+    ).toBeInTheDocument();
+    // Iframe is not mounted before IntersectionObserver fires.
+    expect(observe).toHaveBeenCalled();
+    // Text fallback is visible until the iframe mounts.
+    expect(
+      screen.getByTestId("slide-rail-thumbnail-fallback-s1"),
+    ).toHaveTextContent("Welcome");
+  });
 });

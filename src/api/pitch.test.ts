@@ -493,7 +493,7 @@ describe("Pitch REST router", () => {
       expect(res.status).toBe(200);
       expect(res.headers["content-type"]).toMatch(/text\/html/);
       expect(res.headers["cache-control"]).toBe("no-store");
-      expect(res.text).toContain('class="pitch-deck-wrap"');
+      expect(res.text).toContain('class="pitch-deck-wrap pitch-deck-wrap--embedded"');
       expect(res.text).toContain('class="reveal"');
       expect(res.text).not.toContain("<!doctype");
     });

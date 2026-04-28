@@ -86,6 +86,7 @@ interface SlideRow {
   fragments: string;
   background_image_prompt: string | null;
   source_anchor: string | null;
+  image_style: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -169,6 +170,16 @@ export class PitchRepository {
       CREATE INDEX IF NOT EXISTS idx_pitch_assets_slide
         ON pitch_assets(slide_id);
     `);
+
+    // Sub-issue #998 — additive `image_style` column on existing decks.
+    // SQLite has no `ADD COLUMN IF NOT EXISTS`; tolerate the duplicate-column
+    // error so re-running migrate() on a populated DB stays idempotent.
+    try {
+      this.db.exec(`ALTER TABLE pitch_slides ADD COLUMN image_style TEXT`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (!/duplicate column name/i.test(msg)) throw err;
+    }
   }
 
   // ── Decks ─────────────────────────────────────────────────────────────
@@ -198,8 +209,9 @@ export class PitchRepository {
     );
     const insertSlideStmt = this.db.prepare(
       `INSERT INTO pitch_slides (id, deck_id, position, template, content, speaker_notes,
-         transition, fragments, background_image_prompt, source_anchor, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         transition, fragments, background_image_prompt, source_anchor, image_style,
+         created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     );
 
     const tx = this.db.transaction(() => {
@@ -224,6 +236,7 @@ export class PitchRepository {
           JSON.stringify(slide.fragments),
           slide.background_image_prompt ?? null,
           slide.source_anchor ?? null,
+          slide.image_style ?? null,
           now,
           now,
         );
@@ -322,8 +335,9 @@ export class PitchRepository {
     this.db
       .prepare(
         `INSERT INTO pitch_slides (id, deck_id, position, template, content, speaker_notes,
-           transition, fragments, background_image_prompt, source_anchor, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           transition, fragments, background_image_prompt, source_anchor, image_style,
+           created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         input.id,
@@ -336,6 +350,7 @@ export class PitchRepository {
         JSON.stringify(slide.fragments),
         slide.background_image_prompt ?? null,
         slide.source_anchor ?? null,
+        slide.image_style ?? null,
         now,
         now,
       );
@@ -388,6 +403,7 @@ export class PitchRepository {
         "fragments = ?",
         "background_image_prompt = ?",
         "source_anchor = ?",
+        "image_style = ?",
       );
       params.push(
         validated.template,
@@ -397,6 +413,7 @@ export class PitchRepository {
         JSON.stringify(validated.fragments),
         validated.background_image_prompt ?? null,
         validated.source_anchor ?? null,
+        validated.image_style ?? null,
       );
     }
     if (fields.position !== undefined) {
@@ -542,6 +559,7 @@ export class PitchRepository {
       fragments: JSON.parse(row.fragments),
       background_image_prompt: row.background_image_prompt ?? undefined,
       source_anchor: row.source_anchor ?? undefined,
+      image_style: row.image_style ?? undefined,
     });
     return {
       id: row.id,

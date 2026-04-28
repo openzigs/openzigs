@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   DndContext,
   type DragEndEvent,
@@ -24,6 +24,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { ConfirmDialog } from "@/components/confirm-dialog";
+import { buildUrl } from "@/lib/api";
 
 export interface SlideRailItem {
   id: string;
@@ -60,6 +61,22 @@ export interface SlideRailProps {
    * retry image generation for the slide.
    */
   onRetryImage?: (slideId: string) => void;
+  /**
+   * Sub-issue #996 — when set, every row renders a real iframe-based
+   * thumbnail loaded from
+   * `/api/admin/pitch/decks/{deckId}/render?mode=embedded&slide={slideId}`.
+   * The thumbnail is lazily mounted on first viewport intersection and
+   * gracefully degrades to the existing text-only tile on iframe load
+   * failure. Omit `deckId` (or this whole block) to keep the legacy
+   * text-only rendering used by tests.
+   */
+  thumbnails?: {
+    deckId: string;
+    /** Bearer token forwarded as `?token=` since iframes cannot set headers. */
+    token?: string;
+    /** Cache-buster bumped by the parent when slide content changes. */
+    cacheKey?: number;
+  };
 }
 
 export const SlideRail = ({
@@ -74,6 +91,7 @@ export const SlideRail = ({
   onRegenerate,
   imageStatusOf,
   onRetryImage,
+  thumbnails,
 }: SlideRailProps) => {
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
   // Local copy so we can do optimistic reorder + rollback on failure.
@@ -148,6 +166,7 @@ export const SlideRail = ({
                   onRequestDelete={(id) => setPendingDelete(id)}
                   imageStatus={imageStatusOf?.(item.id) ?? "idle"}
                   onRetryImage={onRetryImage}
+                  thumbnails={thumbnails}
                 />
               ))}
             </ul>
@@ -180,6 +199,7 @@ interface RowProps {
   onRequestDelete: (id: string) => void;
   imageStatus: "idle" | "queued" | "ready" | "failed";
   onRetryImage?: (id: string) => void;
+  thumbnails?: SlideRailProps["thumbnails"];
 }
 
 const SlideRailRow = ({
@@ -194,6 +214,7 @@ const SlideRailRow = ({
   onRequestDelete,
   imageStatus,
   onRetryImage,
+  thumbnails,
 }: RowProps) => {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
     useSortable({ id: item.id });
@@ -232,6 +253,16 @@ const SlideRailRow = ({
               }
             />
           </div>
+          {thumbnails ? (
+            <SlideThumbnail
+              slideId={item.id}
+              slideIndex={index + 1}
+              titleFallback={item.titlePreview || "Untitled"}
+              deckId={thumbnails.deckId}
+              token={thumbnails.token}
+              cacheKey={thumbnails.cacheKey}
+            />
+          ) : null}
           <div className="mt-0.5 truncate font-medium text-foreground">
             {item.titlePreview || "Untitled"}
           </div>
@@ -335,5 +366,117 @@ const ImageStatusBadge = ({ status, slideIndex, onRetry }: BadgeProps) => {
     >
       <AlertCircle className="h-3 w-3" />
     </button>
+  );
+};
+/**
+ * Sub-issue #996 � real iframe-based slide thumbnail.
+ *
+ * Strategy:
+ *   1. Wrapper renders a fixed-size 16:9 box with a static fallback (text
+ *      title) so the rail row paints immediately on first render.
+ *   2. IntersectionObserver lazily mounts the `<iframe>` only once the
+ *      tile scrolls into view; rails of 30+ slides therefore avoid
+ *      hammering `/decks/:deckId/render` with 30 simultaneous requests.
+ *   3. The iframe loads the embedded-mode renderer scoped to the single
+ *      slide via the `?slide={slideId}` query the renderer added in
+ *      sub-issue #996. Auth is forwarded via `?token=` because iframes
+ *      cannot set request headers; this matches the existing Present
+ *      button pattern (PR #1003) and is no-op in dev (no auth).
+ *   4. CSS scales the rendered slide down with `transform: scale(0.18)`
+ *      and `transform-origin: top left`; the wrapper has
+ *      `overflow: hidden` so the off-screen overflow is clipped.
+ *   5. On `<iframe>` `onerror` we hide the iframe and surface the text
+ *      fallback so a render-failure tile is still legible.
+ */
+interface SlideThumbnailProps {
+  slideId: string;
+  slideIndex: number;
+  titleFallback: string;
+  deckId: string;
+  token?: string;
+  cacheKey?: number;
+}
+
+const SlideThumbnail = ({
+  slideId,
+  slideIndex,
+  titleFallback,
+  deckId,
+  token,
+  cacheKey,
+}: SlideThumbnailProps) => {
+  const wrapRef = useRef<HTMLDivElement | null>(null);
+  const [visible, setVisible] = useState(false);
+  const [errored, setErrored] = useState(false);
+
+  useEffect(() => {
+    if (visible) return;
+    if (typeof window === "undefined") return;
+    const node = wrapRef.current;
+    if (!node) return;
+    if (typeof IntersectionObserver === "undefined") {
+      setVisible(true);
+      return;
+    }
+    const obs = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (entry.isIntersecting) {
+            setVisible(true);
+            obs.disconnect();
+            break;
+          }
+        }
+      },
+      { rootMargin: "200px" },
+    );
+    obs.observe(node);
+    return () => obs.disconnect();
+  }, [visible]);
+
+  const params = new URLSearchParams({
+    mode: "embedded",
+    slide: slideId,
+  });
+  if (token) params.set("token", token);
+  if (cacheKey !== undefined) params.set("v", String(cacheKey));
+  const src = buildUrl(
+    `/api/admin/pitch/decks/${encodeURIComponent(deckId)}/render?${params.toString()}`,
+  );
+
+  return (
+    <div
+      ref={wrapRef}
+      data-testid={`slide-rail-thumbnail-${slideId}`}
+      className="relative mt-1 aspect-video w-full overflow-hidden rounded border border-border bg-muted/40"
+      aria-label={`Slide ${slideIndex} thumbnail: ${titleFallback}`}
+    >
+      {visible && !errored ? (
+        <iframe
+          title={`Slide ${slideIndex} thumbnail`}
+          src={src}
+          loading="lazy"
+          sandbox="allow-same-origin"
+          tabIndex={-1}
+          onError={() => setErrored(true)}
+          style={{
+            width: `${100 / 0.18}%`,
+            height: `${100 / 0.18}%`,
+            transform: "scale(0.18)",
+            transformOrigin: "top left",
+            border: "0",
+            pointerEvents: "none",
+          }}
+        />
+      ) : null}
+      {!visible || errored ? (
+        <div
+          data-testid={`slide-rail-thumbnail-fallback-${slideId}`}
+          className="absolute inset-0 flex items-center justify-center px-2 text-center text-[10px] font-medium text-muted-foreground"
+        >
+          {titleFallback}
+        </div>
+      ) : null}
+    </div>
   );
 };
