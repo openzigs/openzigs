@@ -315,6 +315,11 @@ describe("Pitch — Phase 7 integration (sub-issue #976)", () => {
       ).toBe("Updated Agenda");
 
       // Step 4 — Enqueue image generation for a slide.
+      // Issue #1007 — `/decks/draft` now auto-fans-out backgrounds for
+      // every slide via `deriveFallbackBackgrounds: true`, so the spy
+      // already has prior calls from the draft step. Reset before the
+      // manual enqueue so we can assert THIS call landed exactly once.
+      enqueueSlideImageMock.mockReset();
       enqueueSlideImageMock.mockReturnValue({
         jobId: "job-1",
         assetId: "asset-1",

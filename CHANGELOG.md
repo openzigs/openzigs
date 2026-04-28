@@ -7,7 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Pitch deck visual design overhaul.** The embedded chrome `<style>` block was rewritten as a small design system (issue #1007): a modular type scale (`H1 3.2em / H2 2.2em / H3 1.5em`) anchored on `font-heading` and `font-body` from the active brand kit, generous slide padding (`64px 72px 88px`), brand-accent bullet markers via `::before`, an auto-fit KPI grid, full-bleed image absolute positioning with white-on-image text + drop shadow (applied via a new `pitch-has-bg` class), a centered title-slide pattern with a 3 px accent eyebrow underline, and a 6 px top accent bar (`linear-gradient(90deg, var(--pitch-primary), var(--pitch-accent))`) plus a softer `0 12px 40px rgba(0,0,0,0.18)` shadow. Standalone exports now wrap reveal output in `pitch-deck-wrap--standalone` so the same chrome applies to PDF/HTML/zip exports, not just the in-app preview. (#1007)
+- **Web fonts actually load now.** The renderer emits `<link rel="preconnect">` + `<link rel="stylesheet">` against `fonts.googleapis.com` for `kit.fontHeading` and `kit.fontBody`. Names are sanitized through a strict allowlist (`/^[A-Za-z0-9 -]+$/` for the URL, plus a tighter CSS-context scrub on the inline `--pitch-font-heading` / `--pitch-font-body` CSS variables) so a hostile family value cannot break out of either context. (#1007)
+- **`two_column` slides promote bullet-prefixed text to real lists.** A new pure helper `renderRichBody` detects two-or-more lines that start with `• - * – —` and emits `<ul><li>...</li></ul>` instead of dumping the raw text. Single-line content stays inline; multi-line plain prose becomes one `<p>` per line. Each column is wrapped in a `pitch-twocol-col` div for the new flex layout. (#1007)
+
 ### Fixed
+
+- **Slides without a `background_image_prompt` no longer render styled-but-imageless.** A new opt-in `deriveFallbackBackgrounds` flag on `fanOutImageGeneration` derives a short conceptual prompt from the slide's title / heading / quote / caption (capped at 140 chars) when the AI/user left the field blank. The two API fan-out callsites (`POST /decks/draft` auto-fan-out and `POST /decks/:deckId/images/generate-all`) both pass the flag, so every slide in a freshly-generated deck gets a background image. The default for `planImageJobs` stays `false` so unrelated callers and the existing planner test suite are unchanged. (#1007)
 
 - **Pitch deck embedded preview canvas was tiny / unreadable, slide rail thumbnails were entirely blank, and clicking a slide in the rail did not navigate the canvas.** Three follow-up regressions surfaced after the initial Reveal.css fix landed:
   1. **Canvas height collapse** — the `.pitch-deck-wrap--embedded` wrapper had no intrinsic height inside its iframe, so it collapsed to ~84 px and Reveal.js scaled the slide layout down to ~0.2× of the viewport. Embedded chrome CSS now sets `html, body { height: 100% }` and forces `.pitch-deck-wrap--{embedded,present}` to `display: flex; height: 100vh; width: 100vw` with `.reveal { flex: 1; min-height: 0 }`.

@@ -1433,6 +1433,8 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
                 ? { imageStyle: body.options.imageStyle }
                 : {}),
               concurrency: 4,
+              // Issue #1007 — ensure every slide gets a background image.
+              deriveFallbackBackgrounds: true,
               onEnqueued: (info) => {
                 emit("pitch:image:queued", {
                   deckId: persisted.id,
@@ -1676,6 +1678,8 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
             ? { imageStyle: deckImageStyle as never }
             : {}),
           concurrency: 4,
+          // Issue #1007 — ensure every slide gets a background image.
+          deriveFallbackBackgrounds: true,
           onEnqueued: (info) => {
             emit("pitch:image:queued", {
               deckId,
