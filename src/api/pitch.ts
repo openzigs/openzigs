@@ -708,6 +708,16 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
       if (slideIndex !== undefined) {
         renderOpts.slideIndex = slideIndex;
       }
+      // Bug-fix 2026-04-28 — `?initial=N` boots the embedded Reveal at
+      // the slide the user just selected in the rail. Out-of-range or
+      // non-numeric values fall through to slide 0.
+      const rawInitial = req.query.initial;
+      if (typeof rawInitial === "string" && rawInitial.length > 0) {
+        const parsed = Number.parseInt(rawInitial, 10);
+        if (Number.isInteger(parsed) && parsed >= 0) {
+          renderOpts.initialSlideIndex = parsed;
+        }
+      }
       const { html, slideCount } = renderDeckToHtml(
         deck,
         brandKit,

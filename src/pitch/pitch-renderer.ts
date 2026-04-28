@@ -49,6 +49,14 @@ export interface RenderOpts {
    * 500 the server. The bg-URL map is filtered alongside.
    */
   slideIndex?: number;
+  /**
+   * Bug-fix 2026-04-28 — embedded/present mode initial slide index. The
+   * editor canvas passes this so the iframe boots showing the slide the
+   * user just clicked in the rail (instead of always restarting at 0).
+   * The renderer also injects a `postMessage` listener so the parent can
+   * navigate without rebuilding the iframe — see embedded init script.
+   */
+  initialSlideIndex?: number;
 }
 
 export interface RenderResult {
@@ -109,22 +117,77 @@ export function renderDeckToHtml(
     deck.aspect_ratio,
   )}"><div class="slides">${slidesHtml}</div>${footer}${watermark}${logoTag}</div>`;
 
+  // Pick a theme: caller-supplied wins for any mode (allowlist [a-z0-9-]).
+  // Embedded/present default to `white` for a presentation-grade light
+  // background that pairs well with the brand-color overrides; standalone
+  // keeps the historical `black` default to avoid breaking PDF exports.
+  const theme = opts.theme && /^[a-z0-9-]+$/i.test(opts.theme)
+    ? opts.theme
+    : mode === "standalone"
+      ? "black"
+      : "white";
+  const autoInit = opts.autoInit !== false;
+
   if (mode === "embedded" || mode === "present") {
-    // Sub-issue #997 — polished embedded chrome. Wrapper class lets the
-    // hosting Next.js page apply width/height; the inline <style> block
-    // ships the slide-frame chrome (border, shadow, padding) plus the
-    // brand-color CSS variables at full saturation. Sanitisation already
-    // ran for every interpolated string above; the <style> body itself
-    // is a static literal so no XSS surface is introduced here.
+    // Sub-issue #997 — embedded/present preview is loaded inside an
+    // `<iframe srcDoc=...>` (so it doesn't pollute the parent page's
+    // styles). Reveal.js requires its own CSS + theme + init script to
+    // actually lay out and scale slides; without those the page renders
+    // as bare unstyled HTML (the bug reported on 2026-04-28). Emitting
+    // a full HTML document here makes the iframe fully self-contained.
+    //
+    // The chrome `<style>` block stays — its rules layer on top of
+    // reveal.css to apply brand colors at full saturation.
+    //
+    // Bug-fix 2026-04-28: navigate to `initialSlideIndex` post-init AND
+    // install a `postMessage` listener so the parent canvas can drive
+    // slide navigation without rebuilding the iframe (the rail click
+    // handler simply postMessages `{type:"openzigs:navigate",index:N}`).
+    // Origin check is intentionally lax (`*`) because we accept that the
+    // iframe's origin equals the parent's (both served from
+    // localhost:3000 / the admin host) and the message contract is
+    // narrow — only an integer index is consumed.
+    const initialIndex = Number.isInteger(opts.initialSlideIndex)
+      ? Math.max(0, Math.min(opts.initialSlideIndex as number, slidesToRender.length - 1))
+      : 0;
+    const embeddedInit = autoInit
+      ? `<script type="module">
+import Reveal from "https://cdn.jsdelivr.net/npm/reveal.js@5/dist/reveal.esm.js";
+const deck = new Reveal({ embedded: ${mode === "embedded" ? "true" : "false"}, hash: false, controls: ${mode === "present" ? "true" : "false"}, progress: ${mode === "present" ? "true" : "false"}, transition: "slide" });
+await deck.initialize();
+if (${initialIndex} > 0) { try { deck.slide(${initialIndex}); } catch {} }
+window.addEventListener("message", (e) => {
+  const data = e && e.data;
+  if (!data || data.type !== "openzigs:navigate") return;
+  const idx = Number(data.index);
+  if (Number.isInteger(idx) && idx >= 0) { try { deck.slide(idx); } catch {} }
+});
+// Notify parent that the deck is ready so it can flush any queued
+// navigation messages that arrived before initialize() resolved.
+try { window.parent.postMessage({ type: "openzigs:reveal-ready" }, "*"); } catch {}
+</script>`
+      : "";
     return {
-      html: `<style>${embeddedChromeStyles()}</style><div class="pitch-deck-wrap pitch-deck-wrap--${mode}" style="${wrapperStyle}">${reveal}</div>`,
+      html: `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${sanitize(deck.title)}</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@5/dist/reveal.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@5/dist/theme/${theme}.css">
+<style>${embeddedChromeStyles()}</style>
+</head>
+<body style="${wrapperStyle};margin:0;background:transparent;">
+<div class="pitch-deck-wrap pitch-deck-wrap--${mode}" style="${wrapperStyle}">${reveal}</div>
+${embeddedInit}
+</body>
+</html>`,
       slideCount: slidesToRender.length,
     };
   }
 
   // standalone mode — full HTML document
-  const theme = opts.theme && /^[a-z0-9-]+$/i.test(opts.theme) ? opts.theme : "black";
-  const autoInit = opts.autoInit !== false;
   const initScript = autoInit
     ? `<script type="module">
 import Reveal from "https://cdn.jsdelivr.net/npm/reveal.js@5/dist/reveal.esm.js";
@@ -213,9 +276,23 @@ function standaloneStyles(): string {
  */
 function embeddedChromeStyles(): string {
   return `
+/* Bug-fix 2026-04-28 — the iframe's body has no intrinsic height so the
+   wrapper collapses to its content (~84 px), Reveal sees a tiny viewport,
+   and scales the slide layout down to ~0.2x. Force the wrapper to fill
+   the iframe viewport and let .reveal flex-fill the wrapper. */
+html, body { height: 100%; margin: 0; padding: 0; }
 .pitch-deck-wrap { box-sizing: border-box; padding: 16px; background: transparent; }
+.pitch-deck-wrap--embedded,
+.pitch-deck-wrap--present {
+  display: flex;
+  flex-direction: column;
+  width: 100vw;
+  height: 100vh;
+}
 .pitch-deck-wrap--embedded .reveal,
 .pitch-deck-wrap--present .reveal {
+  flex: 1 1 auto;
+  min-height: 0;
   border: 2px solid var(--pitch-primary, #2563eb);
   border-radius: 12px;
   box-shadow: 0 8px 24px rgba(0,0,0,0.25);
