@@ -709,10 +709,12 @@ describe("renderDeckToHtml — embedded chrome (#997)", () => {
     const out = renderDeckToHtml(buildDeck([ALL_TEMPLATES[0]]), KIT, "embedded");
     expect(out.html).toContain('class="pitch-deck-wrap pitch-deck-wrap--embedded"');
     expect(out.html).toContain("<style>");
-    // Brand chrome assertions: border + drop shadow + brand var override.
-    expect(out.html).toContain("border: 2px solid var(--pitch-primary");
-    expect(out.html).toContain("box-shadow: 0 8px 24px rgba(0,0,0,0.25)");
+    // Issue #1007 — design refresh swapped the heavy 2px border for a
+    // softer drop shadow + 6px brand-gradient bar across the top, and
+    // moved the heading-color override to the unified `--r-` Reveal vars.
+    expect(out.html).toContain("box-shadow: 0 12px 40px rgba(0,0,0,0.18)");
     expect(out.html).toContain("--r-heading-color: var(--pitch-primary)");
+    expect(out.html).toContain("linear-gradient(90deg, var(--pitch-primary), var(--pitch-accent))");
   });
 
   it("uses `--present` modifier class for present mode (full HTML document)", () => {
@@ -779,3 +781,94 @@ describe("renderDeckToHtml — embedded chrome (#997)", () => {
   });
 });
 
+
+// ── Issue #1007 — design polish + image-fanout fallback ──────────────
+import { renderRichBody } from "./pitch-renderer.js";
+
+describe("renderRichBody (#1007)", () => {
+  it("returns empty string for empty / whitespace input", () => {
+    expect(renderRichBody("")).toBe("");
+    expect(renderRichBody("   \n  \n")).toBe("");
+  });
+
+  it("renders a <ul> when 2+ lines start with bullet markers", () => {
+    const html = renderRichBody("• First point\n• Second point\n• Third point");
+    expect(html).toContain("<ul>");
+    expect(html).toContain("<li>First point</li>");
+    expect(html).toContain("<li>Second point</li>");
+    expect(html).toContain("<li>Third point</li>");
+    expect(html).not.toContain("•");
+  });
+
+  it("treats `-` and `*` line prefixes as bullets too", () => {
+    const html = renderRichBody("- alpha\n- beta\n* gamma");
+    expect(html).toContain("<ul>");
+    expect(html).toContain("<li>alpha</li>");
+    expect(html).toContain("<li>beta</li>");
+    expect(html).toContain("<li>gamma</li>");
+  });
+
+  it("renders <p> per line for multi-line plain prose", () => {
+    const html = renderRichBody("First sentence.\nSecond sentence.");
+    expect(html).toContain("<p>First sentence.</p>");
+    expect(html).toContain("<p>Second sentence.</p>");
+    expect(html).not.toContain("<ul>");
+  });
+
+  it("renders inline content for single-line input", () => {
+    const html = renderRichBody("Just one line.");
+    expect(html).not.toContain("<ul>");
+    expect(html).not.toContain("<p>");
+    expect(html).toContain("Just one line.");
+  });
+});
+
+describe("renderDeckToHtml — Google Fonts loader (#1007)", () => {
+  it("emits a Google Fonts <link> for both heading and body families", () => {
+    const out = renderDeckToHtml(buildDeck([ALL_TEMPLATES[0]]), KIT, "embedded");
+    expect(out.html).toContain("https://fonts.googleapis.com/css2?");
+    expect(out.html).toContain("family=Inter");
+    expect(out.html).toContain("display=swap");
+  });
+
+  it("rejects family names with disallowed characters", () => {
+    const evilKit: BrandKit = {
+      ...KIT,
+      fontHeading: "Inter\"</style><script>alert(1)</script>",
+      fontBody: "Source Sans",
+    };
+    const out = renderDeckToHtml(buildDeck([ALL_TEMPLATES[0]]), evilKit, "embedded");
+    // The hostile family name must not survive in the Google Fonts <link>
+    // (sanitized by `brandKitFontsLink`) NOR in the inline CSS variable
+    // (sanitized by `brandKitInlineStyle` — see issue #1007). We can't
+    // assert absence of `</script>` in the whole document because Reveal
+    // legitimately emits its own `<script>` bootstrap; instead assert
+    // the hostile `alert(1)` payload is fully stripped and the loader
+    // URL only contains the safe `family=Source%20Sans` value.
+    expect(out.html).not.toContain("alert(1)");
+    expect(out.html).toContain("family=Source%20Sans");
+  });
+
+  it("emits no link tag when both fonts are missing", () => {
+    const noFontKit: BrandKit = { ...KIT, fontHeading: "", fontBody: "" };
+    const out = renderDeckToHtml(buildDeck([ALL_TEMPLATES[0]]), noFontKit, "embedded");
+    expect(out.html).not.toContain("fonts.googleapis.com");
+  });
+});
+
+describe("renderDeckToHtml — two_column rich body (#1007)", () => {
+  it("converts bullet-prefixed two_column content into proper <ul><li>", () => {
+    const slide = s("two_column", {
+      heading: "Compare",
+      left: "• Alpha\n• Beta\n• Gamma",
+      right: "Plain prose on the right.",
+    });
+    const out = renderDeckToHtml(buildDeck([slide]), KIT, "embedded");
+    expect(out.html).toContain("<ul>");
+    expect(out.html).toContain("<li>Alpha</li>");
+    expect(out.html).toContain("<li>Beta</li>");
+    expect(out.html).toContain("<li>Gamma</li>");
+    expect(out.html).toContain("Plain prose on the right.");
+    expect(out.html).toContain("pitch-twocol-col");
+  });
+});

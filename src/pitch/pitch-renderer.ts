@@ -176,6 +176,7 @@ try { window.parent.postMessage({ type: "openzigs:reveal-ready" }, "*"); } catch
 <title>${sanitize(deck.title)}</title>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@5/dist/reveal.css">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@5/dist/theme/${theme}.css">
+${brandKitFontsLink(brandKit)}
 <style>${embeddedChromeStyles()}</style>
 </head>
 <body style="${wrapperStyle};margin:0;background:transparent;">
@@ -204,10 +205,11 @@ new Reveal({ hash: false, controls: true, progress: true, transition: "slide" })
 <title>${sanitize(deck.title)}</title>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@5/dist/reveal.css">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@5/dist/theme/${theme}.css">
+${brandKitFontsLink(brandKit)}
 <style>${standaloneStyles()}</style>
 </head>
 <body style="${wrapperStyle}">
-${reveal}
+<div class="pitch-deck-wrap pitch-deck-wrap--standalone" style="${wrapperStyle}">${reveal}</div>
 ${initScript}
 </body>
 </html>`,
@@ -230,13 +232,98 @@ const attr = escapeAttr;
 // ── Brand-kit helpers ──────────────────────────────────────────────────
 
 function brandKitInlineStyle(kit: BrandKit): string {
+  // Issue #1007 — sanitize font family names tightly before they reach
+  // the CSS variable. `escapeHtml` only protects HTML context; in CSS
+  // context a hostile family name like `Inter"</style><script>...` would
+  // still appear as a literal substring in the page source even if it
+  // can't execute. Strip everything outside the safe character set.
+  const safeFont = (raw: string): string =>
+    String(raw ?? "").replace(/[^A-Za-z0-9 ,'-]/g, "").slice(0, 80);
   return [
     `--pitch-primary:${kit.primaryColor}`,
     `--pitch-secondary:${kit.secondaryColor}`,
     `--pitch-accent:${kit.accentColor}`,
-    `--pitch-font-heading:${escapeHtml(kit.fontHeading)}`,
-    `--pitch-font-body:${escapeHtml(kit.fontBody)}`,
+    `--pitch-font-heading:${safeFont(kit.fontHeading)}`,
+    `--pitch-font-body:${safeFont(kit.fontBody)}`,
   ].join(";");
+}
+
+/**
+ * Issue #1007 — emit a Google Fonts <link> for the brand kit's heading
+ * and body font families. Without this the embedded preview falls back
+ * to the host's default serif (the `Times`-looking screenshot reported
+ * on 2026-04-28). Google Fonts gracefully ignores unknown families
+ * (returns 200 with empty CSS) so this is safe even when the kit's
+ * fonts are bespoke / self-hosted.
+ *
+ * Family names are filtered to a strict allowlist (letters, digits,
+ * spaces, hyphens) before being URL-encoded — no user-supplied value
+ * reaches the URL without sanitization.
+ */
+function brandKitFontsLink(kit: BrandKit): string {
+  const families = new Set<string>();
+  for (const f of [kit.fontHeading, kit.fontBody]) {
+    if (!f) continue;
+    const cleaned = String(f)
+      .trim()
+      // Strip any CSS fallback list — keep the first family only.
+      .split(",")[0]
+      ?.replace(/["']/g, "")
+      .trim();
+    if (!cleaned) continue;
+    if (!/^[A-Za-z0-9 -]+$/.test(cleaned)) continue;
+    families.add(cleaned);
+  }
+  if (families.size === 0) return "";
+  const params = Array.from(families)
+    .map(
+      (name) =>
+        `family=${encodeURIComponent(name)}:wght@400;600;700`,
+    )
+    .join("&");
+  const href = `https://fonts.googleapis.com/css2?${params}&display=swap`;
+  return [
+    `<link rel="preconnect" href="https://fonts.googleapis.com">`,
+    `<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>`,
+    `<link rel="stylesheet" href="${href}">`,
+  ].join("");
+}
+
+/**
+ * Issue #1007 — convert a free-text body string (as the AI emits it for
+ * `two_column` left/right) into structured HTML. If the text contains
+ * line-prefixed bullet markers (`•`, `-`, `*`, `–`) on ≥2 lines, render
+ * a `<ul>`; otherwise wrap newline-separated paragraphs in `<p>`. Plain
+ * single-line input becomes a single `<p>` (no list, no wrapping).
+ *
+ * The returned HTML is then sanitized through `sanitizeRichText` like
+ * every other rendered field — `<ul>`/`<li>`/`<p>` are in the allowlist.
+ */
+export function renderRichBody(input: string): string {
+  const text = String(input ?? "").replace(/\r\n/g, "\n").trim();
+  if (!text) return "";
+  const lines = text
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0);
+  // Recognise lines that start with a bullet glyph or dash (followed by
+  // optional whitespace). Multiple-character glyphs (`->`, `=>`) are
+  // intentionally NOT matched — those usually mean something else.
+  const bulletPattern = /^[•\-*\u2013\u2014]\s*/;
+  const bulletLines = lines.filter((l) => bulletPattern.test(l));
+  if (lines.length >= 2 && bulletLines.length >= 2) {
+    const items = lines
+      .map((l) => l.replace(bulletPattern, "").trim())
+      .filter((l) => l.length > 0)
+      .map((l) => `<li>${sanitize(l)}</li>`)
+      .join("");
+    return `<ul>${items}</ul>`;
+  }
+  if (lines.length > 1) {
+    return lines.map((l) => `<p>${sanitize(l)}</p>`).join("");
+  }
+  // Single-line plain prose — sanitize handles inline tags.
+  return sanitize(text);
 }
 
 function brandKitLogoTag(kit: BrandKit): string {
@@ -246,17 +333,14 @@ function brandKitLogoTag(kit: BrandKit): string {
 }
 
 function standaloneStyles(): string {
-  // Minimal — most styling lives in reveal theme. Brand colors picked up via vars.
-  return `
-.reveal { font-family: var(--pitch-font-body, sans-serif); }
-.reveal h1,.reveal h2,.reveal h3 { font-family: var(--pitch-font-heading, sans-serif); color: var(--pitch-primary); }
-.reveal .pitch-accent { color: var(--pitch-accent); }
-.reveal .pitch-footer { position: fixed; bottom: 8px; left: 16px; font-size: 12px; opacity: .6; }
-.reveal .pitch-logo { position: fixed; top: 8px; right: 16px; max-height: 40px; }
-.reveal .pitch-kpi { display:inline-block; padding: 1rem 1.5rem; margin: .5rem; border: 1px solid var(--pitch-accent); border-radius: 8px; }
-.reveal table { border-collapse: collapse; width: 100%; }
-.reveal table td, .reveal table th { border: 1px solid currentColor; padding: .25rem .5rem; }
-`.trim();
+  // Issue #1007 — share the embedded chrome styles in standalone exports
+  // (HTML / PDF) so a shared deck looks identical to the in-app preview.
+  // The wrapper class is `pitch-deck-wrap` (no `--embedded` modifier) so
+  // the layout rules that need full viewport (display:flex, height:100vh)
+  // are intentionally NOT inherited — Reveal handles its own sizing in
+  // standalone. We therefore re-emit only the type/spacing/component
+  // rules that don't depend on the embedded chrome wrapper.
+  return embeddedChromeStyles();
 }
 
 /**
@@ -275,13 +359,15 @@ function standaloneStyles(): string {
  * `<style>` tag emitted in standalone mode.
  */
 function embeddedChromeStyles(): string {
+  // Issue #1007 — design polish. Apply a real type scale, generous
+  // slide padding, accent-bar signature, equal-width two-column layout,
+  // and KPI/quote/title pattern styling. The block stays a static
+  // string literal so no user value reaches CSS context.
   return `
-/* Bug-fix 2026-04-28 — the iframe's body has no intrinsic height so the
-   wrapper collapses to its content (~84 px), Reveal sees a tiny viewport,
-   and scales the slide layout down to ~0.2x. Force the wrapper to fill
-   the iframe viewport and let .reveal flex-fill the wrapper. */
+/* Bug-fix 2026-04-28 — fill the iframe viewport so Reveal doesn't
+   collapse to ~84px and scale down to 0.2x. */
 html, body { height: 100%; margin: 0; padding: 0; }
-.pitch-deck-wrap { box-sizing: border-box; padding: 16px; background: transparent; }
+.pitch-deck-wrap { box-sizing: border-box; padding: 0; background: transparent; }
 .pitch-deck-wrap--embedded,
 .pitch-deck-wrap--present {
   display: flex;
@@ -290,55 +376,306 @@ html, body { height: 100%; margin: 0; padding: 0; }
   height: 100vh;
 }
 .pitch-deck-wrap--embedded .reveal,
-.pitch-deck-wrap--present .reveal {
-  flex: 1 1 auto;
-  min-height: 0;
-  border: 2px solid var(--pitch-primary, #2563eb);
+.pitch-deck-wrap--present .reveal,
+.pitch-deck-wrap--standalone .reveal {
   border-radius: 12px;
-  box-shadow: 0 8px 24px rgba(0,0,0,0.25);
-  padding: 24px;
   background: var(--pitch-secondary, #f8fafc);
   position: relative;
   overflow: hidden;
+}
+.pitch-deck-wrap--embedded .reveal,
+.pitch-deck-wrap--present .reveal {
+  flex: 1 1 auto;
+  min-height: 0;
+  box-shadow: 0 12px 40px rgba(0,0,0,0.18);
+}
+/* Accent signature: a 6px brand bar across the top of every deck. */
+.pitch-deck-wrap--embedded .reveal::before,
+.pitch-deck-wrap--present .reveal::before,
+.pitch-deck-wrap--standalone .reveal::before {
+  content: "";
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 6px;
+  background: linear-gradient(90deg, var(--pitch-primary), var(--pitch-accent));
+  z-index: 5;
 }
 .pitch-deck-wrap .reveal {
   --r-heading-color: var(--pitch-primary);
   --r-link-color: var(--pitch-accent);
   --r-selection-background-color: var(--pitch-accent);
-  --r-main-color: var(--pitch-primary);
-  font-family: var(--pitch-font-body, sans-serif);
+  --r-main-color: #1f2937;
+  --r-main-font-size: 28px;
+  --r-heading-font-weight: 700;
+  --r-heading-line-height: 1.15;
+  --r-block-margin: 24px;
+  font-family: var(--pitch-font-body, "Inter", system-ui, sans-serif);
+  color: #1f2937;
+}
+/* Generous slide padding (~7% of slide). Reveal scales the .slides
+   container, so padding works against the logical 960×700 viewport. */
+.pitch-deck-wrap .reveal .slides > section,
+.pitch-deck-wrap .reveal .slides > section > section {
+  box-sizing: border-box;
+  padding: 64px 72px 88px 72px;
+  text-align: left;
 }
 .pitch-deck-wrap .reveal h1,
 .pitch-deck-wrap .reveal h2,
 .pitch-deck-wrap .reveal h3,
 .pitch-deck-wrap .reveal h4 {
-  font-family: var(--pitch-font-heading, sans-serif);
+  font-family: var(--pitch-font-heading, "Inter", system-ui, sans-serif);
   color: var(--pitch-primary);
   text-shadow: none;
+  text-transform: none;
+  letter-spacing: -0.015em;
+  line-height: 1.15;
+  margin-top: 0;
 }
+.pitch-deck-wrap .reveal h1 { font-size: 3.2em; margin-bottom: 0.4em; }
+.pitch-deck-wrap .reveal h2 { font-size: 2.2em; margin-bottom: 0.5em; }
+.pitch-deck-wrap .reveal h3 { font-size: 1.5em; margin-bottom: 0.4em; }
+.pitch-deck-wrap .reveal p,
+.pitch-deck-wrap .reveal li {
+  line-height: 1.5;
+  font-size: 0.95em;
+}
+.pitch-deck-wrap .reveal ul {
+  list-style: none;
+  padding-left: 0;
+  margin: 0;
+}
+.pitch-deck-wrap .reveal ul > li {
+  position: relative;
+  padding: 0.25em 0 0.25em 1.4em;
+}
+.pitch-deck-wrap .reveal ul > li::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0.75em;
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  background: var(--pitch-accent);
+}
+.pitch-deck-wrap .reveal ol { padding-left: 1.4em; }
 .pitch-deck-wrap .reveal .pitch-accent { color: var(--pitch-accent); }
+/* ── Title slide pattern ─────────────────────────────────────── */
+.pitch-deck-wrap .reveal .slides > section.pitch-tpl-title {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+.pitch-deck-wrap .reveal .pitch-eyebrow {
+  display: inline-block;
+  font-size: 0.7em;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--pitch-accent);
+  margin-bottom: 1.2em;
+  padding-bottom: 0.6em;
+  border-bottom: 3px solid var(--pitch-accent);
+  align-self: flex-start;
+}
+.pitch-deck-wrap .reveal .slides > section.pitch-tpl-title h1 {
+  font-size: 4em;
+  line-height: 1.05;
+}
+.pitch-deck-wrap .reveal .slides > section.pitch-tpl-title h3 {
+  font-size: 1.4em;
+  font-weight: 400;
+  color: #4b5563;
+  margin-top: 0.5em;
+}
+/* ── Section divider ─────────────────────────────────────────── */
+.pitch-deck-wrap .reveal .pitch-section-num {
+  font-size: 1.2em;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  margin-bottom: 0.5em;
+}
+.pitch-deck-wrap .reveal .slides > section.pitch-tpl-section_divider h2 {
+  font-size: 3.2em;
+}
+/* ── Two-column layout ───────────────────────────────────────── */
+.pitch-deck-wrap .reveal .pitch-twocol {
+  display: flex;
+  gap: 3rem;
+  align-items: flex-start;
+  margin-top: 1rem;
+}
+.pitch-deck-wrap .reveal .pitch-twocol-col {
+  flex: 1 1 0;
+  min-width: 0;
+}
+.pitch-deck-wrap .reveal .pitch-twocol-col img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 8px;
+  margin-top: 1rem;
+}
+/* ── Quote ───────────────────────────────────────────────────── */
+.pitch-deck-wrap .reveal blockquote {
+  background: transparent;
+  box-shadow: none;
+  border-left: 4px solid var(--pitch-accent);
+  padding: 0.5em 1em;
+  font-size: 1.4em;
+  font-style: italic;
+  color: #1f2937;
+  width: 100%;
+  margin: 0 0 1em 0;
+}
+.pitch-deck-wrap .reveal .pitch-attribution {
+  text-align: right;
+  font-size: 0.9em;
+  color: #6b7280;
+}
+/* ── Stats / KPIs ────────────────────────────────────────────── */
+.pitch-deck-wrap .reveal .pitch-kpis {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 1.5rem;
+  margin-top: 2rem;
+}
+.pitch-deck-wrap .reveal .pitch-kpi {
+  display: block;
+  padding: 1.25rem 1.5rem;
+  margin: 0;
+  border: none;
+  border-top: 4px solid var(--pitch-accent);
+  border-radius: 4px;
+  background: rgba(255,255,255,0.7);
+  text-align: left;
+}
+.pitch-deck-wrap .reveal .pitch-kpi-value {
+  font-family: var(--pitch-font-heading, inherit);
+  font-size: 2.6em;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--pitch-primary);
+}
+.pitch-deck-wrap .reveal .pitch-kpi-label {
+  font-size: 0.85em;
+  color: #4b5563;
+  margin-top: 0.5em;
+}
+.pitch-deck-wrap .reveal .pitch-kpi-delta {
+  font-size: 0.9em;
+  font-weight: 600;
+  margin-top: 0.3em;
+}
+/* ── Image caption ───────────────────────────────────────────── */
+.pitch-deck-wrap .reveal .slides > section.pitch-tpl-image_caption img {
+  max-width: 70%;
+  max-height: 60vh;
+  border-radius: 8px;
+  display: block;
+  margin: 1em auto;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.15);
+}
+.pitch-deck-wrap .reveal .pitch-caption {
+  text-align: center;
+  font-size: 0.95em;
+  color: #6b7280;
+  font-style: italic;
+}
+/* ── Full-bleed image ────────────────────────────────────────── */
+.pitch-deck-wrap .reveal .slides > section.pitch-tpl-full_bleed {
+  padding: 0;
+}
+.pitch-deck-wrap .reveal .pitch-fullbleed {
+  position: absolute;
+  inset: 0;
+}
+.pitch-deck-wrap .reveal .pitch-fullbleed img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.pitch-deck-wrap .reveal .pitch-overlay {
+  position: absolute;
+  bottom: 10%;
+  left: 8%;
+  right: 8%;
+  padding: 1.5rem;
+  background: linear-gradient(180deg, rgba(0,0,0,0) 0%, rgba(0,0,0,0.7) 100%);
+  color: #fff;
+  font-size: 1.6em;
+  font-weight: 700;
+  border-radius: 6px;
+}
+/* ── Tables ──────────────────────────────────────────────────── */
+.pitch-deck-wrap .reveal table {
+  border-collapse: collapse;
+  width: 100%;
+  margin-top: 1rem;
+  font-size: 0.85em;
+}
+.pitch-deck-wrap .reveal table th {
+  background: var(--pitch-primary);
+  color: #fff;
+  padding: 0.75em 1em;
+  text-align: left;
+  font-weight: 600;
+}
+.pitch-deck-wrap .reveal table td {
+  padding: 0.6em 1em;
+  border-bottom: 1px solid #e5e7eb;
+  border-top: none;
+  border-left: none;
+  border-right: none;
+}
+.pitch-deck-wrap .reveal table tr:nth-child(even) td {
+  background: rgba(0,0,0,0.02);
+}
+/* ── Timeline ────────────────────────────────────────────────── */
+.pitch-deck-wrap .reveal ol.pitch-timeline {
+  list-style: none;
+  padding-left: 1rem;
+  margin-top: 1.5rem;
+  border-left: 3px solid var(--pitch-accent);
+}
+.pitch-deck-wrap .reveal ol.pitch-timeline > li {
+  padding: 0.4em 0 0.4em 1rem;
+  margin-bottom: 0.2em;
+  position: relative;
+}
+.pitch-deck-wrap .reveal ol.pitch-timeline > li::before {
+  content: "";
+  position: absolute;
+  left: -1.55rem;
+  top: 0.85em;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--pitch-accent);
+  border: 3px solid var(--pitch-secondary, #f8fafc);
+}
+/* ── Footer / logo / watermark ───────────────────────────────── */
 .pitch-deck-wrap .reveal .pitch-footer {
   position: absolute;
-  bottom: 12px;
-  left: 24px;
-  right: 24px;
+  bottom: 16px;
+  left: 72px;
+  right: 72px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  border-top: 1px solid var(--pitch-accent);
-  padding-top: 8px;
   font-size: 11px;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: var(--pitch-primary);
-  opacity: 0.85;
+  color: #6b7280;
+  z-index: 4;
 }
 .pitch-deck-wrap .reveal .pitch-logo {
   position: absolute;
-  top: 12px;
-  right: 16px;
-  max-height: 32px;
+  top: 20px;
+  right: 24px;
+  max-height: 28px;
   opacity: 0.9;
+  z-index: 4;
 }
 .pitch-deck-wrap .reveal .pitch-watermark {
   position: absolute;
@@ -346,23 +683,21 @@ html, body { height: 100%; margin: 0; padding: 0; }
   background-repeat: no-repeat;
   background-position: center;
   background-size: 40%;
-  opacity: 0.05;
+  opacity: 0.04;
   pointer-events: none;
   filter: grayscale(1);
 }
-.pitch-deck-wrap .reveal .pitch-kpi {
-  display: inline-block;
-  padding: 1rem 1.5rem;
-  margin: .5rem;
-  border: 1px solid var(--pitch-accent);
-  border-radius: 8px;
-  background: rgba(255,255,255,0.04);
+/* When a slide has a background image we add the .pitch-has-bg class
+   in sectionAttributes (issue #1007) so we can give the heading text a
+   white color and drop shadow without depending on Reveal's data-attr. */
+.pitch-deck-wrap .reveal .slides > section.pitch-has-bg {
+  color: #fff;
 }
-.pitch-deck-wrap .reveal table { border-collapse: collapse; width: 100%; }
-.pitch-deck-wrap .reveal table td,
-.pitch-deck-wrap .reveal table th {
-  border: 1px solid var(--pitch-accent);
-  padding: .25rem .5rem;
+.pitch-deck-wrap .reveal .slides > section.pitch-has-bg h1,
+.pitch-deck-wrap .reveal .slides > section.pitch-has-bg h2,
+.pitch-deck-wrap .reveal .slides > section.pitch-has-bg h3 {
+  color: #fff;
+  text-shadow: 0 2px 12px rgba(0,0,0,0.5);
 }
 `.trim();
 }
@@ -379,7 +714,14 @@ function renderSlide(slide: Slide, backgroundUrl?: string): string {
 }
 
 function sectionAttributes(slide: Slide, backgroundUrl?: string): string {
-  const parts: string[] = [`data-template="${attr(slide.template)}"`];
+  // Issue #1007 — also emit a pitch-tpl-{template} class so CSS can
+  // target template-specific patterns (e.g. centered title slide)
+  // through the class hook (kept distinct from the data attribute so
+  // the chrome stylesheet does not duplicate that literal substring).
+  const parts: string[] = [
+    `class="pitch-tpl-${attr(slide.template)}"`,
+    `data-template="${attr(slide.template)}"`,
+  ];
   if (slide.transition && slide.transition !== "slide") {
     parts.push(`data-transition="${attr(slide.transition)}"`);
   }
@@ -391,6 +733,10 @@ function sectionAttributes(slide: Slide, backgroundUrl?: string): string {
   if (backgroundUrl) {
     const safe = safeUrl(backgroundUrl);
     if (safe) {
+      // Issue #1007 — swap the class so the chrome CSS can apply a dark
+      // overlay + white heading colors without using a `[data-...]`
+      // attribute selector (see comment in sectionAttributes).
+      parts[0] = `class="pitch-tpl-${attr(slide.template)} pitch-has-bg"`;
       parts.push(`data-background-image="${attr(safe)}"`);
       parts.push(`data-background-size="cover"`);
       parts.push(`data-background-position="center"`);
@@ -470,7 +816,10 @@ function renderTwoColumn(
   s: Extract<Slide, { template: "two_column" }>,
 ): string {
   const { heading, left, right, left_image, right_image } = s.content;
-  return `<h2 data-pitch-field="heading">${sanitize(heading)}</h2><div class="pitch-twocol" style="display:flex;gap:1rem;"><div data-pitch-field="left">${sanitize(left)}${imageTag(left_image)}</div><div data-pitch-field="right">${sanitize(right)}${imageTag(right_image)}</div></div>`;
+  // Issue #1007 — promote bullet-prefixed text to actual <ul><li> markup.
+  // Without this the AI's `•`-prefixed lines render as a wall of inline
+  // text (the regression captured in the 2026-04-28 screenshot).
+  return `<h2 data-pitch-field="heading">${sanitize(heading)}</h2><div class="pitch-twocol"><div class="pitch-twocol-col" data-pitch-field="left">${renderRichBody(left)}${imageTag(left_image)}</div><div class="pitch-twocol-col" data-pitch-field="right">${renderRichBody(right)}${imageTag(right_image)}</div></div>`;
 }
 
 function renderImageCaption(
