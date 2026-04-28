@@ -127,11 +127,28 @@ describe("renderDeckToHtml", () => {
     }
   });
 
-  it("embedded mode emits a fragment, not a full document", () => {
+  it("embedded mode emits a full HTML document with reveal.js + the deck wrapper", () => {
     const out = renderDeckToHtml(buildDeck([ALL_TEMPLATES[0]]), KIT, "embedded");
+    expect(out.html.startsWith("<!doctype html>")).toBe(true);
+    expect(out.html).toContain("reveal.js@5/dist/reveal.css");
+    expect(out.html).toContain("reveal.js@5/dist/theme/white.css");
     expect(out.html).toContain('class="pitch-deck-wrap pitch-deck-wrap--embedded"');
-    expect(out.html).not.toContain("<!doctype");
-    expect(out.html).not.toContain("<html");
+    expect(out.html).toContain("Reveal");
+    expect(out.html).toContain("initialize");
+    // Embedded mode disables Reveal's controls/progress chrome (the slide
+    // rail provides navigation) and runs in `embedded: true` so it scales
+    // to the iframe rather than the viewport.
+    expect(out.html).toContain("embedded: true");
+    expect(out.html).toContain("controls: false");
+  });
+
+  it("present mode emits a full HTML document with controls + progress enabled", () => {
+    const out = renderDeckToHtml(buildDeck([ALL_TEMPLATES[0]]), KIT, "present");
+    expect(out.html.startsWith("<!doctype html>")).toBe(true);
+    expect(out.html).toContain('class="pitch-deck-wrap pitch-deck-wrap--present"');
+    expect(out.html).toContain("embedded: false");
+    expect(out.html).toContain("controls: true");
+    expect(out.html).toContain("progress: true");
   });
 
   it("standalone mode emits a full HTML document with reveal.js link + init script", () => {
@@ -558,7 +575,12 @@ describe("renderDeckToHtml — per-template XSS hardening", () => {
   it.each(PER_TEMPLATE_CASES)(
     "neutralizes XSS in $template template",
     ({ build }) => {
-      const html = renderDeckToHtml(buildDeck([build()]), KIT, "embedded").html;
+      // Use `autoInit: false` so the boilerplate Reveal init `<script>` tag
+      // does not produce a false positive on the `<script` substring check;
+      // we only care that DOMPurify stripped attacker-supplied scripts/handlers.
+      const html = renderDeckToHtml(buildDeck([build()]), KIT, "embedded", {
+        autoInit: false,
+      }).html;
       expect(html).not.toContain("<script");
       expect(html).not.toContain("onerror");
       expect(html).not.toContain("javascript:");
@@ -693,10 +715,13 @@ describe("renderDeckToHtml — embedded chrome (#997)", () => {
     expect(out.html).toContain("--r-heading-color: var(--pitch-primary)");
   });
 
-  it("uses `--present` modifier class for present mode while keeping fragment output", () => {
+  it("uses `--present` modifier class for present mode (full HTML document)", () => {
+    // Embedded + present modes both emit a full HTML document so the
+    // editor canvas / presenter window can mount Reveal.js without the
+    // host page needing to load reveal.css separately.
     const out = renderDeckToHtml(buildDeck([ALL_TEMPLATES[0]]), KIT, "present");
     expect(out.html).toContain('class="pitch-deck-wrap pitch-deck-wrap--present"');
-    expect(out.html).not.toContain("<!doctype");
+    expect(out.html.startsWith("<!doctype html>")).toBe(true);
   });
 
   it("renders brand colors at full saturation via inline CSS variables", () => {

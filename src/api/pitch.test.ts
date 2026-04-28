@@ -495,7 +495,11 @@ describe("Pitch REST router", () => {
       expect(res.headers["cache-control"]).toBe("no-store");
       expect(res.text).toContain('class="pitch-deck-wrap pitch-deck-wrap--embedded"');
       expect(res.text).toContain('class="reveal"');
-      expect(res.text).not.toContain("<!doctype");
+      // Embedded mode now emits a full HTML document so the editor canvas /
+      // slide-rail iframes can mount Reveal.js without the host page needing
+      // to load reveal.css separately. (Bug fix 2026-04-28.)
+      expect(res.text.startsWith("<!doctype html>")).toBe(true);
+      expect(res.text).toContain("reveal.js@5/dist/reveal.css");
     });
 
     it("GET /decks/:deckId/render?mode=standalone returns full HTML doc", async () => {

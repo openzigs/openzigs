@@ -1,92 +1,68 @@
 "use client";
 
-import { useEffect, useRef } from "react";
-// eslint-disable-next-line @typescript-eslint/ban-ts-comment
-// @ts-ignore -- reveal.js ESM build ships its own types only via @types/reveal.js
-import Reveal from "reveal.js";
+import { useCallback } from "react";
 
 export interface RevealCanvasImplProps {
   /**
-   * Embedded HTML fragment from `GET /decks/:deckId/render?mode=embedded`.
-   * Should look like `<div class="pitch-deck-wrap">…<div class="reveal">…</div></div>`.
+   * Full HTML document from `GET /decks/:deckId/render?mode=embedded`.
+   * Includes Reveal.js CSS/theme/init — rendered inside an iframe so the
+   * styles do not leak into the parent Next.js page.
    */
   html: string;
-  /** Forwarded so click handlers in the parent can react to slide content. */
+  /** Forwarded so click handlers in the parent can react to canvas clicks. */
   onContainerClick?: (target: HTMLElement) => void;
 }
 
 /**
- * Real Reveal.js mount point. Only loaded client-side (see reveal-canvas.tsx).
- * Reveal touches `window`/`document` at import time, so this file must NEVER
- * be imported from a server component or a regular `import` chain that runs
- * during `next build` SSG.
+ * Embedded-mode Reveal.js preview mounted inside an `<iframe srcDoc=…>`.
+ *
+ * Why an iframe?
+ *   - The `/render?mode=embedded` endpoint emits a full HTML document with
+ *     reveal.css, the theme CSS and the Reveal init script. Inlining that
+ *     into the parent page (the previous dangerouslySetInnerHTML +
+ *     in-parent Reveal init approach) never loaded those CSS/JS assets, so
+ *     slides rendered as unstyled HTML — text appeared invisible against
+ *     brand-colored backgrounds and Reveal could not lay out the deck.
+ *     Bug report 2026-04-28.
+ *   - The slide-rail thumbnails already render the same endpoint inside
+ *     iframes, so canvas + thumbnails now share one render path.
+ *
+ * Click forwarding: clicks inside the iframe stay inside the iframe; we
+ * only proxy clicks that land on the wrapper itself (e.g. surrounding
+ * padding) — slide selection is driven by the slide rail, not the canvas.
  */
 export default function RevealCanvasImpl({
   html,
   onContainerClick,
 }: RevealCanvasImplProps) {
-  const containerRef = useRef<HTMLDivElement | null>(null);
-  const deckRef = useRef<{ destroy?: () => void } | null>(null);
-
-  useEffect(() => {
-    const root = containerRef.current;
-    if (!root) return;
-    const revealEl = root.querySelector<HTMLDivElement>(".reveal");
-    if (!revealEl) return;
-
-    let cancelled = false;
-    let deck: { destroy?: () => void } | null = null;
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const RevealCtor = Reveal as unknown as new (
-        el: HTMLElement,
-        opts?: Record<string, unknown>,
-      ) => { initialize: () => Promise<void>; destroy?: () => void };
-      deck = new RevealCtor(revealEl, {
-        embedded: true,
-        hash: false,
-        controls: true,
-        progress: true,
-        transition: "slide",
-      });
-      deckRef.current = deck;
-      void (deck as { initialize: () => Promise<void> }).initialize().catch(() => {
-        /* swallow — initialize can throw if container is detached mid-render */
-      });
-    } catch {
-      /* swallow — reveal init failure should not crash the editor */
-    }
-
-    return () => {
-      cancelled = true;
-      void cancelled;
-      try {
-        deckRef.current?.destroy?.();
-      } catch {
-        /* ignore */
-      }
-      deckRef.current = null;
-    };
-  }, [html]);
+  const handleWrapClick = useCallback(
+    (e: React.MouseEvent<HTMLDivElement>) => {
+      if (!onContainerClick) return;
+      const target = e.target as HTMLElement;
+      onContainerClick(target);
+    },
+    [onContainerClick],
+  );
 
   return (
     <div
-      ref={containerRef}
       data-testid="reveal-canvas-impl"
       className="reveal-canvas-root h-full w-full"
-      onClick={(e) => {
-        if (!onContainerClick) return;
-        const target = e.target as HTMLElement;
-        onContainerClick(target);
-      }}
-      // The HTML is sanitized server-side by pitch-renderer (DOMPurify with
-      // strict FORBID_TAGS/FORBID_ATTR list). We trust it here because:
-      //   1. It only contains tags/attrs that survived sanitization
-      //   2. The render endpoint never echoes user input verbatim
-      //   3. Reveal.js needs real DOM nodes to mount, so a parsed-ast
-      //      approach would force a full re-implementation of section-attr
-      //      handling.
-      dangerouslySetInnerHTML={{ __html: html }}
-    />
+      onClick={handleWrapClick}
+    >
+      <iframe
+        data-testid="reveal-canvas-iframe"
+        title="Slide preview"
+        srcDoc={html}
+        className="h-full w-full border-0 bg-transparent"
+        // `allow-same-origin` lets reveal.js read the linked stylesheets;
+        // `allow-scripts` lets the inline Reveal init script execute. We
+        // intentionally do NOT grant `allow-top-navigation` or
+        // `allow-popups` so a tampered deck cannot navigate the parent.
+        // The HTML body is sanitized server-side via DOMPurify
+        // (pitch-sanitize.ts) before reaching the iframe.
+        sandbox="allow-scripts allow-same-origin"
+      />
+    </div>
   );
 }

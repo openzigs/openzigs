@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Pitch deck embedded preview was rendering blank.** Both the editor canvas and the slide-rail thumbnails appeared as empty boxes (or barely-visible text on brand-colored backgrounds) because Reveal.js's CSS, theme stylesheet and init script were never loaded for the `embedded` and `present` render modes — the renderer only emitted an HTML fragment. Embedded and present modes now emit complete HTML documents that link `reveal.css` + `theme/white.css` from the same jsDelivr CDN that standalone exports already used, and ship the Reveal init script inline. The editor canvas component (`reveal-canvas-impl.tsx`) was rewritten to mount the document inside an `<iframe srcDoc=…>` with a locked-down `sandbox="allow-scripts allow-same-origin"` so it stays consistent with the slide-rail thumbnails and cannot leak styles into the parent page or navigate the host. (#990, #996, #997)
+
 ### Added
 
 - **Real slide-rail thumbnails** in the Pitch deck editor. Each row in the rail now renders a 16:9 iframe-based preview of its slide, scaled to `0.18×` with `transform-origin: top left` inside an `overflow:hidden` wrapper. Iframes are lazily mounted via `IntersectionObserver` (200 px root margin) so a 30-slide deck no longer fan-floods `/render`. Auth is forwarded via the same `?token=` query-param pattern used by the "Present" button (PR #1003). The renderer exposes a new `slideIndex` filter — wired into `GET /api/admin/pitch/decks/:deckId/render?slide=:slideId` — so a thumbnail fetches exactly one slide's HTML. Stale slide IDs gracefully fall back to a full-deck render and an iframe `onerror` collapses to the existing text-title fallback so a render-failure tile is still legible. (#996)
