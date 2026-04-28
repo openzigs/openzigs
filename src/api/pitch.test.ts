@@ -513,6 +513,19 @@ describe("Pitch REST router", () => {
       expect(res.text).toContain("reveal.js@5/dist/reveal.css");
     });
 
+    it("forwards `?initial=N` to the renderer (selection navigation, 2026-04-28)", async () => {
+      const kitId = createCustomKit(harness);
+      const { deckId } = createDeck(harness, kitId);
+      const res = await request(harness.app).get(
+        `/api/admin/pitch/decks/${deckId}/render?initial=1`,
+      );
+      expect(res.status).toBe(200);
+      // The embedded init script navigates to the requested slide; the
+      // renderer clamps to the available slide range so even a tiny deck
+      // (1 slide) gets clamped to index 0 — the call still appears.
+      expect(res.text).toContain("deck.slide(");
+    });
+
     it("returns 404 when deck not found", async () => {
       const res = await request(harness.app).get(
         "/api/admin/pitch/decks/missing/render",

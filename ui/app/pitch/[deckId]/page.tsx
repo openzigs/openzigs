@@ -411,6 +411,14 @@ export default function PitchDeckEditorPage() {
 
   const selectedSlide =
     slides.find((s) => s.id === selectedSlideId) ?? slides[0] ?? null;
+  // 0-based index of the currently selected slide in `deck.slides`.
+  // Forwarded to RevealCanvas so the iframe navigates to it via
+  // postMessage instead of being rebuilt on every selection (which would
+  // flash the canvas and reset Reveal back to slide 0).
+  const selectedSlideIndex = Math.max(
+    0,
+    slides.findIndex((s) => s.id === (selectedSlide?.id ?? "")),
+  );
 
   // ── Handlers ─────────────────────────────────────────────────────────
 
@@ -626,6 +634,7 @@ export default function PitchDeckEditorPage() {
           <RevealCanvas
             cacheKey={cacheKey}
             html={renderQuery.data ?? ""}
+            selectedSlideIndex={selectedSlideIndex}
             onContainerClick={handleCanvasClick}
           />
         )}

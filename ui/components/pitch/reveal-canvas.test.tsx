@@ -48,4 +48,52 @@ describe("RevealCanvasImpl (iframe-based)", () => {
     fireEvent.click(wrap);
     expect(onContainerClick).toHaveBeenCalledTimes(1);
   });
+
+  // Bug-fix 2026-04-28 — selection navigation via postMessage.
+  it("queues the initial selectedSlideIndex and posts it on reveal-ready handshake", () => {
+    render(<RevealCanvasImpl html={sampleHtml} selectedSlideIndex={3} />);
+    const iframe = screen.getByTestId(
+      "reveal-canvas-iframe",
+    ) as HTMLIFrameElement;
+    const postMessage = vi.fn();
+    Object.defineProperty(iframe, "contentWindow", {
+      configurable: true,
+      get: () => ({ postMessage }),
+    });
+    // Simulate the iframe's ready handshake.
+    fireEvent(
+      window,
+      new MessageEvent("message", { data: { type: "openzigs:reveal-ready" } }),
+    );
+    expect(postMessage).toHaveBeenCalledWith(
+      { type: "openzigs:navigate", index: 3 },
+      "*",
+    );
+  });
+
+  it("posts navigate messages to the iframe when selectedSlideIndex changes after ready", () => {
+    const { rerender } = render(
+      <RevealCanvasImpl html={sampleHtml} selectedSlideIndex={0} />,
+    );
+    const iframe = screen.getByTestId(
+      "reveal-canvas-iframe",
+    ) as HTMLIFrameElement;
+    const postMessage = vi.fn();
+    Object.defineProperty(iframe, "contentWindow", {
+      configurable: true,
+      get: () => ({ postMessage }),
+    });
+    // Mark ready (flush any pending — should post 0).
+    fireEvent(
+      window,
+      new MessageEvent("message", { data: { type: "openzigs:reveal-ready" } }),
+    );
+    postMessage.mockClear();
+    // Now change selection — should immediately post.
+    rerender(<RevealCanvasImpl html={sampleHtml} selectedSlideIndex={5} />);
+    expect(postMessage).toHaveBeenCalledWith(
+      { type: "openzigs:navigate", index: 5 },
+      "*",
+    );
+  });
 });

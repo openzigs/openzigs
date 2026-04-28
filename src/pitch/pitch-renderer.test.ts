@@ -738,5 +738,44 @@ describe("renderDeckToHtml — embedded chrome (#997)", () => {
       expect(out.html).toContain(KIT.footerText);
     }
   });
+
+  // Bug-fix 2026-04-28 — full-viewport sizing.
+  it("forces the embedded wrapper to fill the iframe viewport (height collapse fix)", () => {
+    const out = renderDeckToHtml(buildDeck([ALL_TEMPLATES[0]]), KIT, "embedded");
+    // Wrapper must claim full viewport height — otherwise it collapses
+    // to its content (~84 px) inside the canvas iframe and Reveal scales
+    // the slide layout down to ~0.2x.
+    expect(out.html).toContain("height: 100vh");
+    expect(out.html).toContain("html, body");
+  });
+
+  // Bug-fix 2026-04-28 — selection navigation via initialSlideIndex + postMessage.
+  it("navigates to `initialSlideIndex` after Reveal initializes", () => {
+    const out = renderDeckToHtml(
+      buildDeck([ALL_TEMPLATES[0], ALL_TEMPLATES[1], ALL_TEMPLATES[2]]),
+      KIT,
+      "embedded",
+      { initialSlideIndex: 2 },
+    );
+    expect(out.html).toContain("deck.slide(2)");
+  });
+
+  it("clamps `initialSlideIndex` to the rendered slide range", () => {
+    const out = renderDeckToHtml(
+      buildDeck([ALL_TEMPLATES[0], ALL_TEMPLATES[1]]),
+      KIT,
+      "embedded",
+      { initialSlideIndex: 99 },
+    );
+    // Two slides → max valid index is 1.
+    expect(out.html).toContain("deck.slide(1)");
+  });
+
+  it("installs a postMessage listener for `openzigs:navigate` and signals ready", () => {
+    const out = renderDeckToHtml(buildDeck([ALL_TEMPLATES[0]]), KIT, "embedded");
+    expect(out.html).toContain('window.addEventListener("message"');
+    expect(out.html).toContain('"openzigs:navigate"');
+    expect(out.html).toContain('"openzigs:reveal-ready"');
+  });
 });
 

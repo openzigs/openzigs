@@ -49,6 +49,14 @@ export interface RenderOpts {
    * 500 the server. The bg-URL map is filtered alongside.
    */
   slideIndex?: number;
+  /**
+   * Bug-fix 2026-04-28 — embedded/present mode initial slide index. The
+   * editor canvas passes this so the iframe boots showing the slide the
+   * user just clicked in the rail (instead of always restarting at 0).
+   * The renderer also injects a `postMessage` listener so the parent can
+   * navigate without rebuilding the iframe — see embedded init script.
+   */
+  initialSlideIndex?: number;
 }
 
 export interface RenderResult {
@@ -130,10 +138,33 @@ export function renderDeckToHtml(
     //
     // The chrome `<style>` block stays — its rules layer on top of
     // reveal.css to apply brand colors at full saturation.
+    //
+    // Bug-fix 2026-04-28: navigate to `initialSlideIndex` post-init AND
+    // install a `postMessage` listener so the parent canvas can drive
+    // slide navigation without rebuilding the iframe (the rail click
+    // handler simply postMessages `{type:"openzigs:navigate",index:N}`).
+    // Origin check is intentionally lax (`*`) because we accept that the
+    // iframe's origin equals the parent's (both served from
+    // localhost:3000 / the admin host) and the message contract is
+    // narrow — only an integer index is consumed.
+    const initialIndex = Number.isInteger(opts.initialSlideIndex)
+      ? Math.max(0, Math.min(opts.initialSlideIndex as number, slidesToRender.length - 1))
+      : 0;
     const embeddedInit = autoInit
       ? `<script type="module">
 import Reveal from "https://cdn.jsdelivr.net/npm/reveal.js@5/dist/reveal.esm.js";
-new Reveal({ embedded: ${mode === "embedded" ? "true" : "false"}, hash: false, controls: ${mode === "present" ? "true" : "false"}, progress: ${mode === "present" ? "true" : "false"}, transition: "slide" }).initialize();
+const deck = new Reveal({ embedded: ${mode === "embedded" ? "true" : "false"}, hash: false, controls: ${mode === "present" ? "true" : "false"}, progress: ${mode === "present" ? "true" : "false"}, transition: "slide" });
+await deck.initialize();
+if (${initialIndex} > 0) { try { deck.slide(${initialIndex}); } catch {} }
+window.addEventListener("message", (e) => {
+  const data = e && e.data;
+  if (!data || data.type !== "openzigs:navigate") return;
+  const idx = Number(data.index);
+  if (Number.isInteger(idx) && idx >= 0) { try { deck.slide(idx); } catch {} }
+});
+// Notify parent that the deck is ready so it can flush any queued
+// navigation messages that arrived before initialize() resolved.
+try { window.parent.postMessage({ type: "openzigs:reveal-ready" }, "*"); } catch {}
 </script>`
       : "";
     return {
@@ -245,9 +276,23 @@ function standaloneStyles(): string {
  */
 function embeddedChromeStyles(): string {
   return `
+/* Bug-fix 2026-04-28 — the iframe's body has no intrinsic height so the
+   wrapper collapses to its content (~84 px), Reveal sees a tiny viewport,
+   and scales the slide layout down to ~0.2x. Force the wrapper to fill
+   the iframe viewport and let .reveal flex-fill the wrapper. */
+html, body { height: 100%; margin: 0; padding: 0; }
 .pitch-deck-wrap { box-sizing: border-box; padding: 16px; background: transparent; }
+.pitch-deck-wrap--embedded,
+.pitch-deck-wrap--present {
+  display: flex;
+  flex-direction: column;
+  width: 100vw;
+  height: 100vh;
+}
 .pitch-deck-wrap--embedded .reveal,
 .pitch-deck-wrap--present .reveal {
+  flex: 1 1 auto;
+  min-height: 0;
   border: 2px solid var(--pitch-primary, #2563eb);
   border-radius: 12px;
   box-shadow: 0 8px 24px rgba(0,0,0,0.25);
