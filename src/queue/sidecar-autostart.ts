@@ -157,6 +157,9 @@ export async function ensureSidecarsRunning(
       // Spawn from the repo root so any relative paths in the script
       // resolve against the expected directory.
       cwd: opts.repoRoot,
+      // Suppress the conhost flash window on Windows when launching
+      // powershell.exe detached. No-op on POSIX.
+      windowsHide: true,
     });
     // Detach so the child keeps running after the parent exits.
     child.unref();

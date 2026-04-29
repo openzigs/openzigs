@@ -81,7 +81,7 @@ const ASSET_FILE_PATH_RE = /^\/assets\/(?:[^/]+\/file|file\/.+)$/;
  * iframe with the token sent via header — left as future work.
  */
 const PITCH_RENDER_PATH_RE =
-  /^\/api\/admin\/pitch\/decks\/[a-zA-Z0-9_-]+\/render(?:\/[^?]*)?$/;
+  /^\/api\/admin\/pitch\/decks\/[a-zA-Z0-9_-]+\/render(?:\/[a-zA-Z0-9_\-./]*)?$/;
 
 const extractToken = (req: Request) => {
   const header = req.headers.authorization ?? "";

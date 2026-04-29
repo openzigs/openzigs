@@ -3984,17 +3984,15 @@ httpServer.listen(port, "0.0.0.0", async () => {
       }
     }
 
-    queueMaster.start();
-    logger.info(
-      `[QueueMaster] Push orchestrator started (callback: ${process.env.QUEUE_CALLBACK_URL ?? `http://${getLanIp()}:${port}/api/queue/complete`})`,
-    );
-
-    // Sub-issue #1010 \u2014 the QueueMaster successfully dispatches pitch
-    // txt2img jobs to FluxQ and emits `job:complete` when the callback
-    // fires, but without this listener the result PNG is never copied
-    // into `~/.openzigs/pitch/assets/{deckId}/` and the slide content
-    // slot is never patched. The dispatch path was always working; the
-    // bookkeeping listener was never wired.
+    // Register all queueMaster listeners BEFORE queueMaster.start() so no
+    // `job:complete` event can be dropped in the wire-up window. Sub-issue
+    // #1010 — the QueueMaster successfully dispatches pitch txt2img jobs
+    // to FluxQ and emits `job:complete` when the callback fires, but
+    // without this listener the result PNG is never copied into
+    // `~/.openzigs/pitch/assets/{deckId}/` and the slide content slot is
+    // never patched. The dispatch path was always working; the bookkeeping
+    // listener was never wired. (PR #1013 review fix: previously the
+    // registration happened after .start(), creating a race window.)
     pitchImageCompletionRegistration = registerImageCompletionListener({
       queueMaster,
       pitchRepo,
@@ -4034,6 +4032,12 @@ httpServer.listen(port, "0.0.0.0", async () => {
         });
       }
     });
+
+    // All listeners are now wired — safe to start the push loop.
+    queueMaster.start();
+    logger.info(
+      `[QueueMaster] Push orchestrator started (callback: ${process.env.QUEUE_CALLBACK_URL ?? `http://${getLanIp()}:${port}/api/queue/complete`})`,
+    );
   }
 
   void auditLogger.log({
