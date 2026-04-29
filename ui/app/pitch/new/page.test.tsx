@@ -408,4 +408,117 @@ describe("NewPitchDeckPage wizard", () => {
       expect(draftBody.options.model).toBe("claude-sonnet-4");
     });
   });
+
+  // ── Sub-issue #1012: surface server errors instead of swallowing them ──
+  // The wizard previously caught the rejection from a 502 /draft response
+  // and only called `showToast`, which auto-dismisses after 4 s. Users
+  // saw nothing actionable. The fix renders an inline `wizard-submit-error`
+  // banner that persists until the next submit attempt.
+  describe("submit error surfacing (#1012)", () => {
+    /** Drive the wizard all the way to the Generate button. */
+    async function gotoGenerate() {
+      render(<NewPitchDeckPage />, { wrapper });
+      await waitFor(() => screen.getByTestId("wizard-kit-kit-a"));
+      fireEvent.click(screen.getByTestId("wizard-kit-kit-a"));
+      fireEvent.click(screen.getByTestId("wizard-next"));
+      fireEvent.change(screen.getByTestId("wizard-script-textarea"), {
+        target: { value: "Pitch script body." },
+      });
+      fireEvent.click(screen.getByTestId("wizard-next"));
+    }
+
+    it("renders an inline error banner with the server message on a 502", async () => {
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 502,
+        text: async () =>
+          JSON.stringify({
+            error: { message: "Upstream LLM timed out after 30 s" },
+          }),
+        json: async () => ({
+          error: { message: "Upstream LLM timed out after 30 s" },
+        }),
+      }) as unknown as typeof fetch;
+      await gotoGenerate();
+      fireEvent.click(screen.getByTestId("wizard-generate"));
+      const banner = await screen.findByTestId("wizard-submit-error");
+      expect(banner).toBeInTheDocument();
+      expect(banner).toHaveAttribute("role", "alert");
+      expect(
+        screen.getByTestId("wizard-submit-error-message"),
+      ).toHaveTextContent(/Upstream LLM timed out/);
+      // Wizard should not navigate away on failure.
+      expect(pushMock).not.toHaveBeenCalled();
+      // The Generate button must be re-enabled so the user can retry.
+      expect(screen.getByTestId("wizard-generate")).not.toBeDisabled();
+    });
+
+    it("falls back to a generic message when the network rejects", async () => {
+      global.fetch = vi
+        .fn()
+        .mockRejectedValue(new Error("network down")) as unknown as typeof fetch;
+      await gotoGenerate();
+      fireEvent.click(screen.getByTestId("wizard-generate"));
+      const banner = await screen.findByTestId("wizard-submit-error");
+      expect(banner).toBeInTheDocument();
+      expect(
+        screen.getByTestId("wizard-submit-error-message"),
+      ).toHaveTextContent(/network down|Failed to generate deck/i);
+    });
+
+    it("clears the previous error on the next submit attempt", async () => {
+      // First submit \u2014 fail.
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 502,
+        text: async () =>
+          JSON.stringify({ error: { message: "First failure" } }),
+        json: async () => ({ error: { message: "First failure" } }),
+      }) as unknown as typeof fetch;
+      await gotoGenerate();
+      fireEvent.click(screen.getByTestId("wizard-generate"));
+      await screen.findByTestId("wizard-submit-error");
+      expect(
+        screen.getByTestId("wizard-submit-error-message"),
+      ).toHaveTextContent(/First failure/);
+
+      // Swap fetch to a slow-resolving success so we can observe the
+      // banner being cleared synchronously when submit re-fires.
+      let resolveFetch: ((value: unknown) => void) | undefined;
+      const pendingFetch = new Promise((res) => {
+        resolveFetch = res;
+      });
+      global.fetch = vi
+        .fn()
+        .mockReturnValue(pendingFetch) as unknown as typeof fetch;
+      fireEvent.click(screen.getByTestId("wizard-generate"));
+      // Banner cleared optimistically at the start of submit.
+      await waitFor(() =>
+        expect(screen.queryByTestId("wizard-submit-error")).toBeNull(),
+      );
+      // Resolve the pending request to avoid leaking a promise.
+      resolveFetch?.({
+        ok: true,
+        status: 201,
+        text: async () => "{}",
+        json: async () => ({ deck: { id: "deck-x" } }),
+      });
+    });
+
+    it("dismiss button removes the banner", async () => {
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 502,
+        text: async () => JSON.stringify({ error: { message: "Boom" } }),
+        json: async () => ({ error: { message: "Boom" } }),
+      }) as unknown as typeof fetch;
+      await gotoGenerate();
+      fireEvent.click(screen.getByTestId("wizard-generate"));
+      await screen.findByTestId("wizard-submit-error");
+      fireEvent.click(screen.getByTestId("wizard-submit-error-dismiss"));
+      await waitFor(() =>
+        expect(screen.queryByTestId("wizard-submit-error")).toBeNull(),
+      );
+    });
+  });
 });

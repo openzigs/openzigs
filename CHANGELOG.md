@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Pitch image completion listener wired into the bootstrap.** `registerImageCompletionListener` in `src/pitch/pitch-image-service.ts` was defined and tested but never registered in `src/server.ts`, so QueueMaster successfully dispatched pitch txt2img jobs to FluxQ:5005 and emitted `job:complete` — but no listener copied the result PNG into `~/.openzigs/pitch/assets/{deckId}/` or patched the slide content slot. Server now registers the listener after `queueMaster.start()` and disposes it during graceful shutdown. (#1010)
+- **Opt-in CUDA sidecar auto-start at server boot** via the new `media.autoStartSidecars` config flag (default `false`). When enabled, `ensureSidecarsRunning` (new module `src/queue/sidecar-autostart.ts`) probes `media.sidecarHealthUrl` (default `http://127.0.0.1:5005/health`) and, if unreachable, spawns the platform-appropriate `scripts/media-ctl.{ps1,sh} flux start` command (detached, ignored stdio, `unref()`'d), then polls for readiness up to `media.startupTimeoutMs` (default 60 s). Failures are logged but never abort startup — the queue worker recovers when sidecars come up later. (#1010)
+
+### Fixed
+
+- **Wizard no longer silently swallows a 502 from `/api/admin/pitch/decks/draft`.** The Generate button previously caught the rejection and only called `showToast`, which auto-dismisses after 4 s, leaving users with no actionable signal when the LLM upstream timed out. The wizard now also renders an inline `wizard-submit-error` banner (`role="alert"`, dismissable) above the main form card with the server's `error.message`, persists until the next submit attempt, and re-enables the Generate button so the user can retry. (#1012)
+- **Present button no longer 401s.** The pitch presenter renders inside a sandboxed iframe whose `src` is `/api/admin/pitch/decks/<id>/render?token=<bearer>` — and iframes cannot send `Authorization` headers. The auth middleware's query-token allowlist (PR #1003) only matched `/assets/*/file`. Added `PITCH_RENDER_PATH_RE = /^\/api\/admin\/pitch\/decks\/[a-zA-Z0-9_-]+\/render(?:\/[^?]*)?$/` to `extractToken()` so `?token=` is honoured for the render path and any sub-paths it serves. The OWASP trade-off is documented inline alongside the precedent reference. (#1011)
+
 ### Changed
 
 - **Pitch deck visual design overhaul.** The embedded chrome `<style>` block was rewritten as a small design system (issue #1007): a modular type scale (`H1 3.2em / H2 2.2em / H3 1.5em`) anchored on `font-heading` and `font-body` from the active brand kit, generous slide padding (`64px 72px 88px`), brand-accent bullet markers via `::before`, an auto-fit KPI grid, full-bleed image absolute positioning with white-on-image text + drop shadow (applied via a new `pitch-has-bg` class), a centered title-slide pattern with a 3 px accent eyebrow underline, and a 6 px top accent bar (`linear-gradient(90deg, var(--pitch-primary), var(--pitch-accent))`) plus a softer `0 12px 40px rgba(0,0,0,0.18)` shadow. Standalone exports now wrap reveal output in `pitch-deck-wrap--standalone` so the same chrome applies to PDF/HTML/zip exports, not just the in-app preview. (#1007)
