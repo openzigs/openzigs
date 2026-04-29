@@ -61,8 +61,14 @@ class FailedAuthLimiter {
  * token must be accepted via the ?token= query param on these specific routes.
  * The scope is deliberately narrow: only asset-file-serve endpoints, not the
  * entire API surface (sub-issue #908 trade-off).
+ *
+ * Note: the mount prefix `/api/queue` is encoded in the regex because we
+ * match against `req.originalUrl` (which retains the mount prefix) rather
+ * than `req.path` (which Express strips inside sub-routers). See the
+ * extractToken() comment below and issue #1012.
  */
-const ASSET_FILE_PATH_RE = /^\/assets\/(?:[^/]+\/file|file\/.+)$/;
+const ASSET_FILE_PATH_RE =
+  /^\/api\/queue\/assets\/(?:[^/]+\/file|file\/.+)$/;
 
 /**
  * Pitch deck render route — same OWASP token-in-URL trade-off as
@@ -103,7 +109,7 @@ const extractToken = (req: Request) => {
   // render allowlist regex requires the full `/api/admin/...` prefix, so
   // matching `req.path` would always miss in production. Hotfix for the
   // regression introduced in #1013 (issue #1012).
-  const fullPath = req.originalUrl.split("?")[0] ?? "";
+  const fullPath = req.originalUrl.split("?")[0];
   const allowQueryToken =
     ASSET_FILE_PATH_RE.test(fullPath) ||
     PITCH_RENDER_PATH_RE.test(fullPath) ||
