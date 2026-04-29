@@ -1,5 +1,5 @@
 /**
- * Sidecar auto-start \u2014 sub-issue #1010.
+ * Sidecar auto-start — sub-issue #1010 + polish #1014.
  *
  * On server boot, if `media.autoStartSidecars` is true, ping the FluxQ
  * health endpoint. If it is unreachable (connect refused / fetch
@@ -8,12 +8,24 @@
  * parent's lifecycle, then poll the health endpoint until it answers
  * `200 OK` or the timeout elapses.
  *
+ * Polish (#1014):
+ *   - Exponential backoff schedule (250 → 500 → 1s → 2s → 4s → 5s cap)
+ *     replaces the previous fixed 1.5 s interval. CUDA cold-starts on
+ *     Windows + WSL2 routinely take 30–60 s and the old fixed interval
+ *     wasted probes during the long warm-up tail.
+ *   - DEBUG-level structured log line per probe so operators can see
+ *     exactly when readiness flipped without enabling INFO floods.
+ *   - Default timeout extended 60 s → 120 s for cold-start scenarios
+ *     (model checkpoint load, first-time CUDA kernel compile).
+ *
  * This module is intentionally pure and side-effect free at import time.
  * The `spawn`/`fetch` callables are injected via options to keep the
  * unit tests deterministic and offline.
  */
 import { spawn as nodeSpawn } from "node:child_process";
 import { platform as osPlatform } from "node:os";
+
+import { logger } from "../logging/logger.js";
 
 export type EnsureSidecarsResult = {
   /** true if the health endpoint answered 200 within the timeout. */
@@ -24,15 +36,17 @@ export type EnsureSidecarsResult = {
   durationMs: number;
   /** Last error message, if `ready === false`. */
   error?: string;
+  /** Number of health probes performed (including the fast-path probe). */
+  attempts: number;
 };
 
-/** Minimal subset of `node:child_process` we depend on \u2014 simplifies tests. */
+/** Minimal subset of `node:child_process` we depend on — simplifies tests. */
 type SpawnLike = typeof nodeSpawn;
 
 export interface EnsureSidecarsOptions {
   /** Health endpoint to probe (e.g. `http://127.0.0.1:5005/health`). */
   healthUrl: string;
-  /** Hard deadline for readiness, including spawn + polling. Defaults to 60 s. */
+  /** Hard deadline for readiness, including spawn + polling. Defaults to 120 s. */
   timeoutMs?: number;
   /** Repository root (used to resolve `scripts/media-ctl.*`). */
   repoRoot: string;
@@ -49,31 +63,52 @@ export interface EnsureSidecarsOptions {
   clock?: () => number;
   /** Sleep helper override (tests resolve immediately). */
   sleep?: (ms: number) => Promise<void>;
-  /** Health-poll interval, ms. Defaults to 1500. */
-  pollIntervalMs?: number;
 }
 
-const DEFAULT_TIMEOUT_MS = 60_000;
-const DEFAULT_POLL_INTERVAL_MS = 1500;
+/** Default 120 s — covers CUDA cold-start tail (model load + kernel compile). */
+const DEFAULT_TIMEOUT_MS = 120_000;
+
+/**
+ * Exponential backoff schedule for health polling, in milliseconds.
+ *
+ * Index N is the delay BEFORE the (N+1)-th polling probe (the 0-th probe
+ * is the fast-path one with no preceding sleep). Once the schedule is
+ * exhausted the last value (5 s) is reused as a cap so we keep pinging
+ * at a steady cadence during the long tail without burning attempts.
+ */
+const BACKOFF_SCHEDULE_MS = [250, 500, 1_000, 2_000, 4_000, 5_000] as const;
 
 const defaultSleep = (ms: number) =>
   new Promise<void>((resolve) => setTimeout(resolve, ms));
 
+/** Index N → backoff delay (caps at the last entry). */
+function backoffDelayMs(attemptIndex: number): number {
+  const last = BACKOFF_SCHEDULE_MS.length - 1;
+  const idx = attemptIndex < 0 ? 0 : attemptIndex > last ? last : attemptIndex;
+  return BACKOFF_SCHEDULE_MS[idx]!;
+}
+
 /**
- * Probe the health endpoint with a tight 2 s timeout. Returns `true` if
- * the endpoint answers any 2xx, `false` for any other outcome.
+ * Probe the health endpoint with a tight 2 s timeout. Returns `"ok"` if
+ * the endpoint answered any 2xx, `"err"` if it threw before timing out,
+ * `"timeout"` if the AbortSignal fired. The discriminated return type
+ * powers the structured DEBUG log line and is otherwise collapsed to a
+ * boolean by the caller.
  */
 async function probeHealth(
   healthUrl: string,
   fetchFn: typeof fetch,
-): Promise<boolean> {
+): Promise<"ok" | "err" | "timeout"> {
   try {
     const res = await fetchFn(healthUrl, {
       signal: AbortSignal.timeout(2_000),
     });
-    return res.ok;
-  } catch {
-    return false;
+    return res.ok ? "ok" : "err";
+  } catch (err) {
+    // AbortSignal.timeout fires a DOMException with name "TimeoutError".
+    const name = (err as { name?: string } | null)?.name;
+    if (name === "TimeoutError" || name === "AbortError") return "timeout";
+    return "err";
   }
 }
 
@@ -114,8 +149,9 @@ function resolveStartCommand(
 
 /**
  * Ensure the FluxQ sidecar is reachable. If the health endpoint already
- * answers, returns immediately with `started: false`. Otherwise spawns
- * the start script and polls until ready or timeout.
+ * answers, returns immediately with `started: false` (no-op fast path).
+ * Otherwise spawns the start script and polls until ready or timeout
+ * using the exponential backoff schedule defined above.
  */
 export async function ensureSidecarsRunning(
   opts: EnsureSidecarsOptions,
@@ -126,16 +162,22 @@ export async function ensureSidecarsRunning(
   const sleep = opts.sleep ?? defaultSleep;
   const platform = opts.platformOverride ?? osPlatform();
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-  const pollIntervalMs = opts.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
 
-  const started = clock();
+  const startedAt = clock();
+  let attempts = 0;
 
   // Fast path: already reachable, no spawn needed.
-  if (await probeHealth(opts.healthUrl, fetchFn)) {
+  attempts += 1;
+  const fastStatus = await probeHealth(opts.healthUrl, fetchFn);
+  logger.debug(
+    `[Sidecars] attempt ${attempts}, elapsed ${clock() - startedAt}ms, status ${fastStatus}`,
+  );
+  if (fastStatus === "ok") {
     return {
       ready: true,
       started: false,
-      durationMs: clock() - started,
+      durationMs: clock() - startedAt,
+      attempts,
     };
   }
 
@@ -145,7 +187,8 @@ export async function ensureSidecarsRunning(
     return {
       ready: false,
       started: false,
-      durationMs: clock() - started,
+      durationMs: clock() - startedAt,
+      attempts,
       error: `unsupported platform: ${platform}`,
     };
   }
@@ -167,29 +210,52 @@ export async function ensureSidecarsRunning(
     return {
       ready: false,
       started: false,
-      durationMs: clock() - started,
+      durationMs: clock() - startedAt,
+      attempts,
       error: `spawn failed: ${err instanceof Error ? err.message : String(err)}`,
     };
   }
 
-  // Poll until ready or timeout. The first probe runs after one
-  // pollIntervalMs to give the script a chance to bind the port.
-  const deadline = started + timeoutMs;
+  // Poll with exponential backoff (250 → 500 → 1s → 2s → 4s → 5s cap)
+  // until ready or `timeoutMs` elapses. Each sleep is clipped to the
+  // remaining budget so we never overshoot the deadline.
+  const deadline = startedAt + timeoutMs;
+  let pollIndex = 0;
   while (clock() < deadline) {
-    await sleep(pollIntervalMs);
-    if (await probeHealth(opts.healthUrl, fetchFn)) {
+    const remaining = deadline - clock();
+    const delay = Math.min(backoffDelayMs(pollIndex), Math.max(0, remaining));
+    if (delay <= 0) break;
+    await sleep(delay);
+    if (clock() >= deadline) break;
+
+    attempts += 1;
+    const status = await probeHealth(opts.healthUrl, fetchFn);
+    logger.debug(
+      `[Sidecars] attempt ${attempts}, elapsed ${clock() - startedAt}ms, status ${status}`,
+    );
+    if (status === "ok") {
       return {
         ready: true,
         started: true,
-        durationMs: clock() - started,
+        durationMs: clock() - startedAt,
+        attempts,
       };
     }
+    pollIndex += 1;
   }
 
   return {
     ready: false,
     started: true,
-    durationMs: clock() - started,
+    durationMs: clock() - startedAt,
+    attempts,
     error: `health endpoint did not respond within ${timeoutMs}ms`,
   };
 }
+
+/** Test-only export — exposed so the unit test can assert the schedule. */
+export const __test = {
+  BACKOFF_SCHEDULE_MS,
+  DEFAULT_TIMEOUT_MS,
+  backoffDelayMs,
+};

@@ -47,9 +47,11 @@ export interface PublicShareDeps {
 const PRESENT_CSP = [
   "default-src 'self'",
   "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net",
-  "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net",
+  // #1019: Google Fonts CSS + woff2 origins explicitly allowed so brand-kit
+  // web fonts load in shared decks (same fix as the admin /render route).
+  "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com",
   "img-src 'self' data: https:",
-  "font-src 'self' data: https:",
+  "font-src 'self' data: https: https://fonts.gstatic.com",
   "connect-src 'self'",
   "frame-ancestors 'self'",
   "base-uri 'self'",

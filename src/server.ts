@@ -3966,7 +3966,9 @@ httpServer.listen(port, "0.0.0.0", async () => {
       try {
         const result = await ensureSidecarsRunning({
           healthUrl,
-          timeoutMs: config.media.startupTimeoutMs ?? 60_000,
+          // Polish (#1014): default extended to 120 s to cover CUDA cold-start
+          // (model checkpoint load + first-time kernel compile) on Windows/WSL2.
+          timeoutMs: config.media.startupTimeoutMs ?? 120_000,
           repoRoot: process.cwd(),
         });
         if (result.ready) {

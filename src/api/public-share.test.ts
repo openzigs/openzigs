@@ -139,6 +139,16 @@ describe("createPublicShareRouter", () => {
     expect(res.text).toContain("Hello"); // slide heading rendered
   });
 
+  it("CSP allows Google Fonts (#1019)", async () => {
+    const deckId = makeDeck(h);
+    const { token } = h.shareTokenRepo.issue({ deckId });
+    const res = await request(h.app).get(`/p/${token}`);
+    expect(res.status).toBe(200);
+    const csp = res.headers["content-security-policy"] ?? "";
+    expect(csp).toMatch(/style-src[^;]*https:\/\/fonts\.googleapis\.com/);
+    expect(csp).toMatch(/font-src[^;]*https:\/\/fonts\.gstatic\.com/);
+  });
+
   it("returns 404 with a generic page for an unknown token", async () => {
     const res = await request(h.app).get(`/p/${"a".repeat(43)}`);
     expect(res.status).toBe(404);

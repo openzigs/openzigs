@@ -1,17 +1,22 @@
 /**
- * Tests for sub-issue #1010 sidecar auto-start.
+ * Tests for sub-issue #1010 sidecar auto-start + #1014 polish.
  *
  * Coverage targets:
- *   1. Fast path \u2014 health endpoint already responds, no spawn.
- *   2. Cold path \u2014 endpoint refused, spawn fired, eventually ready.
- *   3. Timeout path \u2014 endpoint never responds, spawn fired, error reported.
- *   4. Spawn failure \u2014 spawn throws, error reported.
- *   5. Unsupported platform \u2014 returns error without spawning.
- *   6. Windows command resolution \u2014 powershell + media-ctl.ps1.
- *   7. POSIX command resolution \u2014 bash + media-ctl.sh.
+ *   1. Fast path — health endpoint already responds, no spawn.
+ *   2. Cold path — endpoint refused, spawn fired, eventually ready.
+ *   3. Backoff schedule — sleep delays follow 250 → 500 → 1s → 2s → 4s → 5s cap.
+ *   4. Timeout path — endpoint never responds; default 120s deadline.
+ *   5. Spawn failure — spawn throws, error reported.
+ *   6. Unsupported platform — returns error without spawning.
+ *   7. Windows command resolution — powershell + media-ctl.ps1.
+ *   8. POSIX command resolution — bash + media-ctl.sh.
+ *   9. DEBUG log line — emitted per probe with attempt + elapsed + status.
+ *  10. Non-ok health response is treated as not ready.
  */
 import { describe, it, expect, vi } from "vitest";
-import { ensureSidecarsRunning } from "./sidecar-autostart.js";
+
+import { logger } from "../logging/logger.js";
+import { __test, ensureSidecarsRunning } from "./sidecar-autostart.js";
 
 function fakeChild() {
   return { unref: vi.fn() } as unknown as ReturnType<typeof Object>;
@@ -37,25 +42,82 @@ describe("ensureSidecarsRunning", () => {
     });
     expect(result.ready).toBe(true);
     expect(result.started).toBe(false);
+    expect(result.attempts).toBe(1);
     expect(spawnFn).not.toHaveBeenCalled();
     expect(fetchFn).toHaveBeenCalledTimes(1);
   });
 
-  it("cold path: spawns start script and reports ready after a few polls", async () => {
+  it("cold path: spawns and reports ready after a few backoff probes", async () => {
     let probeCount = 0;
     const fetchFn = vi.fn().mockImplementation(async () => {
       probeCount += 1;
-      // Initial probe fails (cold), 3rd probe (after 2 sleeps) succeeds.
-      if (probeCount < 3) throw new Error("ECONNREFUSED");
+      // Initial probe + first 2 polling probes fail; the 4th probe succeeds.
+      if (probeCount < 4) throw new Error("ECONNREFUSED");
       return { ok: true } as Response;
     });
+    const spawnFn = vi.fn().mockReturnValue(fakeChild());
+    let now = 0;
+    const sleeps: number[] = [];
+    const result = await ensureSidecarsRunning({
+      healthUrl: HEALTH_URL,
+      repoRoot: REPO_ROOT,
+      platformOverride: "linux",
+      fetchFn: fetchFn as unknown as typeof fetch,
+      spawnFn: spawnFn as never,
+      clock: () => now,
+      sleep: async (ms) => {
+        sleeps.push(ms);
+        now += ms;
+      },
+    });
+    expect(result.ready).toBe(true);
+    expect(result.started).toBe(true);
+    expect(result.attempts).toBe(4);
+    expect(spawnFn).toHaveBeenCalledTimes(1);
+    // 1 initial probe + 3 polling probes = 4 fetches.
+    expect(fetchFn).toHaveBeenCalledTimes(4);
+    // The sleeps preceding probes 2, 3, 4 must follow the backoff schedule.
+    expect(sleeps).toEqual([250, 500, 1_000]);
+  });
+
+  it("backoff schedule: respects 250 → 500 → 1s → 2s → 4s → 5s cap", async () => {
+    // Force every probe to fail so we exhaust the schedule and verify the cap.
+    const fetchFn = vi.fn().mockRejectedValue(new Error("ECONNREFUSED"));
+    const spawnFn = vi.fn().mockReturnValue(fakeChild());
+    let now = 0;
+    const sleeps: number[] = [];
+    const result = await ensureSidecarsRunning({
+      healthUrl: HEALTH_URL,
+      repoRoot: REPO_ROOT,
+      // Big enough to fit the full schedule (250+500+1000+2000+4000+5000+5000+5000 = 22.75s)
+      timeoutMs: 30_000,
+      platformOverride: "linux",
+      fetchFn: fetchFn as unknown as typeof fetch,
+      spawnFn: spawnFn as never,
+      clock: () => now,
+      sleep: async (ms) => {
+        sleeps.push(ms);
+        now += ms;
+      },
+    });
+    expect(result.ready).toBe(false);
+    // First seven sleeps walk the schedule then cap at 5s.
+    expect(sleeps.slice(0, 7)).toEqual([250, 500, 1_000, 2_000, 4_000, 5_000, 5_000]);
+    // Subsequent sleeps stay capped at 5s.
+    for (const s of sleeps.slice(7, -1)) {
+      expect(s).toBe(5_000);
+    }
+  });
+
+  it("default timeout is 120s — schedule does not give up before then", async () => {
+    expect(__test.DEFAULT_TIMEOUT_MS).toBe(120_000);
+    const fetchFn = vi.fn().mockRejectedValue(new Error("ECONNREFUSED"));
     const spawnFn = vi.fn().mockReturnValue(fakeChild());
     let now = 0;
     const result = await ensureSidecarsRunning({
       healthUrl: HEALTH_URL,
       repoRoot: REPO_ROOT,
-      timeoutMs: 60_000,
-      pollIntervalMs: 1000,
+      // No timeoutMs override → falls through to the 120 s default.
       platformOverride: "linux",
       fetchFn: fetchFn as unknown as typeof fetch,
       spawnFn: spawnFn as never,
@@ -64,14 +126,13 @@ describe("ensureSidecarsRunning", () => {
         now += ms;
       },
     });
-    expect(result.ready).toBe(true);
-    expect(result.started).toBe(true);
-    expect(spawnFn).toHaveBeenCalledTimes(1);
-    // 1 initial probe + 2 polling probes = 3 fetches.
-    expect(fetchFn).toHaveBeenCalledTimes(3);
+    expect(result.ready).toBe(false);
+    expect(result.error).toContain("120000ms");
+    // Final wall clock must be at or beyond 120 s.
+    expect(result.durationMs).toBeGreaterThanOrEqual(120_000);
   });
 
-  it("timeout path: spawns but health never recovers \u2014 ready=false with error", async () => {
+  it("timeout path: spawns but health never recovers — ready=false with error", async () => {
     const fetchFn = vi
       .fn()
       .mockImplementation(async () => {
@@ -83,7 +144,6 @@ describe("ensureSidecarsRunning", () => {
       healthUrl: HEALTH_URL,
       repoRoot: REPO_ROOT,
       timeoutMs: 5_000,
-      pollIntervalMs: 1000,
       platformOverride: "linux",
       fetchFn: fetchFn as unknown as typeof fetch,
       spawnFn: spawnFn as never,
@@ -95,6 +155,7 @@ describe("ensureSidecarsRunning", () => {
     expect(result.ready).toBe(false);
     expect(result.started).toBe(true);
     expect(result.error).toContain("did not respond");
+    expect(result.error).toContain("5000ms");
     expect(spawnFn).toHaveBeenCalledTimes(1);
   });
 
@@ -150,7 +211,6 @@ describe("ensureSidecarsRunning", () => {
       healthUrl: HEALTH_URL,
       repoRoot: "C:\\repo\\openzigs",
       timeoutMs: 100,
-      pollIntervalMs: 50,
       platformOverride: "win32",
       fetchFn: fetchFn as unknown as typeof fetch,
       spawnFn: spawnFn as never,
@@ -177,7 +237,6 @@ describe("ensureSidecarsRunning", () => {
       healthUrl: HEALTH_URL,
       repoRoot: "/Users/me/repo",
       timeoutMs: 100,
-      pollIntervalMs: 50,
       platformOverride: "darwin",
       fetchFn: fetchFn as unknown as typeof fetch,
       spawnFn: spawnFn as never,
@@ -193,6 +252,26 @@ describe("ensureSidecarsRunning", () => {
     expect(args).toContain("start");
   });
 
+  it("emits a DEBUG log line per probe with attempt + elapsed + status", async () => {
+    const debugSpy = vi.spyOn(logger, "debug").mockImplementation(() => logger);
+    const fetchFn = vi.fn().mockResolvedValue({ ok: true } as Response);
+    let now = 1234;
+    await ensureSidecarsRunning({
+      healthUrl: HEALTH_URL,
+      repoRoot: REPO_ROOT,
+      fetchFn: fetchFn as unknown as typeof fetch,
+      spawnFn: (() => fakeChild()) as never,
+      clock: () => now,
+      sleep: async () => {
+        now += 100;
+      },
+    });
+    expect(debugSpy).toHaveBeenCalledWith(
+      expect.stringMatching(/\[Sidecars\] attempt 1, elapsed \d+ms, status ok/),
+    );
+    debugSpy.mockRestore();
+  });
+
   it("non-ok health response is treated as not ready", async () => {
     const fetchFn = vi.fn().mockResolvedValue({ ok: false } as Response);
     const spawnFn = vi.fn().mockReturnValue(fakeChild());
@@ -201,7 +280,6 @@ describe("ensureSidecarsRunning", () => {
       healthUrl: HEALTH_URL,
       repoRoot: REPO_ROOT,
       timeoutMs: 100,
-      pollIntervalMs: 50,
       platformOverride: "linux",
       fetchFn: fetchFn as unknown as typeof fetch,
       spawnFn: spawnFn as never,
