@@ -207,4 +207,149 @@ describe("auth middleware", () => {
       }
     });
   });
+
+  // ── Issue #1012 regression: production mount point ──
+  // PR #1013 added the pitch render allowlist but matched against
+  // `req.path`, which Express strips of the mount prefix inside
+  // sub-routers. In production `app.use("/api/admin", auth, adminRouter)`
+  // makes `req.path` `/pitch/decks/.../render` — the regex (which
+  // requires `/api/admin/...`) never matches and the request 401s.
+  // This block mounts the auth middleware at `/api/admin` (matching
+  // production) to lock in the fix.
+  describe("pitch render allowlist behind /api/admin mount (#1012)", () => {
+    const startMountedServer = async (token: string | undefined) => {
+      const express = (await import("express")).default;
+      const { createAuthMiddleware } = await import("./auth.js");
+      const app = express();
+      const authMiddleware = createAuthMiddleware({
+        mode: "local" as const,
+        token: token ?? "",
+        role: "admin" as const,
+        rateLimit: { windowMs: 60_000, max: 100 },
+      });
+      const router = express.Router();
+      router.use((_req, res) => res.status(200).json({ ok: true }));
+      app.use("/api/admin", authMiddleware, router);
+      const server = app.listen(0);
+      const address = server.address() as AddressInfo;
+      return { server, baseUrl: `http://127.0.0.1:${address.port}` };
+    };
+
+    it("accepts ?token= on the render path when middleware is mounted at /api/admin", async () => {
+      const config = await loadConfig({ configPath });
+      const { server, baseUrl } = await startMountedServer(config.auth.token);
+      try {
+        const response = await fetch(
+          `${baseUrl}/api/admin/pitch/decks/test-deck-123/render?token=${config.auth.token}`,
+        );
+        expect(response.status).toBe(200);
+      } finally {
+        await closeServer(server);
+      }
+    });
+
+    it("accepts ?token= on a render sub-path when middleware is mounted at /api/admin", async () => {
+      const config = await loadConfig({ configPath });
+      const { server, baseUrl } = await startMountedServer(config.auth.token);
+      try {
+        const response = await fetch(
+          `${baseUrl}/api/admin/pitch/decks/test-deck-123/render/style.css?token=${config.auth.token}`,
+        );
+        expect(response.status).toBe(200);
+      } finally {
+        await closeServer(server);
+      }
+    });
+
+    it("still rejects ?token= on a non-allowlisted admin path when mounted at /api/admin", async () => {
+      const config = await loadConfig({ configPath });
+      const { server, baseUrl } = await startMountedServer(config.auth.token);
+      try {
+        const response = await fetch(
+          `${baseUrl}/api/admin/pitch/decks?token=${config.auth.token}`,
+        );
+        expect(response.status).toBe(401);
+      } finally {
+        await closeServer(server);
+      }
+    });
+  });
+
+  // ── Issue #1012 regression (asset auth): mount-prefix encoding ──
+  // The original asset regex was anchored at `^/assets/...` and matched
+  // `req.path` (which Express strips of the mount prefix). When the fix
+  // for the pitch render allowlist switched matching to `req.originalUrl`,
+  // the asset regex had to be updated to encode its `/api/queue` mount
+  // prefix — otherwise every UI <img>/<video> using `?token=` would 401.
+  describe("asset file allowlist behind /api/queue mount (#1012)", () => {
+    const startQueueMountedServer = async (token: string | undefined) => {
+      const express = (await import("express")).default;
+      const { createAuthMiddleware } = await import("./auth.js");
+      const app = express();
+      const authMiddleware = createAuthMiddleware({
+        mode: "local" as const,
+        token: token ?? "",
+        role: "admin" as const,
+        rateLimit: { windowMs: 60_000, max: 100 },
+      });
+      const router = express.Router();
+      router.use((_req, res) => res.status(200).json({ ok: true }));
+      app.use("/api/queue", authMiddleware, router);
+      const server = app.listen(0);
+      const address = server.address() as AddressInfo;
+      return { server, baseUrl: `http://127.0.0.1:${address.port}` };
+    };
+
+    it("accepts ?token= on /api/queue/assets/:id/file when middleware is mounted at /api/queue", async () => {
+      const config = await loadConfig({ configPath });
+      const { server, baseUrl } = await startQueueMountedServer(config.auth.token);
+      try {
+        const response = await fetch(
+          `${baseUrl}/api/queue/assets/abc123/file?token=${config.auth.token}`,
+        );
+        expect(response.status).toBe(200);
+      } finally {
+        await closeServer(server);
+      }
+    });
+
+    it("accepts ?token= on /api/queue/assets/file/:filename when middleware is mounted at /api/queue", async () => {
+      const config = await loadConfig({ configPath });
+      const { server, baseUrl } = await startQueueMountedServer(config.auth.token);
+      try {
+        const response = await fetch(
+          `${baseUrl}/api/queue/assets/file/clip-001.mp4?token=${config.auth.token}`,
+        );
+        expect(response.status).toBe(200);
+      } finally {
+        await closeServer(server);
+      }
+    });
+
+    it("rejects an invalid ?token= on a /api/queue asset file path", async () => {
+      const config = await loadConfig({ configPath });
+      const { server, baseUrl } = await startQueueMountedServer(config.auth.token);
+      try {
+        const response = await fetch(
+          `${baseUrl}/api/queue/assets/abc123/file?token=wrong-token`,
+        );
+        expect(response.status).toBe(401);
+      } finally {
+        await closeServer(server);
+      }
+    });
+
+    it("does NOT accept ?token= on a non-allowlisted /api/queue path (e.g. /api/queue/jobs)", async () => {
+      const config = await loadConfig({ configPath });
+      const { server, baseUrl } = await startQueueMountedServer(config.auth.token);
+      try {
+        const response = await fetch(
+          `${baseUrl}/api/queue/jobs?token=${config.auth.token}`,
+        );
+        expect(response.status).toBe(401);
+      } finally {
+        await closeServer(server);
+      }
+    });
+  });
 });

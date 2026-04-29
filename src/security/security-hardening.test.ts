@@ -133,9 +133,11 @@ describe("security: query-token accepted for asset file serving paths (PR #913 f
         rateLimit: { windowMs: 60_000, max: 1000 },
       }),
     );
-    // Simulate the queue router's asset file serving routes
-    app.get("/assets/:id/file", (_req, res) => res.json({ ok: true }));
-    app.get("/assets/file/:filename", (_req, res) => res.json({ ok: true }));
+    // Simulate the queue router's asset file serving routes. The auth
+    // allowlist regex requires the production `/api/queue` mount prefix
+    // because it matches against `req.originalUrl` (issue #1012).
+    app.get("/api/queue/assets/:id/file", (_req, res) => res.json({ ok: true }));
+    app.get("/api/queue/assets/file/:filename", (_req, res) => res.json({ ok: true }));
     return {
       app,
       restore: () => {
@@ -152,7 +154,7 @@ describe("security: query-token accepted for asset file serving paths (PR #913 f
     const { app, restore } = buildAssetApp(undefined);
     try {
       const res = await request(app).get(
-        "/assets/abc123/file?token=supersecret",
+        "/api/queue/assets/abc123/file?token=supersecret",
       );
       expect(res.status).toBe(200);
     } finally {
@@ -164,7 +166,7 @@ describe("security: query-token accepted for asset file serving paths (PR #913 f
     const { app, restore } = buildAssetApp(undefined);
     try {
       const res = await request(app).get(
-        "/assets/file/image.png?token=supersecret",
+        "/api/queue/assets/file/image.png?token=supersecret",
       );
       expect(res.status).toBe(200);
     } finally {
