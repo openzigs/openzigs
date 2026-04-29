@@ -95,9 +95,18 @@ const extractToken = (req: Request) => {
   // Present button opens the deck in a new tab via <a href> (issue #1011).
   // For all other paths this remains disabled to avoid token leakage via
   // proxy logs, browser history, and Referer headers (sub-issue #908).
+  //
+  // IMPORTANT: match against `req.originalUrl` (minus the query string) and
+  // not `req.path`. Express strips the mount prefix from `req.path` when
+  // middleware runs inside a sub-router (e.g. `app.use("/api/admin", auth,
+  // adminRouter)` makes `req.path` `/pitch/decks/.../render`). The pitch
+  // render allowlist regex requires the full `/api/admin/...` prefix, so
+  // matching `req.path` would always miss in production. Hotfix for the
+  // regression introduced in #1013 (issue #1012).
+  const fullPath = req.originalUrl.split("?")[0] ?? "";
   const allowQueryToken =
-    ASSET_FILE_PATH_RE.test(req.path) ||
-    PITCH_RENDER_PATH_RE.test(req.path) ||
+    ASSET_FILE_PATH_RE.test(fullPath) ||
+    PITCH_RENDER_PATH_RE.test(fullPath) ||
     process.env.OPENZIGS_ALLOW_QUERY_TOKEN === "1";
   if (allowQueryToken) {
     const qToken = req.query?.token;
