@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Loader2, Sparkles } from "lucide-react";
+import { AlertTriangle, Loader2, Sparkles } from "lucide-react";
 import { fetchJson } from "@/lib/api";
 import { useSlideImageStatus } from "./use-slide-image-status";
 
@@ -18,12 +18,17 @@ interface GenerateAllResponse {
   total: number;
 }
 
-type ButtonState = "idle" | "in_progress" | "done";
+type ButtonState = "idle" | "in_progress" | "done" | "error";
 
 /**
  * Toolbar button that enqueues image generation jobs for every image-bearing
  * slot in the active deck, then shows live "X / N" progress sourced from
  * `useSlideImageStatus` (Socket.IO `pitch:image:*` events).
+ *
+ * Bug-fix (post-PR-#1017 walkthrough): when one or more enqueued jobs end
+ * up in the `failed` bucket (retries exhausted, OOM, etc) the button now
+ * transitions to an `error` state with a "Retry failed (N)" label and an
+ * inline aria-live message instead of misleadingly showing "Images ready".
  */
 export const GenerateAllImagesButton = ({
   deckId,
@@ -37,18 +42,20 @@ export const GenerateAllImagesButton = ({
 
   const completed = counts.ready + counts.failed;
 
-  // Auto-flip to done + toast when we've heard back about every enqueued slot.
+  // Auto-flip when we've heard back about every enqueued slot. If any
+  // slot landed in `failed`, transition to `error` so the user sees the
+  // failure and can retry; otherwise transition to `done` as before.
   useEffect(() => {
     if (state !== "in_progress") return;
     if (expected > 0 && completed >= expected) {
-      setState("done");
+      const hasFailures = counts.failed > 0;
+      setState(hasFailures ? "error" : "done");
       if (!completedToastFiredRef.current) {
         completedToastFiredRef.current = true;
-        const msg =
-          counts.failed > 0
-            ? `Image generation finished — ${counts.failed} failed`
-            : "All images generated";
-        onShowToast?.(msg, counts.failed > 0 ? "error" : "success");
+        const msg = hasFailures
+          ? `Image generation finished — ${counts.failed} failed`
+          : "All images generated";
+        onShowToast?.(msg, hasFailures ? "error" : "success");
       }
     }
   }, [state, expected, completed, counts.failed, onShowToast]);
@@ -83,26 +90,53 @@ export const GenerateAllImagesButton = ({
       ? expected > 0
         ? `Generating ${completed} / ${expected}`
         : "Starting\u2026"
-      : state === "done"
-        ? "Images ready"
-        : "Generate all images";
+      : state === "error"
+        ? `Retry failed (${counts.failed})`
+        : state === "done"
+          ? "Images ready"
+          : "Generate all images";
 
-  const Icon = state === "in_progress" ? Loader2 : Sparkles;
+  const Icon =
+    state === "in_progress"
+      ? Loader2
+      : state === "error"
+        ? AlertTriangle
+        : Sparkles;
+
+  // Accent the button when in error state so failures aren't lost in the
+  // toolbar. Re-enabled (not disabled) so a click fires another fan-out.
+  const stateClass =
+    state === "error"
+      ? "border-red-500 text-red-600 hover:bg-red-500/10 dark:text-red-400"
+      : "border-border hover:bg-muted/40";
 
   return (
-    <button
-      type="button"
-      data-testid="pitch-editor-generate-all-images"
-      data-state={state}
-      disabled={disabled || state === "in_progress"}
-      onClick={handleClick}
-      className="inline-flex items-center gap-1.5 rounded border border-border px-2 py-1 text-xs hover:bg-muted/40 disabled:opacity-50"
-    >
-      <Icon
-        className={`h-3.5 w-3.5 ${state === "in_progress" ? "animate-spin" : ""}`}
-      />
-      {label}
-    </button>
+    <div className="inline-flex flex-col items-end gap-0.5">
+      <button
+        type="button"
+        data-testid="pitch-editor-generate-all-images"
+        data-state={state}
+        disabled={disabled || state === "in_progress"}
+        onClick={handleClick}
+        className={`inline-flex items-center gap-1.5 rounded border px-2 py-1 text-xs disabled:opacity-50 ${stateClass}`}
+      >
+        <Icon
+          className={`h-3.5 w-3.5 ${state === "in_progress" ? "animate-spin" : ""}`}
+        />
+        {label}
+      </button>
+      {state === "error" ? (
+        <span
+          data-testid="pitch-editor-generate-all-images-error"
+          role="status"
+          aria-live="polite"
+          className="text-[10px] text-red-600 dark:text-red-400"
+        >
+          {counts.failed} of {expected} image
+          {expected === 1 ? "" : "s"} failed — click to retry
+        </span>
+      ) : null}
+    </div>
   );
 };
 

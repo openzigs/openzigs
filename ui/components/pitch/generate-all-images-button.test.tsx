@@ -141,4 +141,86 @@ describe("GenerateAllImagesButton", () => {
       screen.getByTestId("pitch-editor-generate-all-images"),
     ).toBeDisabled();
   });
+
+  it("transitions to an error state when failed jobs are reported (post-#1017 walkthrough fix)", async () => {
+    fetchJsonMock.mockResolvedValue({ enqueued: 3, skipped: 0, total: 3 });
+    const toast = vi.fn();
+    render(<GenerateAllImagesButton deckId="d1" onShowToast={toast} />);
+    fireEvent.click(screen.getByTestId("pitch-editor-generate-all-images"));
+    await waitFor(() => expect(fetchJsonMock).toHaveBeenCalled());
+
+    // Simulate every enqueued slot landing in the `failed` bucket
+    // (e.g. all three jobs OOM-killed after retries are exhausted).
+    act(() => {
+      fire("pitch:image:failed", {
+        deckId: "d1",
+        slideId: "s1",
+        slot: "background",
+        error: "CUDA out of memory",
+      });
+      fire("pitch:image:failed", {
+        deckId: "d1",
+        slideId: "s2",
+        slot: "background",
+        error: "CUDA out of memory",
+      });
+      fire("pitch:image:failed", {
+        deckId: "d1",
+        slideId: "s3",
+        slot: "background",
+        error: "CUDA out of memory",
+      });
+    });
+
+    const btn = await waitFor(() => {
+      const b = screen.getByTestId("pitch-editor-generate-all-images");
+      expect(b).toHaveAttribute("data-state", "error");
+      return b;
+    });
+
+    // Button is re-enabled so the user can click to retry.
+    expect(btn).not.toBeDisabled();
+    expect(btn.textContent).toContain("Retry failed (3)");
+
+    // Inline aria-live message surfaces the failure reason.
+    const inline = screen.getByTestId(
+      "pitch-editor-generate-all-images-error",
+    );
+    expect(inline).toHaveAttribute("role", "status");
+    expect(inline.textContent).toContain("3 of 3");
+    expect(inline.textContent).toContain("failed");
+
+    // Failure toast fires exactly once.
+    expect(toast).toHaveBeenCalledWith(
+      expect.stringContaining("3 failed"),
+      "error",
+    );
+  });
+
+  it("clicking the button while in error state retries the fan-out", async () => {
+    fetchJsonMock
+      .mockResolvedValueOnce({ enqueued: 1, skipped: 0, total: 1 })
+      .mockResolvedValueOnce({ enqueued: 1, skipped: 0, total: 1 });
+    render(<GenerateAllImagesButton deckId="d1" />);
+    fireEvent.click(screen.getByTestId("pitch-editor-generate-all-images"));
+    await waitFor(() => expect(fetchJsonMock).toHaveBeenCalledTimes(1));
+    act(() => {
+      fire("pitch:image:failed", {
+        deckId: "d1",
+        slideId: "s1",
+        slot: "background",
+        error: "OOM",
+      });
+    });
+    await waitFor(() =>
+      expect(
+        screen.getByTestId("pitch-editor-generate-all-images"),
+      ).toHaveAttribute("data-state", "error"),
+    );
+    fireEvent.click(screen.getByTestId("pitch-editor-generate-all-images"));
+    await waitFor(() => expect(fetchJsonMock).toHaveBeenCalledTimes(2));
+    expect(
+      screen.getByTestId("pitch-editor-generate-all-images"),
+    ).toHaveAttribute("data-state", "in_progress");
+  });
 });

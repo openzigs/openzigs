@@ -3997,6 +3997,17 @@ httpServer.listen(port, "0.0.0.0", async () => {
       queueMaster,
       pitchRepo,
       auditLogger,
+      // Bug-fix (post-PR-#1017 walkthrough): when a Pitch image job
+      // completes (success or retries-exhausted failure), broadcast over
+      // Socket.IO so the deck editor's `useSlideImageStatus` hook flips
+      // the slot from `queued` to `ready` / `failed`. Without these the
+      // "Generate all images" button hangs at "Generating 0 / N" forever.
+      onPitchImageReady: (info) => {
+        io.emit("pitch:image:ready", info);
+      },
+      onPitchImageFailed: (info) => {
+        io.emit("pitch:image:failed", info);
+      },
     });
     logger.info("[Pitch] Image completion listener registered");
 
