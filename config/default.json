@@ -166,6 +166,11 @@
     "modelIdleTimeoutSec": 300,
     "memoryLimitGB": 24
   },
+  "media": {
+    "autoStartSidecars": false,
+    "sidecarHealthUrl": "http://127.0.0.1:5005/health",
+    "startupTimeoutMs": 60000
+  },
   "sadTalker": {
     "enabled": true,
     "networkNodeUrl": "",

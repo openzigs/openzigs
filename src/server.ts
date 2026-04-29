@@ -115,6 +115,8 @@ import { createDirectorRouter, setDirectorIO } from "./api/director.js";
 import { createPitchRouter, setPitchIO } from "./api/pitch.js";
 import { PitchRepository } from "./pitch/pitch-repository.js";
 import { ShareTokenRepository } from "./pitch/share-token-repository.js";
+import { registerImageCompletionListener } from "./pitch/pitch-image-service.js";
+import { ensureSidecarsRunning } from "./queue/sidecar-autostart.js";
 import { createPublicShareRouter } from "./api/public-share.js";
 import { createAudioRouter } from "./api/audio.js";
 import { createPresenterRouter } from "./api/presenter.js";
@@ -2297,6 +2299,9 @@ app.use("/api/webhooks/trigger", webhookRouter);
 
 // ── Firecrawl Webhook Endpoint (internal-only, for async crawl/batch callbacks) ──
 let firecrawlWebhookHandler: FirecrawlWebhookHandler | null = null;
+// Sub-issue #1010 \u2014 holds the disposable registration for the pitch image
+// completion listener so graceful shutdown can detach the handler.
+let pitchImageCompletionRegistration: { dispose(): void } | null = null;
 const firecrawlConfig = (config as Record<string, unknown>).firecrawl as
   | Record<string, unknown>
   | undefined;
@@ -3841,7 +3846,7 @@ if (webConfig?.enabled !== false) {
   });
 }
 
-httpServer.listen(port, "0.0.0.0", () => {
+httpServer.listen(port, "0.0.0.0", async () => {
   logger.info(`OpenZigs server listening on port ${port} (0.0.0.0)`);
 
   // Pinterest OAuth: auto-refresh token if expiry is within 7 days
@@ -3945,10 +3950,57 @@ httpServer.listen(port, "0.0.0.0", () => {
 
   // Start the media queue push loop
   if (process.env.QUEUE_ENABLED !== "false") {
+    // Sub-issue #1010 \u2014 opt-in auto-start of CUDA sidecars before the queue
+    // begins polling. When `media.autoStartSidecars` is true and the FluxQ
+    // health endpoint is unreachable, spawn the platform-appropriate
+    // `scripts/media-ctl.{ps1,sh}` start command (detached, ignored stdio,
+    // unref'd) and poll for readiness up to 60 s. Failures are logged but
+    // do NOT abort startup \u2014 the queue worker recovers when sidecars
+    // come up later.
+    if (config.media?.autoStartSidecars) {
+      const healthUrl =
+        config.media.sidecarHealthUrl ?? "http://127.0.0.1:5005/health";
+      logger.info(
+        `[Sidecars] media.autoStartSidecars=true \u2014 ensuring sidecar at ${healthUrl}`,
+      );
+      try {
+        const result = await ensureSidecarsRunning({
+          healthUrl,
+          timeoutMs: config.media.startupTimeoutMs ?? 60_000,
+          repoRoot: process.cwd(),
+        });
+        if (result.ready) {
+          logger.info(
+            `[Sidecars] Ready in ${result.durationMs}ms (started=${result.started})`,
+          );
+        } else {
+          logger.warn(
+            `[Sidecars] NOT ready after ${result.durationMs}ms (started=${result.started}): ${result.error ?? "timeout"}`,
+          );
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        logger.warn(`[Sidecars] Auto-start failed: ${msg}`);
+      }
+    }
+
     queueMaster.start();
     logger.info(
       `[QueueMaster] Push orchestrator started (callback: ${process.env.QUEUE_CALLBACK_URL ?? `http://${getLanIp()}:${port}/api/queue/complete`})`,
     );
+
+    // Sub-issue #1010 \u2014 the QueueMaster successfully dispatches pitch
+    // txt2img jobs to FluxQ and emits `job:complete` when the callback
+    // fires, but without this listener the result PNG is never copied
+    // into `~/.openzigs/pitch/assets/{deckId}/` and the slide content
+    // slot is never patched. The dispatch path was always working; the
+    // bookkeeping listener was never wired.
+    pitchImageCompletionRegistration = registerImageCompletionListener({
+      queueMaster,
+      pitchRepo,
+      auditLogger,
+    });
+    logger.info("[Pitch] Image completion listener registered");
 
     // Broadcast job events to all connected UI clients via Socket.IO
     queueMaster.on("job:complete", (job) => {
@@ -4019,6 +4071,8 @@ const gracefulShutdown = () => {
   socialIngestion.stopAllPolling();
   outboxPoller.stop();
   queueMaster.stop();
+  pitchImageCompletionRegistration?.dispose();
+  pitchImageCompletionRegistration = null;
   subagentRelay.dispose();
   firecrawlWebhookHandler?.shutdown();
   closeDatabase();
