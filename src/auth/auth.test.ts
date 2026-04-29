@@ -134,14 +134,14 @@ describe("auth middleware", () => {
   // `/api/admin/pitch/*` routes (those live in `server.ts`), and the
   // middleware is per-route there.
   describe("pitch render query-token allowlist (#1011)", () => {
-    const startMiniServer = async (token: string) => {
+    const startMiniServer = async (token: string | undefined) => {
       const express = (await import("express")).default;
       const { createAuthMiddleware } = await import("./auth.js");
       const app = express();
       const authMiddleware = createAuthMiddleware({
         mode: "local" as const,
-        token,
-        role: "owner" as const,
+        token: token ?? "",
+        role: "admin" as const,
         rateLimit: { windowMs: 60_000, max: 100 },
       });
       app.use(authMiddleware);
