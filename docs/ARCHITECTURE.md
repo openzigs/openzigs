@@ -463,6 +463,14 @@ OpenZigs ships with a suite of optional **local Python FastAPI services** that r
 
 Sidecars are selected at install time and can be added later by re-running `install.sh`.
 
+### Sidecar Lifecycle (Boot + Auto-Start)
+
+By default the backend assumes sidecars are managed externally — operators run `scripts/media-ctl.{ps1,sh} <service> start` ahead of time and the queue worker simply dispatches jobs once the sidecar's `/health` endpoint is reachable.
+
+The opt-in `media.autoStartSidecars` config flag (default `false`) flips this around: at server boot, before the media queue begins polling, `ensureSidecarsRunning` (`src/queue/sidecar-autostart.ts`) probes `media.sidecarHealthUrl` (default `http://127.0.0.1:5005/health`). If unreachable it spawns the platform-appropriate `scripts/media-ctl.{ps1,sh} flux start` command (detached + ignored stdio + `unref()`'d so the child outlives the parent), then polls with exponential backoff (250 ms → 500 ms → 1 s → 2 s → 4 s → 5 s cap) until ready or `media.startupTimeoutMs` elapses (default **120 s** — covers CUDA cold-start: model checkpoint load + first-time kernel compile). Probe outcomes are emitted at `DEBUG` level (`[Sidecars] attempt N, elapsed Xms, status {ok|err|timeout}`). Failures never abort startup — the queue worker recovers when the sidecar comes up later.
+
+Once the queue is running, the bootstrap also wires `registerImageCompletionListener` (`src/pitch/pitch-image-service.ts`) into the `QueueMaster` event stream from `src/server.ts`. This is the listener that copies completed FluxQ output PNGs into `~/.openzigs/pitch/assets/{deckId}/`, patches the slide content slot in SQLite, and broadcasts `pitch:image:ready` / `pitch:image:failed` over Socket.IO so the deck editor's `useSlideImageStatus` hook can flip slot status in real time. Registration happens **before** `queueMaster.start()` so no `job:complete` event can be dropped in the wire-up window, and the registration handle is disposed during graceful shutdown.
+
 ### Sidecar Reference
 
 | Sidecar | Port | Key Models / Stack | ~Disk | Python | Features |

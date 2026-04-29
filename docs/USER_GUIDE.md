@@ -1873,6 +1873,41 @@ The **Pitch** workspace turns a script, brief, or research notes into a designed
 3. **Brand kits** — pick a starter kit (Modern Minimal, Corporate Blue, Vibrant Pitch, Editorial, Tech Dark, Warm Neutral) or create your own. Editable: heading + body fonts, accent colors, footer text, logo (≤ 2 MB PNG/JPEG/WebP). Logos are content-sniffed server-side.
 4. **Export** — five formats, all attachment downloads with `Cache-Control: no-store`:
 
+#### Sidecar auto-start (`media.autoStartSidecars`)
+
+By default, Pitch image generation requires you to start the FluxQ image-gen sidecar manually before launching the backend (see [Windows Sidecar Management](#windows-sidecar-management-wslcuda)). Setting `media.autoStartSidecars` to `true` in `~/.openzigs/config.json` (or the equivalent env var) makes the backend probe `media.sidecarHealthUrl` (default `http://127.0.0.1:5005/health`) at boot and, if unreachable, spawn `scripts/media-ctl.{ps1,sh} flux start` for you.
+
+```jsonc
+{
+  "media": {
+    "autoStartSidecars": true,
+    "sidecarHealthUrl": "http://127.0.0.1:5005/health",
+    "startupTimeoutMs": 120000
+  }
+}
+```
+
+- **Default**: `false` (opt-in).
+- **Process model**: the spawn is detached, with stdio ignored and `unref()`'d, so the sidecar continues running after the backend exits. Stopping the sidecar still requires an explicit `media-ctl <service> stop` call.
+- **Polling**: exponential backoff (250 ms → 500 ms → 1 s → 2 s → 4 s → 5 s cap) up to `media.startupTimeoutMs` (default 120 s). Probe outcomes are emitted at `DEBUG` level — set `LOG_LEVEL=debug` to see `[Sidecars] attempt N, elapsed Xms, status {ok|err|timeout}`.
+- **Restart required**: changes to `media.autoStartSidecars` only take effect on backend restart.
+- **Security/operational caveats**: the backend will spawn a child process on every cold boot. Only enable on hosts where you trust the local `scripts/media-ctl.*` script and the user you run the backend as is allowed to launch PowerShell / bash subprocesses. For production deployments behind a process supervisor (systemd, NSSM), prefer managing the sidecar as a sibling unit rather than letting the backend spawn it.
+
+#### Why my Pitch images don't appear
+
+If a deck generates fine but every slide stays in the "Generating…" state or lands in "failed", walk through this checklist before filing a bug:
+
+1. **Check the FluxQ sidecar.** Run `curl http://127.0.0.1:5005/health` (or `Invoke-WebRequest` on Windows). A healthy sidecar returns `200 OK` with a JSON body that includes `recommended_width` / `recommended_height`. If it doesn't answer, start it with `scripts/media-ctl.ps1 flux start` (Windows) or `scripts/media-ctl.sh flux start` (POSIX) — or set `media.autoStartSidecars: true` and restart the backend (see above).
+2. **Check the `media_jobs` SQLite table** at `~/.openzigs/openzigs.db`. Failed jobs include the upstream sidecar error in the `error` column. The most common pattern is an OOM on `flux-schnell` ("CUDA out of memory" on a 12 GB GPU) which retries 3× before lodging as `failed`.
+3. **Dimensions are clamped** to FluxQ's recommended size at fan-out time (PR #1018) — the sidecar advertises `recommended_width` / `recommended_height` on `/health` and `clampToFluxQRecommendedDims` shrinks any over-sized request. If the sidecar is unreachable when the fan-out runs, the safe fallback is `1024×576`. You should never see a job dispatched at the slide's full visual resolution.
+4. **Restart the backend after enabling `media.autoStartSidecars`** — the auto-start probe runs only at boot, so toggling the flag while the backend is already running is a no-op.
+
+Still stuck? Tail the backend log with `LOG_LEVEL=debug pnpm dev`, look for `[Sidecars]` and `[Pitch]` lines, and grep `~/.openzigs/logs/` for the deck ID.
+
+#### Authenticated Present route
+
+The "Present" button in the deck editor opens `/pitch/{deckId}/present`, a Next.js page that fetches `/api/admin/pitch/decks/{deckId}/render?mode=present` with a proper `Authorization: Bearer …` header. Older builds opened the API URL directly with `?token=<bearer>` in the query string, which leaked the token into browser history and any upstream proxy access logs. The query-string fallback is still honoured by the auth middleware so existing shared-link bookmarks keep working, but new sessions never put the token in the URL.
+
 #### Large script uploads
 
 The persisted `source_script` field is capped at **50 KB** so the LLM draft pass stays cheap and the audit trail stays bounded. Real-world inputs (specs, user-guide markdown) are routinely 200 KB – 2 MB. The wizard handles this with an explicit AI condensation step:

@@ -533,6 +533,32 @@ describe("Pitch REST router", () => {
       expect(res.status).toBe(404);
     });
 
+    it("CSP allows Google Fonts (#1019)", async () => {
+      const kitId = createCustomKit(harness);
+      const { deckId } = createDeck(harness, kitId);
+      const res = await request(harness.app).get(
+        `/api/admin/pitch/decks/${deckId}/render?mode=present`,
+      );
+      expect(res.status).toBe(200);
+      const csp = res.headers["content-security-policy"] ?? "";
+      expect(csp).toContain("style-src");
+      expect(csp).toMatch(/style-src[^;]*https:\/\/fonts\.googleapis\.com/);
+      expect(csp).toContain("font-src");
+      expect(csp).toMatch(/font-src[^;]*https:\/\/fonts\.gstatic\.com/);
+    });
+
+    it("export.html CSP also allows Google Fonts (#1019)", async () => {
+      const kitId = createCustomKit(harness);
+      const { deckId } = createDeck(harness, kitId);
+      const res = await request(harness.app).get(
+        `/api/admin/pitch/decks/${deckId}/export.html`,
+      );
+      expect(res.status).toBe(200);
+      const csp = res.headers["content-security-policy"] ?? "";
+      expect(csp).toMatch(/style-src[^;]*https:\/\/fonts\.googleapis\.com/);
+      expect(csp).toMatch(/font-src[^;]*https:\/\/fonts\.gstatic\.com/);
+    });
+
     it("returns 404 when deck's brand kit is missing", async () => {
       const kitId = createCustomKit(harness);
       const { deckId } = createDeck(harness, kitId);

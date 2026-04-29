@@ -86,6 +86,14 @@ const ASSET_FILE_PATH_RE =
  * fix would be a Next.js page that mounts the deck in an authenticated
  * iframe with the token sent via header — left as future work.
  */
+// NOTE (#1016): the UI now wraps Present in an authenticated Next.js route
+// (`/pitch/[deckId]/present`) that fetches `/render?mode=present` with a
+// proper `Authorization` header, so the `?token=` query-string fallback is
+// no longer used by current builds. We INTENTIONALLY keep this allowlist
+// entry so existing shared-link bookmarks and any externally-saved Present
+// URLs remain functional. Once telemetry confirms zero hits on the
+// `?token=` path for `pitch/decks/.../render` over a release window, this
+// constant and its callsite below can be removed.
 const PITCH_RENDER_PATH_RE =
   /^\/api\/admin\/pitch\/decks\/[a-zA-Z0-9_-]+\/render(?:\/[a-zA-Z0-9_\-./]*)?$/;
 
