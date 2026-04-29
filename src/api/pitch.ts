@@ -1439,6 +1439,7 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
                 emit("pitch:image:queued", {
                   deckId: persisted.id,
                   slideId: info.slideId,
+                  slot: info.slot,
                   jobId: info.jobId,
                   assetId: info.assetId,
                   source: "auto_draft",
@@ -1448,6 +1449,7 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
                 emit("pitch:image:failed", {
                   deckId: persisted.id,
                   slideId: info.slideId,
+                  slot: info.slot,
                   error: info.error,
                   source: "auto_draft",
                 });
@@ -1612,6 +1614,7 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
       emit("pitch:image:queued", {
         deckId: req.params.deckId,
         slideId: req.params.slideId,
+        slot: body.mode === "inline" ? "image" : "background",
         jobId: result.jobId,
         assetId: result.assetId,
         mode: body.mode,
@@ -1684,6 +1687,7 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
             emit("pitch:image:queued", {
               deckId,
               slideId: info.slideId,
+              slot: info.slot,
               jobId: info.jobId,
               assetId: info.assetId,
               source: "bulk_button",
@@ -1693,6 +1697,7 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
             emit("pitch:image:failed", {
               deckId,
               slideId: info.slideId,
+              slot: info.slot,
               error: info.error,
               source: "bulk_button",
             });

@@ -36,6 +36,7 @@ import type { PitchRepository } from "./pitch-repository.js";
 import type { Slide, SlideAsset } from "./pitch-schema.js";
 import { injectCharacterLora } from "../api/inject-character-lora.js";
 import { applyStylePreset, type ImageStyle } from "./image-style-prompts.js";
+import { clampToFluxQRecommendedDims } from "./fluxq-recommended-dims.js";
 
 /** Slots inside a slide's `content` object that can hold a `SlideImage`. */
 export type ImageSlot = "image" | "left_image" | "right_image";
@@ -107,8 +108,6 @@ export function _peekPitchJobBindingForTest(jobId: string): PitchJobBinding | un
   return pendingPitchJobs.get(jobId);
 }
 
-const DEFAULT_WIDTH = 1920;
-const DEFAULT_HEIGHT = 1080;
 const DEFAULT_MODEL = "flux-schnell";
 
 /**
@@ -136,10 +135,17 @@ export function enqueueSlideImage(opts: EnqueueSlideImageOpts): EnqueueSlideImag
   // final left-to-right order in the payload.
   const styledPrompt = applyStylePreset(opts.prompt, opts.imageStyle);
 
+  // Bug-fix (post-PR-#1017 walkthrough): clamp the requested dims down to
+  // FluxQ's advertised recommended_width/height. Slide templates render at
+  // 1920×1080 but flux-schnell on a 12 GB GPU OOMs above ~1024×576. The
+  // cache is populated by `refreshFluxQRecommendedDims()` (called from
+  // `fanOutImageGeneration` on entry); when unpopulated the helper falls
+  // back to the safe 1024×576 default.
+  const clamped = clampToFluxQRecommendedDims(opts.width, opts.height);
   const payload: MediaJobPayload = {
     prompt: styledPrompt,
-    width: opts.width ?? DEFAULT_WIDTH,
-    height: opts.height ?? DEFAULT_HEIGHT,
+    width: clamped.width,
+    height: clamped.height,
   };
   if (opts.seed !== undefined) {
     payload.seed = opts.seed;
@@ -171,6 +177,20 @@ export function enqueueSlideImage(opts: EnqueueSlideImageOpts): EnqueueSlideImag
 
 // ── Completion listener ────────────────────────────────────────────────
 
+export interface PitchImageEventInfo {
+  deckId: string;
+  slideId: string;
+  /** Slot identifier consistent with the `pitch:image:queued` payload. */
+  slot: string;
+  jobId: string;
+  assetId: string;
+}
+
+export interface PitchImageFailedEventInfo extends PitchImageEventInfo {
+  /** Human-readable failure reason from the queue (retries-exhausted message etc). */
+  error: string;
+}
+
 export interface RegisterImageCompletionOpts {
   queueMaster: Pick<QueueMaster, "on" | "off">;
   pitchRepo: PitchRepository;
@@ -180,6 +200,20 @@ export interface RegisterImageCompletionOpts {
   clock?: () => Date;
   /** Override the assets root (defaults to `~/.openzigs/pitch/assets`). */
   baseDir?: string;
+  /**
+   * Fired AFTER the result asset has been persisted and the slide content
+   * patched. Wired to Socket.IO `pitch:image:ready` in server.ts so the
+   * UI's `useSlideImageStatus` hook can flip the slot from `queued` to
+   * `ready`. Bug-fix for post-PR-#1017 walkthrough — previously this
+   * event was never emitted server-side.
+   */
+  onPitchImageReady?: (info: PitchImageEventInfo) => void;
+  /**
+   * Fired when a queued Pitch image job exhausts its retries (or is
+   * killed). Wired to Socket.IO `pitch:image:failed` in server.ts so the
+   * deck editor can surface the failure ("Generating 0 / N" forever bug).
+   */
+  onPitchImageFailed?: (info: PitchImageFailedEventInfo) => void;
 }
 
 export interface ImageCompletionRegistration {
@@ -202,17 +236,25 @@ export function registerImageCompletionListener(
 ): ImageCompletionRegistration {
   const inFlight = new Set<Promise<void>>();
 
-  const handler = (job: MediaJob): void => {
+  const completeHandler = (job: MediaJob): void => {
     const p = handleJobComplete(job, opts).finally(() => {
       inFlight.delete(p);
     });
     inFlight.add(p);
   };
 
-  opts.queueMaster.on("job:complete", handler);
+  const failedHandler = (job: MediaJob, error: string): void => {
+    // Synchronous handler — looking up + clearing the binding map and
+    // firing the optional callback don't need to be awaited.
+    handleJobFailed(job, error, opts);
+  };
+
+  opts.queueMaster.on("job:complete", completeHandler);
+  opts.queueMaster.on("job:failed", failedHandler);
   return {
     dispose: () => {
-      opts.queueMaster.off("job:complete", handler);
+      opts.queueMaster.off("job:complete", completeHandler);
+      opts.queueMaster.off("job:failed", failedHandler);
     },
     flush: async () => {
       // Drain in waves: handlers may queue further work synchronously.
@@ -221,6 +263,43 @@ export function registerImageCompletionListener(
       }
     },
   };
+}
+
+/** Slot identifier used in Socket.IO `pitch:image:*` payloads. */
+function slotFromBinding(binding: PitchJobBinding): string {
+  return binding.kind === "background" ? "background" : binding.slot;
+}
+
+function handleJobFailed(
+  job: MediaJob,
+  error: string,
+  opts: RegisterImageCompletionOpts,
+): void {
+  const binding = pendingPitchJobs.get(job.id);
+  if (!binding) return; // Not one of ours.
+  pendingPitchJobs.delete(job.id);
+
+  void safeAudit(opts.auditLogger, {
+    event: "pitch.image.job_failed",
+    deckId: binding.deckId,
+    slideId: binding.slideId,
+    slot: slotFromBinding(binding),
+    jobId: job.id,
+    error,
+  });
+
+  try {
+    opts.onPitchImageFailed?.({
+      deckId: binding.deckId,
+      slideId: binding.slideId,
+      slot: slotFromBinding(binding),
+      jobId: job.id,
+      assetId: binding.assetId,
+      error,
+    });
+  } catch {
+    // Listener must NOT throw — that would crash the EventEmitter loop.
+  }
 }
 
 async function handleJobComplete(
@@ -244,6 +323,17 @@ async function handleJobComplete(
 
   try {
     await persistCompletedAsset(job, binding, opts);
+    try {
+      opts.onPitchImageReady?.({
+        deckId: binding.deckId,
+        slideId: binding.slideId,
+        slot: slotFromBinding(binding),
+        jobId: job.id,
+        assetId: binding.assetId,
+      });
+    } catch {
+      // Listener must NOT throw.
+    }
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err);
     await safeAudit(opts.auditLogger, {
@@ -295,8 +385,14 @@ async function persistCompletedAsset(
 
   // Read intrinsic dimensions — fall back to the requested size if sharp
   // can't decode (corrupt image).
-  let width = (job.payload.width as number | undefined) ?? DEFAULT_WIDTH;
-  let height = (job.payload.height as number | undefined) ?? DEFAULT_HEIGHT;
+  // Use the (already-clamped) payload dims as fallback if sharp can't
+  // decode the file — those are the dims the model was actually asked for.
+  const clampedFallback = clampToFluxQRecommendedDims(
+    job.payload.width as number | undefined,
+    job.payload.height as number | undefined,
+  );
+  let width = (job.payload.width as number | undefined) ?? clampedFallback.width;
+  let height = (job.payload.height as number | undefined) ?? clampedFallback.height;
   try {
     const meta = await sharp(targetPath).metadata();
     if (typeof meta.width === "number" && meta.width > 0) width = meta.width;

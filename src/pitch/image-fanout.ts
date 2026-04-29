@@ -37,6 +37,7 @@ import {
   resolveImageStyle,
   type ImageStyle,
 } from "./image-style-prompts.js";
+import { refreshFluxQRecommendedDims } from "./fluxq-recommended-dims.js";
 
 /** A persisted slide carries both the SlideRecord identity and the Slide payload. */
 export interface SlideForFanout {
@@ -265,6 +266,15 @@ export async function fanOutImageGeneration(
   const concurrency = Math.max(1, opts.concurrency ?? 4);
   const { plan, skipped } = planImageJobs(opts.slides, {
     deriveFallbackBackgrounds: opts.deriveFallbackBackgrounds === true,
+  });
+
+  // Bug-fix (post-PR-#1017 walkthrough): probe FluxQ's `/health` once
+  // before the worker pool starts so every `enqueueSlideImage` call below
+  // observes the cached `recommended_width`/`recommended_height` ceiling.
+  // The probe is best-effort; failure falls through to FLUXQ_FALLBACK_DIMS
+  // so we never block the fan-out on a sidecar hiccup.
+  await refreshFluxQRecommendedDims().catch(() => {
+    /* swallow — clamp helper falls back to safe defaults */
   });
 
   let cursor = 0;
