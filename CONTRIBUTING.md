@@ -7,6 +7,7 @@ Thank you for your interest in contributing to OpenZigs! This document provides 
 - [Code of Conduct](#code-of-conduct)
 - [Getting Started](#getting-started)
 - [Development Setup](#development-setup)
+- [Optional: graphify knowledge graph](#optional-graphify-knowledge-graph)
 - [Branching Strategy](#branching-strategy)
 - [Changelog](#changelog)
 - [Pull Request Process](#pull-request-process)
@@ -62,6 +63,59 @@ Copy `.env.example` to `.env` and configure the required values:
 ```bash
 cp .env.example .env
 ```
+
+## Optional: graphify knowledge graph
+
+[graphify](https://github.com/safishamsi/graphify) is an opt-in developer tool that builds a precomputed knowledge graph of the codebase. When the graph exists at `graphify-out/`, our Copilot subagents (orchestrator, code-issue, code-review, research-gather) consult it before doing wide grep / file-search sweeps. This typically saves **a large amount of premium-request tokens** when working with the AI on this repo.
+
+**Install (one-time):**
+
+| Platform | Command |
+|----------|---------|
+| Mac / Linux (recommended) | `uv tool install graphifyy` |
+| Mac / Linux (alternative) | `pipx install graphifyy` |
+| Windows | `pip install graphifyy` (then ensure `%APPDATA%\Python\Python3X\Scripts` is on `PATH`) |
+
+Note the PyPI package name is `graphifyy` (double **y**); the CLI binary is `graphify`.
+
+**Build the graph (one-time, then refresh on demand):**
+
+```bash
+graphify .
+```
+
+This produces:
+- `graphify-out/graph.json` — the queryable graph (commit this; teammates benefit)
+- `graphify-out/GRAPH_REPORT.md` — human-readable codebase overview (commit this)
+- `graphify-out/graph.html` — interactive graph viewer (commit this)
+- `graphify-out/cache/`, `manifest.json`, `cost.json` — per-developer state (gitignored)
+
+**Auto-refresh on commit / branch switch (optional):**
+
+```bash
+graphify hook install
+```
+
+Installs `post-commit` and `post-checkout` git hooks that re-run `graphify .` so the graph never goes stale.
+
+**VS Code Copilot Chat first-class support:**
+
+```bash
+graphify vscode install
+```
+
+This writes a snippet into `.github/copilot-instructions.md` (already done in this repo) so VS Code Copilot Chat consults the graph automatically every session.
+
+**Query the graph manually** (useful when you're navigating unfamiliar code):
+
+```bash
+graphify query "task engine worker recursion" graphify-out/graph.json   # token-bounded subgraph for a topic
+graphify path src/server.ts src/api/admin.ts                           # show dependency reach between two files
+```
+
+**What is excluded from the graph:** see [.graphifyignore](.graphifyignore) at the repo root — it skips `node_modules/`, `.next/`, `dist/`, `external/`, sidecar Python venvs, generated files, and ML model checkpoints.
+
+**Privacy note:** code is parsed locally via tree-sitter (no API calls). Only documentation, papers, and images (none in this repo by default) would be sent to a model API. See the upstream [graphify README](https://github.com/safishamsi/graphify#privacy) for details.
 
 ## Branching Strategy
 

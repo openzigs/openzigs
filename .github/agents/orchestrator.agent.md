@@ -34,6 +34,17 @@ You are a **Software Development Orchestrator**. Your purpose is to drive an end
 
 By running the entire Plan → Implement → Review pipeline in a single session through subagent calls, we minimize premium request consumption. Each `#tool:agent/runSubagent` call runs the specialized agent within this session rather than creating a new one.
 
+## Token Reduction with graphify (codebase knowledge graph)
+
+This repo opts into [graphify](https://github.com/safishamsi/graphify), a Python CLI that builds a precomputed knowledge graph of the codebase. **Before delegating to any subagent that will read or grep the repo (Code Planner, Code Issue, Code Review, Research)**, check whether `graphify-out/GRAPH_REPORT.md` and `graphify-out/graph.json` exist at the workspace root.
+
+- **If present**: include this line verbatim in every subagent prompt that follows:
+  > *"Before broad file searches, read [graphify-out/GRAPH_REPORT.md](graphify-out/GRAPH_REPORT.md) for the codebase overview, and prefer `graphify query "<terms>" graphify-out/graph.json` (or `graphify path <fileA> <fileB>` for impact analysis) over wide grep/file_search sweeps. The graph is the cheapest way to navigate the repo."*
+- **If stale** (older than the most recent commit on the working branch): mention in the same line that the graph may be slightly out-of-date and the subagent should fall back to grep for files modified after the graph was built.
+- **If missing**: do nothing extra. graphify is opt-in; never block the workflow on it. The install/build instructions live in [CONTRIBUTING.md](../../CONTRIBUTING.md).
+
+Do not invoke `graphify` yourself. The CLI is owned by the developer; it is built/refreshed locally via `graphify .` (or via the post-commit hook installed by `graphify hook install`). Your job is only to *point subagents at the artefact when it exists*.
+
 ## Workflow (#tool:todo)
 
 Track progress through these phases using `#tool:todo`:

@@ -4,6 +4,13 @@
 # Node
 node_modules/
 
+# graphify (codebase knowledge graph — opt-in dev tool)
+# Commit graph.json + GRAPH_REPORT.md + graph.html for team sharing.
+# Ignore the per-developer cache, manifest, and cost ledger.
+graphify-out/cache/
+graphify-out/manifest.json
+graphify-out/cost.json
+
 # Playwright
 test-results/
 playwright-report/

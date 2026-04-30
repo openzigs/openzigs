@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Dev tooling: graphify codebase-graph integration for Copilot subagents (Epic #1026).** The orchestrator agent (`.github/agents/orchestrator.agent.md`) and the `code-issue`, `code-review`, and `research-gather` skills now consult `graphify-out/GRAPH_REPORT.md` (when present) and use `graphify query` / `graphify path` for impact analysis instead of broad grep sweeps. Reduces premium-request token usage when coding on openzigs. Opt-in for developers — install via `pip install graphifyy` (Windows) or `uv tool install graphifyy` (Mac/Linux), then `graphify .` to build, `graphify hook install` to auto-refresh on commit. New `.graphifyignore` excludes `node_modules/`, `.next/`, `dist/`, `external/`, `coverage/`, sidecar venvs, and other generated content. `.gitignore` updated to ignore graphify cache/manifest while committing the shared `graph.json`, `GRAPH_REPORT.md`, and `graph.html`. See [CONTRIBUTING.md](CONTRIBUTING.md#optional-graphify-knowledge-graph) for setup. **No openzigs runtime changes** — graphify is purely a developer-side workflow optimization. (#1026)
+
 ### Added
 
 - **Playwright e2e coverage for Pitch Pro features (Epic #990).** New `ui/e2e/pitch-pro-epic-990.spec.ts` (12 tests) plus two Page Objects (`pitch-editor.page.ts`, `pitch-wizard.page.ts`) verify the user-facing acceptance criteria of sub-issues #991 (Generate-all-images toolbar button), #992/#999 (Present link), #993 (HTML export menu item + download), #994 (regenerate-image dialog flow + queued-status badge), #995 (title-slide background regenerate), #996 (real iframe thumbnails), #997 (polished Reveal.js embedded preview), and #998 (image style preset selector + draft-body wiring). All network is mocked via `page.route()` so the suite is hermetic — no backend, sidecars, or seeded brand kit required.

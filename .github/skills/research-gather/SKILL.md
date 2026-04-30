@@ -27,6 +27,7 @@ This skill collects and converts research material from multiple sources into a 
 | `fetch_webpage` | Fetch a specific URL when Tavily is unavailable |
 | `mcp_context7_resolve-library-id` | Resolve library IDs |
 | `mcp_context7_query-docs` | Fetch framework/library documentation |
+| `graphify` (CLI) | Query the local codebase knowledge graph (`graphify-out/graph.json`) for code research questions — far cheaper than grepping when the question is "where is X used?" or "what depends on Y?". Skip if `graphify-out/` is absent. |
 
 ## Workflow
 

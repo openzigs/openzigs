@@ -1,0 +1,83 @@
+# .graphifyignore — exclude paths from the graphify codebase knowledge graph.
+# Syntax mirrors .gitignore. See https://github.com/safishamsi/graphify
+
+# Node / pnpm
+node_modules/
+.pnpm-store/
+
+# Next.js build outputs
+.next/
+ui/.next/
+out/
+
+# Build artefacts
+dist/
+build/
+*.tsbuildinfo
+
+# Test artefacts
+coverage/
+test-results/
+playwright-report/
+.playwright-mcp/
+ui/test-results/
+ui/playwright-report/
+
+# Vendored / external code (not authored here)
+external/
+patches/
+
+# Python sidecar virtualenvs and caches
+sidecars/**/.venv/
+sidecars/**/__pycache__/
+sidecars/**/*.pyc
+sidecars/**/models/
+sidecars/**/checkpoints/
+sidecars/**/weights/
+sidecars/**/*.safetensors
+sidecars/**/*.bin
+sidecars/**/*.ckpt
+sidecars/**/*.pt
+
+# Docker / container artefacts
+.docker/
+*.tar
+
+# Generated content / scratch files
+*.generated.*
+*.min.js
+*.min.css
+*.map
+
+# Local data and logs
+.openzigs/
+logs/
+*.log
+*.jsonl
+
+# Lock files (graph wouldn't gain useful structure)
+pnpm-lock.yaml
+package-lock.json
+yarn.lock
+
+# Graphify's own outputs (avoid recursive analysis)
+graphify-out/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Repo scratch / one-off files
+_*.txt
+_*.ps1
+_*.md
+test-out.txt
+typecheck-out.txt
+lint-out.txt
+pinterest-snapshots-*.json
+pr-body-*.md
+smoke-*.txt
