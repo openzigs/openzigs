@@ -94,6 +94,31 @@ export class QueueMaster extends EventEmitter {
   /** Prevents overlapping ticks when dispatch takes longer than pollIntervalMs. */
   private tickRunning = false;
 
+  // ── Issue #1022: VRAM-headroom gate for FluxQ ────────────
+  /** Minimum free VRAM (GB) on the FluxQ sidecar required to dispatch a new
+   *  image-gen job. Below this, processImageGen() defers and re-checks on
+   *  the next tick. The sidecar's own self-heal (empty_cache → unload+reload
+   *  on OOM) is the hard backstop; this is a soft gate that avoids even
+   *  trying when we already know VRAM is starved. Configurable via env so
+   *  ops can tune per-GPU without a code change. */
+  private readonly imageGenMinFreeVramGb: number = (() => {
+    const raw = process.env.FLUXQ_MIN_FREE_VRAM_GB;
+    const parsed = raw ? Number.parseFloat(raw) : NaN;
+    return Number.isFinite(parsed) && parsed >= 0 ? parsed : 1.0;
+  })();
+  /** Earliest monotonic timestamp at which the VRAM gate will permit
+   *  another dispatch attempt. Set when a tick observes vram_free_gb below
+   *  the threshold; processImageGen() short-circuits until now() >= this. */
+  private imageGenVramCooldownUntil = 0;
+  /** Length of the cooldown window when the VRAM gate trips, in ms.
+   *  5 seconds matches the cadence at which FluxQ recovers fragmented
+   *  segments under expandable_segments. */
+  private readonly imageGenVramCooldownMs: number = (() => {
+    const raw = process.env.FLUXQ_VRAM_COOLDOWN_MS;
+    const parsed = raw ? Number.parseInt(raw, 10) : NaN;
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : 5_000;
+  })();
+
   constructor(repo: MediaQueueRepository, config: QueueConfig) {
     super();
     this.repo = repo;
@@ -776,6 +801,19 @@ export class QueueMaster extends EventEmitter {
       .filter((j) => !AUDIO_JOB_TYPES.has(j.type));
     if (pending.length === 0) return;
 
+    // Issue #1022 — VRAM cooldown gate: if a recent tick saw vram_free_gb
+    // below threshold, hold off and let the sidecar's empty_cache cycle
+    // reclaim fragmented segments. Jobs stay `pending` so the next tick
+    // re-evaluates — we never silently drop them.
+    const nowMs = Date.now();
+    if (this.imageGenVramCooldownUntil > nowMs) {
+      const remainingMs = this.imageGenVramCooldownUntil - nowMs;
+      logger.debug(
+        `[QueueMaster] FluxQ VRAM cooldown active (${remainingMs}ms left); deferring ${pending.length} pending job(s)`,
+      );
+      return;
+    }
+
     // Poll FluxQ status to check if it's healthy (only when not already busy)
     try {
       this.imageGenStatus = await this.getWorkerStatus(
@@ -791,6 +829,26 @@ export class QueueMaster extends EventEmitter {
     if (this.imageGenStatus.is_busy) {
       logger.debug(
         "[QueueMaster] Image-gen busy (generating), skipping after health check",
+      );
+      return;
+    }
+
+    // Issue #1022 — VRAM headroom gate: if FluxQ reports less than the
+    // configured minimum free VRAM, defer dispatch and arm the cooldown
+    // so we don't hammer /status every tick. The sidecar's OOM self-heal
+    // (empty_cache + retry, then unload+reload + retry) is the hard
+    // backstop; this is the soft gate that avoids even trying when we
+    // already know VRAM is starved.
+    const vramFree = this.imageGenStatus.vram_free_gb;
+    if (
+      typeof vramFree === "number" &&
+      vramFree < this.imageGenMinFreeVramGb
+    ) {
+      this.imageGenVramCooldownUntil = nowMs + this.imageGenVramCooldownMs;
+      logger.warn(
+        `[QueueMaster] FluxQ VRAM low (${vramFree.toFixed(2)} GB free < ` +
+          `${this.imageGenMinFreeVramGb} GB threshold) — pausing image dispatch ` +
+          `for ${this.imageGenVramCooldownMs}ms (${pending.length} job(s) remain pending)`,
       );
       return;
     }
@@ -1094,8 +1152,11 @@ export class QueueMaster extends EventEmitter {
     if (nodeConfig.token)
       headers["Authorization"] = `Bearer ${nodeConfig.token}`;
 
-    // FluxQ uses /health (returns { model, model_loaded, ... }), M2 Pro uses /status
-    const endpoint = node === "image-gen" ? "/health" : "/status";
+    // Both endpoints work for status, but /status additionally exposes
+    // `vram_free_gb` which processImageGen() uses for the issue-#1022
+    // VRAM-headroom dispatch gate. /health is sufficient for the rest of
+    // the workers since they don't need VRAM gating here.
+    const endpoint = node === "image-gen" ? "/status" : "/status";
     const res = await fetch(`${nodeConfig.url}${endpoint}`, {
       headers,
       signal: AbortSignal.timeout(5000),
@@ -1105,10 +1166,14 @@ export class QueueMaster extends EventEmitter {
     const data = (await res.json()) as Record<string, unknown>;
 
     if (node === "image-gen") {
-      // FluxQ /health returns { model, model_loaded, is_busy, ... }
+      // FluxQ /status returns { is_busy, loaded_model, vram_free_gb, ... }
+      const vramRaw = data.vram_free_gb;
+      const vram_free_gb =
+        typeof vramRaw === "number" && Number.isFinite(vramRaw) ? vramRaw : null;
       return {
         is_busy: !!(data.is_busy as boolean),
-        loaded_model: data.model_loaded ? (data.model as string) : null,
+        loaded_model: (data.loaded_model as string) ?? null,
+        vram_free_gb,
       };
     }
 

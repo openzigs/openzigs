@@ -196,8 +196,7 @@ describe("QueueMaster", () => {
           json: () =>
             Promise.resolve({
               is_busy: false,
-              model: "flux-schnell",
-              model_loaded: true,
+              loaded_model: "flux-schnell",
             }),
         })
         .mockResolvedValueOnce({
@@ -776,6 +775,111 @@ describe("QueueMaster", () => {
       );
       expect(unloadCall).toBeDefined();
       expect(repo.markDispatched).toHaveBeenCalledWith("img-vram-1");
+    });
+
+    // ── Issue #1022 — VRAM-headroom dispatch gate ────────────
+    it("defers image dispatch when FluxQ vram_free_gb is below threshold", async () => {
+      const job = makeJob({ id: "img-low-vram-1", targetNode: "image-gen" });
+      repo.getPendingJobs.mockReturnValue([job]);
+      repo.listJobs.mockReturnValue([]);
+
+      // image-gen /status reports starved VRAM (0.4 GB free, threshold 1.0)
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            is_busy: false,
+            loaded_model: "flux-schnell",
+            vram_free_gb: 0.4,
+          }),
+      });
+      // m2-pro / music / lipsync — let the rest of the tick run
+      mockFetch.mockRejectedValue(new Error("skip"));
+
+      await qm.tick();
+
+      // Job MUST stay pending — never dispatched, never failed.
+      expect(repo.markDispatched).not.toHaveBeenCalled();
+      expect(repo.markFailed).not.toHaveBeenCalled();
+    });
+
+    it("dispatches image job when FluxQ vram_free_gb is above threshold", async () => {
+      const job = makeJob({ id: "img-ok-vram-1", targetNode: "image-gen" });
+      repo.getPendingJobs.mockReturnValue([job]);
+      repo.listJobs.mockReturnValue([]);
+
+      // image-gen /status: plenty of headroom
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            is_busy: false,
+            loaded_model: "flux-schnell",
+            vram_free_gb: 8.5,
+          }),
+      });
+      // Dispatch POST
+      mockFetch.mockResolvedValueOnce({ status: 202, ok: true });
+      mockFetch.mockRejectedValue(new Error("skip"));
+
+      await qm.tick();
+      expect(repo.markDispatched).toHaveBeenCalledWith("img-ok-vram-1");
+    });
+
+    it("does not gate when vram_free_gb is missing (unknown headroom)", async () => {
+      const job = makeJob({ id: "img-no-vram-1", targetNode: "image-gen" });
+      repo.getPendingJobs.mockReturnValue([job]);
+      repo.listJobs.mockReturnValue([]);
+
+      // /status without vram_free_gb (older sidecar) — must NOT gate.
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            is_busy: false,
+            loaded_model: "flux-schnell",
+          }),
+      });
+      mockFetch.mockResolvedValueOnce({ status: 202, ok: true });
+      mockFetch.mockRejectedValue(new Error("skip"));
+
+      await qm.tick();
+      expect(repo.markDispatched).toHaveBeenCalledWith("img-no-vram-1");
+    });
+
+    it("VRAM cooldown short-circuits the next tick within the window", async () => {
+      const job = makeJob({ id: "img-cooldown-1", targetNode: "image-gen" });
+      repo.getPendingJobs.mockReturnValue([job]);
+      repo.listJobs.mockReturnValue([]);
+
+      // First tick: low VRAM → arms cooldown.
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            is_busy: false,
+            loaded_model: "flux-schnell",
+            vram_free_gb: 0.2,
+          }),
+      });
+      mockFetch.mockRejectedValue(new Error("skip"));
+      await qm.tick();
+      expect(repo.markDispatched).not.toHaveBeenCalled();
+
+      // Second tick immediately after: cooldown active → should NOT call
+      // /status for image-gen at all (no fetch to image-gen URL). Easiest
+      // assertion: no new dispatch and no markFailed.
+      mockFetch.mockClear();
+      mockFetch.mockRejectedValue(new Error("skip"));
+      await qm.tick();
+      expect(repo.markDispatched).not.toHaveBeenCalled();
+      expect(repo.markFailed).not.toHaveBeenCalled();
+      // Confirm we short-circuited before hitting /status on image-gen.
+      const imageGenStatusCall = mockFetch.mock.calls.find(
+        (c) =>
+          String(c[0]).includes(":5005") && String(c[0]).includes("/status"),
+      );
+      expect(imageGenStatusCall).toBeUndefined();
     });
   });
 
