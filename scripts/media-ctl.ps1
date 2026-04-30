@@ -137,15 +137,14 @@ function Restart-Svc([string]$svc) {
     switch ($svc) {
         "flux" {
             if ($callbackSecret) { $envLines += "export FLUXQ_CALLBACK_SECRET='$callbackSecret'" }
-            # Issue #1022 — fragmentation-resistant CUDA allocator. Without
-            # this, bulk pitch image fan-out OOMs after the first few jobs
-            # despite VRAM accounting showing GB free. Honour an operator
-            # override (only set when not already exported).
-            $envLines += "export PYTORCH_CUDA_ALLOC_CONF=`"`${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}`""
-            # Issue #1022 — sequential cpu offload (slower per-step but ~3 GB
-            # lower peak VRAM) is required to fit flux-schnell at 1024×576 on
-            # 12 GB cards. Operators can opt out by exporting the env var.
-            $envLines += "export FLUXQ_SEQUENTIAL_OFFLOAD=`"`${FLUXQ_SEQUENTIAL_OFFLOAD:-1}`""
+            # Issue #1022 — fragmentation-resistant CUDA allocator + sequential
+            # cpu offload. Required to fit flux-schnell at 1024x576 on 12 GB
+            # cards without OOM after the first few bulk jobs. Operators can
+            # override by exporting these env vars before invoking the script.
+            # Single-quoted PS strings so the bash ${VAR:-default} parameter
+            # expansion passes through verbatim.
+            $envLines += 'export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"'
+            $envLines += 'export FLUXQ_SEQUENTIAL_OFFLOAD="${FLUXQ_SEQUENTIAL_OFFLOAD:-1}"'
         }
         "ltx" {
             if ($callbackSecret) { $envLines += "export CALLBACK_SECRET='$callbackSecret'" }
@@ -169,19 +168,32 @@ function Restart-Svc([string]$svc) {
     }
     $envBlock = ($envLines -join "`n")
 
+    # Write the launcher to a temp .sh file in WSL and execute via `bash <file>`.
+    # Avoids wsl.exe argument-quote mangling that corrupts `(...)` and nested
+    # double-quotes when the script is passed inline (issue #1022 follow-up).
     $script = @"
+#!/bin/bash
 lsof -ti :$port 2>/dev/null | xargs -r kill -9 2>/dev/null || true
 sleep 1
 mkdir -p '$LOG_DIR' '$PID_DIR'
+echo '[media-ctl] restart $svc -> $dir' >> '$log'
+date -u '+[media-ctl] %FT%TZ' >> '$log'
 $envBlock
-nohup bash -c 'cd $dir && source venv/bin/activate && exec python $serverFile --port $port >> $log 2>&1' > /dev/null 2>&1 &
-echo `$! > '$pidFile'
+cd '$dir' || { echo '[media-ctl] cd failed: $dir' >> '$log'; exit 1; }
+source venv/bin/activate || { echo '[media-ctl] venv activate failed' >> '$log'; exit 1; }
+setsid python '$serverFile' --port $port </dev/null >> '$log' 2>&1 &
+PID=`$!
+echo `$PID > '$pidFile'
 disown -a
-echo "Started PID `$(cat '$pidFile')"
-sleep 2
-curl -s http://localhost:$port/health
+echo "Started PID `$PID"
+sleep 3
+curl -s --max-time 3 http://localhost:$port/health
 "@
-    wsl $script
+    $tmpName = "media-ctl-$svc-$([Guid]::NewGuid().ToString('N').Substring(0,8)).sh"
+    $tmpPath = "/tmp/$tmpName"
+    # Write the script through a wsl bash heredoc to avoid CRLF-on-write issues.
+    $b64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes(($script -replace "`r","")))
+    wsl "echo $b64 | base64 -d > $tmpPath && chmod +x $tmpPath && bash $tmpPath; rm -f $tmpPath"
 }
 
 function Stop-Svc([string]$svc) {
