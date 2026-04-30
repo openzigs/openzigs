@@ -62,7 +62,7 @@ jobs:
         run: uv tool install "graphifyy==0.5.6"
 
       - name: Build graph (AST-only, no LLM)
-        run: uv tool run --from graphifyy python scripts/graphify-ast-build.py
+        run: uv tool run --from graphifyy python -u scripts/graphify-ast-build.py
 
       - name: Show graph stats
         run: |
