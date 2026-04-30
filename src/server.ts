@@ -3999,6 +3999,15 @@ httpServer.listen(port, "0.0.0.0", async () => {
       queueMaster,
       pitchRepo,
       auditLogger,
+      // Bug-fix (post-PR-#1024 walkthrough): PR #1023's FluxQ refactor
+      // changed `MediaJob.resultUrl` from a local filesystem path to a
+      // REST URL (`/api/queue/assets/file/<filename>`). The pitch
+      // listener was still treating it as a path and feeding it to
+      // `fs.copyFile()`, which on Windows resolved the leading slash to
+      // drive root (`C:\api\queue\assets\file\...`) and ENOENT'd. Plumb
+      // the same `galleryDir` QueueMaster persists asset bytes into so
+      // the listener can invert URL\u2192path.
+      galleryDir: path.join(os.homedir(), ".openzigs", "gallery"),
       // Bug-fix (post-PR-#1017 walkthrough): when a Pitch image job
       // completes (success or retries-exhausted failure), broadcast over
       // Socket.IO so the deck editor's `useSlideImageStatus` hook flips

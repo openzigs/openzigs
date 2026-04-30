@@ -912,4 +912,181 @@ describe("registerImageCompletionListener", () => {
     expect(failed).not.toHaveBeenCalled();
     reg.dispose();
   });
+
+  // ── Bug-fix (post-PR-#1024 walkthrough): PR #1023's FluxQ refactor
+  // changed `MediaJob.resultUrl` from a local filesystem path to a
+  // REST asset URL. The listener used to feed that string straight to
+  // `fs.copyFile()` (Windows then resolved `/api/queue/...` to drive
+  // root → ENOENT). The contract now: resolve `/api/queue/assets/file/`
+  // URLs back to the gallery dir before the copy.
+  describe("queue asset URL resolution", () => {
+    it("translates `/api/queue/assets/file/<name>` resultUrl to <galleryDir>/<name>", async () => {
+      const queue = new EventEmitter();
+      const repo = mockQueueRepo();
+      const enqRes = enqueueSlideImage({
+        deckId: "deck-1",
+        slideId: "slide-photo",
+        prompt: "a fluffy kitten",
+        kind: "image",
+        mediaQueueRepo: repo,
+      });
+
+      // Lay down the file the QueueMaster would have written.
+      const galleryDir = join(tmpDir, "gallery");
+      mkdirSync(galleryDir, { recursive: true });
+      const filename = `${enqRes.jobId}.png`;
+      await sharp({
+        create: {
+          width: 64,
+          height: 32,
+          channels: 3,
+          background: { r: 10, g: 20, b: 30 },
+        },
+      })
+        .png()
+        .toFile(join(galleryDir, filename));
+
+      const reg = registerImageCompletionListener({
+        queueMaster: queue as unknown as Parameters<
+          typeof registerImageCompletionListener
+        >[0]["queueMaster"],
+        pitchRepo,
+        baseDir,
+        galleryDir,
+        clock: FROZEN,
+      });
+
+      queue.emit("job:complete", {
+        id: enqRes.jobId,
+        type: "txt2img",
+        requiredModel: "flux-schnell",
+        targetNode: "image-gen",
+        payload: { prompt: "a fluffy kitten", width: 64, height: 32 },
+        status: "complete",
+        // The post-#1023 contract: REST URL, NOT a filesystem path.
+        resultUrl: `/api/queue/assets/file/${filename}`,
+        resultMetadata: null,
+        projectId: "pitch:deck-1",
+        galleryAssetId: null,
+        priority: 0,
+        retries: 0,
+        maxRetries: 3,
+        error: null,
+        retryAfter: null,
+        createdAt: FROZEN(),
+        dispatchedAt: FROZEN(),
+        completedAt: FROZEN(),
+        notifyViaTelegram: false,
+        telegramChatId: null,
+      } as MediaJob);
+      await reg.flush();
+
+      const assets = pitchRepo.listAssetsForDeck("deck-1");
+      expect(assets).toHaveLength(1);
+      expect(assets[0].mime).toBe("image/png");
+      expect(assets[0].width).toBe(64);
+      expect(assets[0].height).toBe(32);
+      expect(existsSync(assets[0].local_path)).toBe(true);
+      reg.dispose();
+    });
+
+    it("still accepts a legacy absolute filesystem path resultUrl", async () => {
+      const queue = new EventEmitter();
+      const repo = mockQueueRepo();
+      const enqRes = enqueueSlideImage({
+        deckId: "deck-1",
+        slideId: "slide-photo",
+        prompt: "x",
+        kind: "image",
+        mediaQueueRepo: repo,
+      });
+      const sourcePath = await makeImageFile("legacy.png");
+      const reg = registerImageCompletionListener({
+        queueMaster: queue as unknown as Parameters<
+          typeof registerImageCompletionListener
+        >[0]["queueMaster"],
+        pitchRepo,
+        baseDir,
+        galleryDir: join(tmpDir, "gallery-empty"),
+      });
+      queue.emit("job:complete", {
+        id: enqRes.jobId,
+        type: "txt2img",
+        requiredModel: "flux-schnell",
+        targetNode: "image-gen",
+        payload: { prompt: "x", width: 320, height: 180 },
+        status: "complete",
+        resultUrl: sourcePath,
+        resultMetadata: null,
+        projectId: null,
+        galleryAssetId: null,
+        priority: 0,
+        retries: 0,
+        maxRetries: 3,
+        error: null,
+        retryAfter: null,
+        createdAt: FROZEN(),
+        dispatchedAt: FROZEN(),
+        completedAt: FROZEN(),
+        notifyViaTelegram: false,
+        telegramChatId: null,
+      } as MediaJob);
+      await reg.flush();
+      expect(pitchRepo.listAssetsForDeck("deck-1")).toHaveLength(1);
+      reg.dispose();
+    });
+
+    it("rejects a queue-asset URL that escapes the gallery dir via traversal", async () => {
+      const queue = new EventEmitter();
+      const repo = mockQueueRepo();
+      const auditLog = vi.fn().mockResolvedValue(undefined);
+      const enqRes = enqueueSlideImage({
+        deckId: "deck-1",
+        slideId: "slide-photo",
+        prompt: "x",
+        kind: "image",
+        mediaQueueRepo: repo,
+      });
+      const reg = registerImageCompletionListener({
+        queueMaster: queue as unknown as Parameters<
+          typeof registerImageCompletionListener
+        >[0]["queueMaster"],
+        pitchRepo,
+        baseDir,
+        galleryDir: join(tmpDir, "gallery"),
+        auditLogger: { log: auditLog },
+      });
+      queue.emit("job:complete", {
+        id: enqRes.jobId,
+        type: "txt2img",
+        requiredModel: "flux-schnell",
+        targetNode: "image-gen",
+        payload: { prompt: "x" },
+        status: "complete",
+        // Encoded slash should still be rejected (decodeURIComponent →
+        // contains `/` → basename-only check fails).
+        resultUrl: `/api/queue/assets/file/..%2F..%2Fetc%2Fpasswd`,
+        resultMetadata: null,
+        projectId: null,
+        galleryAssetId: null,
+        priority: 0,
+        retries: 0,
+        maxRetries: 3,
+        error: null,
+        retryAfter: null,
+        createdAt: FROZEN(),
+        dispatchedAt: FROZEN(),
+        completedAt: FROZEN(),
+        notifyViaTelegram: false,
+        telegramChatId: null,
+      } as MediaJob);
+      await reg.flush();
+      expect(pitchRepo.listAssetsForDeck("deck-1")).toEqual([]);
+      const events = auditLog.mock.calls.map(
+        (c: unknown[]) => (c[0] as { event: string }).event,
+      );
+      expect(events).toContain("pitch.image.persist_failed");
+      reg.dispose();
+    });
+  });
 });
