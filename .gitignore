@@ -148,6 +148,8 @@ nohup.out
 
 # Throwaway tmp-prefixed scripts (auto-generated during debugging)
 tmp-*
+smoke-*-output.txt
+smoke-*-final.ps1
 
 # Pinterest / scheduler generated output (runtime data, not source)
 pinterest-daily-summary-*.md

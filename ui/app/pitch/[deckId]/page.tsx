@@ -151,11 +151,13 @@ async function downloadExport(
 }
 
 /**
- * Toolbar "Present" button (sub-issue #999). Opens the Reveal renderer
- * in a new tab in presenter mode. The auth token is appended as a query
- * param because `window.open` / anchor navigation can't carry an
- * `Authorization` header. The link is disabled while there are unsaved
- * edits so a presenter never demos a half-saved deck.
+ * Toolbar "Present" button (sub-issue #999, rewired in #1016). Navigates
+ * to the authenticated `/pitch/{deckId}/present` Next.js route instead of
+ * opening the API render URL with a `?token=` query string. The route
+ * runs inside the user's browser session so the auth token rides as a
+ * `Bearer` header on the fetch \u2014 no token leakage to history, Referer,
+ * or proxy logs. The link is disabled while there are unsaved edits so a
+ * presenter never demos a half-saved deck.
  */
 function PresentButton({
   deckId,
@@ -164,12 +166,7 @@ function PresentButton({
   deckId: string;
   disabled: boolean;
 }) {
-  const baseUrl = buildUrl(
-    `/api/admin/pitch/decks/${deckId}/render?mode=present`,
-  );
-  const href = AUTH_TOKEN
-    ? `${baseUrl}${baseUrl.includes("?") ? "&" : "?"}token=${encodeURIComponent(AUTH_TOKEN)}`
-    : baseUrl;
+  const href = `/pitch/${deckId}/present`;
   const className =
     "inline-flex items-center gap-1 rounded border border-border px-2 py-1 text-xs hover:bg-muted/40";
   if (disabled) {
@@ -411,6 +408,14 @@ export default function PitchDeckEditorPage() {
 
   const selectedSlide =
     slides.find((s) => s.id === selectedSlideId) ?? slides[0] ?? null;
+  // 0-based index of the currently selected slide in `deck.slides`.
+  // Forwarded to RevealCanvas so the iframe navigates to it via
+  // postMessage instead of being rebuilt on every selection (which would
+  // flash the canvas and reset Reveal back to slide 0).
+  const selectedSlideIndex = Math.max(
+    0,
+    slides.findIndex((s) => s.id === (selectedSlide?.id ?? "")),
+  );
 
   // ── Handlers ─────────────────────────────────────────────────────────
 
@@ -626,6 +631,7 @@ export default function PitchDeckEditorPage() {
           <RevealCanvas
             cacheKey={cacheKey}
             html={renderQuery.data ?? ""}
+            selectedSlideIndex={selectedSlideIndex}
             onContainerClick={handleCanvasClick}
           />
         )}

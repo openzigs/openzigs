@@ -24,7 +24,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { ConfirmDialog } from "@/components/confirm-dialog";
-import { buildUrl } from "@/lib/api";
+import { fetchWithAuth } from "@/lib/api";
 
 export interface SlideRailItem {
   id: string;
@@ -408,6 +408,7 @@ const SlideThumbnail = ({
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const [visible, setVisible] = useState(false);
   const [errored, setErrored] = useState(false);
+  const [html, setHtml] = useState<string | null>(null);
 
   useEffect(() => {
     if (visible) return;
@@ -434,15 +435,40 @@ const SlideThumbnail = ({
     return () => obs.disconnect();
   }, [visible]);
 
-  const params = new URLSearchParams({
-    mode: "embedded",
-    slide: slideId,
-  });
-  if (token) params.set("token", token);
-  if (cacheKey !== undefined) params.set("v", String(cacheKey));
-  const src = buildUrl(
-    `/api/admin/pitch/decks/${encodeURIComponent(deckId)}/render?${params.toString()}`,
-  );
+  // Bug-fix 2026-04-28 — fetch the embedded HTML with a Bearer header
+  // (via fetchWithAuth) and feed it into the iframe via `srcDoc`. The
+  // previous `<iframe src=...?token=...>` approach (a) leaked the admin
+  // token in URL / Referer / access logs, and (b) was blocked entirely
+  // by the Next.js dev server's default `X-Frame-Options: DENY` header
+  // on the proxied response. `srcDoc` sidesteps both problems and keeps
+  // thumbnails consistent with the canvas (which already does the same).
+  useEffect(() => {
+    if (!visible) return;
+    let cancelled = false;
+    const params = new URLSearchParams({ mode: "embedded", slide: slideId });
+    if (cacheKey !== undefined) params.set("v", String(cacheKey));
+    const path = `/api/admin/pitch/decks/${encodeURIComponent(deckId)}/render?${params.toString()}`;
+    (async () => {
+      try {
+        const res = await fetchWithAuth(path);
+        if (!res.ok) {
+          if (!cancelled) setErrored(true);
+          return;
+        }
+        const text = await res.text();
+        if (!cancelled) setHtml(text);
+      } catch {
+        if (!cancelled) setErrored(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [visible, slideId, deckId, cacheKey]);
+
+  // `token` is intentionally unused now — retained on the props type
+  // for backward compatibility but no longer placed in the URL.
+  void token;
 
   return (
     <div
@@ -451,12 +477,12 @@ const SlideThumbnail = ({
       className="relative mt-1 aspect-video w-full overflow-hidden rounded border border-border bg-muted/40"
       aria-label={`Slide ${slideIndex} thumbnail: ${titleFallback}`}
     >
-      {visible && !errored ? (
+      {visible && !errored && html !== null ? (
         <iframe
           title={`Slide ${slideIndex} thumbnail`}
-          src={src}
+          srcDoc={html}
           loading="lazy"
-          sandbox="allow-same-origin"
+          sandbox="allow-scripts allow-same-origin"
           tabIndex={-1}
           onError={() => setErrored(true)}
           style={{
@@ -469,7 +495,7 @@ const SlideThumbnail = ({
           }}
         />
       ) : null}
-      {!visible || errored ? (
+      {!visible || errored || (visible && html === null && !errored) ? (
         <div
           data-testid={`slide-rail-thumbnail-fallback-${slideId}`}
           className="absolute inset-0 flex items-center justify-center px-2 text-center text-[10px] font-medium text-muted-foreground"

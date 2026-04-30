@@ -482,16 +482,17 @@ describe("PitchDeckEditorPage", () => {
     );
   });
 
-  it("renders a Present anchor with target=_blank and rel=noopener noreferrer (#999)", async () => {
+  it("renders a Present anchor pointing at the authenticated /pitch/[deckId]/present route (#1016)", async () => {
     render(<PitchDeckEditorPage />, { wrapper });
     const present = await screen.findByTestId("pitch-editor-present");
     expect(present.tagName).toBe("A");
     expect(present).toHaveAttribute("target", "_blank");
     expect(present).toHaveAttribute("rel", "noopener noreferrer");
     const href = present.getAttribute("href") ?? "";
-    expect(href).toContain(
-      "/api/admin/pitch/decks/deck-1/render?mode=present",
-    );
+    // Should now be the in-app route (no `?token=` smuggling).
+    expect(href).toBe("/pitch/deck-1/present");
+    expect(href).not.toContain("token=");
+    expect(href).not.toContain("/render");
   });
 
   it("renders a Share button that opens the ShareDialog (#1000)", async () => {

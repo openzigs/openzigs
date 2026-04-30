@@ -496,3 +496,63 @@ describe("fanOutImageGeneration — image style preset (#998)", () => {
     expect(payload.prompt).toBe("raw prompt only");
   });
 });
+
+// ── Issue #1007 — fallback background prompt derivation ──────────────
+import { deriveFallbackBackgroundPrompt } from "./image-fanout.js";
+
+describe("deriveFallbackBackgroundPrompt (#1007)", () => {
+  it("derives a prompt from the slide title", () => {
+    const slide = {
+      template: "title" as const,
+      content: { title: "Our Vision for 2030", subtitle: "Bold but achievable" },
+      speaker_notes: "",
+      transition: "slide" as const,
+    };
+    const out = deriveFallbackBackgroundPrompt(slide as never);
+    expect(out).toBeTruthy();
+    expect(out).toContain("Our Vision for 2030");
+  });
+
+  it("falls back to heading for a bullet_list", () => {
+    const slide = {
+      template: "bullet_list" as const,
+      content: { heading: "Quarterly Highlights", bullets: ["a", "b"] },
+      speaker_notes: "",
+      transition: "slide" as const,
+    };
+    const out = deriveFallbackBackgroundPrompt(slide as never);
+    expect(out).toContain("Quarterly Highlights");
+  });
+
+  it("returns undefined when no usable text is present", () => {
+    const slide = {
+      template: "qa" as const,
+      content: { heading: "" },
+      speaker_notes: "",
+      transition: "slide" as const,
+    };
+    const out = deriveFallbackBackgroundPrompt(slide as never);
+    expect(out).toBeUndefined();
+  });
+
+  it("planImageJobs uses the fallback when background_image_prompt is missing", () => {
+    const slides = [
+      {
+        id: "s1",
+        slide: {
+          template: "title" as const,
+          content: { title: "Hello World", subtitle: "demo" },
+          speaker_notes: "",
+          transition: "slide" as const,
+        } as never,
+      },
+    ];
+    const { plan, skipped } = planImageJobs(slides, {
+      deriveFallbackBackgrounds: true,
+    });
+    expect(skipped).toBe(0);
+    // One background job planned because the fallback derived a prompt.
+    expect(plan.length).toBeGreaterThanOrEqual(1);
+    expect(plan.some((p) => p.kind === "background")).toBe(true);
+  });
+});

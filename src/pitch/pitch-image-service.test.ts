@@ -150,7 +150,7 @@ describe("enqueueSlideImage", () => {
       .not.toHaveBeenCalled();
   });
 
-  it("submits a txt2img job with default 1920×1080 and registers a binding", () => {
+  it("submits a txt2img job with FluxQ-clamped fallback dims and registers a binding", () => {
     const repo = mockQueueRepo();
     const r = enqueueSlideImage({
       deckId: "deck-1",
@@ -163,8 +163,11 @@ describe("enqueueSlideImage", () => {
     expect(stub.createJob).toHaveBeenCalledTimes(1);
     const input = stub.createJob.mock.calls[0][0] as CreateMediaJobInput;
     expect(input.type).toBe("txt2img");
-    expect(input.payload.width).toBe(1920);
-    expect(input.payload.height).toBe(1080);
+    // Bug-fix (post-PR-#1017 walkthrough): omitted width/height now fall
+    // back to FLUXQ_FALLBACK_DIMS (1024×576) instead of the OOM-inducing
+    // 1920×1080 that flux-schnell can't fit on a 12 GB card.
+    expect(input.payload.width).toBe(1024);
+    expect(input.payload.height).toBe(576);
     expect(input.model).toBe("flux-schnell");
     expect(input.projectId).toBe("pitch:deck-1");
     const binding = _peekPitchJobBindingForTest(r.jobId);
@@ -213,7 +216,7 @@ describe("enqueueSlideImage", () => {
     expect(submittedPayload.lora_paths).toBeUndefined();
   });
 
-  it("respects explicit width/height/seed/preferredModel", () => {
+  it("clamps explicit width/height down to FluxQ-recommended (post-#1017 dim cap)", () => {
     const repo = mockQueueRepo();
     enqueueSlideImage({
       deckId: "deck-1",
@@ -228,8 +231,11 @@ describe("enqueueSlideImage", () => {
     });
     const stub = repo as unknown as { createJob: ReturnType<typeof vi.fn> };
     const input = stub.createJob.mock.calls[0][0] as CreateMediaJobInput;
-    expect(input.payload.width).toBe(1080);
-    expect(input.payload.height).toBe(1920);
+    // Cache empty in this test → clamp ceiling = FLUXQ_FALLBACK_DIMS
+    // (1024×576). Both requested dims are LARGER on at least one axis
+    // and therefore get pinned down: 1080→1024, 1920→576.
+    expect(input.payload.width).toBe(1024);
+    expect(input.payload.height).toBe(576);
     expect(input.payload.seed).toBe(42);
     expect(input.model).toBe("flux-dev");
   });
@@ -624,9 +630,10 @@ describe("registerImageCompletionListener", () => {
     const assets = pitchRepo.listAssetsForDeck("deck-1");
     expect(assets).toHaveLength(1);
     expect(assets[0].mime).toBe("image/jpeg");
-    // Sharp couldn't decode → falls back to defaults.
-    expect(assets[0].width).toBe(1920);
-    expect(assets[0].height).toBe(1080);
+    // Sharp couldn't decode → falls back to FluxQ defaults
+    // (FLUXQ_FALLBACK_DIMS = 1024×576) — see post-#1017 dim-clamp fix.
+    expect(assets[0].width).toBe(1024);
+    expect(assets[0].height).toBe(576);
     reg.dispose();
   });
 
@@ -735,8 +742,351 @@ describe("registerImageCompletionListener", () => {
     const assets = pitchRepo.listAssetsForDeck("deck-1");
     expect(assets).toHaveLength(1);
     expect(assets[0].mime).toBe("application/octet-stream");
-    expect(assets[0].width).toBe(1920);
-    expect(assets[0].height).toBe(1080);
+    // Bug-fix (post-PR-#1017 walkthrough): when sharp can't probe an
+    // image AND the job payload doesn't carry width/height, we now fall
+    // back to FluxQ's `recommended_*` (or FLUXQ_FALLBACK_DIMS = 1024×576
+    // when the cache is empty) instead of the old hard-coded 1920×1080
+    // that was OOM-killing flux-schnell on 12 GB cards.
+    expect(assets[0].width).toBe(1024);
+    expect(assets[0].height).toBe(576);
     reg.dispose();
+  });
+
+  it("fires onPitchImageReady after a successful persist", async () => {
+    const queue = new EventEmitter();
+    const repo = mockQueueRepo();
+    const enqRes = enqueueSlideImage({
+      deckId: "deck-1",
+      slideId: "slide-photo",
+      prompt: "a fluffy kitten",
+      kind: "image",
+      mediaQueueRepo: repo,
+    });
+    const sourcePath = await makeImageFile("ready.png");
+    const ready = vi.fn();
+    const reg = registerImageCompletionListener({
+      queueMaster: queue as unknown as Parameters<
+        typeof registerImageCompletionListener
+      >[0]["queueMaster"],
+      pitchRepo,
+      baseDir,
+      onPitchImageReady: ready,
+    });
+    queue.emit("job:complete", {
+      id: enqRes.jobId,
+      type: "txt2img",
+      requiredModel: "flux-schnell",
+      targetNode: "image-gen",
+      payload: { prompt: "a fluffy kitten", width: 512, height: 512 },
+      status: "complete",
+      resultUrl: sourcePath,
+      resultMetadata: null,
+      projectId: "pitch:deck-1",
+      galleryAssetId: null,
+      priority: 0,
+      retries: 0,
+      maxRetries: 3,
+      error: null,
+      retryAfter: null,
+      createdAt: FROZEN(),
+      dispatchedAt: FROZEN(),
+      completedAt: FROZEN(),
+      notifyViaTelegram: false,
+      telegramChatId: null,
+    } as MediaJob);
+    await reg.flush();
+    expect(ready).toHaveBeenCalledTimes(1);
+    expect(ready).toHaveBeenCalledWith({
+      deckId: "deck-1",
+      slideId: "slide-photo",
+      slot: "image",
+      jobId: enqRes.jobId,
+      assetId: enqRes.assetId,
+    });
+    reg.dispose();
+  });
+
+  it("fires onPitchImageFailed and clears the binding on job:failed", async () => {
+    const queue = new EventEmitter();
+    const repo = mockQueueRepo();
+    const enqRes = enqueueSlideImage({
+      deckId: "deck-1",
+      slideId: "slide-title",
+      prompt: "starfield background",
+      kind: "background",
+      mediaQueueRepo: repo,
+    });
+    const failed = vi.fn();
+    const ready = vi.fn();
+    const reg = registerImageCompletionListener({
+      queueMaster: queue as unknown as Parameters<
+        typeof registerImageCompletionListener
+      >[0]["queueMaster"],
+      pitchRepo,
+      baseDir,
+      onPitchImageReady: ready,
+      onPitchImageFailed: failed,
+    });
+    queue.emit(
+      "job:failed",
+      {
+        id: enqRes.jobId,
+        type: "txt2img",
+        requiredModel: "flux-schnell",
+        targetNode: "image-gen",
+        payload: { prompt: "x" },
+        status: "failed",
+        resultUrl: null,
+        resultMetadata: null,
+        projectId: "pitch:deck-1",
+        galleryAssetId: null,
+        priority: 0,
+        retries: 3,
+        maxRetries: 3,
+        error: "CUDA out of memory",
+        retryAfter: null,
+        createdAt: FROZEN(),
+        dispatchedAt: FROZEN(),
+        completedAt: FROZEN(),
+        notifyViaTelegram: false,
+        telegramChatId: null,
+      } as MediaJob,
+      "CUDA out of memory",
+    );
+    await reg.flush();
+    expect(ready).not.toHaveBeenCalled();
+    expect(failed).toHaveBeenCalledTimes(1);
+    expect(failed).toHaveBeenCalledWith({
+      deckId: "deck-1",
+      slideId: "slide-title",
+      slot: "background",
+      jobId: enqRes.jobId,
+      assetId: enqRes.assetId,
+      error: "CUDA out of memory",
+    });
+    // Subsequent late `job:complete` for the same id is now ignored
+    // (binding was removed by the failed handler).
+    queue.emit("job:complete", {
+      id: enqRes.jobId,
+      type: "txt2img",
+      requiredModel: "flux-schnell",
+      targetNode: "image-gen",
+      payload: { prompt: "x" },
+      status: "complete",
+      resultUrl: null,
+      resultMetadata: null,
+      projectId: null,
+      galleryAssetId: null,
+      priority: 0,
+      retries: 0,
+      maxRetries: 3,
+      error: null,
+      retryAfter: null,
+      createdAt: FROZEN(),
+      dispatchedAt: FROZEN(),
+      completedAt: FROZEN(),
+      notifyViaTelegram: false,
+      telegramChatId: null,
+    } as MediaJob);
+    await reg.flush();
+    expect(ready).not.toHaveBeenCalled();
+    reg.dispose();
+  });
+
+  it("ignores foreign job:failed events (no binding)", async () => {
+    const queue = new EventEmitter();
+    const failed = vi.fn();
+    const reg = registerImageCompletionListener({
+      queueMaster: queue as unknown as Parameters<
+        typeof registerImageCompletionListener
+      >[0]["queueMaster"],
+      pitchRepo,
+      onPitchImageFailed: failed,
+    });
+    queue.emit(
+      "job:failed",
+      { id: "some-other-job", payload: {} } as unknown as MediaJob,
+      "boom",
+    );
+    await reg.flush();
+    expect(failed).not.toHaveBeenCalled();
+    reg.dispose();
+  });
+
+  // ── Bug-fix (post-PR-#1024 walkthrough): PR #1023's FluxQ refactor
+  // changed `MediaJob.resultUrl` from a local filesystem path to a
+  // REST asset URL. The listener used to feed that string straight to
+  // `fs.copyFile()` (Windows then resolved `/api/queue/...` to drive
+  // root → ENOENT). The contract now: resolve `/api/queue/assets/file/`
+  // URLs back to the gallery dir before the copy.
+  describe("queue asset URL resolution", () => {
+    it("translates `/api/queue/assets/file/<name>` resultUrl to <galleryDir>/<name>", async () => {
+      const queue = new EventEmitter();
+      const repo = mockQueueRepo();
+      const enqRes = enqueueSlideImage({
+        deckId: "deck-1",
+        slideId: "slide-photo",
+        prompt: "a fluffy kitten",
+        kind: "image",
+        mediaQueueRepo: repo,
+      });
+
+      // Lay down the file the QueueMaster would have written.
+      const galleryDir = join(tmpDir, "gallery");
+      mkdirSync(galleryDir, { recursive: true });
+      const filename = `${enqRes.jobId}.png`;
+      await sharp({
+        create: {
+          width: 64,
+          height: 32,
+          channels: 3,
+          background: { r: 10, g: 20, b: 30 },
+        },
+      })
+        .png()
+        .toFile(join(galleryDir, filename));
+
+      const reg = registerImageCompletionListener({
+        queueMaster: queue as unknown as Parameters<
+          typeof registerImageCompletionListener
+        >[0]["queueMaster"],
+        pitchRepo,
+        baseDir,
+        galleryDir,
+        clock: FROZEN,
+      });
+
+      queue.emit("job:complete", {
+        id: enqRes.jobId,
+        type: "txt2img",
+        requiredModel: "flux-schnell",
+        targetNode: "image-gen",
+        payload: { prompt: "a fluffy kitten", width: 64, height: 32 },
+        status: "complete",
+        // The post-#1023 contract: REST URL, NOT a filesystem path.
+        resultUrl: `/api/queue/assets/file/${filename}`,
+        resultMetadata: null,
+        projectId: "pitch:deck-1",
+        galleryAssetId: null,
+        priority: 0,
+        retries: 0,
+        maxRetries: 3,
+        error: null,
+        retryAfter: null,
+        createdAt: FROZEN(),
+        dispatchedAt: FROZEN(),
+        completedAt: FROZEN(),
+        notifyViaTelegram: false,
+        telegramChatId: null,
+      } as MediaJob);
+      await reg.flush();
+
+      const assets = pitchRepo.listAssetsForDeck("deck-1");
+      expect(assets).toHaveLength(1);
+      expect(assets[0].mime).toBe("image/png");
+      expect(assets[0].width).toBe(64);
+      expect(assets[0].height).toBe(32);
+      expect(existsSync(assets[0].local_path)).toBe(true);
+      reg.dispose();
+    });
+
+    it("still accepts a legacy absolute filesystem path resultUrl", async () => {
+      const queue = new EventEmitter();
+      const repo = mockQueueRepo();
+      const enqRes = enqueueSlideImage({
+        deckId: "deck-1",
+        slideId: "slide-photo",
+        prompt: "x",
+        kind: "image",
+        mediaQueueRepo: repo,
+      });
+      const sourcePath = await makeImageFile("legacy.png");
+      const reg = registerImageCompletionListener({
+        queueMaster: queue as unknown as Parameters<
+          typeof registerImageCompletionListener
+        >[0]["queueMaster"],
+        pitchRepo,
+        baseDir,
+        galleryDir: join(tmpDir, "gallery-empty"),
+      });
+      queue.emit("job:complete", {
+        id: enqRes.jobId,
+        type: "txt2img",
+        requiredModel: "flux-schnell",
+        targetNode: "image-gen",
+        payload: { prompt: "x", width: 320, height: 180 },
+        status: "complete",
+        resultUrl: sourcePath,
+        resultMetadata: null,
+        projectId: null,
+        galleryAssetId: null,
+        priority: 0,
+        retries: 0,
+        maxRetries: 3,
+        error: null,
+        retryAfter: null,
+        createdAt: FROZEN(),
+        dispatchedAt: FROZEN(),
+        completedAt: FROZEN(),
+        notifyViaTelegram: false,
+        telegramChatId: null,
+      } as MediaJob);
+      await reg.flush();
+      expect(pitchRepo.listAssetsForDeck("deck-1")).toHaveLength(1);
+      reg.dispose();
+    });
+
+    it("rejects a queue-asset URL that escapes the gallery dir via traversal", async () => {
+      const queue = new EventEmitter();
+      const repo = mockQueueRepo();
+      const auditLog = vi.fn().mockResolvedValue(undefined);
+      const enqRes = enqueueSlideImage({
+        deckId: "deck-1",
+        slideId: "slide-photo",
+        prompt: "x",
+        kind: "image",
+        mediaQueueRepo: repo,
+      });
+      const reg = registerImageCompletionListener({
+        queueMaster: queue as unknown as Parameters<
+          typeof registerImageCompletionListener
+        >[0]["queueMaster"],
+        pitchRepo,
+        baseDir,
+        galleryDir: join(tmpDir, "gallery"),
+        auditLogger: { log: auditLog },
+      });
+      queue.emit("job:complete", {
+        id: enqRes.jobId,
+        type: "txt2img",
+        requiredModel: "flux-schnell",
+        targetNode: "image-gen",
+        payload: { prompt: "x" },
+        status: "complete",
+        // Encoded slash should still be rejected (decodeURIComponent →
+        // contains `/` → basename-only check fails).
+        resultUrl: `/api/queue/assets/file/..%2F..%2Fetc%2Fpasswd`,
+        resultMetadata: null,
+        projectId: null,
+        galleryAssetId: null,
+        priority: 0,
+        retries: 0,
+        maxRetries: 3,
+        error: null,
+        retryAfter: null,
+        createdAt: FROZEN(),
+        dispatchedAt: FROZEN(),
+        completedAt: FROZEN(),
+        notifyViaTelegram: false,
+        telegramChatId: null,
+      } as MediaJob);
+      await reg.flush();
+      expect(pitchRepo.listAssetsForDeck("deck-1")).toEqual([]);
+      const events = auditLog.mock.calls.map(
+        (c: unknown[]) => (c[0] as { event: string }).event,
+      );
+      expect(events).toContain("pitch.image.persist_failed");
+      reg.dispose();
+    });
   });
 });

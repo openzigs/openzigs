@@ -127,11 +127,28 @@ describe("renderDeckToHtml", () => {
     }
   });
 
-  it("embedded mode emits a fragment, not a full document", () => {
+  it("embedded mode emits a full HTML document with reveal.js + the deck wrapper", () => {
     const out = renderDeckToHtml(buildDeck([ALL_TEMPLATES[0]]), KIT, "embedded");
+    expect(out.html.startsWith("<!doctype html>")).toBe(true);
+    expect(out.html).toContain("reveal.js@5/dist/reveal.css");
+    expect(out.html).toContain("reveal.js@5/dist/theme/white.css");
     expect(out.html).toContain('class="pitch-deck-wrap pitch-deck-wrap--embedded"');
-    expect(out.html).not.toContain("<!doctype");
-    expect(out.html).not.toContain("<html");
+    expect(out.html).toContain("Reveal");
+    expect(out.html).toContain("initialize");
+    // Embedded mode disables Reveal's controls/progress chrome (the slide
+    // rail provides navigation) and runs in `embedded: true` so it scales
+    // to the iframe rather than the viewport.
+    expect(out.html).toContain("embedded: true");
+    expect(out.html).toContain("controls: false");
+  });
+
+  it("present mode emits a full HTML document with controls + progress enabled", () => {
+    const out = renderDeckToHtml(buildDeck([ALL_TEMPLATES[0]]), KIT, "present");
+    expect(out.html.startsWith("<!doctype html>")).toBe(true);
+    expect(out.html).toContain('class="pitch-deck-wrap pitch-deck-wrap--present"');
+    expect(out.html).toContain("embedded: false");
+    expect(out.html).toContain("controls: true");
+    expect(out.html).toContain("progress: true");
   });
 
   it("standalone mode emits a full HTML document with reveal.js link + init script", () => {
@@ -558,7 +575,12 @@ describe("renderDeckToHtml — per-template XSS hardening", () => {
   it.each(PER_TEMPLATE_CASES)(
     "neutralizes XSS in $template template",
     ({ build }) => {
-      const html = renderDeckToHtml(buildDeck([build()]), KIT, "embedded").html;
+      // Use `autoInit: false` so the boilerplate Reveal init `<script>` tag
+      // does not produce a false positive on the `<script` substring check;
+      // we only care that DOMPurify stripped attacker-supplied scripts/handlers.
+      const html = renderDeckToHtml(buildDeck([build()]), KIT, "embedded", {
+        autoInit: false,
+      }).html;
       expect(html).not.toContain("<script");
       expect(html).not.toContain("onerror");
       expect(html).not.toContain("javascript:");
@@ -687,16 +709,21 @@ describe("renderDeckToHtml — embedded chrome (#997)", () => {
     const out = renderDeckToHtml(buildDeck([ALL_TEMPLATES[0]]), KIT, "embedded");
     expect(out.html).toContain('class="pitch-deck-wrap pitch-deck-wrap--embedded"');
     expect(out.html).toContain("<style>");
-    // Brand chrome assertions: border + drop shadow + brand var override.
-    expect(out.html).toContain("border: 2px solid var(--pitch-primary");
-    expect(out.html).toContain("box-shadow: 0 8px 24px rgba(0,0,0,0.25)");
+    // Issue #1007 — design refresh swapped the heavy 2px border for a
+    // softer drop shadow + 6px brand-gradient bar across the top, and
+    // moved the heading-color override to the unified `--r-` Reveal vars.
+    expect(out.html).toContain("box-shadow: 0 12px 40px rgba(0,0,0,0.18)");
     expect(out.html).toContain("--r-heading-color: var(--pitch-primary)");
+    expect(out.html).toContain("linear-gradient(90deg, var(--pitch-primary), var(--pitch-accent))");
   });
 
-  it("uses `--present` modifier class for present mode while keeping fragment output", () => {
+  it("uses `--present` modifier class for present mode (full HTML document)", () => {
+    // Embedded + present modes both emit a full HTML document so the
+    // editor canvas / presenter window can mount Reveal.js without the
+    // host page needing to load reveal.css separately.
     const out = renderDeckToHtml(buildDeck([ALL_TEMPLATES[0]]), KIT, "present");
     expect(out.html).toContain('class="pitch-deck-wrap pitch-deck-wrap--present"');
-    expect(out.html).not.toContain("<!doctype");
+    expect(out.html.startsWith("<!doctype html>")).toBe(true);
   });
 
   it("renders brand colors at full saturation via inline CSS variables", () => {
@@ -713,5 +740,135 @@ describe("renderDeckToHtml — embedded chrome (#997)", () => {
       expect(out.html).toContain(KIT.footerText);
     }
   });
+
+  // Bug-fix 2026-04-28 — full-viewport sizing.
+  it("forces the embedded wrapper to fill the iframe viewport (height collapse fix)", () => {
+    const out = renderDeckToHtml(buildDeck([ALL_TEMPLATES[0]]), KIT, "embedded");
+    // Wrapper must claim full viewport height — otherwise it collapses
+    // to its content (~84 px) inside the canvas iframe and Reveal scales
+    // the slide layout down to ~0.2x.
+    expect(out.html).toContain("height: 100vh");
+    expect(out.html).toContain("html, body");
+  });
+
+  // Bug-fix 2026-04-28 — selection navigation via initialSlideIndex + postMessage.
+  it("navigates to `initialSlideIndex` after Reveal initializes", () => {
+    const out = renderDeckToHtml(
+      buildDeck([ALL_TEMPLATES[0], ALL_TEMPLATES[1], ALL_TEMPLATES[2]]),
+      KIT,
+      "embedded",
+      { initialSlideIndex: 2 },
+    );
+    expect(out.html).toContain("deck.slide(2)");
+  });
+
+  it("clamps `initialSlideIndex` to the rendered slide range", () => {
+    const out = renderDeckToHtml(
+      buildDeck([ALL_TEMPLATES[0], ALL_TEMPLATES[1]]),
+      KIT,
+      "embedded",
+      { initialSlideIndex: 99 },
+    );
+    // Two slides → max valid index is 1.
+    expect(out.html).toContain("deck.slide(1)");
+  });
+
+  it("installs a postMessage listener for `openzigs:navigate` and signals ready", () => {
+    const out = renderDeckToHtml(buildDeck([ALL_TEMPLATES[0]]), KIT, "embedded");
+    expect(out.html).toContain('window.addEventListener("message"');
+    expect(out.html).toContain('"openzigs:navigate"');
+    expect(out.html).toContain('"openzigs:reveal-ready"');
+  });
 });
 
+
+// ── Issue #1007 — design polish + image-fanout fallback ──────────────
+import { renderRichBody } from "./pitch-renderer.js";
+
+describe("renderRichBody (#1007)", () => {
+  it("returns empty string for empty / whitespace input", () => {
+    expect(renderRichBody("")).toBe("");
+    expect(renderRichBody("   \n  \n")).toBe("");
+  });
+
+  it("renders a <ul> when 2+ lines start with bullet markers", () => {
+    const html = renderRichBody("• First point\n• Second point\n• Third point");
+    expect(html).toContain("<ul>");
+    expect(html).toContain("<li>First point</li>");
+    expect(html).toContain("<li>Second point</li>");
+    expect(html).toContain("<li>Third point</li>");
+    expect(html).not.toContain("•");
+  });
+
+  it("treats `-` and `*` line prefixes as bullets too", () => {
+    const html = renderRichBody("- alpha\n- beta\n* gamma");
+    expect(html).toContain("<ul>");
+    expect(html).toContain("<li>alpha</li>");
+    expect(html).toContain("<li>beta</li>");
+    expect(html).toContain("<li>gamma</li>");
+  });
+
+  it("renders <p> per line for multi-line plain prose", () => {
+    const html = renderRichBody("First sentence.\nSecond sentence.");
+    expect(html).toContain("<p>First sentence.</p>");
+    expect(html).toContain("<p>Second sentence.</p>");
+    expect(html).not.toContain("<ul>");
+  });
+
+  it("renders inline content for single-line input", () => {
+    const html = renderRichBody("Just one line.");
+    expect(html).not.toContain("<ul>");
+    expect(html).not.toContain("<p>");
+    expect(html).toContain("Just one line.");
+  });
+});
+
+describe("renderDeckToHtml — Google Fonts loader (#1007)", () => {
+  it("emits a Google Fonts <link> for both heading and body families", () => {
+    const out = renderDeckToHtml(buildDeck([ALL_TEMPLATES[0]]), KIT, "embedded");
+    expect(out.html).toContain("https://fonts.googleapis.com/css2?");
+    expect(out.html).toContain("family=Inter");
+    expect(out.html).toContain("display=swap");
+  });
+
+  it("rejects family names with disallowed characters", () => {
+    const evilKit: BrandKit = {
+      ...KIT,
+      fontHeading: "Inter\"</style><script>alert(1)</script>",
+      fontBody: "Source Sans",
+    };
+    const out = renderDeckToHtml(buildDeck([ALL_TEMPLATES[0]]), evilKit, "embedded");
+    // The hostile family name must not survive in the Google Fonts <link>
+    // (sanitized by `brandKitFontsLink`) NOR in the inline CSS variable
+    // (sanitized by `brandKitInlineStyle` — see issue #1007). We can't
+    // assert absence of `</script>` in the whole document because Reveal
+    // legitimately emits its own `<script>` bootstrap; instead assert
+    // the hostile `alert(1)` payload is fully stripped and the loader
+    // URL only contains the safe `family=Source%20Sans` value.
+    expect(out.html).not.toContain("alert(1)");
+    expect(out.html).toContain("family=Source%20Sans");
+  });
+
+  it("emits no link tag when both fonts are missing", () => {
+    const noFontKit: BrandKit = { ...KIT, fontHeading: "", fontBody: "" };
+    const out = renderDeckToHtml(buildDeck([ALL_TEMPLATES[0]]), noFontKit, "embedded");
+    expect(out.html).not.toContain("fonts.googleapis.com");
+  });
+});
+
+describe("renderDeckToHtml — two_column rich body (#1007)", () => {
+  it("converts bullet-prefixed two_column content into proper <ul><li>", () => {
+    const slide = s("two_column", {
+      heading: "Compare",
+      left: "• Alpha\n• Beta\n• Gamma",
+      right: "Plain prose on the right.",
+    });
+    const out = renderDeckToHtml(buildDeck([slide]), KIT, "embedded");
+    expect(out.html).toContain("<ul>");
+    expect(out.html).toContain("<li>Alpha</li>");
+    expect(out.html).toContain("<li>Beta</li>");
+    expect(out.html).toContain("<li>Gamma</li>");
+    expect(out.html).toContain("Plain prose on the right.");
+    expect(out.html).toContain("pitch-twocol-col");
+  });
+});

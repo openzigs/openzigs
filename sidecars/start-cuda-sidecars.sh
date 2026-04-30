@@ -116,7 +116,7 @@ else
     IMAGE_GEN_CUDA_VISIBLE="$IMAGE_GEN_GPU_INDEX"
 fi
 echo "Starting Image Gen sidecar (port 5005, GPU(s) $IMAGE_GEN_CUDA_VISIBLE, pooling=${IMAGE_GEN_POOLING_MODE:-off})..."
-setsid bash -c "cd '$SIDECARS_DIR/image-gen' && source venv/bin/activate && CUDA_VISIBLE_DEVICES='$IMAGE_GEN_CUDA_VISIBLE' IMAGE_GEN_POOLING_MODE='${IMAGE_GEN_POOLING_MODE:-off}' HF_TOKEN='${HF_TOKEN:-}' FLUXQ_CALLBACK_SECRET='${CALLBACK_SECRET:-}' FLUX_DEFAULT_MODEL='${FLUX_DEFAULT_MODEL:-flux-dev}' exec python server_cuda.py --port 5005 >> '$LOG_DIR/image-gen-cuda.log' 2>&1" &
+setsid bash -c "cd '$SIDECARS_DIR/image-gen' && source venv/bin/activate && CUDA_VISIBLE_DEVICES='$IMAGE_GEN_CUDA_VISIBLE' IMAGE_GEN_POOLING_MODE='${IMAGE_GEN_POOLING_MODE:-off}' PYTORCH_CUDA_ALLOC_CONF='${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}' FLUXQ_SEQUENTIAL_OFFLOAD='${FLUXQ_SEQUENTIAL_OFFLOAD:-1}' HF_TOKEN='${HF_TOKEN:-}' FLUXQ_CALLBACK_SECRET='${CALLBACK_SECRET:-}' FLUX_DEFAULT_MODEL='${FLUX_DEFAULT_MODEL:-flux-dev}' exec python server_cuda.py --port 5005 >> '$LOG_DIR/image-gen-cuda.log' 2>&1" &
 IMG_PID=$!
 echo "$IMG_PID" > "$PID_DIR/image-gen.pid"
 echo "  PID: $IMG_PID"

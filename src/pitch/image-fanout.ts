@@ -37,6 +37,7 @@ import {
   resolveImageStyle,
   type ImageStyle,
 } from "./image-style-prompts.js";
+import { refreshFluxQRecommendedDims } from "./fluxq-recommended-dims.js";
 
 /** A persisted slide carries both the SlideRecord identity and the Slide payload. */
 export interface SlideForFanout {
@@ -57,6 +58,14 @@ export interface FanOutImageGenerationOpts {
    * uses this prefix. Undefined = no preset.
    */
   imageStyle?: ImageStyle;
+  /**
+   * Issue #1007 — when true, slides without an explicit
+   * `background_image_prompt` get a fallback prompt derived from the
+   * slide's title/heading/quote so every slide has a background image.
+   * The API layer sets this for both auto-fan-out (after deck draft) and
+   * the manual `generate-all` endpoint. Defaults to false.
+   */
+  deriveFallbackBackgrounds?: boolean;
   /**
    * Optional hook invoked synchronously after each successful enqueue.
    * Used by the API layer to emit `pitch:image:queued` and audit log.
@@ -96,7 +105,10 @@ interface PlannedJob {
 }
 
 /** Pure: scan a deck and return the list of jobs that *would* be enqueued. */
-export function planImageJobs(slides: SlideForFanout[]): {
+export function planImageJobs(
+  slides: SlideForFanout[],
+  opts: { deriveFallbackBackgrounds?: boolean } = {},
+): {
   plan: PlannedJob[];
   skipped: number;
 } {
@@ -106,7 +118,17 @@ export function planImageJobs(slides: SlideForFanout[]): {
   for (const { id: slideId, slide } of slides) {
     const perSlideStyle = slide.image_style;
     // 1. Background prompt (any template).
-    const bgPrompt = slide.background_image_prompt?.trim();
+    // Issue #1007 — when `deriveFallbackBackgrounds` is enabled and the
+    // AI/user did not emit a background prompt, derive a fallback from
+    // the slide's most descriptive text field (title / heading / quote)
+    // so EVERY slide gets a background image. Disabled by default to
+    // preserve the historical "opt-in only" semantics that existing
+    // call sites rely on.
+    let bgPrompt = slide.background_image_prompt?.trim();
+    if ((!bgPrompt || bgPrompt.length < 3) && opts.deriveFallbackBackgrounds) {
+      const derived = deriveFallbackBackgroundPrompt(slide);
+      if (derived) bgPrompt = derived;
+    }
     if (bgPrompt && bgPrompt.length >= 3) {
       // Background prompts have no URL slot to check — schema doesn't
       // expose a persisted background URL. We always enqueue, since the
@@ -203,6 +225,37 @@ function shouldEnqueueImage(img: SlideImage): boolean {
 }
 
 /**
+ * Issue #1007 — derive a short background-image prompt from a slide's
+ * most descriptive text field when the AI did not emit one. Pure / no
+ * dependencies, deterministic for a given slide. Returns `undefined` if
+ * the slide has no usable text.
+ *
+ * Exported for unit testing.
+ */
+export function deriveFallbackBackgroundPrompt(
+  slide: Slide,
+): string | undefined {
+  const c = slide.content as Record<string, unknown>;
+  const candidates: Array<unknown> = [
+    c.title,
+    c.heading,
+    c.subtitle,
+    c.caption,
+    c.overlay_text,
+    c.quote,
+  ];
+  for (const candidate of candidates) {
+    if (typeof candidate !== "string") continue;
+    const trimmed = candidate.trim();
+    if (trimmed.length < 3) continue;
+    // Cap length so the derived prompt stays focused.
+    const focus = trimmed.slice(0, 140);
+    return `Abstract conceptual background illustration evoking: ${focus}`;
+  }
+  return undefined;
+}
+
+/**
  * Walk the deck and enqueue one flux job per planned slot, capped at
  * `concurrency` in-flight calls at a time. Resolves with counts; never
  * rejects (per-slot errors are reported via `onEnqueueError`).
@@ -211,7 +264,18 @@ export async function fanOutImageGeneration(
   opts: FanOutImageGenerationOpts,
 ): Promise<FanOutImageGenerationResult> {
   const concurrency = Math.max(1, opts.concurrency ?? 4);
-  const { plan, skipped } = planImageJobs(opts.slides);
+  const { plan, skipped } = planImageJobs(opts.slides, {
+    deriveFallbackBackgrounds: opts.deriveFallbackBackgrounds === true,
+  });
+
+  // Bug-fix (post-PR-#1017 walkthrough): probe FluxQ's `/health` once
+  // before the worker pool starts so every `enqueueSlideImage` call below
+  // observes the cached `recommended_width`/`recommended_height` ceiling.
+  // The probe is best-effort; failure falls through to FLUXQ_FALLBACK_DIMS
+  // so we never block the fan-out on a sidecar hiccup.
+  await refreshFluxQRecommendedDims().catch(() => {
+    /* swallow — clamp helper falls back to safe defaults */
+  });
 
   let cursor = 0;
   let enqueued = 0;

@@ -418,6 +418,13 @@ export interface CreateMediaJobInput {
 export interface WorkerStatus {
   is_busy: boolean;
   loaded_model: string | null;
+  /**
+   * Free VRAM in GB reported by the sidecar's /status endpoint.
+   * Optional: only populated for FluxQ (image-gen) and used by
+   * QueueMaster.processImageGen to gate dispatch (issue #1022).
+   * `null`/`undefined` means "unknown" — do not gate on it.
+   */
+  vram_free_gb?: number | null;
 }
 
 // ── Webhook Completion ────────────────────────────────────────

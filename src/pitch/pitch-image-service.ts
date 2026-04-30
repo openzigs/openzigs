@@ -36,6 +36,7 @@ import type { PitchRepository } from "./pitch-repository.js";
 import type { Slide, SlideAsset } from "./pitch-schema.js";
 import { injectCharacterLora } from "../api/inject-character-lora.js";
 import { applyStylePreset, type ImageStyle } from "./image-style-prompts.js";
+import { clampToFluxQRecommendedDims } from "./fluxq-recommended-dims.js";
 
 /** Slots inside a slide's `content` object that can hold a `SlideImage`. */
 export type ImageSlot = "image" | "left_image" | "right_image";
@@ -107,8 +108,6 @@ export function _peekPitchJobBindingForTest(jobId: string): PitchJobBinding | un
   return pendingPitchJobs.get(jobId);
 }
 
-const DEFAULT_WIDTH = 1920;
-const DEFAULT_HEIGHT = 1080;
 const DEFAULT_MODEL = "flux-schnell";
 
 /**
@@ -136,10 +135,17 @@ export function enqueueSlideImage(opts: EnqueueSlideImageOpts): EnqueueSlideImag
   // final left-to-right order in the payload.
   const styledPrompt = applyStylePreset(opts.prompt, opts.imageStyle);
 
+  // Bug-fix (post-PR-#1017 walkthrough): clamp the requested dims down to
+  // FluxQ's advertised recommended_width/height. Slide templates render at
+  // 1920×1080 but flux-schnell on a 12 GB GPU OOMs above ~1024×576. The
+  // cache is populated by `refreshFluxQRecommendedDims()` (called from
+  // `fanOutImageGeneration` on entry); when unpopulated the helper falls
+  // back to the safe 1024×576 default.
+  const clamped = clampToFluxQRecommendedDims(opts.width, opts.height);
   const payload: MediaJobPayload = {
     prompt: styledPrompt,
-    width: opts.width ?? DEFAULT_WIDTH,
-    height: opts.height ?? DEFAULT_HEIGHT,
+    width: clamped.width,
+    height: clamped.height,
   };
   if (opts.seed !== undefined) {
     payload.seed = opts.seed;
@@ -171,6 +177,20 @@ export function enqueueSlideImage(opts: EnqueueSlideImageOpts): EnqueueSlideImag
 
 // ── Completion listener ────────────────────────────────────────────────
 
+export interface PitchImageEventInfo {
+  deckId: string;
+  slideId: string;
+  /** Slot identifier consistent with the `pitch:image:queued` payload. */
+  slot: string;
+  jobId: string;
+  assetId: string;
+}
+
+export interface PitchImageFailedEventInfo extends PitchImageEventInfo {
+  /** Human-readable failure reason from the queue (retries-exhausted message etc). */
+  error: string;
+}
+
 export interface RegisterImageCompletionOpts {
   queueMaster: Pick<QueueMaster, "on" | "off">;
   pitchRepo: PitchRepository;
@@ -180,6 +200,28 @@ export interface RegisterImageCompletionOpts {
   clock?: () => Date;
   /** Override the assets root (defaults to `~/.openzigs/pitch/assets`). */
   baseDir?: string;
+  /**
+   * Override the gallery dir used to resolve `/api/queue/assets/file/<name>`
+   * URLs back to disk paths (defaults to `~/.openzigs/gallery`). Must match
+   * the `galleryDir` configured for QueueMaster / `src/api/queue.ts`; the
+   * QueueMaster persists asset bytes here and emits a URL pointing at the
+   * REST asset route, never the raw filesystem path.
+   */
+  galleryDir?: string;
+  /**
+   * Fired AFTER the result asset has been persisted and the slide content
+   * patched. Wired to Socket.IO `pitch:image:ready` in server.ts so the
+   * UI's `useSlideImageStatus` hook can flip the slot from `queued` to
+   * `ready`. Bug-fix for post-PR-#1017 walkthrough — previously this
+   * event was never emitted server-side.
+   */
+  onPitchImageReady?: (info: PitchImageEventInfo) => void;
+  /**
+   * Fired when a queued Pitch image job exhausts its retries (or is
+   * killed). Wired to Socket.IO `pitch:image:failed` in server.ts so the
+   * deck editor can surface the failure ("Generating 0 / N" forever bug).
+   */
+  onPitchImageFailed?: (info: PitchImageFailedEventInfo) => void;
 }
 
 export interface ImageCompletionRegistration {
@@ -202,17 +244,25 @@ export function registerImageCompletionListener(
 ): ImageCompletionRegistration {
   const inFlight = new Set<Promise<void>>();
 
-  const handler = (job: MediaJob): void => {
+  const completeHandler = (job: MediaJob): void => {
     const p = handleJobComplete(job, opts).finally(() => {
       inFlight.delete(p);
     });
     inFlight.add(p);
   };
 
-  opts.queueMaster.on("job:complete", handler);
+  const failedHandler = (job: MediaJob, error: string): void => {
+    // Synchronous handler — looking up + clearing the binding map and
+    // firing the optional callback don't need to be awaited.
+    handleJobFailed(job, error, opts);
+  };
+
+  opts.queueMaster.on("job:complete", completeHandler);
+  opts.queueMaster.on("job:failed", failedHandler);
   return {
     dispose: () => {
-      opts.queueMaster.off("job:complete", handler);
+      opts.queueMaster.off("job:complete", completeHandler);
+      opts.queueMaster.off("job:failed", failedHandler);
     },
     flush: async () => {
       // Drain in waves: handlers may queue further work synchronously.
@@ -221,6 +271,43 @@ export function registerImageCompletionListener(
       }
     },
   };
+}
+
+/** Slot identifier used in Socket.IO `pitch:image:*` payloads. */
+function slotFromBinding(binding: PitchJobBinding): string {
+  return binding.kind === "background" ? "background" : binding.slot;
+}
+
+function handleJobFailed(
+  job: MediaJob,
+  error: string,
+  opts: RegisterImageCompletionOpts,
+): void {
+  const binding = pendingPitchJobs.get(job.id);
+  if (!binding) return; // Not one of ours.
+  pendingPitchJobs.delete(job.id);
+
+  void safeAudit(opts.auditLogger, {
+    event: "pitch.image.job_failed",
+    deckId: binding.deckId,
+    slideId: binding.slideId,
+    slot: slotFromBinding(binding),
+    jobId: job.id,
+    error,
+  });
+
+  try {
+    opts.onPitchImageFailed?.({
+      deckId: binding.deckId,
+      slideId: binding.slideId,
+      slot: slotFromBinding(binding),
+      jobId: job.id,
+      assetId: binding.assetId,
+      error,
+    });
+  } catch {
+    // Listener must NOT throw — that would crash the EventEmitter loop.
+  }
 }
 
 async function handleJobComplete(
@@ -244,6 +331,17 @@ async function handleJobComplete(
 
   try {
     await persistCompletedAsset(job, binding, opts);
+    try {
+      opts.onPitchImageReady?.({
+        deckId: binding.deckId,
+        slideId: binding.slideId,
+        slot: slotFromBinding(binding),
+        jobId: job.id,
+        assetId: binding.assetId,
+      });
+    } catch {
+      // Listener must NOT throw.
+    }
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err);
     await safeAudit(opts.auditLogger, {
@@ -263,12 +361,13 @@ async function persistCompletedAsset(
   opts: RegisterImageCompletionOpts,
 ): Promise<void> {
   const baseDir = opts.baseDir ?? join(homedir(), ".openzigs", "pitch", "assets");
+  const galleryDir = opts.galleryDir ?? join(homedir(), ".openzigs", "gallery");
   // Defence-in-depth: `binding.deckId` originates from a URL parameter and
   // `binding.assetId` is a server-generated UUID, but CodeQL (and good
   // hygiene) demand we contain every joined path inside `baseDir`. Reject
   // anything that would resolve outside the assets root.
   const baseDirResolved = resolve(baseDir);
-  const sourcePath = resolveSourcePath(job.resultUrl as string);
+  const sourcePath = resolveSourcePath(job.resultUrl as string, galleryDir);
   const ext = (extname(sourcePath) || ".png").toLowerCase();
   const targetDirCandidate = resolve(baseDirResolved, binding.deckId);
   const targetPathCandidate = resolve(
@@ -295,8 +394,14 @@ async function persistCompletedAsset(
 
   // Read intrinsic dimensions — fall back to the requested size if sharp
   // can't decode (corrupt image).
-  let width = (job.payload.width as number | undefined) ?? DEFAULT_WIDTH;
-  let height = (job.payload.height as number | undefined) ?? DEFAULT_HEIGHT;
+  // Use the (already-clamped) payload dims as fallback if sharp can't
+  // decode the file — those are the dims the model was actually asked for.
+  const clampedFallback = clampToFluxQRecommendedDims(
+    job.payload.width as number | undefined,
+    job.payload.height as number | undefined,
+  );
+  let width = (job.payload.width as number | undefined) ?? clampedFallback.width;
+  let height = (job.payload.height as number | undefined) ?? clampedFallback.height;
   try {
     const meta = await sharp(targetPath).metadata();
     if (typeof meta.width === "number" && meta.width > 0) width = meta.width;
@@ -408,9 +513,58 @@ function patchSlideImageSlot(
   }
 }
 
-function resolveSourcePath(resultUrl: string): string {
+/** REST asset URL prefix emitted by QueueMaster / `/api/queue` complete handlers. */
+const QUEUE_ASSET_URL_PREFIX = "/api/queue/assets/file/";
+
+/**
+ * Translate a queue-job `resultUrl` back to a local disk path.
+ *
+ * Three input shapes are supported:
+ *   1. `file:///abs/path.png` — legacy, returned by some sidecars; the
+ *      `URL.pathname` is decoded and the leading `/` stripped on Windows
+ *      drive paths.
+ *   2. `/api/queue/assets/file/<filename>` — the canonical shape since
+ *      PR #1023's FluxQ refactor. The QueueMaster wrote the asset bytes
+ *      to `<galleryDir>/<filename>` and only emits the REST path; we
+ *      translate it back to a disk path under `galleryDir`. The filename
+ *      portion is restricted to a basename (no path separators, no `..`)
+ *      to keep this purely a URL→path inversion, never an arbitrary read.
+ *   3. An absolute filesystem path — returned as-is for back-compat with
+ *      pre-#1023 callers and tests.
+ */
+function resolveSourcePath(resultUrl: string, galleryDir: string): string {
   if (resultUrl.startsWith("file://")) {
     return new URL(resultUrl).pathname.replace(/^\/([A-Za-z]:)/, "$1");
+  }
+  if (resultUrl.startsWith(QUEUE_ASSET_URL_PREFIX)) {
+    const rawName = resultUrl.slice(QUEUE_ASSET_URL_PREFIX.length);
+    // Strip any query string / fragment a future caller might tack on.
+    const cleaned = rawName.split(/[?#]/, 1)[0];
+    const decoded = decodeURIComponent(cleaned);
+    // Containment: only allow a flat basename, never a traversal sequence.
+    if (
+      decoded.length === 0 ||
+      decoded.includes("/") ||
+      decoded.includes("\\") ||
+      decoded === "." ||
+      decoded === ".." ||
+      decoded.includes("\0")
+    ) {
+      throw new Error(
+        `pitch-image-service: refusing to resolve queue asset URL with non-basename filename: ${resultUrl}`,
+      );
+    }
+    const galleryDirResolved = resolve(galleryDir);
+    const candidate = resolve(galleryDirResolved, decoded);
+    if (
+      candidate !== galleryDirResolved &&
+      !candidate.startsWith(galleryDirResolved + sep)
+    ) {
+      throw new Error(
+        `pitch-image-service: refusing to read outside gallery dir (${resultUrl})`,
+      );
+    }
+    return candidate;
   }
   return resultUrl;
 }

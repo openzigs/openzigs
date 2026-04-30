@@ -28,6 +28,20 @@ Port: 5005 (default)
 
 from __future__ import annotations
 
+import os as _early_os
+
+# ── VRAM fragmentation fix (issue #1022) ────────────────────
+# `expandable_segments:True` lets PyTorch's caching allocator grow
+# existing segments instead of fragmenting VRAM into thousands of tiny
+# pinned blocks. On a 12 GB card this is the difference between bulk
+# pitch image fan-out succeeding and OOMing on the second job.
+# Must be set BEFORE `import torch` — torch caches the env at first
+# CUDA call, so setting it later is a no-op. We honour any explicit
+# override the operator passed in via the launch script.
+_early_os.environ.setdefault(
+    "PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True"
+)
+
 import argparse
 import base64
 import gc
@@ -432,8 +446,31 @@ def _load_model(model_key: str, lora_paths: Optional[list[str]] = None,
                 pipe.enable_attention_slicing()
                 _pooled_active = False
         else:
-            pipe.enable_model_cpu_offload()
+            # Issue #1022 — on 12 GB cards, flux-schnell + enable_model_cpu_offload
+            # leaves <100 MiB of headroom and the first inference OOMs trying to
+            # allocate the 72-74 MiB CLIP-L pre-forward swap. We:
+            #   * prefer enable_sequential_cpu_offload when FLUXQ_SEQUENTIAL_OFFLOAD=1
+            #     (slower per-step but ~3 GB lower peak — fits 1024×576 with room).
+            #   * always enable VAE tiling + slicing so decode never re-spikes the
+            #     allocator after a generation succeeds.
+            sequential = os.environ.get("FLUXQ_SEQUENTIAL_OFFLOAD", "").strip().lower() in ("1", "true", "yes", "on")
+            if sequential and hasattr(pipe, "enable_sequential_cpu_offload"):
+                try:
+                    pipe.enable_sequential_cpu_offload()
+                    log.info("FLUXQ_SEQUENTIAL_OFFLOAD=1 → enable_sequential_cpu_offload() (slower but ~3 GB lower peak)")
+                except Exception as e:
+                    log.warning(f"sequential cpu offload failed ({e}); falling back to model-level offload")
+                    pipe.enable_model_cpu_offload()
+            else:
+                pipe.enable_model_cpu_offload()
             pipe.enable_attention_slicing()
+            try:
+                if hasattr(pipe, "vae") and hasattr(pipe.vae, "enable_tiling"):
+                    pipe.vae.enable_tiling()
+                if hasattr(pipe, "vae") and hasattr(pipe.vae, "enable_slicing"):
+                    pipe.vae.enable_slicing()
+            except Exception as e:
+                log.warning(f"VAE tiling/slicing not enabled ({e}); decode may peak higher")
 
         elapsed = time.monotonic() - start
         _pipeline = pipe
@@ -622,6 +659,88 @@ def _generate_image(prompt: str, model_key: str, width: int, height: int,
     return result.images[0]
 
 
+def _empty_cuda_cache() -> None:
+    """Best-effort `torch.cuda.empty_cache()` + `gc.collect()`. Used after every
+    generation (success or failure) and after every OOM-recovery step."""
+    try:
+        gc.collect()
+        if torch is not None and torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            try:
+                torch.cuda.ipc_collect()
+            except Exception:
+                pass
+    except Exception as exc:
+        log.debug(f"empty_cuda_cache: ignoring {type(exc).__name__}: {exc}")
+
+
+def _is_cuda_oom(exc: BaseException) -> bool:
+    """Detect ``torch.cuda.OutOfMemoryError`` without importing torch eagerly.
+
+    On older PyTorch versions the OOM is raised as a ``RuntimeError`` whose
+    message contains ``CUDA out of memory``. We check both conditions so the
+    self-heal path works on every supported wheel."""
+    if torch is not None:
+        oom_cls = getattr(getattr(torch, "cuda", None), "OutOfMemoryError", None)
+        if oom_cls is not None and isinstance(exc, oom_cls):
+            return True
+    msg = str(exc) if exc else ""
+    return "out of memory" in msg.lower() and "cuda" in msg.lower()
+
+
+def _generate_image_with_oom_recovery(
+    prompt: str, model_key: str, width: int, height: int,
+    steps: Optional[int], guidance: float, seed: int,
+    lora_paths: Optional[list[str]] = None,
+    lora_scales: Optional[list[float]] = None,
+) -> "Image.Image":
+    """Wrap ``_generate_image`` with two layers of OOM recovery (issue #1022).
+
+    Step 1: catch the first CUDA OOM, ``empty_cache()``, retry once.
+    Step 2: if the retry still OOMs, unload + reload the pipeline and try
+            once more so a fragmented VRAM arena gets a clean slate.
+    Step 3: still OOM → re-raise so the caller surfaces a structured error."""
+    try:
+        return _generate_image(
+            prompt, model_key, width, height, steps, guidance, seed,
+            lora_paths=lora_paths, lora_scales=lora_scales,
+        )
+    except BaseException as exc:  # noqa: BLE001 — we re-raise non-OOM below
+        if not _is_cuda_oom(exc):
+            raise
+        log.warning(
+            "[oom] CUDA OOM on first attempt; clearing cache and retrying once"
+        )
+        _empty_cuda_cache()
+        try:
+            return _generate_image(
+                prompt, model_key, width, height, steps, guidance, seed,
+                lora_paths=lora_paths, lora_scales=lora_scales,
+            )
+        except BaseException as exc2:  # noqa: BLE001
+            if not _is_cuda_oom(exc2):
+                raise
+            log.warning(
+                "[oom] CUDA OOM on retry; unloading + reloading model for clean VRAM arena"
+            )
+            try:
+                _unload_model()
+            except Exception as unload_exc:
+                log.error(f"[oom] _unload_model failed during recovery: {unload_exc}")
+            _empty_cuda_cache()
+            try:
+                return _generate_image(
+                    prompt, model_key, width, height, steps, guidance, seed,
+                    lora_paths=lora_paths, lora_scales=lora_scales,
+                )
+            except BaseException as exc3:  # noqa: BLE001
+                if not _is_cuda_oom(exc3):
+                    raise
+                log.error("[oom] CUDA OOM after unload+reload; surfacing failure")
+                _empty_cuda_cache()
+                raise
+
+
 def _bg_generate(
     job_id: str, callback_url: Optional[str],
     prompt: str, model_key: str,
@@ -634,8 +753,10 @@ def _bg_generate(
     _generating = True
     try:
         start = time.monotonic()
-        pil_image = _generate_image(prompt, model_key, width, height, steps, guidance, seed,
-                                    lora_paths=lora_paths, lora_scales=lora_scales)
+        pil_image = _generate_image_with_oom_recovery(
+            prompt, model_key, width, height, steps, guidance, seed,
+            lora_paths=lora_paths, lora_scales=lora_scales,
+        )
         elapsed = time.monotonic() - start
         _last_used = time.monotonic()
         log.info(f"[async] generate done in {elapsed:.1f}s job={job_id}")
@@ -658,6 +779,11 @@ def _bg_generate(
         _post_callback(job_id, callback_url, {"job_id": job_id, "status": "failed", "error": _sanitize_runtime_error(e)})
     finally:
         _generating = False
+        # Issue #1022 — always free fragmented VRAM after a job, even on
+        # success. Without this, sequential bulk fan-outs fragment the
+        # caching allocator until the next inference can't allocate even
+        # 72 MiB despite multi-GB nominal headroom.
+        _empty_cuda_cache()
 
 
 def _build_inpaint_pipe(pipeline_type: str, base_pipe: Any) -> Any:
@@ -1173,8 +1299,23 @@ async def generate(req: GenerateRequest):
     seed = req.seed if req.seed is not None else random.randint(0, 2**32 - 1)
 
     start = time.monotonic()
-    pil_image = _generate_image(req.prompt, requested_model, req.width, req.height, req.steps, guidance, seed,
-                                lora_paths=req.lora_paths, lora_scales=req.lora_scales)
+    try:
+        pil_image = _generate_image_with_oom_recovery(
+            req.prompt, requested_model, req.width, req.height, req.steps, guidance, seed,
+            lora_paths=req.lora_paths, lora_scales=req.lora_scales,
+        )
+    except BaseException as exc:  # noqa: BLE001 — convert OOM to clean 503
+        if _is_cuda_oom(exc):
+            log.error(f"[/generate] surfacing CUDA OOM after self-heal: {exc}")
+            _empty_cuda_cache()
+            raise HTTPException(
+                status_code=503,
+                detail="CUDA out of memory after retry; sidecar VRAM is exhausted",
+            ) from exc
+        raise
+    finally:
+        # Issue #1022 — sync path also empties cache after every call.
+        _empty_cuda_cache()
     elapsed = time.monotonic() - start
     _last_used = time.monotonic()
     log.info(f"Generated in {elapsed:.1f}s")

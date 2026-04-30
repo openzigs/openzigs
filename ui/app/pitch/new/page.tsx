@@ -75,6 +75,11 @@ export default function NewPitchDeckPage() {
   // 502'd because the SDK doesn't expose it).
   const [model, setModel] = useState<string>("");
   const [submitting, setSubmitting] = useState(false);
+  // Sub-issue #1012 — visible inline error when the draft endpoint returns
+  // a non-2xx response or the network request rejects. Surfaces the
+  // server's `error.message` envelope when present so the user knows what
+  // to retry. Cleared on the next submit attempt.
+  const [submitError, setSubmitError] = useState<string | null>(null);
   const [createKitOpen, setCreateKitOpen] = useState(false);
   // Condense panel state — set when the user drops/pastes content over
   // the 50 KB draft cap but under the 2 MB hard ceiling. The user must
@@ -221,6 +226,8 @@ export default function NewPitchDeckPage() {
       showToast("Provide a script.", "error");
       return;
     }
+    // Clear any previous error banner so re-submits start fresh (#1012).
+    setSubmitError(null);
     setSubmitting(true);
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), DRAFT_TIMEOUT_MS);
@@ -269,13 +276,15 @@ export default function NewPitchDeckPage() {
       router.push(`/pitch/${data.deck.id}`);
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") {
-        showToast(
-          `Generation timed out after ${Math.round(DRAFT_TIMEOUT_MS / 1000)}s. The model may be cold-starting — please try again.`,
-          "error",
-        );
+        const timeoutMsg = `Generation timed out after ${Math.round(DRAFT_TIMEOUT_MS / 1000)}s. The model may be cold-starting — please try again.`;
+        showToast(timeoutMsg, "error");
+        setSubmitError(timeoutMsg);
       } else {
         const msg = err instanceof Error ? err.message : String(err);
         showToast(`Could not draft deck: ${msg}`, "error");
+        // Inline banner persists until the next submit attempt so users
+        // who miss the toast still see what went wrong (#1012).
+        setSubmitError(msg || "Failed to generate deck.");
       }
     } finally {
       clearTimeout(timer);
@@ -300,6 +309,35 @@ export default function NewPitchDeckPage() {
         <Step active={step === "options"} done={false}>3. Options</Step>
       </ol>
 
+      {submitError && (
+        <div
+          data-testid="wizard-submit-error"
+          role="alert"
+          aria-live="polite"
+          className="mt-4 rounded-md border border-destructive/50 bg-destructive/10 p-3 text-sm text-destructive"
+        >
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <div className="font-semibold">Could not generate deck</div>
+              <div
+                className="mt-1 text-xs"
+                data-testid="wizard-submit-error-message"
+              >
+                {submitError}
+              </div>
+            </div>
+            <button
+              type="button"
+              data-testid="wizard-submit-error-dismiss"
+              onClick={() => setSubmitError(null)}
+              aria-label="Dismiss error"
+              className="shrink-0 rounded border border-destructive/40 px-2 py-0.5 text-[11px] hover:bg-destructive/20"
+            >
+              Dismiss
+            </button>
+          </div>
+        </div>
+      )}
       <div className="mt-6 rounded-lg border border-border bg-card p-6">
         {step === "kit" && (
           <div data-testid="wizard-step-kit">

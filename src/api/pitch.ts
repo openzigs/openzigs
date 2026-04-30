@@ -708,6 +708,16 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
       if (slideIndex !== undefined) {
         renderOpts.slideIndex = slideIndex;
       }
+      // Bug-fix 2026-04-28 — `?initial=N` boots the embedded Reveal at
+      // the slide the user just selected in the rail. Out-of-range or
+      // non-numeric values fall through to slide 0.
+      const rawInitial = req.query.initial;
+      if (typeof rawInitial === "string" && rawInitial.length > 0) {
+        const parsed = Number.parseInt(rawInitial, 10);
+        if (Number.isInteger(parsed) && parsed >= 0) {
+          renderOpts.initialSlideIndex = parsed;
+        }
+      }
       const { html, slideCount } = renderDeckToHtml(
         deck,
         brandKit,
@@ -736,14 +746,20 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
       // mode, image URLs are http(s) only, and `data:` is allowed only
       // for inline image previews. Embedded mode also benefits since the
       // browser still respects the header on the response.
+      // #1019: Google Fonts origins (fonts.googleapis.com for the CSS
+      // stylesheet, fonts.gstatic.com for the woff2 payload) are now
+      // explicitly allowed so the brand-kit `<link>` tags emitted by the
+      // renderer don't get blocked. Family names are sanitised through a
+      // strict allowlist in the renderer (#1007) so this expansion does
+      // not introduce a user-controlled URL surface.
       res.setHeader(
         "Content-Security-Policy",
         [
           "default-src 'self'",
           "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net",
-          "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net",
+          "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com",
           "img-src 'self' data: https:",
-          "font-src 'self' data: https:",
+          "font-src 'self' data: https: https://fonts.gstatic.com",
           "connect-src 'self'",
           "frame-ancestors 'self'",
           "base-uri 'self'",
@@ -855,14 +871,16 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
       res.setHeader("Cache-Control", "no-store");
       // Same CSP as `/render` (#977) — standalone HTML carries inlined
       // Reveal init + theme overrides, so `'unsafe-inline'` is required.
+      // #1019: Google Fonts origins added to style-src/font-src so brand-
+      // kit web fonts load in exported HTML (was a CSP block in production).
       res.setHeader(
         "Content-Security-Policy",
         [
           "default-src 'self'",
           "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net",
-          "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net",
+          "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com",
           "img-src 'self' data: https:",
-          "font-src 'self' data: https:",
+          "font-src 'self' data: https: https://fonts.gstatic.com",
           "connect-src 'self'",
           "frame-ancestors 'self'",
           "base-uri 'self'",
@@ -1423,10 +1441,13 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
                 ? { imageStyle: body.options.imageStyle }
                 : {}),
               concurrency: 4,
+              // Issue #1007 — ensure every slide gets a background image.
+              deriveFallbackBackgrounds: true,
               onEnqueued: (info) => {
                 emit("pitch:image:queued", {
                   deckId: persisted.id,
                   slideId: info.slideId,
+                  slot: info.slot,
                   jobId: info.jobId,
                   assetId: info.assetId,
                   source: "auto_draft",
@@ -1436,6 +1457,7 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
                 emit("pitch:image:failed", {
                   deckId: persisted.id,
                   slideId: info.slideId,
+                  slot: info.slot,
                   error: info.error,
                   source: "auto_draft",
                 });
@@ -1600,6 +1622,7 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
       emit("pitch:image:queued", {
         deckId: req.params.deckId,
         slideId: req.params.slideId,
+        slot: body.mode === "inline" ? "image" : "background",
         jobId: result.jobId,
         assetId: result.assetId,
         mode: body.mode,
@@ -1666,10 +1689,13 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
             ? { imageStyle: deckImageStyle as never }
             : {}),
           concurrency: 4,
+          // Issue #1007 — ensure every slide gets a background image.
+          deriveFallbackBackgrounds: true,
           onEnqueued: (info) => {
             emit("pitch:image:queued", {
               deckId,
               slideId: info.slideId,
+              slot: info.slot,
               jobId: info.jobId,
               assetId: info.assetId,
               source: "bulk_button",
@@ -1679,6 +1705,7 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
             emit("pitch:image:failed", {
               deckId,
               slideId: info.slideId,
+              slot: info.slot,
               error: info.error,
               source: "bulk_button",
             });

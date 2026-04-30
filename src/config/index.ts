@@ -280,6 +280,22 @@ export type LipSyncAppConfig = {
   memoryLimitGB?: number;
 };
 
+/**
+ * Sub-issue #1010 — controls auto-start of CUDA sidecars at server boot.
+ * When `autoStartSidecars` is true, the server pings `sidecarHealthUrl`
+ * (default `http://127.0.0.1:5005/health`) on startup and, if the
+ * endpoint is unreachable, spawns the platform-appropriate
+ * `scripts/media-ctl.{ps1,sh} flux start` command (detached + ignored
+ * stdio + unref()) and polls for readiness up to `startupTimeoutMs`.
+ * Defaults are conservative — opt-in only, never blocks server startup
+ * on failure (the queue worker recovers when sidecars come up later).
+ */
+export type MediaAppConfig = {
+  autoStartSidecars?: boolean;
+  sidecarHealthUrl?: string;
+  startupTimeoutMs?: number;
+};
+
 export type SocialBrainPlatformConnectionConfig = {
   enabled?: boolean;
   mode?: "webhook" | "polling" | "browser";
@@ -345,6 +361,7 @@ export type AppConfig = {
   imageGen?: ImageGenAppConfig;
   musicGen?: MusicGenAppConfig;
   lipSync?: LipSyncAppConfig;
+  media?: MediaAppConfig;
   socialBrain?: SocialBrainAppConfig;
   sentinel?: SentinelAppConfig;
   knowledge?: KnowledgeAppConfig;
@@ -757,6 +774,23 @@ const appConfigSchema = z.object({
     })
     .optional()
     .default({}),
+  // Sub-issue #1010 — opt-in CUDA sidecar auto-start. See `MediaAppConfig`.
+  media: z
+    .object({
+      autoStartSidecars: z.boolean().optional().default(false),
+      sidecarHealthUrl: z
+        .string()
+        .optional()
+        .default("http://127.0.0.1:5005/health"),
+      startupTimeoutMs: z
+        .number()
+        .int()
+        .min(1_000)
+        .max(600_000)
+        .optional()
+        .default(60_000),
+    })
+    .optional(),
 });
 
 export type LoadConfigOptions = {

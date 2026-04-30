@@ -1,92 +1,123 @@
 "use client";
 
-import { useEffect, useRef } from "react";
-// eslint-disable-next-line @typescript-eslint/ban-ts-comment
-// @ts-ignore -- reveal.js ESM build ships its own types only via @types/reveal.js
-import Reveal from "reveal.js";
+import { useCallback, useEffect, useRef } from "react";
 
 export interface RevealCanvasImplProps {
   /**
-   * Embedded HTML fragment from `GET /decks/:deckId/render?mode=embedded`.
-   * Should look like `<div class="pitch-deck-wrap">…<div class="reveal">…</div></div>`.
+   * Full HTML document from `GET /decks/:deckId/render?mode=embedded`.
+   * Includes Reveal.js CSS/theme/init — rendered inside an iframe so the
+   * styles do not leak into the parent Next.js page.
    */
   html: string;
-  /** Forwarded so click handlers in the parent can react to slide content. */
+  /**
+   * 0-based index of the slide to focus. The parent page changes this
+   * when the user clicks a row in the slide rail; the canvas drives Reveal
+   * via `postMessage` so the iframe does NOT have to be rebuilt on every
+   * selection (which would flash + reset Reveal back to slide 0).
+   */
+  selectedSlideIndex?: number;
+  /** Forwarded so click handlers in the parent can react to canvas clicks. */
   onContainerClick?: (target: HTMLElement) => void;
 }
 
 /**
- * Real Reveal.js mount point. Only loaded client-side (see reveal-canvas.tsx).
- * Reveal touches `window`/`document` at import time, so this file must NEVER
- * be imported from a server component or a regular `import` chain that runs
- * during `next build` SSG.
+ * Embedded-mode Reveal.js preview mounted inside an `<iframe srcDoc=…>`.
+ *
+ * Why an iframe?
+ *   - The `/render?mode=embedded` endpoint emits a full HTML document with
+ *     reveal.css, the theme CSS and the Reveal init script. Inlining that
+ *     into the parent page (the previous dangerouslySetInnerHTML +
+ *     in-parent Reveal init approach) never loaded those CSS/JS assets, so
+ *     slides rendered as unstyled HTML — text appeared invisible against
+ *     brand-colored backgrounds and Reveal could not lay out the deck.
+ *     Bug report 2026-04-28.
+ *   - The slide-rail thumbnails already render the same endpoint inside
+ *     iframes, so canvas + thumbnails now share one render path.
+ *
+ * Selection navigation: the iframe's init script installs a `message`
+ * listener that accepts `{type:"openzigs:navigate", index:N}`. We post
+ * that message whenever `selectedSlideIndex` changes. If the iframe is
+ * still booting we queue the latest index and flush it when it announces
+ * `openzigs:reveal-ready`.
  */
 export default function RevealCanvasImpl({
   html,
+  selectedSlideIndex,
   onContainerClick,
 }: RevealCanvasImplProps) {
-  const containerRef = useRef<HTMLDivElement | null>(null);
-  const deckRef = useRef<{ destroy?: () => void } | null>(null);
+  const iframeRef = useRef<HTMLIFrameElement | null>(null);
+  const readyRef = useRef(false);
+  const pendingIndexRef = useRef<number | null>(null);
 
+  const handleWrapClick = useCallback(
+    (e: React.MouseEvent<HTMLDivElement>) => {
+      if (!onContainerClick) return;
+      const target = e.target as HTMLElement;
+      onContainerClick(target);
+    },
+    [onContainerClick],
+  );
+
+  // Listen for the `openzigs:reveal-ready` handshake from the iframe so
+  // we know when it's safe to drive Reveal via postMessage. Reset on
+  // every srcDoc change (new html means the listener inside is gone).
   useEffect(() => {
-    const root = containerRef.current;
-    if (!root) return;
-    const revealEl = root.querySelector<HTMLDivElement>(".reveal");
-    if (!revealEl) return;
-
-    let cancelled = false;
-    let deck: { destroy?: () => void } | null = null;
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const RevealCtor = Reveal as unknown as new (
-        el: HTMLElement,
-        opts?: Record<string, unknown>,
-      ) => { initialize: () => Promise<void>; destroy?: () => void };
-      deck = new RevealCtor(revealEl, {
-        embedded: true,
-        hash: false,
-        controls: true,
-        progress: true,
-        transition: "slide",
-      });
-      deckRef.current = deck;
-      void (deck as { initialize: () => Promise<void> }).initialize().catch(() => {
-        /* swallow — initialize can throw if container is detached mid-render */
-      });
-    } catch {
-      /* swallow — reveal init failure should not crash the editor */
-    }
-
-    return () => {
-      cancelled = true;
-      void cancelled;
-      try {
-        deckRef.current?.destroy?.();
-      } catch {
-        /* ignore */
+    readyRef.current = false;
+    const onMessage = (e: MessageEvent) => {
+      const data = e.data;
+      if (!data || typeof data !== "object") return;
+      if (data.type === "openzigs:reveal-ready") {
+        readyRef.current = true;
+        const queued = pendingIndexRef.current;
+        if (queued !== null && iframeRef.current?.contentWindow) {
+          iframeRef.current.contentWindow.postMessage(
+            { type: "openzigs:navigate", index: queued },
+            "*",
+          );
+          pendingIndexRef.current = null;
+        }
       }
-      deckRef.current = null;
     };
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
   }, [html]);
+
+  // Drive navigation when the parent's selection changes. Queue the
+  // index if the iframe hasn't reported ready yet — it'll be flushed by
+  // the handshake handler above.
+  useEffect(() => {
+    if (selectedSlideIndex === undefined) return;
+    if (!Number.isInteger(selectedSlideIndex) || selectedSlideIndex < 0) return;
+    if (readyRef.current && iframeRef.current?.contentWindow) {
+      iframeRef.current.contentWindow.postMessage(
+        { type: "openzigs:navigate", index: selectedSlideIndex },
+        "*",
+      );
+    } else {
+      pendingIndexRef.current = selectedSlideIndex;
+    }
+  }, [selectedSlideIndex]);
 
   return (
     <div
-      ref={containerRef}
       data-testid="reveal-canvas-impl"
       className="reveal-canvas-root h-full w-full"
-      onClick={(e) => {
-        if (!onContainerClick) return;
-        const target = e.target as HTMLElement;
-        onContainerClick(target);
-      }}
-      // The HTML is sanitized server-side by pitch-renderer (DOMPurify with
-      // strict FORBID_TAGS/FORBID_ATTR list). We trust it here because:
-      //   1. It only contains tags/attrs that survived sanitization
-      //   2. The render endpoint never echoes user input verbatim
-      //   3. Reveal.js needs real DOM nodes to mount, so a parsed-ast
-      //      approach would force a full re-implementation of section-attr
-      //      handling.
-      dangerouslySetInnerHTML={{ __html: html }}
-    />
+      onClick={handleWrapClick}
+    >
+      <iframe
+        ref={iframeRef}
+        data-testid="reveal-canvas-iframe"
+        title="Slide preview"
+        srcDoc={html}
+        className="h-full w-full border-0 bg-transparent"
+        // `allow-same-origin` lets reveal.js read the linked stylesheets;
+        // `allow-scripts` lets the inline Reveal init script execute. We
+        // intentionally do NOT grant `allow-top-navigation` or
+        // `allow-popups` so a tampered deck cannot navigate the parent.
+        // The HTML body is sanitized server-side via DOMPurify
+        // (pitch-sanitize.ts) before reaching the iframe.
+        sandbox="allow-scripts allow-same-origin"
+      />
+    </div>
   );
 }

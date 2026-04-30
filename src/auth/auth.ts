@@ -61,8 +61,41 @@ class FailedAuthLimiter {
  * token must be accepted via the ?token= query param on these specific routes.
  * The scope is deliberately narrow: only asset-file-serve endpoints, not the
  * entire API surface (sub-issue #908 trade-off).
+ *
+ * Note: the mount prefix `/api/queue` is encoded in the regex because we
+ * match against `req.originalUrl` (which retains the mount prefix) rather
+ * than `req.path` (which Express strips inside sub-routers). See the
+ * extractToken() comment below and issue #1012.
  */
-const ASSET_FILE_PATH_RE = /^\/assets\/(?:[^/]+\/file|file\/.+)$/;
+const ASSET_FILE_PATH_RE =
+  /^\/api\/queue\/assets\/(?:[^/]+\/file|file\/.+)$/;
+
+/**
+ * Pitch deck render route — same OWASP token-in-URL trade-off as
+ * `ASSET_FILE_PATH_RE` (sub-issue #908). The Present button (see
+ * `ui/app/pitch/[deckId]/page.tsx` `PresentButton`) opens the rendered
+ * HTML in a new tab via `<a href>` navigation, which cannot carry an
+ * Authorization header. Without this allowlist entry the request falls
+ * through to bearer-only auth and 401s (Bug #3 / issue #1011).
+ *
+ * Trade-off (accepted): the token will appear in browser history, the
+ * tab's `Referer` header for any outbound asset requests embedded in the
+ * rendered HTML, and any reverse-proxy access logs in front of the API.
+ * The scope is intentionally narrow (this single route family) and the
+ * existing `?token=` precedent is set by PR #1003. A cleaner long-term
+ * fix would be a Next.js page that mounts the deck in an authenticated
+ * iframe with the token sent via header — left as future work.
+ */
+// NOTE (#1016): the UI now wraps Present in an authenticated Next.js route
+// (`/pitch/[deckId]/present`) that fetches `/render?mode=present` with a
+// proper `Authorization` header, so the `?token=` query-string fallback is
+// no longer used by current builds. We INTENTIONALLY keep this allowlist
+// entry so existing shared-link bookmarks and any externally-saved Present
+// URLs remain functional. Once telemetry confirms zero hits on the
+// `?token=` path for `pitch/decks/.../render` over a release window, this
+// constant and its callsite below can be removed.
+const PITCH_RENDER_PATH_RE =
+  /^\/api\/admin\/pitch\/decks\/[a-zA-Z0-9_-]+\/render(?:\/[a-zA-Z0-9_\-./]*)?$/;
 
 const extractToken = (req: Request) => {
   const header = req.headers.authorization ?? "";
@@ -72,10 +105,22 @@ const extractToken = (req: Request) => {
   // Accept ?token= for known media-serving endpoints or when the global opt-in
   // is set. Media file paths (/assets/:id/file, /assets/file/:filename) use
   // this because <img>/<video>/<audio> elements cannot send Authorization
-  // headers. For all other paths this remains disabled to avoid token leakage
-  // via proxy logs, browser history, and Referer headers (sub-issue #908).
+  // headers. The pitch render route is allowed for the same reason — the
+  // Present button opens the deck in a new tab via <a href> (issue #1011).
+  // For all other paths this remains disabled to avoid token leakage via
+  // proxy logs, browser history, and Referer headers (sub-issue #908).
+  //
+  // IMPORTANT: match against `req.originalUrl` (minus the query string) and
+  // not `req.path`. Express strips the mount prefix from `req.path` when
+  // middleware runs inside a sub-router (e.g. `app.use("/api/admin", auth,
+  // adminRouter)` makes `req.path` `/pitch/decks/.../render`). The pitch
+  // render allowlist regex requires the full `/api/admin/...` prefix, so
+  // matching `req.path` would always miss in production. Hotfix for the
+  // regression introduced in #1013 (issue #1012).
+  const fullPath = req.originalUrl.split("?")[0];
   const allowQueryToken =
-    ASSET_FILE_PATH_RE.test(req.path) ||
+    ASSET_FILE_PATH_RE.test(fullPath) ||
+    PITCH_RENDER_PATH_RE.test(fullPath) ||
     process.env.OPENZIGS_ALLOW_QUERY_TOKEN === "1";
   if (allowQueryToken) {
     const qToken = req.query?.token;
