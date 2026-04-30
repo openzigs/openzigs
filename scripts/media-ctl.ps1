@@ -137,6 +137,15 @@ function Restart-Svc([string]$svc) {
     switch ($svc) {
         "flux" {
             if ($callbackSecret) { $envLines += "export FLUXQ_CALLBACK_SECRET='$callbackSecret'" }
+            # Issue #1022 — fragmentation-resistant CUDA allocator. Without
+            # this, bulk pitch image fan-out OOMs after the first few jobs
+            # despite VRAM accounting showing GB free. Honour an operator
+            # override (only set when not already exported).
+            $envLines += "export PYTORCH_CUDA_ALLOC_CONF=`"`${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}`""
+            # Issue #1022 — sequential cpu offload (slower per-step but ~3 GB
+            # lower peak VRAM) is required to fit flux-schnell at 1024×576 on
+            # 12 GB cards. Operators can opt out by exporting the env var.
+            $envLines += "export FLUXQ_SEQUENTIAL_OFFLOAD=`"`${FLUXQ_SEQUENTIAL_OFFLOAD:-1}`""
         }
         "ltx" {
             if ($callbackSecret) { $envLines += "export CALLBACK_SECRET='$callbackSecret'" }
