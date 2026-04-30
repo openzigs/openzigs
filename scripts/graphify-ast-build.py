@@ -14,17 +14,58 @@ Usage (locally or in CI):
 """
 from __future__ import annotations
 
+import faulthandler
 import json
+import signal
 import sys
 import traceback
 from pathlib import Path
 
+faulthandler.enable()
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 OUT_DIR = REPO_ROOT / "graphify-out"
+
+# Hard cap on detect() — if graphify's corpus scanner walks something huge
+# (or hits a pathological file) we'd rather emit a stub and keep going than
+# block CI. detect_result is only consumed by report.generate() for the
+# header summary; the graph itself does not depend on it.
+DETECT_TIMEOUT_SECS = 60
 
 
 def log(msg: str) -> None:
     print(f"[graphify] {msg}", flush=True)
+
+
+class _Timeout(Exception):
+    pass
+
+
+def _alarm(_signum, _frame):
+    raise _Timeout()
+
+
+def _safe_detect(detect_mod):
+    """Run detect.detect() with a timeout; return a minimal stub on failure.
+
+    SIGALRM is POSIX-only (fine for CI on Linux). On Windows the timeout is
+    not armed and we just call through.
+    """
+    if hasattr(signal, "SIGALRM"):
+        signal.signal(signal.SIGALRM, _alarm)
+        signal.alarm(DETECT_TIMEOUT_SECS)
+    try:
+        return detect_mod.detect(REPO_ROOT)
+    except _Timeout:
+        log(f"detect timed out after {DETECT_TIMEOUT_SECS}s; using stub")
+        return {"languages": {}, "file_count": 0, "word_count": 0}
+    except Exception:
+        log("detect raised; using stub")
+        traceback.print_exc()
+        return {"languages": {}, "file_count": 0, "word_count": 0}
+    finally:
+        if hasattr(signal, "SIGALRM"):
+            signal.alarm(0)
 
 
 def main() -> int:
@@ -42,9 +83,9 @@ def main() -> int:
     (OUT_DIR / "cache").mkdir(exist_ok=True)
 
     try:
-        # 1. Detect corpus.
+        # 1. Detect corpus (best-effort; report header only).
         log("step 1/7: detect")
-        detect_result = detect.detect(REPO_ROOT)
+        detect_result = _safe_detect(detect)
         log(f"detect ok: {detect_result}")
 
         # 2. AST extraction (no LLM).
