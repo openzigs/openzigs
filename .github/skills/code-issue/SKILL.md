@@ -61,8 +61,9 @@ This skill should be executed by the **Code Issue** agent (`code-issue.agent.md`
 2. If it has sub-issues, read each one to understand full scope
 3. Use `mcp_context7_resolve-library-id` + `mcp_context7_query-docs` for any library questions
 4. Use `fetch_webpage` to pull reference documentation or examples
-5. Analyze the codebase — identify affected files, patterns, and conventions
-6. Create a task tracking list with all issues to resolve
+5. **Consult the graphify knowledge graph first.** If `graphify-out/GRAPH_REPORT.md` exists at the repo root, read it before any wide grep/file_search sweep — it is a precomputed summary of the entire codebase and saves tokens. Then use `graphify query "<terms>" graphify-out/graph.json` to get a token-bounded subgraph for the area you'll touch (function/class/file dependencies, imports, callers). Use `graphify path <fileA> <fileB>` to understand reach when changing shared modules. Fall back to grep only for files modified after the graph was built (check `graphify-out/manifest.json` mtime vs. `git log -1 --format=%ct -- <file>`).
+6. Analyze the codebase — identify affected files, patterns, and conventions
+7. Create a task tracking list with all issues to resolve
 
 ### Step 2: Branch Setup
 

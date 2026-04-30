@@ -1,5 +1,9 @@
 # Copilot Instructions (openzigs)
 
+## Codebase navigation hint (graphify)
+
+If [graphify-out/GRAPH_REPORT.md](graphify-out/GRAPH_REPORT.md) exists at the repo root, **read it before any wide grep or file_search sweep** — it is a precomputed knowledge graph of the codebase and dramatically reduces tokens for "where is X defined / used" questions. For deeper queries, run `graphify query "<terms>" graphify-out/graph.json` (token-bounded subgraph) or `graphify path <fileA> <fileB>` (dependency reach). The graph is opt-in dev tooling — if `graphify-out/` is missing, fall through to normal search. Install/build instructions: see [CONTRIBUTING.md](../CONTRIBUTING.md#optional-graphify-knowledge-graph).
+
 ## Architecture Overview
 - **Express server** ([src/server.ts](src/server.ts)) bootstraps all subsystems: config, tools, sessions, tasks, scheduler, personality, Sentinel, channels, Socket.IO wiring.
 - **AI wrapper** ([src/copilot/copilot-wrapper.ts](src/copilot/copilot-wrapper.ts)): wraps `@github/copilot-sdk` for device auth, streaming chat, tool-call hooks, and session-level token tracking.

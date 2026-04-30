@@ -71,6 +71,9 @@ Determine the `owner/repo` for issue creation:
 2. Ask the user if not obvious: *"Which GitHub repository should I create these issues in?"*
 3. Verify repo exists using `mcp_github_issue_read` on issue #1 (or list issues)
 
+#### 0a.1 Codebase context via graphify (if available)
+If `graphify-out/GRAPH_REPORT.md` exists at the repo root, read it before drafting epics — it gives a token-cheap overview of the codebase structure that helps you scope sub-issues to the right modules. Run `graphify query "<feature_topic>" graphify-out/graph.json` to identify which existing files/symbols the new work will touch (informs sub-issue boundaries and acceptance criteria). Skip if no graph is present.
+
 #### 0b. Research Sources — Ask the User
 
 Present this prompt:

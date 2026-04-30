@@ -81,6 +81,7 @@ Execute with the **Code Review** agent (`code-review.agent.md`), which has the s
    gh pr view {PR_NUMBER} --json files --jq '.files[].path'
    ```
 6. **Read each changed file in full** — not just the diff hunks. Context matters.
+7. **Impact analysis via graphify (if available).** If `graphify-out/graph.json` exists, run `graphify query "<symbol_or_path>" graphify-out/graph.json` for each significantly changed module and `graphify path <changed_file> <suspected_dependent>` to surface non-obvious callers/importers. Flag any caller in the PR description that the diff didn't update — these are common review-blocking regressions. Skip if no graph is present (it's opt-in dev tooling, not a hard requirement).
 
 ### Step 1b: Security Scanner Comments (CodeQL / GHAS)
 
