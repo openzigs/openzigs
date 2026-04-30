@@ -1,0 +1,79 @@
+name: graphify refresh
+
+# Auto-refreshes the codebase knowledge graph on every PR that touches code.
+# The orchestrator agent and Copilot subagents read graphify-out/ to avoid
+# expensive grep/file-search sweeps. Keeping it fresh on PRs means reviewers
+# (human and AI) always navigate against an up-to-date graph.
+#
+# This is the AST-only path: no LLM calls, deterministic, ~1 minute, $0 cost.
+# A nightly semantic refresh (LLM-aware) can be added later on a schedule.
+
+on:
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'ui/**'
+      - 'sidecars/**'
+      - 'desktop/**'
+      - 'config/**'
+      - 'scripts/**'
+      - '.graphifyignore'
+      - 'scripts/graphify-ast-build.py'
+      - '.github/workflows/graphify-refresh.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'ui/**'
+      - 'sidecars/**'
+      - 'desktop/**'
+      - 'config/**'
+      - 'scripts/**'
+      - '.graphifyignore'
+
+concurrency:
+  group: graphify-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    # Skip on forked-PRs (no write token) and on the bot's own auto-commit.
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository
+      && !contains(github.event.head_commit.message, '[skip graphify]')
+    steps:
+      - name: Checkout PR branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref || github.ref_name }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+
+      - name: Install graphifyy
+        run: uv tool install "graphifyy==0.5.6"
+
+      - name: Build graph (AST-only, no LLM)
+        run: uv tool run --from graphifyy python scripts/graphify-ast-build.py
+
+      - name: Show graph stats
+        run: |
+          ls -la graphify-out/
+          echo "---"
+          head -40 graphify-out/GRAPH_REPORT.md
+
+      - name: Commit refreshed graph
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "chore(graphify): refresh code graph [skip graphify]"
+          file_pattern: "graphify-out/graph.json graphify-out/GRAPH_REPORT.md"
+          commit_user_name: "graphify-bot"
+          commit_user_email: "graphify-bot@users.noreply.github.com"

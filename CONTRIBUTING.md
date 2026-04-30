@@ -98,6 +98,12 @@ graphify hook install
 
 Installs `post-commit` and `post-checkout` git hooks that re-run `graphify .` so the graph never goes stale.
 
+**Auto-refresh in CI on every PR (already wired):**
+
+The workflow [`.github/workflows/graphify-refresh.yml`](.github/workflows/graphify-refresh.yml) runs on every PR that touches `src/`, `ui/`, `sidecars/`, `desktop/`, `config/`, or `scripts/`. It executes [`scripts/graphify-ast-build.py`](scripts/graphify-ast-build.py) (AST-only — no LLM calls, ~1 minute, $0 cost) and commits the refreshed `graph.json` + `GRAPH_REPORT.md` back to the PR branch as the `graphify-bot` user. This means reviewers (human and AI) always navigate against an up-to-date graph without any manual refresh step. The bot's commit message includes `[skip graphify]` to prevent recursion. Forked PRs are skipped (no write token).
+
+To opt out for a single commit, append `[skip graphify]` to your commit message.
+
 **VS Code Copilot Chat first-class support:**
 
 ```bash
