@@ -121,8 +121,11 @@ export const TitleSlideSchema = Common.extend({
   template: z.literal("title"),
   content: z.object({
     title: z.string().min(1).max(120),
-    subtitle: z.string().max(200).optional(),
-    eyebrow: z.string().max(60).optional(),
+    // LLMs commonly emit `null` (not omission) for optional string fields
+    // they choose not to populate. Accept both `null` and absent so that
+    // valid pitches don't get rejected at the schema boundary.
+    subtitle: z.string().max(200).nullable().optional(),
+    eyebrow: z.string().max(60).nullable().optional(),
   }),
 });
 
@@ -187,7 +190,9 @@ export const StatsKpiSlideSchema = Common.extend({
         z.object({
           value: z.string().min(1).max(20),
           label: z.string().min(1).max(60),
-          delta: z.string().max(20).optional(),
+          // LLMs frequently return `null` for absent deltas instead of
+          // omitting the key. Accept both `null` and missing.
+          delta: z.string().max(20).nullable().optional(),
         }),
       )
       .min(2)

@@ -284,6 +284,32 @@ describe("SlideSchema — discriminated union covers all 14 templates", () => {
     ).not.toThrow();
   });
 
+  it("stats_kpi — accepts `null` delta on a kpi (LLMs emit null, not omission)", () => {
+    // Bug-fix (post-PR-#1024 walkthrough): LLM legitimately returns
+    // `null` for `delta` when there's no quarter-over-quarter change.
+    // Schema previously rejected it as "Expected string, received null".
+    expect(() =>
+      SlideSchema.parse(
+        validSlide("stats_kpi", {
+          heading: "Q4",
+          kpis: [
+            { value: "12M", label: "ARR", delta: "+8%" },
+            { value: "3.2", label: "NPS", delta: null },
+            { value: "97%", label: "Retention" },
+          ],
+        }),
+      ),
+    ).not.toThrow();
+  });
+
+  it("title — accepts `null` for optional subtitle/eyebrow", () => {
+    expect(() =>
+      SlideSchema.parse(
+        validSlide("title", { title: "Hi", subtitle: null, eyebrow: null }),
+      ),
+    ).not.toThrow();
+  });
+
   it("comparison_table — enforces 2..5 columns and ≥1 row", () => {
     expect(() =>
       SlideSchema.parse(
