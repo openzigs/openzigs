@@ -7,9 +7,9 @@ import {
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
-import { FileCode, Play, Share2 } from "lucide-react";
+import { FileCode, Play, RefreshCw, Share2 } from "lucide-react";
 import { useSocket } from "@/lib/socket-context";
-import { buildUrl, fetchJson } from "@/lib/api";
+import { authorizeRenderedMedia, buildUrl, fetchJson } from "@/lib/api";
 import { showToast } from "@/components/toast";
 import { RevealCanvas } from "@/components/pitch/reveal-canvas";
 import { SlideRail, type SlideRailItem } from "@/components/pitch/slide-rail";
@@ -86,9 +86,20 @@ async function fetchRenderHtml(deckId: string): Promise<string> {
     : {};
   const res = await fetch(url, { headers });
   if (!res.ok) {
-    throw new Error(`render failed: ${res.status}`);
+    let detail = res.statusText || `HTTP ${res.status}`;
+    try {
+      const body = (await res.json()) as { error?: { message?: string; code?: string } };
+      if (body?.error?.message) {
+        detail = body.error.code
+          ? `${body.error.message} (${body.error.code})`
+          : body.error.message;
+      }
+    } catch {
+      // keep status detail
+    }
+    throw new Error(`GET /api/admin/pitch/decks/${deckId}/render failed with ${res.status}: ${detail}`);
   }
-  return res.text();
+  return authorizeRenderedMedia(await res.text());
 }
 
 interface ExportFormat {
@@ -374,7 +385,10 @@ export default function PitchDeckEditorPage() {
   // ── Derived view models ──────────────────────────────────────────────
 
   const deck = deckQuery.data?.deck;
-  const slides = deckQuery.data?.slides ?? [];
+  const slides = useMemo(
+    () => deckQuery.data?.slides ?? [],
+    [deckQuery.data?.slides],
+  );
 
   // Track per-slide image generation status (#993). Drives the rail badges
   // and the "Generate all images" button progress counter.
@@ -458,12 +472,36 @@ export default function PitchDeckEditorPage() {
     );
   }
   if (deckQuery.isError || !deck) {
+    const detail = deckQuery.error instanceof Error
+      ? deckQuery.error.message
+      : "Unknown error";
     return (
-      <div className="flex h-full items-center justify-center text-sm text-red-500">
-        Could not load deck {deckId}.
+      <div className="flex h-full items-center justify-center p-6 text-sm">
+        <div className="max-w-xl rounded-lg border border-red-500/30 bg-red-500/5 p-6">
+          <div className="font-semibold text-red-600 dark:text-red-400">
+            Could not load deck {deckId}.
+          </div>
+          <div className="mt-2 break-words text-xs text-muted-foreground">
+            GET /api/admin/pitch/decks/{deckId}: {detail}
+          </div>
+          <button
+            type="button"
+            onClick={() => void deckQuery.refetch()}
+            className="mt-4 inline-flex items-center gap-2 rounded-md border border-border px-3 py-2 text-xs font-semibold hover:bg-muted/40"
+          >
+            <RefreshCw className="h-3.5 w-3.5" />
+            Retry
+          </button>
+        </div>
       </div>
     );
   }
+
+  const renderError = renderQuery.error instanceof Error
+    ? renderQuery.error.message
+    : renderQuery.isError
+      ? "Unknown render error"
+      : null;
 
   const cacheKey = `${deck.id}-${slides.length}-${deck.updated_at}`;
 
@@ -624,8 +662,23 @@ export default function PitchDeckEditorPage() {
             Rendering…
           </div>
         ) : renderQuery.isError ? (
-          <div className="flex h-full items-center justify-center text-sm text-red-500">
-            Could not render deck.
+          <div className="flex h-full items-center justify-center p-6 text-sm">
+            <div className="max-w-xl rounded-lg border border-red-500/30 bg-red-500/5 p-5">
+              <div className="font-semibold text-red-600 dark:text-red-400">
+                Could not render deck.
+              </div>
+              <div className="mt-2 break-words text-xs text-muted-foreground">
+                {renderError}
+              </div>
+              <button
+                type="button"
+                onClick={() => void renderQuery.refetch()}
+                className="mt-4 inline-flex items-center gap-2 rounded-md border border-border px-3 py-2 text-xs font-semibold hover:bg-muted/40"
+              >
+                <RefreshCw className="h-3.5 w-3.5" />
+                Retry render
+              </button>
+            </div>
           </div>
         ) : (
           <RevealCanvas

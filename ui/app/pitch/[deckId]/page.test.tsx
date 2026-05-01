@@ -16,6 +16,7 @@ vi.mock("@/lib/socket-context", () => ({
 
 // Mock the API helpers + global fetch (used for /render).
 vi.mock("@/lib/api", () => ({
+  authorizeRenderedMedia: (html: string) => html,
   buildUrl: (p: string) => p,
   fetchJson: vi.fn(),
 }));

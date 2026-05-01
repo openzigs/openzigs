@@ -273,6 +273,19 @@ describe("auth middleware", () => {
         await closeServer(server);
       }
     });
+
+    it("accepts ?token= on pitch-generated asset URLs used by rendered slide iframes", async () => {
+      const config = await loadConfig({ configPath });
+      const { server, baseUrl } = await startMountedServer(config.auth.token);
+      try {
+        const response = await fetch(
+          `${baseUrl}/api/admin/pitch/decks/test-deck-123/assets/asset-456?token=${config.auth.token}`,
+        );
+        expect(response.status).toBe(200);
+      } finally {
+        await closeServer(server);
+      }
+    });
   });
 
   // ── Issue #1012 regression (asset auth): mount-prefix encoding ──

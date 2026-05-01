@@ -39,6 +39,21 @@ export const buildMediaUrl = (path: string): string => {
   return `${base}${sep}token=${encodeURIComponent(AUTH_TOKEN)}`;
 };
 
+const PITCH_ASSET_URL_RE = /^\/api\/admin\/pitch\/decks\/[A-Za-z0-9_-]+\/assets\/[A-Za-z0-9_-]+(?:[?#][^"'\s<>]*)?$/;
+
+export const authorizeRenderedMedia = (html: string): string => {
+  if (!AUTH_TOKEN) return html;
+  return html.replace(
+    /(\s(?:src|href|data-background-image)=["'])(\/api\/admin\/pitch\/decks\/[A-Za-z0-9_-]+\/assets\/[A-Za-z0-9_-]+(?:[?#][^"'\s<>]*)?)(["'])/g,
+    (match, prefix: string, rawUrl: string, suffix: string) => {
+      if (!PITCH_ASSET_URL_RE.test(rawUrl)) return match;
+      if (/[?&]token=/.test(rawUrl)) return match;
+      const separator = rawUrl.includes("?") ? "&" : "?";
+      return `${prefix}${rawUrl}${separator}token=${encodeURIComponent(AUTH_TOKEN)}${suffix}`;
+    },
+  );
+};
+
 export const fetchJson = async <T>(
   path: string,
   options?: RequestInit,
@@ -62,7 +77,20 @@ export const fetchJson = async <T>(
 
   if (!response.ok) {
     const text = await response.text();
-    throw new Error(text || response.statusText);
+    let detail = text || response.statusText || `HTTP ${response.status}`;
+    try {
+      const parsed = JSON.parse(text) as {
+        error?: { message?: string; code?: string; details?: unknown };
+      };
+      if (parsed?.error?.message) {
+        detail = parsed.error.code
+          ? `${parsed.error.message} (${parsed.error.code})`
+          : parsed.error.message;
+      }
+    } catch {
+      // non-JSON error body; keep the raw text/status
+    }
+    throw new Error(`${url} failed with ${response.status}: ${detail}`);
   }
   return response.json() as Promise<T>;
 };

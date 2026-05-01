@@ -18,6 +18,7 @@ import {
   type Deck,
   type Slide,
   type SlideAsset,
+  type SlideImage,
 } from "./pitch-schema.js";
 
 // ── Public API types (rich, JSON-decoded) ──────────────────────────────────
@@ -254,14 +255,26 @@ export class PitchRepository {
       .prepare(`SELECT * FROM pitch_decks WHERE id = ?`)
       .get(id) as DeckRow | undefined;
     if (!row) return null;
-    return this.assembleDeck(row);
+    try {
+      return this.assembleDeck(row);
+    } catch {
+      return null;
+    }
   }
 
   listDecks(): DeckRecord[] {
     const rows = this.db
       .prepare(`SELECT * FROM pitch_decks ORDER BY updated_at DESC`)
       .all() as DeckRow[];
-    return rows.map((r) => this.assembleDeck(r));
+    const decks: DeckRecord[] = [];
+    for (const row of rows) {
+      try {
+        decks.push(this.assembleDeck(row));
+      } catch {
+        // Ignore malformed legacy rows so one bad deck cannot poison the library.
+      }
+    }
+    return decks;
   }
 
   /**
@@ -363,7 +376,12 @@ export class PitchRepository {
     const row = this.db
       .prepare(`SELECT * FROM pitch_slides WHERE id = ?`)
       .get(id) as SlideRow | undefined;
-    return row ? this.rowToSlideRecord(row) : null;
+    if (!row) return null;
+    try {
+      return this.rowToSlideRecord(row);
+    } catch {
+      return null;
+    }
   }
 
   listSlidesForDeck(deckId: string): SlideRecord[] {
@@ -372,7 +390,15 @@ export class PitchRepository {
         `SELECT * FROM pitch_slides WHERE deck_id = ? ORDER BY position ASC`,
       )
       .all(deckId) as SlideRow[];
-    return rows.map((r) => this.rowToSlideRecord(r));
+    const slides: SlideRecord[] = [];
+    for (const row of rows) {
+      try {
+        slides.push(this.rowToSlideRecord(row));
+      } catch {
+        // Ignore malformed legacy slides so the rest of the deck can render.
+      }
+    }
+    return slides;
   }
 
   /**
@@ -514,6 +540,63 @@ export class PitchRepository {
     return rows.map((r) => this.rowToAsset(r));
   }
 
+  /**
+   * Best-effort repair for completed inline image jobs whose asset row was
+   * persisted but whose slide JSON still has a missing `url`. This can happen
+   * after a crash between asset insert and slide update, or for legacy rows
+   * created before inline patching existed.
+   */
+  reconcileImageAssetsForDeck(deckId: string): number {
+    const slides = this.listSlidesForDeck(deckId);
+    const assetsBySlideId = new Map<string, AssetRecord[]>();
+    for (const asset of this.listAssetsForDeck(deckId)) {
+      if (asset.kind !== "image" || !asset.slide_id) continue;
+      const existing = assetsBySlideId.get(asset.slide_id) ?? [];
+      existing.push(asset);
+      assetsBySlideId.set(asset.slide_id, existing);
+    }
+
+    let patched = 0;
+    for (const slideRecord of slides) {
+      const assets = assetsBySlideId.get(slideRecord.id);
+      if (!assets || assets.length === 0) continue;
+      const missingSlots = inlineImageSlots(slideRecord.slide).filter(
+        (slot) => !hasImageUrl(slot.image),
+      );
+      if (missingSlots.length === 0) continue;
+
+      let updatedContent: Record<string, unknown> | null = null;
+      const usedAssetIds = new Set<string>();
+      for (const slot of missingSlots) {
+        const asset = selectAssetForSlot(
+          slot.image,
+          assets,
+          usedAssetIds,
+          missingSlots.length,
+        );
+        if (!asset) continue;
+        usedAssetIds.add(asset.id);
+        const targetContent: Record<string, unknown> = updatedContent ?? {
+          ...(slideRecord.slide.content as Record<string, unknown>),
+        };
+        targetContent[slot.name] = {
+          ...slot.image,
+          url: pitchAssetUrl(deckId, asset.id),
+        };
+        updatedContent = targetContent;
+      }
+
+      if (!updatedContent) continue;
+      const nextSlide = {
+        ...slideRecord.slide,
+        content: updatedContent,
+      } as Slide;
+      this.updateSlide(slideRecord.id, { slide: nextSlide });
+      patched += usedAssetIds.size;
+    }
+    return patched;
+  }
+
   deleteAssetsForSlide(slideId: string): number {
     const result = this.db
       .prepare(`DELETE FROM pitch_assets WHERE slide_id = ?`)
@@ -586,4 +669,58 @@ export class PitchRepository {
       created_at: row.created_at,
     });
   }
+}
+
+type InlineImageSlotName = "image" | "left_image" | "right_image";
+
+interface InlineImageSlot {
+  name: InlineImageSlotName;
+  image: SlideImage;
+}
+
+function inlineImageSlots(slide: Slide): InlineImageSlot[] {
+  switch (slide.template) {
+    case "bullet_list":
+      return slide.content.image
+        ? [{ name: "image", image: slide.content.image }]
+        : [];
+    case "two_column": {
+      const slots: InlineImageSlot[] = [];
+      if (slide.content.left_image) {
+        slots.push({ name: "left_image", image: slide.content.left_image });
+      }
+      if (slide.content.right_image) {
+        slots.push({ name: "right_image", image: slide.content.right_image });
+      }
+      return slots;
+    }
+    case "image_caption":
+    case "full_bleed":
+      return [{ name: "image", image: slide.content.image }];
+    default:
+      return [];
+  }
+}
+
+function hasImageUrl(image: SlideImage): boolean {
+  return typeof image.url === "string" && image.url.trim().length > 0;
+}
+
+function selectAssetForSlot(
+  image: SlideImage,
+  assets: readonly AssetRecord[],
+  usedAssetIds: ReadonlySet<string>,
+  missingSlotCount: number,
+): AssetRecord | undefined {
+  const unused = assets.filter((asset) => !usedAssetIds.has(asset.id));
+  const promptMatch = [...unused]
+    .reverse()
+    .find((asset) => asset.prompt === image.prompt);
+  if (promptMatch) return promptMatch;
+  if (missingSlotCount === 1) return unused.at(-1);
+  return undefined;
+}
+
+function pitchAssetUrl(deckId: string, assetId: string): string {
+  return `/api/admin/pitch/decks/${encodeURIComponent(deckId)}/assets/${encodeURIComponent(assetId)}`;
 }

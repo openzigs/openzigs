@@ -130,8 +130,9 @@ export function escapeAttr(input: string | null | undefined): string {
 
 /**
  * Strict allowlist for URLs rendered inside `<img src>` etc. Permits
- * `http(s)://` absolute URLs and root-relative paths. Returns `null`
- * for anything else (callers degrade by omitting the element).
+ * `http(s)://` absolute URLs and root-relative paths. Protocol-relative
+ * `//host/path` URLs are rejected so relative assets cannot silently turn
+ * into third-party requests. Returns `null` for anything else.
  *
  * `data:` URLs are intentionally rejected here — image-pipeline assets
  * arrive as `http(s)://` URLs, and any `data:` inside the schema would
@@ -141,7 +142,7 @@ export function safeUrl(input: string | null | undefined): string | null {
   if (!input) return null;
   const v = String(input).trim();
   if (!v) return null;
-  if (v.startsWith("/")) return v;
+  if (v.startsWith("/") && !v.startsWith("//")) return v;
   if (/^https?:\/\//i.test(v)) return v;
   return null;
 }

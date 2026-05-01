@@ -459,6 +459,43 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
       logger.warn(`[Pitch API] socket emit ${event} failed: ${errMessage(err)}`);
     }
   };
+  const reconcileInlineImageAssets = (deckId: string): void => {
+    try {
+      const patched = deps.pitchRepo.reconcileImageAssetsForDeck(deckId);
+      if (patched > 0) {
+        audit("system", "pitch.image.assets_reconciled", { deckId, patched });
+      }
+    } catch (err) {
+      logger.warn(
+        `[Pitch API] inline image asset reconciliation failed for ${deckId}: ${errMessage(err)}`,
+      );
+      audit(
+        "system",
+        "pitch.image.assets_reconcile_failed",
+        { deckId, error: errMessage(err) },
+        "warn",
+      );
+    }
+  };
+  const auditRouteFailure = (
+    req: Request,
+    status: number,
+    error: unknown,
+    details: Record<string, unknown> = {},
+  ): void => {
+    audit(
+      "system",
+      "pitch.route_failed",
+      {
+        route: req.originalUrl ?? req.url,
+        method: req.method,
+        status,
+        cause: errMessage(error).slice(0, 500),
+        ...details,
+      },
+      status >= 500 ? "error" : "warn",
+    );
+  };
 
   // ────────────────────────────────────────────────────────────────────
   // Rate limiting (Phase 7 / sub-issue #977)
@@ -547,12 +584,20 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
       : 50;
     const offset = Number.isFinite(offsetRaw) ? Math.max(offsetRaw, 0) : 0;
 
-    const all = deps.pitchRepo.listDecks();
-    const page = all.slice(offset, offset + limit);
-    res.json({
-      decks: page,
-      pagination: { total: all.length, limit, offset },
-    });
+    try {
+      const all = deps.pitchRepo.listDecks();
+      const page = all.slice(offset, offset + limit);
+      res.json({
+        decks: page,
+        pagination: { total: all.length, limit, offset },
+      });
+    } catch (err) {
+      logger.error(`[Pitch API] GET /decks failed: ${errMessage(err)}`);
+      auditRouteFailure(req, 500, err);
+      sendError(res, 500, "internal_error", "could not load pitch decks", {
+        route: "/api/admin/pitch/decks",
+      });
+    }
   });
 
   router.post("/decks", crudLimiter, (req, res) => {
@@ -593,8 +638,12 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
   });
 
   router.get("/decks/:deckId", crudLimiter, (req, res) => {
+    reconcileInlineImageAssets(req.params.deckId);
     const deck = deps.pitchRepo.getDeck(req.params.deckId);
     if (!deck) {
+      auditRouteFailure(req, 404, `deck ${req.params.deckId} not found`, {
+        deckId: req.params.deckId,
+      });
       sendError(res, 404, "not_found", `deck ${req.params.deckId} not found`);
       return;
     }
@@ -667,13 +716,21 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
         : rawMode === "present"
           ? "present"
           : "embedded";
+    reconcileInlineImageAssets(req.params.deckId);
     const deck = deps.pitchRepo.getDeck(req.params.deckId);
     if (!deck) {
+      auditRouteFailure(req, 404, `deck ${req.params.deckId} not found`, {
+        deckId: req.params.deckId,
+      });
       sendError(res, 404, "not_found", `deck ${req.params.deckId} not found`);
       return;
     }
     const repoKit = deps.brandKitRepo.getById(deck.brand_kit_id);
     if (!repoKit) {
+      auditRouteFailure(req, 404, `brand kit ${deck.brand_kit_id} not found`, {
+        deckId: deck.id,
+        brandKitId: deck.brand_kit_id,
+      });
       sendError(
         res,
         404,
@@ -771,6 +828,7 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
       logger.error(
         `[Pitch API] GET /decks/${req.params.deckId}/render failed: ${errMessage(err)}`,
       );
+      auditRouteFailure(req, 500, err, { deckId: req.params.deckId });
       sendError(res, 500, "internal_error", errMessage(err));
     }
   });
@@ -818,6 +876,7 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
     brandKit: PitchBrandKit;
   };
   const loadDeckAndKit = (req: Request, res: Response): DeckCtx | null => {
+    reconcileInlineImageAssets(req.params.deckId);
     const deck = deps.pitchRepo.getDeck(req.params.deckId);
     if (!deck) {
       sendError(res, 404, "not_found", `deck ${req.params.deckId} not found`);
@@ -1666,9 +1725,16 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
       }
       lastBulkAtByDeck.set(deckId, now);
 
+      reconcileInlineImageAssets(deckId);
       const slidesForFanout = deps.pitchRepo
         .listSlidesForDeck(deckId)
         .map((s) => ({ id: s.id, slide: s.slide }));
+      const existingBackgroundSlideIds = new Set(
+        deps.pitchRepo
+          .listAssetsForDeck(deckId)
+          .filter((a) => a.kind === "background" && a.slide_id)
+          .map((a) => a.slide_id as string),
+      );
 
       // Sub-issue #998 — honour the deck-level image-style preset
       // persisted on `metadata.image_style` so re-running generate-all
@@ -1689,6 +1755,7 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
             ? { imageStyle: deckImageStyle as never }
             : {}),
           concurrency: 4,
+          existingBackgroundSlideIds,
           // Issue #1007 — ensure every slide gets a background image.
           deriveFallbackBackgrounds: true,
           onEnqueued: (info) => {

@@ -107,9 +107,14 @@ const Common = z.object({
 });
 
 /** Inline image — always carries a generation prompt; `url` is filled later. */
+const SlideImageUrl = z.union([
+  z.string().url(),
+  z.string().regex(/^\/(?!\/)[A-Za-z0-9._~!$&'()*+,;=:@/%-]*(?:\?[A-Za-z0-9._~!$&'()*+,;=:@/?%-]*)?$/),
+]);
+
 export const SlideImageSchema = z.object({
   prompt: z.string().min(3).max(400),
-  url: z.string().url().nullable(),
+  url: SlideImageUrl.nullable(),
   alt: z.string().max(200),
 });
 export type SlideImage = z.infer<typeof SlideImageSchema>;

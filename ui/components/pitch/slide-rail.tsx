@@ -24,7 +24,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { ConfirmDialog } from "@/components/confirm-dialog";
-import { fetchWithAuth } from "@/lib/api";
+import { authorizeRenderedMedia, fetchWithAuth } from "@/lib/api";
 
 export interface SlideRailItem {
   id: string;
@@ -455,7 +455,7 @@ const SlideThumbnail = ({
           if (!cancelled) setErrored(true);
           return;
         }
-        const text = await res.text();
+        const text = authorizeRenderedMedia(await res.text());
         if (!cancelled) setHtml(text);
       } catch {
         if (!cancelled) setErrored(true);

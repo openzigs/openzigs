@@ -266,6 +266,41 @@ describe("Pitch REST router", () => {
       expect(paged.body.pagination).toEqual({ total: 2, limit: 1, offset: 1 });
     });
 
+    it("GET /decks skips a malformed legacy row instead of returning 500", async () => {
+      const kitId = createCustomKit(harness);
+      createDeck(harness, kitId, "Good Deck");
+      harness.db.prepare(
+        `INSERT INTO pitch_decks (id, title, brand_kit_id, aspect_ratio, metadata, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        "bad-legacy",
+        "Bad Legacy",
+        kitId,
+        "16:9",
+        JSON.stringify({ source_script: "" }),
+        FROZEN().toISOString(),
+        FROZEN().toISOString(),
+      );
+
+      const res = await request(harness.app).get("/api/admin/pitch/decks");
+      expect(res.status).toBe(200);
+      expect(res.body.decks).toHaveLength(1);
+      expect(res.body.decks[0].id).toBe("deck-good-deck");
+    });
+
+    it("GET /decks returns a structured error envelope if the repository throws", async () => {
+      vi.spyOn(harness.deps.pitchRepo, "listDecks").mockImplementation(() => {
+        throw new Error("database is locked");
+      });
+      const res = await request(harness.app).get("/api/admin/pitch/decks");
+      expect(res.status).toBe(500);
+      expect(res.body.error).toMatchObject({
+        code: "internal_error",
+        message: "could not load pitch decks",
+      });
+      expect(res.body.error.details.route).toBe("/api/admin/pitch/decks");
+    });
+
     it("POST /decks creates a deck (with placeholder slide)", async () => {
       const kitId = createCustomKit(harness);
       const res = await request(harness.app)
@@ -314,6 +349,49 @@ describe("Pitch REST router", () => {
       expect(res.status).toBe(200);
       expect(res.body.deck.id).toBe(deckId);
       expect(res.body.slides).toHaveLength(1);
+    });
+
+    it("GET /decks/:deckId reconciles existing inline image assets into slide URLs", async () => {
+      const kitId = createCustomKit(harness);
+      const slide = SlideSchema.parse({
+        template: "image_caption",
+        content: {
+          image: { prompt: "a robot", url: null, alt: "robot" },
+          caption: "Robot",
+        },
+        speaker_notes: "",
+        transition: "slide",
+        fragments: [],
+      });
+      const deck = harness.deps.pitchRepo.insertDeck({
+        id: "deck-inline-assets",
+        title: "Inline Assets",
+        brand_kit_id: kitId,
+        aspect_ratio: "16:9",
+        metadata: { source_script: "", tone: "formal" },
+        slides: [{ id: "slide-inline-assets", slide }],
+      });
+      harness.deps.pitchRepo.insertAsset({
+        id: "asset-inline",
+        deck_id: deck.id,
+        slide_id: "slide-inline-assets",
+        kind: "image",
+        source: "fluxq",
+        prompt: "a robot",
+        local_path: join(harness.brandKitsDir, "asset-inline.png"),
+        mime: "image/png",
+        width: 16,
+        height: 16,
+        created_at: FROZEN().toISOString(),
+      });
+
+      const res = await request(harness.app).get(
+        `/api/admin/pitch/decks/${deck.id}`,
+      );
+      expect(res.status).toBe(200);
+      expect(res.body.slides[0].slide.content.image.url).toBe(
+        `/api/admin/pitch/decks/${deck.id}/assets/asset-inline`,
+      );
     });
 
     it("GET /decks/:deckId returns 404 for unknown deck", async () => {

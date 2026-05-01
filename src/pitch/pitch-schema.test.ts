@@ -251,6 +251,36 @@ describe("SlideSchema — discriminated union covers all 14 templates", () => {
     ).toThrow();
   });
 
+  it("image_caption — accepts routed internal asset URLs for persisted generated images", () => {
+    expect(() =>
+      SlideSchema.parse(
+        validSlide("image_caption", {
+          image: {
+            prompt: "A cat",
+            url: "/api/admin/pitch/decks/deck-1/assets/asset-1",
+            alt: "cat",
+          },
+          caption: "the cat",
+        }),
+      ),
+    ).not.toThrow();
+  });
+
+  it("image_caption — rejects protocol-relative asset URLs", () => {
+    expect(() =>
+      SlideSchema.parse(
+        validSlide("image_caption", {
+          image: {
+            prompt: "A cat",
+            url: "//example.com/asset.png",
+            alt: "cat",
+          },
+          caption: "the cat",
+        }),
+      ),
+    ).toThrow();
+  });
+
   it("quote — accepts and rejects empty quote", () => {
     expect(() =>
       SlideSchema.parse(

@@ -1,3 +1,4 @@
+import "@testing-library/jest-dom/vitest";
 import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -107,6 +108,30 @@ describe("PitchDeckListPage", () => {
       });
     });
     render(<PitchDeckListPage />, { wrapper });
+    await waitFor(() => {
+      expect(screen.getByTestId("deck-list-empty")).toBeInTheDocument();
+    });
+  });
+
+  it("shows endpoint/status detail and retries without a full page reload", async () => {
+    vi.mocked(fetchJson)
+      .mockImplementationOnce(() =>
+        Promise.reject(new Error("/api/admin/pitch/decks failed with 500: boom")),
+      )
+      .mockImplementation((path: string) => {
+        if (path.includes("brand-kits")) return Promise.resolve(kitsResponse);
+        return Promise.resolve({
+          decks: [],
+          pagination: { total: 0, limit: 50, offset: 0 },
+        });
+      });
+
+    render(<PitchDeckListPage />, { wrapper });
+    expect(await screen.findByTestId("deck-list-error")).toBeInTheDocument();
+    expect(screen.getByTestId("deck-list-error-detail")).toHaveTextContent(
+      "GET /api/admin/pitch/decks",
+    );
+    fireEvent.click(screen.getByTestId("deck-list-error-retry"));
     await waitFor(() => {
       expect(screen.getByTestId("deck-list-empty")).toBeInTheDocument();
     });

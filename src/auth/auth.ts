@@ -70,6 +70,10 @@ class FailedAuthLimiter {
 const ASSET_FILE_PATH_RE =
   /^\/api\/queue\/assets\/(?:[^/]+\/file|file\/.+)$/;
 
+/** Pitch-generated slide assets served into rendered deck iframes. */
+const PITCH_ASSET_PATH_RE =
+  /^\/api\/admin\/pitch\/decks\/[a-zA-Z0-9_-]+\/assets\/[a-zA-Z0-9_-]+$/;
+
 /**
  * Pitch deck render route — same OWASP token-in-URL trade-off as
  * `ASSET_FILE_PATH_RE` (sub-issue #908). The Present button (see
@@ -120,6 +124,7 @@ const extractToken = (req: Request) => {
   const fullPath = req.originalUrl.split("?")[0];
   const allowQueryToken =
     ASSET_FILE_PATH_RE.test(fullPath) ||
+    PITCH_ASSET_PATH_RE.test(fullPath) ||
     PITCH_RENDER_PATH_RE.test(fullPath) ||
     process.env.OPENZIGS_ALLOW_QUERY_TOKEN === "1";
   if (allowQueryToken) {

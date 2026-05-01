@@ -4,7 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Plus, MoreVertical } from "lucide-react";
+import { Plus, MoreVertical, RefreshCw } from "lucide-react";
 import { fetchJson } from "@/lib/api";
 import { showToast } from "@/components/toast";
 import { ConfirmDialog } from "@/components/confirm-dialog";
@@ -67,6 +67,11 @@ export default function PitchDeckListPage() {
   });
 
   const decks = decksQuery.data?.decks ?? [];
+  const deckLoadError = decksQuery.error instanceof Error
+    ? decksQuery.error.message
+    : decksQuery.isError
+      ? "Unknown error"
+      : null;
   const kitNameById = new Map(
     (kitsQuery.data?.brandKits ?? []).map((k) => [k.id, k.name]),
   );
@@ -95,8 +100,28 @@ export default function PitchDeckListPage() {
           Loading decks…
         </div>
       ) : decksQuery.isError ? (
-        <div className="mt-12 text-center text-sm text-red-500">
-          Could not load decks.
+        <div
+          className="mt-12 rounded-lg border border-red-500/30 bg-red-500/5 p-6 text-sm"
+          data-testid="deck-list-error"
+        >
+          <div className="font-semibold text-red-600 dark:text-red-400">
+            Could not load decks.
+          </div>
+          <div
+            className="mt-2 break-words text-xs text-muted-foreground"
+            data-testid="deck-list-error-detail"
+          >
+            GET /api/admin/pitch/decks: {deckLoadError}
+          </div>
+          <button
+            type="button"
+            data-testid="deck-list-error-retry"
+            onClick={() => void decksQuery.refetch()}
+            className="mt-4 inline-flex items-center gap-2 rounded-md border border-border px-3 py-2 text-xs font-semibold hover:bg-muted/40"
+          >
+            <RefreshCw className="h-3.5 w-3.5" />
+            Retry
+          </button>
         </div>
       ) : decks.length === 0 ? (
         <div
