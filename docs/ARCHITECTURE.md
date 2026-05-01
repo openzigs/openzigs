@@ -6957,15 +6957,23 @@ flowchart LR
 |---|---|
 | `src/api/pitch.ts` | 24 routes, per-route rate-limit factory `buildLimiter(max, label)`, CSP on render/HTML export, 80-slide cap |
 | `src/pitch/pitch-condense.ts` | Map-reduce LLM summariser used by `POST /script/condense`. `condenseScript()` chunks raw text on paragraph boundaries, then summarises chunks **in parallel with bounded concurrency** (`CONDENSE_MAP_CONCURRENCY` = 4) via the Copilot wrapper. The model defaults to the wrapper-selected one; callers can override via the optional `model` opt (forwarded to `copilot.chat`). Output order matches input chunk order (workers write into a positional `summaries[i]` slot). Optionally runs a reduce pass to fit `targetBytes` (default 40 KB). 2 MB hard ceiling rejected before any LLM call. |
-| `src/pitch/pitch-schema.ts` | All Zod schemas. `BrandKitSchema`/`SlideImageSchema` URL fields are server-populated only |
+| `src/pitch/pitch-schema.ts` | All Zod schemas. `BrandKitSchema` URLs are server-populated; `SlideImageSchema.url` accepts http(s) and root-relative internal asset routes only |
 | `src/pitch/pitch-sanitize.ts` | Centralised DOMPurify; `sanitizeRichText/escapeHtml/escapeAttr/safeUrl`. Forbids `script`/`iframe`/`object`/`embed`/`link`/`meta`/`base`/`form`/`style` and all `on*`/`formaction`/`xlink:href`/`srcdoc`/`action`/`background`/`ping`/`style` attributes |
 | `src/pitch/pitch-utils.ts` | `wrapUserScript`: wraps user input in `<DATA>...</DATA>` envelope and strips any envelope tokens from the body |
 | `src/pitch/pitch-prompts.ts` | `PROMPT_INJECTION_GUARD` system instruction telling the model to treat envelope contents as data |
 | `src/pitch/pitch-generator.ts` | Two-stage generation: stage 1 truncates to `MAX_SLIDES_PER_DECK = 80` then stage 2 validates against final `DeckSchema` |
-| `src/pitch/pitch-renderer.ts` | Reveal HTML renderer; strict CSP for standalone mode |
+| `src/pitch/pitch-renderer.ts` | Reveal HTML renderer; strict CSP for standalone mode; derives readable brand color tokens before emitting deck CSS |
 | `src/pitch/pitch-export-utils.ts` | `safeFilename` (`[a-zA-Z0-9._-]+`, 120 char cap), `assertWithinTmpdir` (realpath-based symlink containment under `os.tmpdir()`), `htmlToPdf` (decktape subprocess + `AbortController`) |
 | `src/pitch/pitch-export-pdf.ts` / `-pptx.ts` / `-zip.ts` / `-md.ts` / `-notes.ts` | Per-format exporters; PDF + notes pipelines abort early when `opts.signal.aborted` |
-| `src/pitch/pitch-repository.ts` | SQLite tables `pitch_decks`, `pitch_brand_kits`, `pitch_slide_assets`; `seedStarterBrandKits` writes the 6 starter kits |
+| `src/pitch/pitch-repository.ts` | SQLite tables `pitch_decks`, `pitch_brand_kits`, `pitch_slide_assets`; read paths skip malformed legacy deck/slide rows so one bad record cannot poison the library; `seedStarterBrandKits` writes the 6 starter kits |
+
+### Image lifecycle and readable rendering
+
+Pitch image jobs are persisted in two steps: the queue completion listener copies the FluxQ output into `~/.openzigs/pitch/assets/{deckId}/`, inserts a `pitch_assets` row, then updates inline image slots with `/api/admin/pitch/decks/{deckId}/assets/{assetId}`. The renderer intentionally accepts that root-relative route because the browser can load it through the normal admin auth/CSP path; it never emits `file://` URLs into deck HTML.
+
+Background images remain asset-row driven rather than inline slide content. Bulk fan-out receives the set of slide IDs that already have `kind = background` assets and skips those slides, so repeated Generate All requests cannot create an unbounded trail of duplicate background jobs. Inline slots are still skipped when their `url` is already populated.
+
+Brand kit colors are treated as inputs, not final text colors. `buildReadableColorTokens()` computes contrast-safe text, heading, accent, table-header, and surface tokens from the active kit before the renderer writes CSS variables. The UI warns on low-contrast brand kit combinations, but rendering still protects existing decks and imported kits by deriving readable fallbacks at render time.
 
 #### PDF export — Chromium dependency
 

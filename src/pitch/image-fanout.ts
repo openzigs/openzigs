@@ -66,6 +66,8 @@ export interface FanOutImageGenerationOpts {
    * the manual `generate-all` endpoint. Defaults to false.
    */
   deriveFallbackBackgrounds?: boolean;
+  /** Slide IDs that already have a persisted background asset. */
+  existingBackgroundSlideIds?: ReadonlySet<string>;
   /**
    * Optional hook invoked synchronously after each successful enqueue.
    * Used by the API layer to emit `pitch:image:queued` and audit log.
@@ -107,7 +109,10 @@ interface PlannedJob {
 /** Pure: scan a deck and return the list of jobs that *would* be enqueued. */
 export function planImageJobs(
   slides: SlideForFanout[],
-  opts: { deriveFallbackBackgrounds?: boolean } = {},
+  opts: {
+    deriveFallbackBackgrounds?: boolean;
+    existingBackgroundSlideIds?: ReadonlySet<string>;
+  } = {},
 ): {
   plan: PlannedJob[];
   skipped: number;
@@ -130,19 +135,21 @@ export function planImageJobs(
       if (derived) bgPrompt = derived;
     }
     if (bgPrompt && bgPrompt.length >= 3) {
+      if (opts.existingBackgroundSlideIds?.has(slideId)) {
+        skipped += 1;
+      } else {
       // Background prompts have no URL slot to check — schema doesn't
-      // expose a persisted background URL. We always enqueue, since the
-      // existence of an asset in `pitch_assets` (kind=background) is what
-      // the renderer joins on, and the bulk button cannot cheaply learn
-      // about that here. Idempotency for background is therefore
-      // best-effort; flux jobs are cheap and the worst case is a duplicate.
-      plan.push({
-        slideId,
-        slot: "image",
-        kind: "background",
-        prompt: bgPrompt,
-        ...(perSlideStyle ? { perSlideStyle } : {}),
-      });
+        // expose a persisted background URL. Callers that can cheaply look
+        // up pitch_assets pass existingBackgroundSlideIds so repeated bulk
+        // requests do not enqueue unbounded duplicate background jobs.
+        plan.push({
+          slideId,
+          slot: "image",
+          kind: "background",
+          prompt: bgPrompt,
+          ...(perSlideStyle ? { perSlideStyle } : {}),
+        });
+      }
     }
 
     // 2. Inline image slots, by template.
@@ -266,6 +273,7 @@ export async function fanOutImageGeneration(
   const concurrency = Math.max(1, opts.concurrency ?? 4);
   const { plan, skipped } = planImageJobs(opts.slides, {
     deriveFallbackBackgrounds: opts.deriveFallbackBackgrounds === true,
+    existingBackgroundSlideIds: opts.existingBackgroundSlideIds,
   });
 
   // Bug-fix (post-PR-#1017 walkthrough): probe FluxQ's `/health` once

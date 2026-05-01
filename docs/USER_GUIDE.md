@@ -1870,7 +1870,7 @@ The **Pitch** workspace turns a script, brief, or research notes into a designed
 
 1. **Draft** — paste a script or upload notes, pick a brand kit, choose target slide count + tone, and (optionally) pick the LLM via the **AI model** picker on the Options step. Defaults to your Copilot account's selected model; override for a faster/cheaper model on both the condense and draft passes. The AI produces a structured deck with up to **80 slides** (`MAX_SLIDES_PER_DECK`) across 14 templates.
 2. **Edit** — click any slide field to edit it inline; the right rail loads the matching property editor. Drag slides to reorder, regenerate individual slides, or regenerate slide images via Flux.
-3. **Brand kits** — pick a starter kit (Modern Minimal, Corporate Blue, Vibrant Pitch, Editorial, Tech Dark, Warm Neutral) or create your own. Editable: heading + body fonts, accent colors, footer text, logo (≤ 2 MB PNG/JPEG/WebP). Logos are content-sniffed server-side.
+3. **Brand kits** — pick a starter kit (Modern Minimal, Corporate Blue, Vibrant Pitch, Editorial, Tech Dark, Warm Neutral) or create your own. Editable: heading + body fonts, accent colors, footer text, logo (≤ 2 MB PNG/JPEG/WebP). Logos are content-sniffed server-side. The editor warns when colors are likely to be low contrast, and the renderer derives readable text colors automatically so existing decks stay legible.
 4. **Export** — five formats, all attachment downloads with `Cache-Control: no-store`:
 
 #### Sidecar auto-start (`media.autoStartSidecars`)
@@ -1900,7 +1900,11 @@ If a deck generates fine but every slide stays in the "Generating…" state or l
 1. **Check the FluxQ sidecar.** Run `curl http://127.0.0.1:5005/health` (or `Invoke-WebRequest` on Windows). A healthy sidecar returns `200 OK` with a JSON body that includes `recommended_width` / `recommended_height`. If it doesn't answer, start it with `scripts/media-ctl.ps1 flux start` (Windows) or `scripts/media-ctl.sh flux start` (POSIX) — or set `media.autoStartSidecars: true` and restart the backend (see above).
 2. **Check the `media_jobs` SQLite table** at `~/.openzigs/openzigs.db`. Failed jobs include the upstream sidecar error in the `error` column. The most common pattern is an OOM on `flux-schnell` ("CUDA out of memory" on a 12 GB GPU) which retries 3× before lodging as `failed`.
 3. **Dimensions are clamped** to FluxQ's recommended size at fan-out time (PR #1018) — the sidecar advertises `recommended_width` / `recommended_height` on `/health` and `clampToFluxQRecommendedDims` shrinks any over-sized request. If the sidecar is unreachable when the fan-out runs, the safe fallback is `1024×576`. You should never see a job dispatched at the slide's full visual resolution.
-4. **Restart the backend after enabling `media.autoStartSidecars`** — the auto-start probe runs only at boot, so toggling the flag while the backend is already running is a no-op.
+4. **Generated inline images are served through Pitch asset routes.** A completed inline image should create a `pitch_assets` row and patch the slide slot to `/api/admin/pitch/decks/{deckId}/assets/{assetId}`. The renderer loads that authenticated route directly; it should not show `file://` URLs in the slide JSON or rendered HTML.
+5. **Generate All is idempotent for backgrounds.** Re-running it skips slides that already have a persisted background asset and skips inline slots whose URL is already populated. If the button enqueues the same background forever, check for stale or malformed `pitch_assets` rows for that deck.
+6. **Restart the backend after enabling `media.autoStartSidecars`** — the auto-start probe runs only at boot, so toggling the flag while the backend is already running is a no-op.
+
+If the Pitch library itself shows **Could not load decks**, expand the diagnostic line in the error panel. It includes the endpoint/status reported by the backend and a retry button; malformed legacy rows are skipped automatically, but database lock or filesystem errors will still surface there.
 
 Still stuck? Tail the backend log with `LOG_LEVEL=debug pnpm dev`, look for `[Sidecars]` and `[Pitch]` lines, and grep `~/.openzigs/logs/` for the deck ID.
 

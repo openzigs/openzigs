@@ -319,10 +319,13 @@ describe("registerImageCompletionListener", () => {
     expect(assets[0].local_path).toContain(enqRes.assetId);
     expect(existsSync(assets[0].local_path)).toBe(true);
 
-    // Slide content should now have a file:// URL on its image slot.
+    // Slide content should now have a routed URL on its image slot so the
+    // renderer's URL allowlist and browser CSP can load it after refresh.
     const slide = pitchRepo.getSlide("slide-photo");
     if (slide && slide.slide.template === "image_caption") {
-      expect(slide.slide.content.image.url).toMatch(/^file:\/\//);
+      expect(slide.slide.content.image.url).toBe(
+        `/api/admin/pitch/decks/deck-1/assets/${enqRes.assetId}`,
+      );
       expect(slide.slide.content.image.prompt).toBe("a kitten");
     } else {
       throw new Error("expected image_caption slide");
@@ -441,6 +444,7 @@ describe("registerImageCompletionListener", () => {
     const queue = new EventEmitter();
     const repo = mockQueueRepo();
     const auditLog = vi.fn().mockResolvedValue(undefined);
+    const failed = vi.fn();
     const enqRes = enqueueSlideImage({
       deckId: "deck-1",
       slideId: "slide-photo",
@@ -454,6 +458,7 @@ describe("registerImageCompletionListener", () => {
       >[0]["queueMaster"],
       pitchRepo,
       auditLogger: { log: auditLog },
+      onPitchImageFailed: failed,
       baseDir,
     });
     queue.emit("job:complete", {
@@ -485,6 +490,14 @@ describe("registerImageCompletionListener", () => {
     expect(auditLog.mock.calls[0][0].event).toBe(
       "pitch.image.job_did_not_succeed",
     );
+    expect(failed).toHaveBeenCalledWith({
+      deckId: "deck-1",
+      slideId: "slide-photo",
+      slot: "image",
+      jobId: enqRes.jobId,
+      assetId: enqRes.assetId,
+      error: "GPU oom",
+    });
     reg.dispose();
   });
 
@@ -492,6 +505,7 @@ describe("registerImageCompletionListener", () => {
     const queue = new EventEmitter();
     const repo = mockQueueRepo();
     const auditLog = vi.fn().mockResolvedValue(undefined);
+    const failed = vi.fn();
     const enqRes = enqueueSlideImage({
       deckId: "deck-1",
       slideId: "slide-photo",
@@ -515,6 +529,7 @@ describe("registerImageCompletionListener", () => {
       pitchRepo,
       auditLogger: { log: auditLog },
       baseDir,
+      onPitchImageFailed: failed,
     });
     queue.emit("job:complete", {
       id: enqRes.jobId,
@@ -549,6 +564,14 @@ describe("registerImageCompletionListener", () => {
     expect(auditLog.mock.calls.some(
       (c: unknown[]) => (c[0] as { event: string }).event === "pitch.image.persist_failed",
     )).toBe(true);
+    expect(failed).toHaveBeenCalledWith({
+      deckId: "deck-1",
+      slideId: "slide-photo",
+      slot: "image",
+      jobId: enqRes.jobId,
+      assetId: enqRes.assetId,
+      error: "FK violation",
+    });
     reg.dispose();
   });
 

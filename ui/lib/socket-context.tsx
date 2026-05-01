@@ -38,6 +38,21 @@ function resolveSocketUrl(): string {
   return RAW_SOCKET_URL;
 }
 const CLIENT_ID_KEY = "openzigs:client-id";
+const E2E_SOCKET_HOOK_KEY = "openzigs:e2e-socket-hook";
+
+type WindowWithOpenZigsSocket = Window & {
+  __openzigsSocket?: Socket;
+};
+
+function shouldExposeSocketForE2E(): boolean {
+  if (process.env.NODE_ENV !== "production") return true;
+  if (typeof window === "undefined") return false;
+  try {
+    return window.localStorage.getItem(E2E_SOCKET_HOOK_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
 
 /** Get or generate a stable client identity that persists across page navigations. */
 export const getStableClientId = (): string => {
@@ -68,6 +83,7 @@ export const useSocket = () => useContext(SocketContext);
 
 export const SocketProvider = ({ children }: { children: ReactNode }) => {
   const socketRef = useRef<Socket | null>(null);
+  const [socketInstance, setSocketInstance] = useState<Socket | null>(null);
   const [connected, setConnected] = useState(false);
   const hadDisconnectRef = useRef(false);
   const reconnectTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -86,6 +102,10 @@ export const SocketProvider = ({ children }: { children: ReactNode }) => {
       timeout: 20_000,
     });
     socketRef.current = socket;
+    setSocketInstance(socket);
+    if (shouldExposeSocketForE2E()) {
+      (window as WindowWithOpenZigsSocket).__openzigsSocket = socket;
+    }
 
     const onConnect = () => {
       setConnected(true);
@@ -130,12 +150,17 @@ export const SocketProvider = ({ children }: { children: ReactNode }) => {
         reconnectTimerRef.current = null;
       }
       socket.disconnect();
+      const browserWindow = window as WindowWithOpenZigsSocket;
+      if (browserWindow.__openzigsSocket === socket) {
+        delete browserWindow.__openzigsSocket;
+      }
       socketRef.current = null;
+      setSocketInstance(null);
     };
   }, []);
 
   return (
-    <SocketContext.Provider value={{ socket: socketRef.current, connected }}>
+    <SocketContext.Provider value={{ socket: socketInstance, connected }}>
       {children}
     </SocketContext.Provider>
   );

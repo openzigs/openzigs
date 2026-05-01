@@ -10,6 +10,7 @@
  *   - Oversized images are rejected (resize stub throws)
  */
 import { describe, it, expect, vi } from "vitest";
+import JSZip from "jszip";
 import { exportDeckToPptx } from "./pitch-export-pptx.js";
 import {
   DeckSchema,
@@ -175,17 +176,98 @@ describe("exportDeckToPptx", () => {
       .mockResolvedValue({ dataUrl: "data:image/png;base64,xxx", bytes: 100 });
     const fetchImpl = vi.fn().mockResolvedValue(PNG_TINY);
 
-    const kit = buildKit({ accentColor: "#abcdef", primaryColor: "#123456" });
+    // Use a *high-contrast* primary AND accent against a white slide
+    // background so the readable-color token derivation passes both
+    // straight through to the export.
+    const kit = buildKit({
+      accentColor: "#996600",
+      primaryColor: "#123456",
+      secondaryColor: "#ffffff",
+    });
     const out = await exportDeckToPptx(
       buildDeck([makeSlide("title", { title: "T" })]),
       kit,
       { resizeImage, fetchImpl },
     );
 
-    // Inspect the underlying zip text — brand colors (sans `#`) should
-    // appear somewhere in the XML payload.
-    const text = out.buffer.toString("latin1");
-    expect(text.toLowerCase()).toContain("abcdef");
-    expect(text.toLowerCase()).toContain("123456");
+    // Unzip the .pptx and concatenate every XML part — the brand colors
+    // (sans `#`) must appear somewhere in the rendered XML payload.
+    const xml = (await collectPptxXml(out.buffer)).toLowerCase();
+    expect(xml).toContain("996600");
+    expect(xml).toContain("123456");
+  });
+
+  // Sub-issue #1037 / Epic #1035 AC4 — when the brand kit is so
+  // light-on-light that the raw primary/accent colors would be
+  // unreadable on a white slide background, the PPTX export must fall
+  // back to the contrast-safe heading/accent colors derived by
+  // `buildReadableColorTokens`, and overlay text on the
+  // section-divider's primary fill must use `onPrimary` (dark for a
+  // light fill) instead of a hard-coded white.
+  it("low-contrast brand kits route headings through the readable color tokens", async () => {
+    const resizeImage = vi.fn();
+    const fetchImpl = vi.fn();
+
+    const kit = buildKit({
+      // Pure-white primary/secondary/accent on a white slide bg = 1.0:1
+      // contrast — illegible without the readable-token fallback.
+      primaryColor: "#ffffff",
+      secondaryColor: "#ffffff",
+      accentColor: "#ffffff",
+    });
+    const deck = buildDeck([
+      makeSlide("title", { title: "T", subtitle: "S", eyebrow: "E" }),
+      makeSlide("section_divider", { section_number: 1, title: "Sec" }),
+      makeSlide("comparison_table", {
+        heading: "H",
+        columns: ["A", "B"],
+        rows: [{ label: "row", cells: ["x", "y"] }],
+      }),
+    ]);
+
+    const out = await exportDeckToPptx(deck, kit, { resizeImage, fetchImpl });
+    const xml = (await collectPptxXml(out.buffer)).toLowerCase();
+
+    // Readable fallback (dark `#111827`) must appear, proving the
+    // export consulted the readable token set instead of dropping the
+    // raw white primary directly into the heading color slot. Without
+    // the contrast guard, the section_divider title and table header
+    // text would render invisibly white-on-white.
+    expect(xml).toContain("111827");
+  });
+
+  // Regression: a *high*-contrast brand kit must still pass the
+  // primary color through verbatim — readable-token derivation only
+  // kicks in when contrast is too low.
+  it("high-contrast brand kits keep their primary color in the export", async () => {
+    const resizeImage = vi.fn();
+    const fetchImpl = vi.fn();
+    const kit = buildKit({
+      primaryColor: "#0a1f44",
+      accentColor: "#996600",
+      secondaryColor: "#ffffff",
+    });
+    const out = await exportDeckToPptx(
+      buildDeck([makeSlide("title", { title: "T" })]),
+      kit,
+      { resizeImage, fetchImpl },
+    );
+    const xml = (await collectPptxXml(out.buffer)).toLowerCase();
+    expect(xml).toContain("0a1f44");
   });
 });
+
+/**
+ * Unzip a `.pptx` buffer (which is a ZIP of XML parts) and concatenate
+ * every textual XML/relationship file into a single string. Used by the
+ * brand-color tests so they don't have to grovel through the deflated
+ * raw bytes.
+ */
+async function collectPptxXml(buffer: Buffer): Promise<string> {
+  const zip = await JSZip.loadAsync(buffer);
+  const files = Object.values(zip.files).filter(
+    (f) => !f.dir && /\.(xml|rels)$/i.test(f.name),
+  );
+  const parts = await Promise.all(files.map((f) => f.async("string")));
+  return parts.join("\n");
+}

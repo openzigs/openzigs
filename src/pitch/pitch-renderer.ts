@@ -59,6 +59,53 @@ export interface RenderOpts {
   initialSlideIndex?: number;
 }
 
+export interface ReadableColorTokens {
+  background: string;
+  text: string;
+  muted: string;
+  heading: string;
+  accent: string;
+  onPrimary: string;
+  onAccent: string;
+  surface: string;
+  surfaceText: string;
+}
+
+interface Rgb {
+  r: number;
+  g: number;
+  b: number;
+}
+
+export function contrastRatio(foreground: string, background: string): number {
+  const fg = relativeLuminance(parseHexColor(foreground));
+  const bg = relativeLuminance(parseHexColor(background));
+  const lighter = Math.max(fg, bg);
+  const darker = Math.min(fg, bg);
+  return (lighter + 0.05) / (darker + 0.05);
+}
+
+export function buildReadableColorTokens(kit: BrandKit): ReadableColorTokens {
+  const background = isHexColor(kit.secondaryColor) ? kit.secondaryColor : "#ffffff";
+  const primary = isHexColor(kit.primaryColor) ? kit.primaryColor : "#111827";
+  const accentRaw = isHexColor(kit.accentColor) ? kit.accentColor : "#2563eb";
+  const text = readableTextColor(background);
+  const muted = text === "#111827" ? "#4b5563" : "#e5e7eb";
+  const heading = contrastRatio(primary, background) >= 4.5 ? primary : text;
+  const accent = contrastRatio(accentRaw, background) >= 4.5 ? accentRaw : text;
+  return {
+    background,
+    text,
+    muted,
+    heading,
+    accent,
+    onPrimary: readableTextColor(primary),
+    onAccent: readableTextColor(accentRaw),
+    surface: text === "#111827" ? "rgba(255,255,255,0.78)" : "rgba(255,255,255,0.92)",
+    surfaceText: "#111827",
+  };
+}
+
 export interface RenderResult {
   html: string;
   /** Number of `<section>` slides emitted (for tests / audit logs). */
@@ -239,13 +286,49 @@ function brandKitInlineStyle(kit: BrandKit): string {
   // can't execute. Strip everything outside the safe character set.
   const safeFont = (raw: string): string =>
     String(raw ?? "").replace(/[^A-Za-z0-9 ,'-]/g, "").slice(0, 80);
+  const tokens = buildReadableColorTokens(kit);
   return [
     `--pitch-primary:${kit.primaryColor}`,
-    `--pitch-secondary:${kit.secondaryColor}`,
+    `--pitch-secondary:${tokens.background}`,
     `--pitch-accent:${kit.accentColor}`,
+    `--pitch-text:${tokens.text}`,
+    `--pitch-muted:${tokens.muted}`,
+    `--pitch-heading:${tokens.heading}`,
+    `--pitch-accent-readable:${tokens.accent}`,
+    `--pitch-on-primary:${tokens.onPrimary}`,
+    `--pitch-on-accent:${tokens.onAccent}`,
+    `--pitch-surface:${tokens.surface}`,
+    `--pitch-surface-text:${tokens.surfaceText}`,
     `--pitch-font-heading:${safeFont(kit.fontHeading)}`,
     `--pitch-font-body:${safeFont(kit.fontBody)}`,
   ].join(";");
+}
+
+function isHexColor(input: string): boolean {
+  return /^#[0-9a-f]{6}$/i.test(input);
+}
+
+function parseHexColor(input: string): Rgb {
+  if (!isHexColor(input)) return { r: 255, g: 255, b: 255 };
+  return {
+    r: Number.parseInt(input.slice(1, 3), 16),
+    g: Number.parseInt(input.slice(3, 5), 16),
+    b: Number.parseInt(input.slice(5, 7), 16),
+  };
+}
+
+function relativeLuminance(rgb: Rgb): number {
+  const channel = (value: number): number => {
+    const s = value / 255;
+    return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
+  };
+  return 0.2126 * channel(rgb.r) + 0.7152 * channel(rgb.g) + 0.0722 * channel(rgb.b);
+}
+
+function readableTextColor(background: string): "#111827" | "#ffffff" {
+  return contrastRatio("#111827", background) >= contrastRatio("#ffffff", background)
+    ? "#111827"
+    : "#ffffff";
 }
 
 /**
@@ -401,16 +484,16 @@ html, body { height: 100%; margin: 0; padding: 0; }
   z-index: 5;
 }
 .pitch-deck-wrap .reveal {
-  --r-heading-color: var(--pitch-primary);
-  --r-link-color: var(--pitch-accent);
-  --r-selection-background-color: var(--pitch-accent);
-  --r-main-color: #1f2937;
+  --r-heading-color: var(--pitch-heading);
+  --r-link-color: var(--pitch-accent-readable);
+  --r-selection-background-color: var(--pitch-accent-readable);
+  --r-main-color: var(--pitch-text);
   --r-main-font-size: 28px;
   --r-heading-font-weight: 700;
   --r-heading-line-height: 1.15;
   --r-block-margin: 24px;
   font-family: var(--pitch-font-body, "Inter", system-ui, sans-serif);
-  color: #1f2937;
+  color: var(--pitch-text);
 }
 /* Generous slide padding (~7% of slide). Reveal scales the .slides
    container, so padding works against the logical 960×700 viewport. */
@@ -425,10 +508,10 @@ html, body { height: 100%; margin: 0; padding: 0; }
 .pitch-deck-wrap .reveal h3,
 .pitch-deck-wrap .reveal h4 {
   font-family: var(--pitch-font-heading, "Inter", system-ui, sans-serif);
-  color: var(--pitch-primary);
+  color: var(--pitch-heading);
   text-shadow: none;
   text-transform: none;
-  letter-spacing: -0.015em;
+  letter-spacing: 0;
   line-height: 1.15;
   margin-top: 0;
 }
@@ -457,10 +540,10 @@ html, body { height: 100%; margin: 0; padding: 0; }
   width: 8px;
   height: 8px;
   border-radius: 2px;
-  background: var(--pitch-accent);
+  background: var(--pitch-accent-readable);
 }
 .pitch-deck-wrap .reveal ol { padding-left: 1.4em; }
-.pitch-deck-wrap .reveal .pitch-accent { color: var(--pitch-accent); }
+.pitch-deck-wrap .reveal .pitch-accent { color: var(--pitch-accent-readable); }
 /* ── Title slide pattern ─────────────────────────────────────── */
 .pitch-deck-wrap .reveal .slides > section.pitch-tpl-title {
   display: flex;
@@ -473,10 +556,10 @@ html, body { height: 100%; margin: 0; padding: 0; }
   font-weight: 600;
   letter-spacing: 0.18em;
   text-transform: uppercase;
-  color: var(--pitch-accent);
+  color: var(--pitch-accent-readable);
   margin-bottom: 1.2em;
   padding-bottom: 0.6em;
-  border-bottom: 3px solid var(--pitch-accent);
+  border-bottom: 3px solid var(--pitch-accent-readable);
   align-self: flex-start;
 }
 .pitch-deck-wrap .reveal .slides > section.pitch-tpl-title h1 {
@@ -486,7 +569,7 @@ html, body { height: 100%; margin: 0; padding: 0; }
 .pitch-deck-wrap .reveal .slides > section.pitch-tpl-title h3 {
   font-size: 1.4em;
   font-weight: 400;
-  color: #4b5563;
+  color: var(--pitch-muted);
   margin-top: 0.5em;
 }
 /* ── Section divider ─────────────────────────────────────────── */
@@ -520,18 +603,18 @@ html, body { height: 100%; margin: 0; padding: 0; }
 .pitch-deck-wrap .reveal blockquote {
   background: transparent;
   box-shadow: none;
-  border-left: 4px solid var(--pitch-accent);
+  border-left: 4px solid var(--pitch-accent-readable);
   padding: 0.5em 1em;
   font-size: 1.4em;
   font-style: italic;
-  color: #1f2937;
+  color: var(--pitch-text);
   width: 100%;
   margin: 0 0 1em 0;
 }
 .pitch-deck-wrap .reveal .pitch-attribution {
   text-align: right;
   font-size: 0.9em;
-  color: #6b7280;
+  color: var(--pitch-muted);
 }
 /* ── Stats / KPIs ────────────────────────────────────────────── */
 .pitch-deck-wrap .reveal .pitch-kpis {
@@ -545,9 +628,10 @@ html, body { height: 100%; margin: 0; padding: 0; }
   padding: 1.25rem 1.5rem;
   margin: 0;
   border: none;
-  border-top: 4px solid var(--pitch-accent);
+  border-top: 4px solid var(--pitch-accent-readable);
   border-radius: 4px;
-  background: rgba(255,255,255,0.7);
+  background: var(--pitch-surface);
+  color: var(--pitch-surface-text);
   text-align: left;
 }
 .pitch-deck-wrap .reveal .pitch-kpi-value {
@@ -555,11 +639,11 @@ html, body { height: 100%; margin: 0; padding: 0; }
   font-size: 2.6em;
   font-weight: 700;
   line-height: 1;
-  color: var(--pitch-primary);
+  color: var(--pitch-heading);
 }
 .pitch-deck-wrap .reveal .pitch-kpi-label {
   font-size: 0.85em;
-  color: #4b5563;
+  color: var(--pitch-muted);
   margin-top: 0.5em;
 }
 .pitch-deck-wrap .reveal .pitch-kpi-delta {
@@ -579,7 +663,7 @@ html, body { height: 100%; margin: 0; padding: 0; }
 .pitch-deck-wrap .reveal .pitch-caption {
   text-align: center;
   font-size: 0.95em;
-  color: #6b7280;
+  color: var(--pitch-muted);
   font-style: italic;
 }
 /* ── Full-bleed image ────────────────────────────────────────── */
@@ -616,7 +700,7 @@ html, body { height: 100%; margin: 0; padding: 0; }
 }
 .pitch-deck-wrap .reveal table th {
   background: var(--pitch-primary);
-  color: #fff;
+  color: var(--pitch-on-primary);
   padding: 0.75em 1em;
   text-align: left;
   font-weight: 600;
@@ -636,7 +720,7 @@ html, body { height: 100%; margin: 0; padding: 0; }
   list-style: none;
   padding-left: 1rem;
   margin-top: 1.5rem;
-  border-left: 3px solid var(--pitch-accent);
+  border-left: 3px solid var(--pitch-accent-readable);
 }
 .pitch-deck-wrap .reveal ol.pitch-timeline > li {
   padding: 0.4em 0 0.4em 1rem;
@@ -651,7 +735,7 @@ html, body { height: 100%; margin: 0; padding: 0; }
   width: 12px;
   height: 12px;
   border-radius: 50%;
-  background: var(--pitch-accent);
+  background: var(--pitch-accent-readable);
   border: 3px solid var(--pitch-secondary, #f8fafc);
 }
 /* ── Footer / logo / watermark ───────────────────────────────── */
@@ -666,7 +750,7 @@ html, body { height: 100%; margin: 0; padding: 0; }
   font-size: 11px;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: #6b7280;
+  color: var(--pitch-muted);
   z-index: 4;
 }
 .pitch-deck-wrap .reveal .pitch-logo {

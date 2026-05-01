@@ -204,6 +204,25 @@ describe("planImageJobs", () => {
     expect(plan[0]?.kind).toBe("background");
   });
 
+  it("skips background jobs when a background asset already exists for the slide", () => {
+    const slides: SlideForFanout[] = [
+      makeSlide(
+        {
+          ...baseCommon,
+          background_image_prompt: "a vista",
+          template: "title",
+          content: { title: "Hello" },
+        },
+        "s1",
+      ),
+    ];
+    const { plan, skipped } = planImageJobs(slides, {
+      existingBackgroundSlideIds: new Set(["s1"]),
+    });
+    expect(plan).toHaveLength(0);
+    expect(skipped).toBe(1);
+  });
+
   it("ignores too-short or whitespace-only prompts", () => {
     const slides: SlideForFanout[] = [
       makeSlide(

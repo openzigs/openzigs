@@ -1,3 +1,10 @@
+import {
+  buildReadableColorTokens,
+  contrastRatio,
+  renderDeckToHtml,
+  renderRichBody,
+  sanitize,
+} from "./pitch-renderer.js";
 /**
  * pitch-renderer.test.ts — sub-issue #963 acceptance tests.
  *
@@ -10,7 +17,6 @@
  *   - URL allowlist drops `javascript:` and `data:` URIs from images
  */
 import { describe, it, expect } from "vitest";
-import { renderDeckToHtml, sanitize } from "./pitch-renderer.js";
 import {
   DeckSchema,
   SlideSchema,
@@ -184,6 +190,9 @@ describe("renderDeckToHtml", () => {
     expect(out.html).toContain("--pitch-primary:#112233");
     expect(out.html).toContain("--pitch-secondary:#445566");
     expect(out.html).toContain("--pitch-accent:#778899");
+    expect(out.html).toContain("--pitch-text:#ffffff");
+    expect(out.html).toContain("--pitch-heading:#ffffff");
+    expect(out.html).toContain("--r-heading-color: var(--pitch-heading)");
     expect(out.html).toContain("--pitch-font-heading:Inter");
     expect(out.html).toContain("--pitch-font-body:Roboto");
   });
@@ -713,7 +722,7 @@ describe("renderDeckToHtml — embedded chrome (#997)", () => {
     // softer drop shadow + 6px brand-gradient bar across the top, and
     // moved the heading-color override to the unified `--r-` Reveal vars.
     expect(out.html).toContain("box-shadow: 0 12px 40px rgba(0,0,0,0.18)");
-    expect(out.html).toContain("--r-heading-color: var(--pitch-primary)");
+    expect(out.html).toContain("--r-heading-color: var(--pitch-heading)");
     expect(out.html).toContain("linear-gradient(90deg, var(--pitch-primary), var(--pitch-accent))");
   });
 
@@ -781,9 +790,7 @@ describe("renderDeckToHtml — embedded chrome (#997)", () => {
   });
 });
 
-
 // ── Issue #1007 — design polish + image-fanout fallback ──────────────
-import { renderRichBody } from "./pitch-renderer.js";
 
 describe("renderRichBody (#1007)", () => {
   it("returns empty string for empty / whitespace input", () => {
@@ -853,6 +860,43 @@ describe("renderDeckToHtml — Google Fonts loader (#1007)", () => {
     const noFontKit: BrandKit = { ...KIT, fontHeading: "", fontBody: "" };
     const out = renderDeckToHtml(buildDeck([ALL_TEMPLATES[0]]), noFontKit, "embedded");
     expect(out.html).not.toContain("fonts.googleapis.com");
+  });
+});
+
+describe("renderDeckToHtml — readable color tokens (#1037)", () => {
+  it("computes WCAG AA contrast ratios for black and white text", () => {
+    expect(contrastRatio("#000000", "#ffffff")).toBeGreaterThanOrEqual(21);
+    expect(contrastRatio("#777777", "#ffffff")).toBeLessThan(4.5);
+  });
+
+  it("derives readable text, heading, accent, and table-header tokens for low-contrast kits", () => {
+    const tokens = buildReadableColorTokens({
+      ...KIT,
+      primaryColor: "#111111",
+      secondaryColor: "#101010",
+      accentColor: "#151515",
+    });
+    expect(contrastRatio(tokens.text, tokens.background)).toBeGreaterThanOrEqual(4.5);
+    expect(contrastRatio(tokens.heading, tokens.background)).toBeGreaterThanOrEqual(4.5);
+    expect(contrastRatio(tokens.accent, tokens.background)).toBeGreaterThanOrEqual(4.5);
+    expect(contrastRatio(tokens.onPrimary, "#111111")).toBeGreaterThanOrEqual(4.5);
+  });
+
+  it("emits contrast-safe CSS variables used by major template families", () => {
+    const unreadableKit: BrandKit = {
+      ...KIT,
+      primaryColor: "#111111",
+      secondaryColor: "#101010",
+      accentColor: "#151515",
+    };
+    const out = renderDeckToHtml(buildDeck(ALL_TEMPLATES), unreadableKit, "embedded");
+    expect(out.html).toContain("--pitch-text:#ffffff");
+    expect(out.html).toContain("--pitch-heading:#ffffff");
+    expect(out.html).toContain("--pitch-accent-readable:#ffffff");
+    expect(out.html).toContain("color: var(--pitch-text)");
+    expect(out.html).toContain("color: var(--pitch-heading)");
+    expect(out.html).toContain("color: var(--pitch-on-primary)");
+    expect(out.html).toContain("background: var(--pitch-surface)");
   });
 });
 

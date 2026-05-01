@@ -23,7 +23,6 @@
  */
 import { copyFile, mkdir, rm, stat } from "node:fs/promises";
 import { extname, join, resolve, sep } from "node:path";
-import { pathToFileURL } from "node:url";
 import { homedir } from "node:os";
 import { randomUUID } from "node:crypto";
 import sharp from "sharp";
@@ -296,18 +295,7 @@ function handleJobFailed(
     error,
   });
 
-  try {
-    opts.onPitchImageFailed?.({
-      deckId: binding.deckId,
-      slideId: binding.slideId,
-      slot: slotFromBinding(binding),
-      jobId: job.id,
-      assetId: binding.assetId,
-      error,
-    });
-  } catch {
-    // Listener must NOT throw — that would crash the EventEmitter loop.
-  }
+  notifyPitchImageFailed(job, binding, error, opts);
 }
 
 async function handleJobComplete(
@@ -319,13 +307,17 @@ async function handleJobComplete(
   pendingPitchJobs.delete(job.id);
 
   if (job.status !== "complete" || !job.resultUrl) {
+    const error = job.error ?? `job completed without a usable result (status=${job.status})`;
     await safeAudit(opts.auditLogger, {
       event: "pitch.image.job_did_not_succeed",
       deckId: binding.deckId,
       slideId: binding.slideId,
+      slot: slotFromBinding(binding),
       jobId: job.id,
       status: job.status,
+      error,
     });
+    notifyPitchImageFailed(job, binding, error, opts);
     return;
   }
 
@@ -348,9 +340,31 @@ async function handleJobComplete(
       event: "pitch.image.persist_failed",
       deckId: binding.deckId,
       slideId: binding.slideId,
+      slot: slotFromBinding(binding),
       jobId: job.id,
       error,
     });
+    notifyPitchImageFailed(job, binding, error, opts);
+    // Listener must NOT throw — that would crash the EventEmitter loop.
+  }
+}
+
+function notifyPitchImageFailed(
+  job: MediaJob,
+  binding: PitchJobBinding,
+  error: string,
+  opts: RegisterImageCompletionOpts,
+): void {
+  try {
+    opts.onPitchImageFailed?.({
+      deckId: binding.deckId,
+      slideId: binding.slideId,
+      slot: slotFromBinding(binding),
+      jobId: job.id,
+      assetId: binding.assetId,
+      error,
+    });
+  } catch {
     // Listener must NOT throw — that would crash the EventEmitter loop.
   }
 }
@@ -451,20 +465,19 @@ async function persistCompletedAsset(
   // Inline image — patch the slide content's image slot URL. Skipped for
   // backgrounds (which are tracked purely via the asset row).
   if (binding.kind === "image") {
-    patchSlideImageSlot(opts.pitchRepo, binding, targetPath, opts.auditLogger);
+    patchSlideImageSlot(opts.pitchRepo, binding, opts.auditLogger);
   }
 }
 
 function patchSlideImageSlot(
   pitchRepo: PitchRepository,
   binding: PitchJobBinding,
-  targetPath: string,
   auditLogger?: Pick<AuditLogger, "log">,
 ): void {
   const slideRecord = pitchRepo.getSlide(binding.slideId);
   if (!slideRecord) return; // Slide deleted between enqueue and completion.
 
-  const fileUrl = pathToFileURL(targetPath).toString();
+  const assetUrl = `/api/admin/pitch/decks/${encodeURIComponent(binding.deckId)}/assets/${encodeURIComponent(binding.assetId)}`;
   const content = slideRecord.slide.content as Record<string, unknown>;
   const slotValue = content[binding.slot];
 
@@ -483,7 +496,7 @@ function patchSlideImageSlot(
 
   const updatedSlot: Record<string, unknown> = {
     ...(slotValue as Record<string, unknown>),
-    url: fileUrl,
+    url: assetUrl,
   };
   // Ensure required SlideImage fields are populated even if the slot was
   // a partially-built stub.

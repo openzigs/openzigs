@@ -79,6 +79,26 @@ const blankForm = (): FormState => ({
   footerText: "",
 });
 
+function contrastRatio(foreground: string, background: string): number {
+  const fg = relativeLuminance(foreground);
+  const bg = relativeLuminance(background);
+  const lighter = Math.max(fg, bg);
+  const darker = Math.min(fg, bg);
+  return (lighter + 0.05) / (darker + 0.05);
+}
+
+function relativeLuminance(hex: string): number {
+  if (!HEX_RE.test(hex)) return 1;
+  const rgb = [1, 3, 5].map((start) => Number.parseInt(hex.slice(start, start + 2), 16));
+  const channel = (value: number): number => {
+    const normalized = value / 255;
+    return normalized <= 0.03928
+      ? normalized / 12.92
+      : ((normalized + 0.055) / 1.055) ** 2.4;
+  };
+  return 0.2126 * channel(rgb[0] ?? 255) + 0.7152 * channel(rgb[1] ?? 255) + 0.0722 * channel(rgb[2] ?? 255);
+}
+
 export const BrandKitEditor = ({
   open,
   onOpenChange,
@@ -121,6 +141,19 @@ export const BrandKitEditor = ({
     colourErrors.primaryColor ||
     colourErrors.secondaryColor ||
     colourErrors.accentColor;
+  const contrastWarnings =
+    !colourErrors.primaryColor &&
+    !colourErrors.secondaryColor &&
+    !colourErrors.accentColor
+      ? [
+          contrastRatio(form.primaryColor, form.secondaryColor) < 4.5
+            ? "Primary text is low contrast against the slide background. The renderer will use a readable fallback."
+            : null,
+          contrastRatio(form.accentColor, form.secondaryColor) < 4.5
+            ? "Accent text is low contrast against the slide background. The renderer will use a readable fallback."
+            : null,
+        ].filter((warning): warning is string => warning !== null)
+      : [];
 
   const saveMutation = useMutation({
     mutationFn: async () => {
@@ -313,6 +346,15 @@ export const BrandKitEditor = ({
               ),
             )}
           </div>
+
+          {contrastWarnings.length > 0 ? (
+            <div
+              data-testid="pitch-bk-contrast-warning"
+              className="rounded border border-amber-500/40 bg-amber-500/10 p-2 text-[11px] text-amber-700 dark:text-amber-300"
+            >
+              {contrastWarnings[0]}
+            </div>
+          ) : null}
 
           <div className="grid grid-cols-2 gap-2">
             <label className="block">

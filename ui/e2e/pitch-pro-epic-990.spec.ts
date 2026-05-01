@@ -237,8 +237,8 @@ test.describe("Epic #990 — Pitch Pro deck editor", () => {
     await expect(editor.generateAllImagesButton).toBeDisabled();
   });
 
-  // AC: "Toolbar 'Present' opens the renderer in a new tab in present mode." (#992 / #999)
-  test("renders the Present button as a new-tab link to ?mode=present", async ({
+  // AC: "Toolbar 'Present' opens the authenticated presenter route." (#992 / #999)
+  test("renders the Present button as a new-tab link to the authenticated presenter route", async ({
     page,
   }) => {
     const editor = new PitchEditorPage(page, DECK_ID);
@@ -255,8 +255,7 @@ test.describe("Epic #990 — Pitch Pro deck editor", () => {
     );
     const href = await editor.presentButton.getAttribute("href");
     expect(href).toBeTruthy();
-    expect(href!).toContain(`/api/admin/pitch/decks/${DECK_ID}/render`);
-    expect(href!).toContain("mode=present");
+    expect(href!).toBe(`/pitch/${DECK_ID}/present`);
   });
 
   // AC: "Export dropdown lists HTML alongside PDF / PowerPoint / Markdown / Speaker Notes / ZIP." (#993)
@@ -487,8 +486,12 @@ test.describe("Epic #990 — Pitch Pro deck editor", () => {
 
     // The canvas wraps the rendered HTML in a sandboxed iframe.
     const frame = editor.revealFrame();
-    await expect(frame.locator(".reveal")).toBeVisible();
-    await expect(frame.locator(".pitch-deck-wrap--embedded")).toBeVisible();
+    await expect(
+      frame.getByRole("heading", { name: "Welcome to Pitch Pro" }),
+    ).toBeVisible();
+    await expect(
+      frame.getByRole("heading", { name: "The next generation" }),
+    ).toBeVisible();
   });
 });
 

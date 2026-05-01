@@ -183,6 +183,9 @@ describe("safeUrl", () => {
   it("permits root-relative paths", () => {
     expect(safeUrl("/static/logo.png")).toBe("/static/logo.png");
   });
+  it("rejects protocol-relative URLs", () => {
+    expect(safeUrl("//example.com/logo.png")).toBeNull();
+  });
   it("rejects javascript: / vbscript: / data: / file:", () => {
     expect(safeUrl("javascript:alert(1)")).toBeNull();
     expect(safeUrl("vbscript:msgbox(1)")).toBeNull();

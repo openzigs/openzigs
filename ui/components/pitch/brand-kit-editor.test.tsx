@@ -70,6 +70,27 @@ describe("BrandKitEditor", () => {
     ).toBe(true);
   });
 
+  it("warns when selected colors have low presentation contrast", () => {
+    render(<BrandKitEditor open onOpenChange={vi.fn()} kit={null} />, {
+      wrapper,
+    });
+    fireEvent.change(screen.getByTestId("pitch-bk-name"), {
+      target: { value: "Unreadable" },
+    });
+    fireEvent.change(screen.getByTestId("pitch-bk-primaryColor-hex"), {
+      target: { value: "#111111" },
+    });
+    fireEvent.change(screen.getByTestId("pitch-bk-secondaryColor-hex"), {
+      target: { value: "#101010" },
+    });
+    expect(screen.getByTestId("pitch-bk-contrast-warning")).toHaveTextContent(
+      /low contrast/i,
+    );
+    expect(
+      (screen.getByTestId("pitch-bk-save") as HTMLButtonElement).disabled,
+    ).toBe(false);
+  });
+
   it("creates a new kit via POST when saving", async () => {
     vi.mocked(fetchJson).mockResolvedValue({ brandKit: { id: "new-1" } });
     const onSaved = vi.fn();

@@ -33,6 +33,35 @@ function titleSlide(title: string): Slide {
   };
 }
 
+function imageCaptionSlide(prompt: string, url: string | null = null): Slide {
+  return {
+    template: "image_caption",
+    content: {
+      image: { prompt, url, alt: "generated image" },
+      caption: "Generated image",
+    },
+    speaker_notes: "",
+    transition: "slide",
+    fragments: [],
+  };
+}
+
+function twoColumnImageSlide(): Slide {
+  return {
+    template: "two_column",
+    content: {
+      heading: "Split view",
+      left: "Left",
+      right: "Right",
+      left_image: { prompt: "left prompt", url: null, alt: "left" },
+      right_image: { prompt: "right prompt", url: null, alt: "right" },
+    },
+    speaker_notes: "",
+    transition: "slide",
+    fragments: [],
+  };
+}
+
 describe("PitchRepository", () => {
   let db: Database.Database;
   let repo: PitchRepository;
@@ -191,6 +220,53 @@ describe("PitchRepository", () => {
       // both share the frozen clock; just assert presence.
       const ids = all.map((d) => d.id).sort();
       expect(ids).toEqual(["deck-A", "deck-B"]);
+    });
+
+    it("skips malformed legacy slide rows without failing the whole library", () => {
+      db.prepare(
+        `INSERT INTO pitch_slides (id, deck_id, position, template, content, speaker_notes, transition, fragments, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        "bad-slide",
+        "deck-A",
+        99,
+        "bullet_list",
+        JSON.stringify({ heading: "broken", bullets: [] }),
+        "",
+        "slide",
+        "[]",
+        FROZEN_NOW.toISOString(),
+        FROZEN_NOW.toISOString(),
+      );
+
+      const deck = repo.getDeck("deck-A");
+      expect(deck?.slides).toHaveLength(1);
+      expect(repo.listDecks().map((d) => d.id).sort()).toEqual([
+        "deck-A",
+        "deck-B",
+      ]);
+      expect(repo.getSlide("bad-slide")).toBeNull();
+    });
+
+    it("skips a malformed deck row when listing decks", () => {
+      db.prepare(
+        `INSERT INTO pitch_decks (id, title, brand_kit_id, aspect_ratio, metadata, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        "legacy-bad",
+        "Legacy Bad",
+        "kit-1",
+        "16:9",
+        JSON.stringify({ source_script: "" }),
+        FROZEN_NOW.toISOString(),
+        FROZEN_NOW.toISOString(),
+      );
+
+      expect(repo.getDeck("legacy-bad")).toBeNull();
+      expect(repo.listDecks().map((d) => d.id).sort()).toEqual([
+        "deck-A",
+        "deck-B",
+      ]);
     });
   });
 
@@ -420,6 +496,62 @@ describe("PitchRepository", () => {
 
     it("rejects an asset with invalid dimensions via SlideAssetSchema", () => {
       expect(() => repo.insertAsset(asset({ width: 0 }))).toThrow();
+    });
+
+    it("reconciles a persisted inline image asset into a missing slide URL", () => {
+      repo.insertDeck({
+        id: "deck-img",
+        title: "Images",
+        brand_kit_id: "kit-1",
+        metadata: { source_script: "x", tone: "formal" },
+        slides: [{ id: "s-img", slide: imageCaptionSlide("a robot") }],
+      });
+      repo.insertAsset(
+        asset({
+          id: "asset-img",
+          deck_id: "deck-img",
+          slide_id: "s-img",
+          prompt: "a robot",
+        }),
+      );
+
+      expect(repo.reconcileImageAssetsForDeck("deck-img")).toBe(1);
+      const slide = repo.getSlide("s-img")?.slide;
+      if (slide?.template !== "image_caption") {
+        throw new Error("expected image_caption slide");
+      }
+      expect(slide.content.image.url).toBe(
+        "/api/admin/pitch/decks/deck-img/assets/asset-img",
+      );
+      expect(repo.reconcileImageAssetsForDeck("deck-img")).toBe(0);
+    });
+
+    it("uses prompt matching when multiple inline image slots exist", () => {
+      repo.insertDeck({
+        id: "deck-two",
+        title: "Two Up",
+        brand_kit_id: "kit-1",
+        metadata: { source_script: "x", tone: "formal" },
+        slides: [{ id: "s-two", slide: twoColumnImageSlide() }],
+      });
+      repo.insertAsset(
+        asset({
+          id: "asset-right",
+          deck_id: "deck-two",
+          slide_id: "s-two",
+          prompt: "right prompt",
+        }),
+      );
+
+      expect(repo.reconcileImageAssetsForDeck("deck-two")).toBe(1);
+      const slide = repo.getSlide("s-two")?.slide;
+      if (slide?.template !== "two_column") {
+        throw new Error("expected two_column slide");
+      }
+      expect(slide.content.left_image?.url).toBeNull();
+      expect(slide.content.right_image?.url).toBe(
+        "/api/admin/pitch/decks/deck-two/assets/asset-right",
+      );
     });
   });
 });

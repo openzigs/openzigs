@@ -24,7 +24,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { ConfirmDialog } from "@/components/confirm-dialog";
-import { fetchWithAuth } from "@/lib/api";
+import { authorizeRenderedMedia, fetchWithAuth } from "@/lib/api";
 
 export interface SlideRailItem {
   id: string;
@@ -356,6 +356,7 @@ const ImageStatusBadge = ({ status, slideIndex, onRetry }: BadgeProps) => {
       type="button"
       data-testid={`slide-rail-image-status-${slideIndex}`}
       data-status="failed"
+      aria-label={`Retry failed image generation for slide ${slideIndex}`}
       title="Image generation failed — click to retry"
       onClick={(e) => {
         e.stopPropagation();
@@ -455,7 +456,7 @@ const SlideThumbnail = ({
           if (!cancelled) setErrored(true);
           return;
         }
-        const text = await res.text();
+        const text = authorizeRenderedMedia(await res.text());
         if (!cancelled) setHtml(text);
       } catch {
         if (!cancelled) setErrored(true);
