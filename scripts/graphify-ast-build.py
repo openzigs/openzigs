@@ -71,9 +71,11 @@ def main() -> int:
         graph = build.build_from_json(extracted)
         log(f"graph: {graph.number_of_nodes()} nodes / {graph.number_of_edges()} edges")
 
-        # 4. Cluster.
+        # 4. Cluster (returns dict[int, list[str]]).
         log("step 4/7: cluster")
-        communities, cohesion, labels, member_counts = cluster.cluster(graph)
+        communities = cluster.cluster(graph)
+        cohesion = {cid: 0.0 for cid in communities}
+        labels = {cid: f"Community {cid}" for cid in communities}
         log(f"{len(communities)} communities")
 
         # 5. Analyze.
@@ -101,8 +103,8 @@ def main() -> int:
             god_nodes,
             surprises,
             detect_result,
-            token_cost=0.0,
-            root=REPO_ROOT,
+            {"input_tokens": 0, "output_tokens": 0, "total_cost_usd": 0.0},
+            str(REPO_ROOT),
         )
         report_path = OUT_DIR / "GRAPH_REPORT.md"
         report_path.write_text(md, encoding="utf-8")
