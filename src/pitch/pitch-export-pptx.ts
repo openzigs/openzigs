@@ -45,6 +45,7 @@ const PptxGenJS = ((PptxGenJSNs as unknown as { default: PptxGenJSCtor }).defaul
   (PptxGenJSNs as unknown as PptxGenJSCtor)) as PptxGenJSCtor;
 type PptxGenJSInstance = InstanceType<PptxGenJSCtor>;
 import type { BrandKit, Deck, Slide } from "./pitch-schema.js";
+import { buildReadableColorTokens } from "./pitch-renderer.js";
 import {
   resizeImageForPptx,
   safeFilename,
@@ -90,8 +91,20 @@ export async function exportDeckToPptx(
     bodyFontFace: brandKit.fontBody,
   };
 
-  const primary = stripHash(brandKit.primaryColor);
-  const accent = stripHash(brandKit.accentColor);
+  // Sub-issue #1037 / Epic #1035 AC4 — PPTX export must honour the same
+  // readable-color-token derivation that the HTML/presenter renderers
+  // use, so a low-contrast brand kit cannot produce unreadable PPTX
+  // slides. `tokens.heading` is contrast-safe vs the slide background
+  // (white below); `tokens.accent` is contrast-safe for accent text;
+  // `tokens.onPrimary` is the readable text color for surfaces filled
+  // with the raw brand primary (section divider background, table
+  // header fill, etc.).
+  const tokens = buildReadableColorTokens(brandKit);
+  const primary = stripHash(tokens.heading);
+  const accent = stripHash(tokens.accent);
+  const onPrimary = stripHash(tokens.onPrimary);
+  const sectionBg = stripHash(brandKit.primaryColor);
+  const tableHeaderFill = stripHash(brandKit.primaryColor);
 
   pres.defineSlideMaster({
     title: "BRAND_MASTER",
@@ -113,7 +126,7 @@ export async function exportDeckToPptx(
   });
 
   for (const slide of deck.slides) {
-    await renderPptxSlide(pres, slide, brandKit, primary, accent, resize, fetchUrl);
+    await renderPptxSlide(pres, slide, brandKit, primary, accent, onPrimary, sectionBg, tableHeaderFill, resize, fetchUrl);
   }
 
   const out = (await pres.write({ outputType: "nodebuffer" })) as unknown;
@@ -135,6 +148,9 @@ async function renderPptxSlide(
   brandKit: BrandKit,
   primary: string,
   accent: string,
+  onPrimary: string,
+  sectionBg: string,
+  tableHeaderFill: string,
   resize: typeof resizeImageForPptx,
   fetchUrl: (url: string) => Promise<Buffer>,
 ): Promise<void> {
@@ -163,7 +179,11 @@ async function renderPptxSlide(
       break;
     }
     case "section_divider": {
-      s.background = { color: primary };
+      // Sub-issue #1037 — section divider keeps the brand primary as the
+      // slide background but overlays text in `onPrimary` (contrast-safe
+      // for that exact color), not a hard-coded white that would vanish
+      // on a light brand primary.
+      s.background = { color: sectionBg };
       s.addText(`${slide.content.section_number}`, {
         x: MARGIN_X, y: 2.5, w: CONTENT_W, h: 1.0,
         fontSize: 80, color: accent, bold: true, align: "center",
@@ -171,7 +191,7 @@ async function renderPptxSlide(
       });
       s.addText(slide.content.title, {
         x: MARGIN_X, y: 3.8, w: CONTENT_W, h: 1.2,
-        fontSize: 40, color: "FFFFFF", bold: true, align: "center",
+        fontSize: 40, color: onPrimary, bold: true, align: "center",
         fontFace: brandKit.fontHeading,
       });
       break;
@@ -273,10 +293,13 @@ async function renderPptxSlide(
         x: MARGIN_X, y: 0.4, w: CONTENT_W, h: 0.8,
         fontSize: 28, color: primary, bold: true, fontFace: brandKit.fontHeading,
       });
+      // Sub-issue #1037 — table header fill stays brand primary but
+      // text color uses `onPrimary` so a light brand kit doesn't make
+      // the header labels invisible against the fill.
       const headerRow = [
-        { text: "", options: { bold: true, fill: { color: primary }, color: "FFFFFF" } },
+        { text: "", options: { bold: true, fill: { color: tableHeaderFill }, color: onPrimary } },
         ...slide.content.columns.map((c) => ({
-          text: c, options: { bold: true, fill: { color: primary }, color: "FFFFFF" },
+          text: c, options: { bold: true, fill: { color: tableHeaderFill }, color: onPrimary },
         })),
       ];
       const bodyRows = slide.content.rows.map((r) => [
@@ -403,7 +426,11 @@ async function renderPptxSlide(
 // ── Helpers ────────────────────────────────────────────────────────────
 
 function stripHash(hex: string): string {
-  return hex.startsWith("#") ? hex.slice(1) : hex;
+  // pptxgenjs validates color values with an uppercase-only `^[0-9A-F]{6}$`
+  // regex; lowercase hex (e.g. `0a1f44`) is silently dropped + replaced
+  // with `FFFFFF`. Normalise here so callers don't have to remember.
+  const trimmed = hex.startsWith("#") ? hex.slice(1) : hex;
+  return trimmed.toUpperCase();
 }
 
 function toBuffer(out: unknown): Buffer {

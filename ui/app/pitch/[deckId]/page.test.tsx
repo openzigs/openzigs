@@ -50,6 +50,7 @@ vi.mock("@/components/pitch/slide-rail", () => ({
     onDuplicate,
     onDelete,
     onReorder,
+    onRetryImage,
   }: {
     items: { id: string; titlePreview: string }[];
     onSelect: (id: string) => void;
@@ -58,6 +59,7 @@ vi.mock("@/components/pitch/slide-rail", () => ({
     onDuplicate: (id: string) => void;
     onDelete: (id: string) => void;
     onReorder: (id: string, pos: number) => void | Promise<void>;
+    onRetryImage?: (id: string) => void;
   }) => (
     <div data-testid="slide-rail-mock">
       {items.map((it) => (
@@ -93,6 +95,14 @@ vi.mock("@/components/pitch/slide-rail", () => ({
           >
             move
           </button>
+          {onRetryImage ? (
+            <button
+              data-testid={`slide-rail-retry-image-${it.id}`}
+              onClick={() => onRetryImage(it.id)}
+            >
+              retry-image
+            </button>
+          ) : null}
         </div>
       ))}
     </div>
@@ -510,5 +520,43 @@ describe("PitchDeckEditorPage", () => {
           ),
       ).toBe(true),
     );
+  });
+
+  // Sub-issue #1039 / Epic #1035 AC3 — when the slide-rail surfaces a
+  // failed-image retry control, the editor must scope the regenerate
+  // request to ONLY that slide via the new `slideIds` filter on the
+  // generate-all endpoint. Previously the click was wired to a
+  // deck-level "retry all" mutation that discarded the slide id, so a
+  // single bad slide forced the entire deck through the fan-out again.
+  it("retry-image button scopes the generate-all POST to the failing slide id (#1039)", async () => {
+    vi.mocked(fetchJson).mockClear();
+    vi.mocked(fetchJson).mockImplementation(async (url: string) => {
+      if (typeof url === "string" && url.endsWith("/images/generate-all")) {
+        return { enqueued: 1, skipped: 0, total: 1 };
+      }
+      // Default deck fetch.
+      return sampleDeck;
+    });
+
+    render(<PitchDeckEditorPage />, { wrapper });
+    await waitFor(() =>
+      expect(screen.getByTestId("slide-rail-mock")).toBeInTheDocument(),
+    );
+
+    const retry = await screen.findByTestId("slide-rail-retry-image-s2");
+    fireEvent.click(retry);
+
+    await waitFor(() => {
+      const call = vi
+        .mocked(fetchJson)
+        .mock.calls.find(([url]) =>
+          typeof url === "string" && url.endsWith("/images/generate-all"),
+        );
+      expect(call).toBeDefined();
+      const init = call?.[1] as RequestInit | undefined;
+      expect(init?.method).toBe("POST");
+      const body = init?.body ? JSON.parse(String(init.body)) : null;
+      expect(body).toEqual({ slideIds: ["s2"] });
+    });
   });
 });

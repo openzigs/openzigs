@@ -394,13 +394,23 @@ export default function PitchDeckEditorPage() {
   // and the "Generate all images" button progress counter.
   const { slideStatus: imageSlideStatus } = useSlideImageStatus(deckId);
 
-  const retryAllImages = async () => {
+  const retryAllImages = async (slideId?: string) => {
     try {
+      // Sub-issue #1039 / Epic #1035 AC3 — when a slide id is supplied
+      // (rail per-slide retry) scope the fan-out to that single slide
+      // via the `slideIds` filter. Falling through with no body keeps
+      // the legacy deck-level "Generate all images" behaviour.
+      const payload = slideId ? { slideIds: [slideId] } : {};
       await fetchJson(
         `/api/admin/pitch/decks/${deckId}/images/generate-all`,
-        { method: "POST", body: JSON.stringify({}) },
+        { method: "POST", body: JSON.stringify(payload) },
       );
-      showToast("Retrying image generation\u2026", "success");
+      showToast(
+        slideId
+          ? "Retrying image for this slide\u2026"
+          : "Retrying image generation\u2026",
+        "success",
+      );
     } catch (err) {
       showToast(
         `Retry failed: ${err instanceof Error ? err.message : String(err)}`,
@@ -643,8 +653,8 @@ export default function PitchDeckEditorPage() {
         onDelete={(slideId) => deleteSlideMutation.mutate(slideId)}
         onRegenerate={(slideId) => regenerateSlideMutation.mutate(slideId)}
         imageStatusOf={imageSlideStatus}
-        onRetryImage={() => {
-          void retryAllImages();
+        onRetryImage={(slideId) => {
+          void retryAllImages(slideId);
         }}
         thumbnails={{
           deckId,

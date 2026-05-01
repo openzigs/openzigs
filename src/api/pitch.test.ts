@@ -931,6 +931,50 @@ describe("Pitch REST router", () => {
         .send({});
       expect(res.status).toBe(503);
     });
+
+    // Sub-issue #1039 / Epic #1035 AC3 — `slideIds` filter scopes the
+    // fan-out to a single slide so the slide-rail per-slide retry
+    // control doesn't fan out across the entire deck.
+    it("POST .../images/generate-all forwards slideIds filter to fanOutImageGeneration (#1039)", async () => {
+      const kitId = createCustomKit(harness);
+      const { deckId, slideId } = createDeck(harness, kitId);
+      // Add a second slide so the filter actually narrows the slate.
+      const secondSlide = SlideSchema.parse({
+        template: "title",
+        content: { title: "Second" },
+        speaker_notes: "",
+        transition: "slide",
+        fragments: [],
+      });
+      const created = await request(harness.app)
+        .post(`/api/admin/pitch/decks/${deckId}/slides`)
+        .send({ slide: secondSlide });
+      expect(created.status).toBe(201);
+      fanOutImageGenerationMock.mockResolvedValue({
+        enqueued: 1,
+        skipped: 0,
+        total: 1,
+      });
+      const res = await request(harness.app)
+        .post(`/api/admin/pitch/decks/${deckId}/images/generate-all`)
+        .send({ slideIds: [slideId] });
+      expect(res.status).toBe(200);
+      expect(fanOutImageGenerationMock).toHaveBeenCalledTimes(1);
+      const args = fanOutImageGenerationMock.mock.calls[0]?.[0] as {
+        slides: Array<{ id: string }>;
+      };
+      expect(args.slides.map((s) => s.id)).toEqual([slideId]);
+    });
+
+    it("POST .../images/generate-all returns 404 when slideIds match nothing (#1039)", async () => {
+      const kitId = createCustomKit(harness);
+      const { deckId } = createDeck(harness, kitId);
+      const res = await request(harness.app)
+        .post(`/api/admin/pitch/decks/${deckId}/images/generate-all`)
+        .send({ slideIds: ["does-not-exist"] });
+      expect(res.status).toBe(404);
+      expect(fanOutImageGenerationMock).not.toHaveBeenCalled();
+    });
   });
 
   // ── #966 — brand kits + logo upload ─────────────────────────────────
@@ -1663,6 +1707,79 @@ describe("Pitch REST router", () => {
           event: "pitch_brand_kit_mutation_blocked",
         }),
       );
+    });
+
+    // Sub-issue #1039 / Epic #1035 AC5 — when an asset row exists but
+    // its `local_path` is missing on disk (workspace migration, manual
+    // cleanup, half-failed flux job), the 404 response must be paired
+    // with a structured `pitch.route_failed` audit entry so SREs can
+    // diagnose the gap instead of guessing from a silent client error.
+    it("audit logs pitch.route_failed when an asset file is missing on disk", async () => {
+      // The default test harness routes asset paths through the user's
+      // real `~/.openzigs/pitch/assets` dir, so a phantom file in
+      // `tmpdir()` would trigger the path-traversal guard *before* the
+      // missing-file branch we're trying to exercise. Build a scoped
+      // router whose `assetsBaseDir` matches the phantom file's parent.
+      const isolatedAssetsDir = mkdtempSync(join(tmpdir(), "pitch-audit-"));
+      try {
+        const scopedAuditLog = vi.fn().mockResolvedValue(undefined);
+        const scopedDeps: PitchRouterDeps = {
+          ...h.deps,
+          assetsBaseDir: isolatedAssetsDir,
+          auditLogger: {
+            log: scopedAuditLog,
+          } as unknown as PitchRouterDeps["auditLogger"],
+        };
+        const scopedApp = express();
+        scopedApp.use(express.json());
+        scopedApp.use("/api/admin/pitch", createPitchRouter(scopedDeps));
+
+        const kitId = createCustomKit(h);
+        const { deckId, slideId } = createDeck(h, kitId);
+        const phantom = join(isolatedAssetsDir, "asset-phantom-audit.png");
+        // intentionally do NOT write the file
+        h.deps.pitchRepo.insertAsset({
+          id: "asset-phantom-audit",
+          deck_id: deckId,
+          slide_id: slideId,
+          kind: "background",
+          source: "fluxq",
+          prompt: null,
+          local_path: phantom,
+          mime: "image/png",
+          width: 16,
+          height: 16,
+          created_at: FROZEN().toISOString(),
+        });
+        scopedAuditLog.mockClear();
+        const res = await request(scopedApp).get(
+          `/api/admin/pitch/decks/${deckId}/assets/asset-phantom-audit`,
+        );
+        expect(res.status).toBe(404);
+        expect(res.body.error.code).toBe("not_found");
+        expect(scopedAuditLog).toHaveBeenCalledWith(
+          expect.objectContaining({
+            category: "system",
+            event: "pitch.route_failed",
+            level: "warn",
+            details: expect.objectContaining({
+              method: "GET",
+              status: 404,
+              cause: "asset file missing",
+              deckId,
+              assetId: "asset-phantom-audit",
+              kind: "background",
+              localPath: phantom,
+            }),
+          }),
+        );
+      } finally {
+        try {
+          rmSync(isolatedAssetsDir, { recursive: true, force: true });
+        } catch {
+          /* best effort */
+        }
+      }
     });
   });
 

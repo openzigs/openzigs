@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **PPTX export now derives readable text/background colors via `buildReadableColorTokens()` (Epic #1035 / #1037 AC4).** The PPTX exporter (`src/pitch/pitch-export-pptx.ts`) previously dropped the raw `brandKit.primaryColor` straight into heading/title text and hard-coded `color: "FFFFFF"` on the `section_divider` title and `comparison_table` header text. With a light brand kit (e.g. white-on-white) the slides rendered with invisible labels. Headings/eyebrow/timeline accent and table-header text now route through the same WCAG contrast tokens used by the HTML renderer (`heading`, `accent`, `onPrimary`), so light brand kits fall back to the readable dark text color while high-contrast kits still pass through unchanged. Also fixes a silent color-drop where pptxgenjs requires uppercase hex — `stripHash()` now normalises to uppercase. (#1037)
+- **Missing pitch asset files emit a structured audit-log entry (Epic #1035 / #1039 AC5).** The `GET /api/admin/pitch/decks/:deckId/assets/:assetId` 404 path for "asset row exists but file missing on disk" now calls `auditRouteFailure(req, 404, "asset file missing", { deckId, assetId, kind, localPath })` before sending the response, so operators can spot orphaned-DB-row drift in the same `pitch.route_failed` audit stream that already covers DB and validation failures. (#1039)
+- **Pitch hardening Playwright suite passes against a fresh dev server (Epic #1035 / #1036).** The previously reported `/pitch` Internal Server Error was traced to a stale long-running `next dev` process from a prior session; the route compiles and serves 200 on a clean server, and the full `e2e/pitch-hardening-epic-1035.spec.ts` (6 tests) passes end-to-end. (#1036)
+
+### Changed
+
+- **Slide-rail "Retry image" regenerates only the failing slide (Epic #1035 / #1039 AC3).** `POST /api/admin/pitch/decks/:deckId/images/generate-all` now accepts an optional `slideIds: string[]` body filter (max 200) and only fans out to the requested slides; the slide-rail retry button (`ui/app/pitch/[deckId]/page.tsx`) now passes the failing slide id instead of triggering a deck-wide regeneration, and the audit/socket events tag the source as `slide_retry` vs `bulk_button`. Returns 404 when `slideIds` matches no eligible slides. (#1039)
+
 ### Added
 
 - **Dev tooling: graphify auto-refresh in CI on every PR.** New workflow [`.github/workflows/graphify-refresh.yml`](.github/workflows/graphify-refresh.yml) runs [`scripts/graphify-ast-build.py`](scripts/graphify-ast-build.py) on every PR that touches `src/`, `ui/`, `sidecars/`, `desktop/`, `config/`, or `scripts/`, and commits the refreshed `graphify-out/graph.json` + `GRAPH_REPORT.md` back to the PR branch as the `graphify-bot` user. AST-only — no LLM calls, ~1 minute CI time, $0 cost. Reviewers (human and AI subagents) always navigate against an up-to-date codebase graph. The orchestrator agent doc ([`.github/agents/orchestrator.agent.md`](.github/agents/orchestrator.agent.md)) is updated to expect the bot's auto-commit on feature branches. Forked PRs are skipped (no write token); commits containing `[skip graphify]` are not refreshed.

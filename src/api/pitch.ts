@@ -695,6 +695,17 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
       return;
     }
     if (!existsSync(absPath)) {
+      // Sub-issue #1039 / Epic #1035 AC5 — emit a structured audit
+      // entry so a missing-on-disk asset (typically caused by a
+      // workspace migration, manual cleanup, or a half-failed flux
+      // job) surfaces alongside the other pitch route failures
+      // instead of silently 404-ing the client.
+      auditRouteFailure(req, 404, "asset file missing", {
+        deckId,
+        assetId,
+        kind: asset.kind,
+        localPath: absPath,
+      });
       sendError(res, 404, "not_found", "asset file missing");
       return;
     }
@@ -1700,7 +1711,15 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
   // ────────────────────────────────────────────────────────────────────
   const lastBulkAtByDeck = new Map<string, number>();
   const BULK_COOLDOWN_MS = 5_000;
-  const GenerateAllImagesBody = z.object({}).strict();
+  // Sub-issue #1039 / Epic #1035 AC3 — accept an optional `slideIds`
+  // filter so the slide-rail's per-slide retry control can re-enqueue
+  // a single failing slide instead of fanning out across the whole
+  // deck. Empty or omitted = all slides (legacy bulk-button behaviour).
+  const GenerateAllImagesBody = z
+    .object({
+      slideIds: z.array(z.string().min(1)).max(200).optional(),
+    })
+    .strict();
 
   router.post(
     "/decks/:deckId/images/generate-all",
@@ -1726,9 +1745,29 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
       lastBulkAtByDeck.set(deckId, now);
 
       reconcileInlineImageAssets(deckId);
-      const slidesForFanout = deps.pitchRepo
+      const allSlides = deps.pitchRepo
         .listSlidesForDeck(deckId)
         .map((s) => ({ id: s.id, slide: s.slide }));
+      // Sub-issue #1039 / Epic #1035 AC3 — when a `slideIds` filter is
+      // present, scope the fan-out to those slides. Unknown ids are
+      // dropped silently (matches `generate-all`'s idempotent contract);
+      // an empty post-filter list short-circuits with a 404 so callers
+      // get a clear signal instead of a 200/0-enqueued no-op.
+      const requestedIds = body.slideIds && body.slideIds.length > 0
+        ? new Set(body.slideIds)
+        : null;
+      const slidesForFanout = requestedIds
+        ? allSlides.filter((s) => requestedIds.has(s.id))
+        : allSlides;
+      if (requestedIds && slidesForFanout.length === 0) {
+        sendError(
+          res,
+          404,
+          "not_found",
+          `no matching slides for deck ${deckId}`,
+        );
+        return;
+      }
       const existingBackgroundSlideIds = new Set(
         deps.pitchRepo
           .listAssetsForDeck(deckId)
@@ -1765,7 +1804,7 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
               slot: info.slot,
               jobId: info.jobId,
               assetId: info.assetId,
-              source: "bulk_button",
+              source: requestedIds ? "slide_retry" : "bulk_button",
             });
           },
           onEnqueueError: (info) => {
@@ -1774,16 +1813,17 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
               slideId: info.slideId,
               slot: info.slot,
               error: info.error,
-              source: "bulk_button",
+              source: requestedIds ? "slide_retry" : "bulk_button",
             });
           },
         });
         audit("tool", "pitch.images.bulk_enqueued", {
           deckId,
-          source: "bulk_button",
+          source: requestedIds ? "slide_retry" : "bulk_button",
           enqueued: result.enqueued,
           skipped: result.skipped,
           total: result.total,
+          ...(requestedIds ? { slideIds: [...requestedIds] } : {}),
         });
         res.status(200).json(result);
       } catch (err) {
