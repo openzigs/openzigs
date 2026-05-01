@@ -240,6 +240,14 @@ function toFileUrl(p: string): string {
  * `slideRecord.position` here. URLs are root-relative paths into this
  * router; the renderer re-validates them through `safeUrl` before
  * emission.
+ *
+ * When `accessToken` is supplied, each emitted URL is suffixed with
+ * `?token=<encoded>` so the rendered iframe (`/render?mode=present`) can
+ * fetch the asset without an `Authorization` header — `<img>` /
+ * `data-background-image` cannot carry one. The auth middleware already
+ * allowlists `?token=` for `PITCH_ASSET_PATH_RE` (see `src/auth/auth.ts`).
+ * Pass `undefined` (or omit) when no token is needed (test harnesses with
+ * auth disabled, public-share routes that authenticate differently).
  */
 export function buildBackgroundImageUrlMap(
   deckId: string,
@@ -250,6 +258,7 @@ export function buildBackgroundImageUrlMap(
     kind: string;
     created_at: string;
   }>,
+  accessToken?: string,
 ): Map<number, string> {
   const positionBySlideId = new Map<string, number>();
   for (const s of slides) positionBySlideId.set(s.id, s.position);
@@ -270,14 +279,110 @@ export function buildBackgroundImageUrlMap(
       });
     }
   }
+  const tokenSuffix =
+    accessToken && accessToken.length > 0
+      ? `?token=${encodeURIComponent(accessToken)}`
+      : "";
   const out = new Map<number, string>();
   for (const [position, asset] of latestByPosition) {
     out.set(
       position,
-      `/api/admin/pitch/decks/${encodeURIComponent(deckId)}/assets/${encodeURIComponent(asset.id)}`,
+      `/api/admin/pitch/decks/${encodeURIComponent(deckId)}/assets/${encodeURIComponent(asset.id)}${tokenSuffix}`,
     );
   }
   return out;
+}
+
+// ── Render-iframe auth-token plumbing (Pitch Present bug fix) ───────────
+//
+// The Present route mounts `/render?mode=present` HTML inside a sandboxed
+// `<iframe srcDoc>`. Inside that iframe `<img>` / `data-background-image`
+// requests cannot carry an `Authorization: Bearer ...` header (the
+// browser strips it for navigation-style asset GETs), so they 401 against
+// the admin auth middleware. The middleware already allowlists `?token=`
+// for `/api/admin/pitch/decks/.../assets/...` precisely for this scenario
+// (see `PITCH_ASSET_PATH_RE` in `src/auth/auth.ts`); the helpers below
+// append the token to the URLs that the renderer emits.
+
+/**
+ * Mirrors `PITCH_ASSET_PATH_RE` in `src/auth/auth.ts`. Used to decide
+ * which inline image URLs (set by the image-pipeline reconciliation) point
+ * at the local asset route and therefore need a `?token=` suffix. Third-
+ * party `https://...` URLs MUST NOT be touched — appending the local
+ * bearer token to a remote origin would leak it.
+ */
+const PITCH_ASSET_PATH_RE_LOCAL =
+  /^\/api\/admin\/pitch\/decks\/[a-zA-Z0-9_-]+\/assets\/[a-zA-Z0-9_-]+$/;
+
+/**
+ * Extract the bearer token used to authenticate the current request.
+ * Reads `Authorization: Bearer <token>` first, then falls back to
+ * `?token=` (the render route's `PITCH_RENDER_PATH_RE` allowlist still
+ * accepts the query form for backwards compatibility with externally
+ * saved Present URLs / shared bookmarks). Returns `undefined` when no
+ * token was presented (e.g. auth disabled, test harness without
+ * middleware) — callers MUST treat this as "do not append a token" so we
+ * never surface a literal `?token=` in audit logs or the rendered HTML.
+ */
+function extractRequestAuthToken(req: Request): string | undefined {
+  const header = req.headers.authorization ?? "";
+  if (header.startsWith("Bearer ")) {
+    const t = header.slice("Bearer ".length).trim();
+    if (t.length > 0) return t;
+  }
+  const q = req.query.token;
+  if (typeof q === "string" && q.length > 0) return q;
+  return undefined;
+}
+
+/**
+ * Append `?token=<encoded>` to a single URL iff its path matches the
+ * Pitch asset route. Preserves any pre-existing query string and is a
+ * no-op for null/undefined/non-matching URLs. The token is always run
+ * through `encodeURIComponent` so that a token containing `&`, `?`, `#`,
+ * `=`, or `/` cannot inject extra query params or path segments.
+ */
+function appendTokenToAssetUrl(
+  url: string | null | undefined,
+  token: string,
+): string | null | undefined {
+  if (!url || !token) return url;
+  const [path, existingQuery] = url.split("?", 2);
+  if (!PITCH_ASSET_PATH_RE_LOCAL.test(path)) return url;
+  const prefix = existingQuery ? `?${existingQuery}&` : "?";
+  return `${path}${prefix}token=${encodeURIComponent(token)}`;
+}
+
+/**
+ * Mutate-in-place: walk `deck.slides` and tokenize every inline image
+ * `url` that points at the local Pitch asset route. Touches the
+ * three slide image slots produced by `SlideImageSchema` —
+ * `content.image`, `content.left_image`, `content.right_image`. Safe to
+ * call when `token` is empty (no-op) and safe against unknown templates
+ * (only reads the documented field names).
+ *
+ * IMPORTANT: callers pass an in-memory deck object (returned fresh from
+ * `pitchRepo.getDeck()` each request via `assembleDeck()`), so this never
+ * leaks token-tagged URLs back into persistence.
+ */
+export function appendTokenToPitchAssetUrls(
+  deck: { slides: Array<Record<string, unknown>> },
+  token: string,
+): void {
+  if (!token) return;
+  for (const slide of deck.slides) {
+    const content = (slide as { content?: Record<string, unknown> }).content;
+    if (!content || typeof content !== "object") continue;
+    for (const slot of ["image", "left_image", "right_image"] as const) {
+      const img = content[slot] as
+        | { url?: string | null }
+        | undefined
+        | null;
+      if (!img || typeof img !== "object") continue;
+      const next = appendTokenToAssetUrl(img.url, token);
+      if (next !== img.url) img.url = next ?? null;
+    }
+  }
 }
 
 // ── Body schemas ────────────────────────────────────────────────────────
@@ -752,11 +857,22 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
     }
     try {
       const brandKit = repoToPitchBrandKit(repoKit);
+      // Pitch Present iframe asset auth — see comment near
+      // `appendTokenToPitchAssetUrls`. Tokenize background image URLs and
+      // inline image URLs so the sandboxed iframe can load them via the
+      // `?token=` allowlist (no Authorization header reachable from
+      // `<img>` / `data-background-image`). No-op when the request was
+      // unauthenticated (test harness, future auth modes).
+      const accessToken = extractRequestAuthToken(req);
       const backgroundImageUrlBySlideIndex = buildBackgroundImageUrlMap(
         deck.id,
         deps.pitchRepo.listSlidesForDeck(deck.id),
         deps.pitchRepo.listAssetsForDeck(deck.id),
+        accessToken,
       );
+      if (accessToken) {
+        appendTokenToPitchAssetUrls(deck, accessToken);
+      }
       // Sub-issue #996 — single-slide thumbnail filter. The query
       // parameter is the slide ROW id (not its position) so the slide-rail
       // can pass the same id it shows in `data-testid`. We resolve it to
@@ -920,11 +1036,20 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
     const ctx = loadDeckAndKit(req, res);
     if (!ctx?.deck) return;
     try {
+      // Same Present-iframe asset-auth plumbing as `/render`. Even though
+      // the standalone HTML is downloadable, when an operator opens it in
+      // a browser tab it loads asset URLs sans Authorization header, so
+      // they need the `?token=` query suffix to authenticate.
+      const accessToken = extractRequestAuthToken(req);
       const backgroundImageUrlBySlideIndex = buildBackgroundImageUrlMap(
         ctx.deck.id,
         deps.pitchRepo.listSlidesForDeck(ctx.deck.id),
         deps.pitchRepo.listAssetsForDeck(ctx.deck.id),
+        accessToken,
       );
+      if (accessToken) {
+        appendTokenToPitchAssetUrls(ctx.deck, accessToken);
+      }
       const { html, slideCount } = renderDeckToHtml(
         ctx.deck,
         ctx.brandKit,
