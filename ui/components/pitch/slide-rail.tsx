@@ -356,6 +356,7 @@ const ImageStatusBadge = ({ status, slideIndex, onRetry }: BadgeProps) => {
       type="button"
       data-testid={`slide-rail-image-status-${slideIndex}`}
       data-status="failed"
+      aria-label={`Retry failed image generation for slide ${slideIndex}`}
       title="Image generation failed — click to retry"
       onClick={(e) => {
         e.stopPropagation();

@@ -30,6 +30,14 @@ export class PitchEditorPage {
   readonly exportMdItem: Locator;
   readonly exportNotesItem: Locator;
   readonly exportZipItem: Locator;
+  readonly generateAllImagesControl: Locator;
+  readonly renderErrorMessage: Locator;
+  readonly renderRetryButton: Locator;
+  readonly brandKitSelect: Locator;
+  readonly editBrandKitButton: Locator;
+  readonly newBrandKitButton: Locator;
+  readonly brandKitDialog: Locator;
+  readonly contrastWarning: Locator;
 
   // Slide rail
   readonly slideRail: Locator;
@@ -69,6 +77,24 @@ export class PitchEditorPage {
     this.exportMdItem = page.getByTestId("pitch-editor-export-md");
     this.exportNotesItem = page.getByTestId("pitch-editor-export-notes");
     this.exportZipItem = page.getByTestId("pitch-editor-export-zip");
+    this.generateAllImagesControl = page.getByRole("button", {
+      name: /Generate all images|Starting|Generating|Images ready|Retry failed/i,
+    });
+    this.renderErrorMessage = page.getByText("Could not render deck.");
+    this.renderRetryButton = page.getByRole("button", {
+      name: "Retry render",
+    });
+    this.brandKitSelect = page.getByLabel("Brand kit");
+    this.editBrandKitButton = page.getByRole("button", {
+      name: "Edit kit",
+    });
+    this.newBrandKitButton = page.getByRole("button", { name: "+ New" });
+    this.brandKitDialog = page.getByRole("dialog", {
+      name: /Edit brand kit|New brand kit|Starter brand kit/,
+    });
+    this.contrastWarning = page.getByText(
+      /low contrast against the slide background/i,
+    );
 
     this.slideRail = page.getByTestId("slide-rail");
 
@@ -134,6 +160,13 @@ export class PitchEditorPage {
   /** Click a slide rail row to make it the selected slide. */
   async selectSlide(slideId: string) {
     await this.rowFor(slideId).click();
+  }
+
+  retryImageButtonForSlide(slideIndex: number): Locator {
+    return this.page.getByRole("button", {
+      name: `Retry failed image generation for slide ${slideIndex}`,
+      exact: true,
+    });
   }
 }
 
