@@ -43,7 +43,9 @@ This repo opts into [graphify](https://github.com/safishamsi/graphify), a Python
 - **If stale** (older than the most recent commit on the working branch): mention in the same line that the graph may be slightly out-of-date and the subagent should fall back to grep for files modified after the graph was built.
 - **If missing**: do nothing extra. graphify is opt-in; never block the workflow on it. The install/build instructions live in [CONTRIBUTING.md](../../CONTRIBUTING.md).
 
-Do not invoke `graphify` yourself. The CLI is owned by the developer; it is built/refreshed locally via `graphify .` (or via the post-commit hook installed by `graphify hook install`). Your job is only to *point subagents at the artefact when it exists*.
+Do not invoke `graphify` yourself. The CLI is owned by the developer; it is built/refreshed locally via `graphify .` (or via the post-commit hook installed by `graphify hook install`), and a CI job ([`.github/workflows/graphify-refresh.yml`](../workflows/graphify-refresh.yml)) auto-rebuilds the AST graph on every PR that touches code paths and commits `graphify-out/graph.json` + `GRAPH_REPORT.md` back to the PR branch as `graphify-bot`. Your job is only to *point subagents at the artefact when it exists*.
+
+**Practical implication for the orchestrator**: when you delegate the IMPLEMENT phase to Code Issue, the bot's auto-commit may add a follow-up commit to the feature branch after CI runs. This is expected — do not treat it as an unexpected change, and do not ask the user to revert it. If the REVIEW phase reports that the only diff is the graphify auto-commit, that is normal.
 
 ## Workflow (#tool:todo)
 

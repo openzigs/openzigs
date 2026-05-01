@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Dev tooling: graphify auto-refresh in CI on every PR.** New workflow [`.github/workflows/graphify-refresh.yml`](.github/workflows/graphify-refresh.yml) runs [`scripts/graphify-ast-build.py`](scripts/graphify-ast-build.py) on every PR that touches `src/`, `ui/`, `sidecars/`, `desktop/`, `config/`, or `scripts/`, and commits the refreshed `graphify-out/graph.json` + `GRAPH_REPORT.md` back to the PR branch as the `graphify-bot` user. AST-only — no LLM calls, ~1 minute CI time, $0 cost. Reviewers (human and AI subagents) always navigate against an up-to-date codebase graph. The orchestrator agent doc ([`.github/agents/orchestrator.agent.md`](.github/agents/orchestrator.agent.md)) is updated to expect the bot's auto-commit on feature branches. Forked PRs are skipped (no write token); commits containing `[skip graphify]` are not refreshed.
+
 ### Changed
 
 - **Dev tooling: graphify codebase-graph integration for Copilot subagents (Epic #1026).** The orchestrator agent (`.github/agents/orchestrator.agent.md`) and the `code-issue`, `code-review`, and `research-gather` skills now consult `graphify-out/GRAPH_REPORT.md` (when present) and use `graphify query` / `graphify path` for impact analysis instead of broad grep sweeps. Reduces premium-request token usage when coding on openzigs. Opt-in for developers — install via `pip install graphifyy` (Windows) or `uv tool install graphifyy` (Mac/Linux), then `graphify .` to build, `graphify hook install` to auto-refresh on commit. New `.graphifyignore` excludes `node_modules/`, `.next/`, `dist/`, `external/`, `coverage/`, sidecar venvs, and other generated content. `.gitignore` updated to ignore graphify cache/manifest while committing the shared `graph.json`, `GRAPH_REPORT.md`, and `graph.html`. See [CONTRIBUTING.md](CONTRIBUTING.md#optional-graphify-knowledge-graph) for setup. **No openzigs runtime changes** — graphify is purely a developer-side workflow optimization. (#1026)
