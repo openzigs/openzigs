@@ -32,7 +32,7 @@ OUT_DIR = REPO_ROOT / "graphify-out"
 #   3. Its only consumer is ``report.generate()``, which uses it for the
 #      header summary. A minimal stub is sufficient to keep the report and
 #      the actual graph building intact.
-DETECT_STUB = {"languages": {}, "file_count": 0, "word_count": 0}
+DETECT_STUB = {"total_files": 0, "total_words": 0, "files": {"code": []}, "warning": "detect() skipped in CI to avoid OOM"}
 
 
 def log(msg: str) -> None:
