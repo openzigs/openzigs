@@ -73,6 +73,7 @@ import {
   type Slide,
 } from "../pitch/pitch-schema.js";
 import { STARTER_BRAND_KITS } from "../pitch/starter-brand-kits.js";
+import { PITCH_ASSET_PATH_RE } from "../auth/auth.js";
 import type { CopilotWrapper } from "../copilot/copilot-wrapper.js";
 import type { TaskEngine } from "../tasks/task-engine.js";
 import type { MediaQueueRepository } from "../queue/media-queue-repository.js";
@@ -305,14 +306,25 @@ export function buildBackgroundImageUrlMap(
 // append the token to the URLs that the renderer emits.
 
 /**
- * Mirrors `PITCH_ASSET_PATH_RE` in `src/auth/auth.ts`. Used to decide
- * which inline image URLs (set by the image-pipeline reconciliation) point
- * at the local asset route and therefore need a `?token=` suffix. Third-
- * party `https://...` URLs MUST NOT be touched — appending the local
- * bearer token to a remote origin would leak it.
+ * Append `?token=<encoded>` to a single URL iff its path matches the
+ * Pitch asset route. Preserves any pre-existing query string and is a
+ * no-op for null/undefined/non-matching URLs. The token is always run
+ * through `encodeURIComponent` so that a token containing `&`, `?`, `#`,
+ * `=`, or `/` cannot inject extra query params or path segments.
+ *
+ * Exported for direct unit testing — see `pitch.test.ts`.
  */
-const PITCH_ASSET_PATH_RE_LOCAL =
-  /^\/api\/admin\/pitch\/decks\/[a-zA-Z0-9_-]+\/assets\/[a-zA-Z0-9_-]+$/;
+export function appendTokenToAssetUrl(
+  url: string | null | undefined,
+  token: string,
+): string | null {
+  if (!url) return url ?? null;
+  if (!token) return url;
+  const [path, existingQuery] = url.split("?", 2);
+  if (!PITCH_ASSET_PATH_RE.test(path)) return url;
+  const prefix = existingQuery ? `?${existingQuery}&` : "?";
+  return `${path}${prefix}token=${encodeURIComponent(token)}`;
+}
 
 /**
  * Extract the bearer token used to authenticate the current request.
@@ -333,24 +345,6 @@ function extractRequestAuthToken(req: Request): string | undefined {
   const q = req.query.token;
   if (typeof q === "string" && q.length > 0) return q;
   return undefined;
-}
-
-/**
- * Append `?token=<encoded>` to a single URL iff its path matches the
- * Pitch asset route. Preserves any pre-existing query string and is a
- * no-op for null/undefined/non-matching URLs. The token is always run
- * through `encodeURIComponent` so that a token containing `&`, `?`, `#`,
- * `=`, or `/` cannot inject extra query params or path segments.
- */
-function appendTokenToAssetUrl(
-  url: string | null | undefined,
-  token: string,
-): string | null | undefined {
-  if (!url || !token) return url;
-  const [path, existingQuery] = url.split("?", 2);
-  if (!PITCH_ASSET_PATH_RE_LOCAL.test(path)) return url;
-  const prefix = existingQuery ? `?${existingQuery}&` : "?";
-  return `${path}${prefix}token=${encodeURIComponent(token)}`;
 }
 
 /**
@@ -380,7 +374,7 @@ export function appendTokenToPitchAssetUrls(
         | null;
       if (!img || typeof img !== "object") continue;
       const next = appendTokenToAssetUrl(img.url, token);
-      if (next !== img.url) img.url = next ?? null;
+      if (next !== img.url) img.url = next;
     }
   }
 }

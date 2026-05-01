@@ -2323,6 +2323,33 @@ describe("Pitch REST router", () => {
   });
 
   // ─────────────────────────────────────────────────────────────────
+  // appendTokenToAssetUrl — direct unit tests (PR #1041 follow-up)
+  // ─────────────────────────────────────────────────────────────────
+  describe("appendTokenToAssetUrl (direct)", () => {
+    it("appends ?token=<encoded> to a matching pitch asset path with no query string", async () => {
+      const { appendTokenToAssetUrl } = await import("./pitch.js");
+      const url = "/api/admin/pitch/decks/deck-abc/assets/asset-xyz";
+      expect(appendTokenToAssetUrl(url, "tok 1+&")).toBe(
+        `${url}?token=${encodeURIComponent("tok 1+&")}`,
+      );
+    });
+
+    it("preserves an existing query string and appends &token=<encoded>", async () => {
+      const { appendTokenToAssetUrl } = await import("./pitch.js");
+      const url = "/api/admin/pitch/decks/deck-abc/assets/asset-xyz?v=2";
+      expect(appendTokenToAssetUrl(url, "abc")).toBe(
+        "/api/admin/pitch/decks/deck-abc/assets/asset-xyz?v=2&token=abc",
+      );
+    });
+
+    it("returns a non-matching URL unchanged (does NOT leak the token to third-party origins)", async () => {
+      const { appendTokenToAssetUrl } = await import("./pitch.js");
+      const url = "https://cdn.example.com/foo.png";
+      expect(appendTokenToAssetUrl(url, "tok")).toBe(url);
+    });
+  });
+
+  // ─────────────────────────────────────────────────────────────────
   // Sub-issue #992 — buildBackgroundImageUrlMap pure-function tests
   // ─────────────────────────────────────────────────────────────────
   describe("buildBackgroundImageUrlMap (#992)", () => {

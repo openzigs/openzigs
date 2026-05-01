@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Internal: `PITCH_ASSET_PATH_RE` is now exported from `src/auth/auth.ts` and imported by `src/api/pitch.ts` (PR #1041 follow-up).** Eliminates the hand-copied `PITCH_ASSET_PATH_RE_LOCAL` mirror in the renderer's tokenizer that would have silently desynced if the auth allowlist charset relaxed. Also exports `appendTokenToAssetUrl` for direct unit testing (three new tests cover the no-query / existing-query / non-matching branches).
 - **Slide-rail "Retry image" regenerates only the failing slide (Epic #1035 / #1039 AC3).** `POST /api/admin/pitch/decks/:deckId/images/generate-all` now accepts an optional `slideIds: string[]` body filter (max 200) and only fans out to the requested slides; the slide-rail retry button (`ui/app/pitch/[deckId]/page.tsx`) now passes the failing slide id instead of triggering a deck-wide regeneration, and the audit/socket events tag the source as `slide_retry` vs `bulk_button`. Returns 404 when `slideIds` matches no eligible slides. (#1039)
 
 ### Added
