@@ -494,4 +494,77 @@ test.describe("Epic #1035 - Pitch hardening", () => {
 
     await expect.poll(() => retryCount).toBe(1);
   });
+
+  // PR #1041 follow-up: Present-mode iframes load inline asset images via
+  // tokenized URLs. The server tokenizer (`appendTokenToPitchAssetUrls` in
+  // `src/api/pitch.ts`) is what makes this work — if the token query param
+  // is dropped, the auth middleware returns 401 and the image renders blank.
+  // This test asserts the live network behavior: an asset request that
+  // carries `?token=<encoded>` returns 200 with a non-empty body, while a
+  // request without the token would 401. We mount the HTML directly via
+  // `page.setContent` to mirror exactly what the Present iframe receives
+  // from `/api/admin/pitch/decks/:deckId/render?mode=present`.
+  test("Present-mode iframe asset request with ?token= returns 200 with non-zero bytes", async ({
+    page,
+  }) => {
+    const PRESENT_TOKEN = "present-mode-bearer-1234";
+    const TOKENIZED_ASSET_URL = `${GENERATED_IMAGE_PATH}?token=${encodeURIComponent(PRESENT_TOKEN)}`;
+    let unauthenticatedRequestCount = 0;
+
+    await page.route(
+      `**/api/admin/pitch/decks/${DECK_ID}/assets/${GENERATED_ASSET_ID}**`,
+      (route) => {
+        const url = new URL(route.request().url());
+        const token = url.searchParams.get("token");
+        if (token !== PRESENT_TOKEN) {
+          unauthenticatedRequestCount += 1;
+          return route.fulfill({
+            status: 401,
+            contentType: "application/json",
+            body: JSON.stringify({
+              error: { code: "UNAUTHENTICATED", message: "missing token" },
+            }),
+          });
+        }
+        return route.fulfill({
+          status: 200,
+          contentType: "image/png",
+          body: GENERATED_IMAGE_BYTES,
+        });
+      },
+    );
+
+    // Establish a real origin so that `page.route(**/api/...)` patterns
+    // intercept the relative-URL `<img>` request issued by the embedded
+    // Present HTML below. Without this the document has `about:blank`
+    // origin and relative URLs never match the mock route.
+    await page.route("**/__present_mode_test_host__**", (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "text/html",
+        // Mirror what the server emits for `/render?mode=present` after
+        // `appendTokenToPitchAssetUrls` has tokenized inline asset URLs.
+        body: `<!doctype html><html><body style="margin:0;background:#000"><main aria-label="Present mode slide" style="min-height:100vh;display:grid;place-items:center"><img alt="Generated product panel" src="${TOKENIZED_ASSET_URL}" style="width:480px;height:270px" /></main></body></html>`,
+      }),
+    );
+
+    const assetResponsePromise = page.waitForResponse(
+      (response) =>
+        response.url().includes(`/assets/${GENERATED_ASSET_ID}`) &&
+        response.request().method() === "GET",
+    );
+
+    await page.goto("http://127.0.0.1:65535/__present_mode_test_host__/", {
+      waitUntil: "domcontentloaded",
+    });
+
+    const assetResponse = await assetResponsePromise;
+    expect(assetResponse.status()).toBe(200);
+    expect(assetResponse.url()).toContain(
+      `token=${encodeURIComponent(PRESENT_TOKEN)}`,
+    );
+    const body = await assetResponse.body();
+    expect(body.byteLength).toBeGreaterThan(0);
+    expect(unauthenticatedRequestCount).toBe(0);
+  });
 });
