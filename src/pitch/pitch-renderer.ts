@@ -69,6 +69,17 @@ export interface ReadableColorTokens {
   onAccent: string;
   surface: string;
   surfaceText: string;
+  /**
+   * Bug-fix (post-PR-#1041 walkthrough): foreground color for text that
+   * sits on top of a background image. The renderer pairs this with a
+   * deterministic dark scrim (see `.pitch-has-bg::before` in
+   * {@link embeddedChromeStyles}) so legibility does not depend on the
+   * image's average luminance — a brand "primary" cannot disappear on a
+   * matching-tone image because the scrim guarantees enough contrast for
+   * white text. Always `#ffffff` today; left as a token so future work
+   * can derive it from sampled image luminance without churning callers.
+   */
+  onImage: string;
 }
 
 interface Rgb {
@@ -103,6 +114,9 @@ export function buildReadableColorTokens(kit: BrandKit): ReadableColorTokens {
     onAccent: readableTextColor(accentRaw),
     surface: text === "#111827" ? "rgba(255,255,255,0.78)" : "rgba(255,255,255,0.92)",
     surfaceText: "#111827",
+    // Pinned to white because it always rides on top of the dark scrim
+    // emitted for `.pitch-has-bg` sections — see `embeddedChromeStyles`.
+    onImage: "#ffffff",
   };
 }
 
@@ -299,6 +313,7 @@ function brandKitInlineStyle(kit: BrandKit): string {
     `--pitch-on-accent:${tokens.onAccent}`,
     `--pitch-surface:${tokens.surface}`,
     `--pitch-surface-text:${tokens.surfaceText}`,
+    `--pitch-on-image:${tokens.onImage}`,
     `--pitch-font-heading:${safeFont(kit.fontHeading)}`,
     `--pitch-font-body:${safeFont(kit.fontBody)}`,
   ].join(";");
@@ -773,15 +788,64 @@ html, body { height: 100%; margin: 0; padding: 0; }
 }
 /* When a slide has a background image we add the .pitch-has-bg class
    in sectionAttributes (issue #1007) so we can give the heading text a
-   white color and drop shadow without depending on Reveal's data-attr. */
+   white color and drop shadow without depending on Reveal's data-attr.
+
+   Bug-fix (post-PR-#1041 walkthrough): the previous rule only forced
+   white on h1/h2/h3, leaving eyebrows, paragraphs, list items, captions
+   and the title-template subtitle to inherit the brand kit's primary
+   or muted color, which on a "Dark Tech" kit collapses to near-black
+   on a near-black background image. We now:
+     1. Layer a deterministic dark scrim (::before pseudo) BETWEEN the
+        background image and the slide content so legibility never
+        depends on the image's average luminance.
+     2. Force every text-bearing element to a high-contrast color via
+        --pitch-on-image (always white today; tokenised so future
+        per-image luminance sampling can override it without touching
+        the CSS).
+     3. Apply a soft drop shadow as belt-and-suspenders for the rare
+        case where the scrim is tinted out by a custom theme override.
+   The scrim is positioned absolute / inset:0 / z-index:0 and the
+   section children are lifted to z-index:1 so they sit on top. Reveal
+   places the actual background-image in a separate .slide-background
+   wrapper outside .slides > section, so the scrim does not occlude
+   the image, it dims it. */
 .pitch-deck-wrap .reveal .slides > section.pitch-has-bg {
-  color: #fff;
+  color: var(--pitch-on-image, #ffffff);
+  position: relative;
+}
+.pitch-deck-wrap .reveal .slides > section.pitch-has-bg::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, rgba(0,0,0,0.55) 0%, rgba(0,0,0,0.25) 60%, rgba(0,0,0,0.55) 100%);
+  z-index: 0;
+  pointer-events: none;
+}
+.pitch-deck-wrap .reveal .slides > section.pitch-has-bg > * {
+  position: relative;
+  z-index: 1;
 }
 .pitch-deck-wrap .reveal .slides > section.pitch-has-bg h1,
 .pitch-deck-wrap .reveal .slides > section.pitch-has-bg h2,
-.pitch-deck-wrap .reveal .slides > section.pitch-has-bg h3 {
-  color: #fff;
+.pitch-deck-wrap .reveal .slides > section.pitch-has-bg h3,
+.pitch-deck-wrap .reveal .slides > section.pitch-has-bg h4 {
+  color: var(--pitch-on-image, #ffffff);
   text-shadow: 0 2px 12px rgba(0,0,0,0.5);
+}
+.pitch-deck-wrap .reveal .slides > section.pitch-has-bg p,
+.pitch-deck-wrap .reveal .slides > section.pitch-has-bg li,
+.pitch-deck-wrap .reveal .slides > section.pitch-has-bg blockquote,
+.pitch-deck-wrap .reveal .slides > section.pitch-has-bg .pitch-caption,
+.pitch-deck-wrap .reveal .slides > section.pitch-has-bg .pitch-attribution {
+  color: var(--pitch-on-image, #ffffff);
+  text-shadow: 0 1px 6px rgba(0,0,0,0.55);
+}
+.pitch-deck-wrap .reveal .slides > section.pitch-has-bg .pitch-eyebrow,
+.pitch-deck-wrap .reveal .slides > section.pitch-has-bg .pitch-accent,
+.pitch-deck-wrap .reveal .slides > section.pitch-has-bg .pitch-section-num {
+  color: var(--pitch-on-image, #ffffff);
+  border-bottom-color: rgba(255,255,255,0.6);
+  text-shadow: 0 1px 6px rgba(0,0,0,0.55);
 }
 `.trim();
 }

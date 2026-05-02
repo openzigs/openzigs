@@ -55,6 +55,14 @@ vi.mock("../pitch/image-fanout.js", () => ({
   fanOutImageGeneration: (...a: unknown[]) => fanOutImageGenerationMock(...a),
 }));
 
+const refreshFluxQGpuAvailableMock = vi.fn();
+
+vi.mock("../pitch/fluxq-recommended-dims.js", () => ({
+  refreshFluxQGpuAvailable: (...a: unknown[]) =>
+    refreshFluxQGpuAvailableMock(...a),
+  getCachedFluxQGpuAvailable: () => undefined,
+}));
+
 vi.mock("../logging/logger.js", () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
@@ -202,6 +210,10 @@ describe("Pitch REST router", () => {
       skipped: 0,
       total: 0,
     });
+    refreshFluxQGpuAvailableMock.mockReset();
+    // Default: probe is unreachable / undecided. Tests that need a
+    // definitive false (no GPU) must override this per-case.
+    refreshFluxQGpuAvailableMock.mockResolvedValue(undefined);
     harness = buildHarness();
   });
 
@@ -974,6 +986,61 @@ describe("Pitch REST router", () => {
         .send({ slideIds: ["does-not-exist"] });
       expect(res.status).toBe(404);
       expect(fanOutImageGenerationMock).not.toHaveBeenCalled();
+    });
+
+    // Bug-fix (post-PR-#1041 walkthrough): pre-flight FluxQ /gpu-info
+    // probe must short-circuit the bulk fan-out with a structured 503
+    // when the sidecar reports no usable GPU, instead of enqueueing N
+    // doomed jobs that all fail with `enable_model_cpu_offload requires
+    // accelerator, but not found`.
+    it("returns 503 image_gen_unavailable when FluxQ reports no GPU", async () => {
+      const kitId = createCustomKit(harness);
+      const { deckId } = createDeck(harness, kitId);
+      refreshFluxQGpuAvailableMock.mockResolvedValue(false);
+      const res = await request(harness.app)
+        .post(`/api/admin/pitch/decks/${deckId}/images/generate-all`)
+        .send({});
+      expect(res.status).toBe(503);
+      expect(res.body.error?.code).toBe("image_gen_unavailable");
+      expect(fanOutImageGenerationMock).not.toHaveBeenCalled();
+    });
+
+    it("does NOT arm the cooldown when pre-flight short-circuits with 503", async () => {
+      const kitId = createCustomKit(harness);
+      const { deckId } = createDeck(harness, kitId);
+      refreshFluxQGpuAvailableMock.mockResolvedValueOnce(false);
+      const r1 = await request(harness.app)
+        .post(`/api/admin/pitch/decks/${deckId}/images/generate-all`)
+        .send({});
+      expect(r1.status).toBe(503);
+      // Subsequent request after GPU comes back online should be allowed
+      // through (no 429), proving the cooldown was not armed.
+      refreshFluxQGpuAvailableMock.mockResolvedValueOnce(true);
+      fanOutImageGenerationMock.mockResolvedValueOnce({
+        enqueued: 1,
+        skipped: 0,
+        total: 1,
+      });
+      const r2 = await request(harness.app)
+        .post(`/api/admin/pitch/decks/${deckId}/images/generate-all`)
+        .send({});
+      expect(r2.status).toBe(200);
+    });
+
+    it("continues with fan-out when GPU probe returns undefined (unreachable)", async () => {
+      const kitId = createCustomKit(harness);
+      const { deckId } = createDeck(harness, kitId);
+      refreshFluxQGpuAvailableMock.mockResolvedValue(undefined);
+      fanOutImageGenerationMock.mockResolvedValue({
+        enqueued: 2,
+        skipped: 0,
+        total: 2,
+      });
+      const res = await request(harness.app)
+        .post(`/api/admin/pitch/decks/${deckId}/images/generate-all`)
+        .send({});
+      expect(res.status).toBe(200);
+      expect(fanOutImageGenerationMock).toHaveBeenCalledTimes(1);
     });
   });
 
