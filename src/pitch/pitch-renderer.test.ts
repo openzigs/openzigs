@@ -674,6 +674,74 @@ describe("renderDeckToHtml — backgroundImageUrlBySlideIndex (#992)", () => {
       'data-background-image="https://cdn.example.com/x.png"',
     );
   });
+
+  // Bug-fix (post-PR-#1041 walkthrough): legibility regression where
+  // title text on a Dark Tech kit collapsed to near-black on a near-black
+  // background image. Renderer now emits a deterministic dark scrim
+  // ::before pseudo + a white --pitch-on-image token so contrast does
+  // NOT depend on the image's luminance.
+  it("adds the .pitch-has-bg class to sections with a background image", () => {
+    const deck = buildDeck([titleSlide()]);
+    const map = new Map<number, string>([
+      [0, "https://cdn.example.com/dark.png"],
+    ]);
+    const html = renderDeckToHtml(deck, KIT, "embedded", {
+      backgroundImageUrlBySlideIndex: map,
+    }).html;
+    expect(html).toContain("pitch-has-bg");
+  });
+
+  it("emits a deterministic dark scrim layer behind text on background-image slides", () => {
+    const out = renderDeckToHtml(
+      buildDeck([titleSlide()]),
+      KIT,
+      "embedded",
+      {
+        backgroundImageUrlBySlideIndex: new Map([
+          [0, "https://cdn.example.com/dark.png"],
+        ]),
+      },
+    );
+    // The scrim is keyed on the .pitch-has-bg::before selector and uses
+    // a vertical 0.55 → 0.25 → 0.55 alpha gradient. Both pieces matter:
+    // the selector ensures it ONLY fires on bg-image slides, and the
+    // gradient guarantees ≥AA contrast for white text in the title band.
+    expect(out.html).toContain("section.pitch-has-bg::before");
+    expect(out.html).toContain("rgba(0,0,0,0.55)");
+  });
+
+  it("emits the --pitch-on-image CSS variable so the scrim has a paired foreground token", () => {
+    const out = renderDeckToHtml(
+      buildDeck([titleSlide()]),
+      KIT,
+      "embedded",
+      {
+        backgroundImageUrlBySlideIndex: new Map([
+          [0, "https://cdn.example.com/dark.png"],
+        ]),
+      },
+    );
+    expect(out.html).toContain("--pitch-on-image:#ffffff");
+  });
+
+  it("forces eyebrow / paragraph / list-item color on .pitch-has-bg slides", () => {
+    const out = renderDeckToHtml(
+      buildDeck([titleSlide()]),
+      KIT,
+      "embedded",
+      {
+        backgroundImageUrlBySlideIndex: new Map([
+          [0, "https://cdn.example.com/dark.png"],
+        ]),
+      },
+    );
+    // Eyebrow / accent overrides — these previously inherited the brand
+    // primary which on a Dark Tech kit collapses to black-on-black.
+    expect(out.html).toContain(
+      "section.pitch-has-bg .pitch-eyebrow",
+    );
+    expect(out.html).toContain("section.pitch-has-bg p");
+  });
 });
 
 // ── Sub-issue #996: single-slide thumbnail render ──────────────────────
@@ -880,6 +948,23 @@ describe("renderDeckToHtml — readable color tokens (#1037)", () => {
     expect(contrastRatio(tokens.heading, tokens.background)).toBeGreaterThanOrEqual(4.5);
     expect(contrastRatio(tokens.accent, tokens.background)).toBeGreaterThanOrEqual(4.5);
     expect(contrastRatio(tokens.onPrimary, "#111111")).toBeGreaterThanOrEqual(4.5);
+  });
+
+  // Bug-fix (post-PR-#1041 walkthrough): the `onImage` token MUST be
+  // white regardless of brand kit colors because it always rides on top
+  // of the deterministic dark scrim emitted for `.pitch-has-bg` slides.
+  // If a future refactor lets the brand kit override this, contrast on
+  // background-image slides regresses.
+  it("pins onImage to #ffffff regardless of brand kit colors", () => {
+    const tokens = buildReadableColorTokens(KIT);
+    expect(tokens.onImage).toBe("#ffffff");
+    const lightKitTokens = buildReadableColorTokens({
+      ...KIT,
+      primaryColor: "#ffe600",
+      secondaryColor: "#ffffff",
+      accentColor: "#fff8b0",
+    });
+    expect(lightKitTokens.onImage).toBe("#ffffff");
   });
 
   it("emits contrast-safe CSS variables used by major template families", () => {

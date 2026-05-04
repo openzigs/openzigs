@@ -52,6 +52,10 @@ import {
 import { submitSlideRegenerateTask } from "../pitch/pitch-regenerate.js";
 import { enqueueSlideImage } from "../pitch/pitch-image-service.js";
 import { fanOutImageGeneration } from "../pitch/image-fanout.js";
+import {
+  refreshFluxQGpuAvailable,
+  getCachedFluxQGpuAvailable,
+} from "../pitch/fluxq-recommended-dims.js";
 import { renderDeckToHtml } from "../pitch/pitch-renderer.js";
 import { exportDeckToPdf } from "../pitch/pitch-export-pdf.js";
 import { exportDeckToPptx } from "../pitch/pitch-export-pptx.js";
@@ -170,7 +174,8 @@ type ErrorCode =
   | "bad_request"
   | "internal_error"
   | "rate_limited"
-  | "pdf_export_unavailable";
+  | "pdf_export_unavailable"
+  | "image_gen_unavailable";
 
 function sendError(
   res: Response,
@@ -1850,6 +1855,36 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
       const deck = deps.pitchRepo.getDeck(deckId);
       if (!deck) {
         sendError(res, 404, "not_found", `deck ${deckId} not found`);
+        return;
+      }
+
+      // Bug-fix (post-PR-#1041 walkthrough): when the FluxQ sidecar is
+      // running but has lost its CUDA accelerator, every enqueued txt2img
+      // job fails downstream with "`enable_model_cpu_offload` requires
+      // accelerator, but not found" and the user is left staring at a
+      // "Retry failed (12)" banner with no idea why. Probe the sidecar's
+      // `/gpu-info` once before the fan-out and short-circuit with a
+      // structured 503 when GPU is *definitively* unavailable. We do
+      // NOT block on probe failure (`undefined` result) — that preserves
+      // the legacy best-effort behaviour for environments where the
+      // probe is unreachable but jobs may still succeed via a different
+      // sidecar configuration. The pre-flight runs BEFORE the cooldown
+      // window is armed so a transient outage does not lock the deck
+      // out for 5 s.
+      const gpuAvailable = await refreshFluxQGpuAvailable();
+      if (gpuAvailable === false) {
+        audit(
+          "system",
+          "pitch.images.bulk_blocked_no_gpu",
+          { deckId, cachedGpuAvailable: getCachedFluxQGpuAvailable() },
+          "warn",
+        );
+        sendError(
+          res,
+          503,
+          "image_gen_unavailable",
+          "Image generation is unavailable: the FluxQ sidecar reports no usable GPU. Verify the CUDA driver is healthy and restart the sidecar before retrying.",
+        );
         return;
       }
 

@@ -31,6 +31,23 @@ export const FLUXQ_FALLBACK_DIMS: Readonly<FluxQRecommendedDims> = Object.freeze
 
 let cached: FluxQRecommendedDims | undefined;
 
+/**
+ * Bug-fix (post-PR-#1041 walkthrough): the bulk "Generate all images"
+ * button silently enqueued 12 doomed jobs when the FluxQ sidecar was
+ * running but had lost its CUDA accelerator (every job came back with
+ * "`enable_model_cpu_offload` requires accelerator, but not found").
+ * The probe now also captures whether FluxQ has a usable GPU so the
+ * route handler can short-circuit with a 503 BEFORE fan-out.
+ *
+ * Tri-state by design:
+ *   - `true`   FluxQ reports a working CUDA device
+ *   - `false`  FluxQ reports `available: false` (or `device != "cuda"`)
+ *   - `undefined`  probe was never run, or it failed to reach the sidecar
+ *                  (in which case we fall through to the legacy "best
+ *                  effort" behaviour and let the queue surface failures)
+ */
+let cachedGpuAvailable: boolean | undefined;
+
 /** Default sidecar URL — mirrors `image-gen-service.ts`. */
 function defaultSidecarUrl(): string {
   return process.env.IMAGE_GEN_SIDECAR_URL ?? "http://127.0.0.1:5005";
@@ -81,6 +98,47 @@ export function getCachedFluxQRecommendedDims(): FluxQRecommendedDims {
 }
 
 /**
+ * Synchronous getter — returns the most recently observed GPU availability
+ * flag, or `undefined` if no successful probe has happened yet. See the
+ * {@link cachedGpuAvailable} doc comment for the tri-state semantics.
+ */
+export function getCachedFluxQGpuAvailable(): boolean | undefined {
+  return cachedGpuAvailable;
+}
+
+/**
+ * Probe FluxQ's `/gpu-info` endpoint and cache whether a usable GPU is
+ * present. Safe to call repeatedly. Never throws — on any transport or
+ * shape error the cache is cleared (set back to `undefined`) and
+ * `undefined` is returned so callers can distinguish "definitely no GPU"
+ * from "we don't know yet".
+ */
+export async function refreshFluxQGpuAvailable(
+  url?: string,
+): Promise<boolean | undefined> {
+  const target = url ?? defaultSidecarUrl();
+  try {
+    const res = await fetch(`${target}/gpu-info`, {
+      signal: AbortSignal.timeout(2_000),
+    });
+    if (!res.ok) {
+      cachedGpuAvailable = undefined;
+      return undefined;
+    }
+    const data = (await res.json()) as { available?: unknown };
+    if (typeof data.available === "boolean") {
+      cachedGpuAvailable = data.available;
+      return cachedGpuAvailable;
+    }
+    cachedGpuAvailable = undefined;
+    return undefined;
+  } catch {
+    cachedGpuAvailable = undefined;
+    return undefined;
+  }
+}
+
+/**
  * Clamp the requested width/height down to the FluxQ-advertised
  * recommended ceiling. If either dim is missing, the recommended value
  * is used directly. Never up-scales — a caller asking for 256×256 still
@@ -106,10 +164,15 @@ export function clampToFluxQRecommendedDims(
 
 export function _resetFluxQDimsCacheForTest(): void {
   cached = undefined;
+  cachedGpuAvailable = undefined;
 }
 
 export function _setFluxQDimsCacheForTest(
   v: FluxQRecommendedDims | undefined,
 ): void {
   cached = v ? { ...v } : undefined;
+}
+
+export function _setFluxQGpuAvailableForTest(v: boolean | undefined): void {
+  cachedGpuAvailable = v;
 }

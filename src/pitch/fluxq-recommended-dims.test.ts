@@ -4,7 +4,9 @@ import {
   _resetFluxQDimsCacheForTest,
   _setFluxQDimsCacheForTest,
   clampToFluxQRecommendedDims,
+  getCachedFluxQGpuAvailable,
   getCachedFluxQRecommendedDims,
+  refreshFluxQGpuAvailable,
   refreshFluxQRecommendedDims,
 } from "./fluxq-recommended-dims.js";
 
@@ -147,5 +149,83 @@ describe("refreshFluxQRecommendedDims", () => {
       width: 768,
       height: 432,
     });
+  });
+});
+
+// Bug-fix (post-PR-#1041 walkthrough): GPU availability probe so the
+// bulk "Generate all images" route can short-circuit instead of
+// enqueueing N doomed jobs when FluxQ has lost its CUDA accelerator.
+describe("refreshFluxQGpuAvailable", () => {
+  it("caches `true` when /gpu-info reports `available: true`", async () => {
+    globalThis.fetch = vi.fn(async () =>
+      new Response(JSON.stringify({ available: true, name: "RTX 4090" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    ) as unknown as typeof globalThis.fetch;
+
+    const result = await refreshFluxQGpuAvailable("http://fluxq:5005");
+    expect(result).toBe(true);
+    expect(getCachedFluxQGpuAvailable()).toBe(true);
+  });
+
+  it("caches `false` when /gpu-info reports `available: false`", async () => {
+    globalThis.fetch = vi.fn(async () =>
+      new Response(JSON.stringify({ available: false }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    ) as unknown as typeof globalThis.fetch;
+
+    const result = await refreshFluxQGpuAvailable("http://fluxq:5005");
+    expect(result).toBe(false);
+    expect(getCachedFluxQGpuAvailable()).toBe(false);
+  });
+
+  it("returns undefined and clears the cache when /gpu-info returns non-2xx", async () => {
+    globalThis.fetch = vi.fn(async () =>
+      new Response("nope", { status: 500 }),
+    ) as unknown as typeof globalThis.fetch;
+
+    const result = await refreshFluxQGpuAvailable("http://fluxq:5005");
+    expect(result).toBeUndefined();
+    expect(getCachedFluxQGpuAvailable()).toBeUndefined();
+  });
+
+  it("returns undefined when /gpu-info omits the `available` flag", async () => {
+    globalThis.fetch = vi.fn(async () =>
+      new Response(JSON.stringify({ name: "RTX 4090" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    ) as unknown as typeof globalThis.fetch;
+
+    const result = await refreshFluxQGpuAvailable("http://fluxq:5005");
+    expect(result).toBeUndefined();
+  });
+
+  it("returns undefined when fetch throws (sidecar unreachable)", async () => {
+    globalThis.fetch = vi.fn(async () => {
+      throw new Error("ECONNREFUSED");
+    }) as unknown as typeof globalThis.fetch;
+
+    const result = await refreshFluxQGpuAvailable("http://fluxq:5005");
+    expect(result).toBeUndefined();
+  });
+
+  it("calls the /gpu-info endpoint, not /health", async () => {
+    const mock = vi.fn(async () =>
+      new Response(JSON.stringify({ available: true }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    globalThis.fetch = mock as unknown as typeof globalThis.fetch;
+
+    await refreshFluxQGpuAvailable("http://fluxq:5005");
+    expect(mock).toHaveBeenCalledWith(
+      "http://fluxq:5005/gpu-info",
+      expect.any(Object),
+    );
   });
 });
