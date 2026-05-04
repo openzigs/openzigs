@@ -70,8 +70,16 @@ class FailedAuthLimiter {
 const ASSET_FILE_PATH_RE =
   /^\/api\/queue\/assets\/(?:[^/]+\/file|file\/.+)$/;
 
-/** Pitch-generated slide assets served into rendered deck iframes. */
-const PITCH_ASSET_PATH_RE =
+/**
+ * Pitch-generated slide assets served into rendered deck iframes.
+ *
+ * Exported so the Pitch render route (`src/api/pitch.ts`) can reuse the
+ * exact same shape when tokenizing inline asset URLs. Keep these two
+ * usages in lockstep — if this charset is relaxed here, the renderer's
+ * tokenizer must continue to match or Present mode silently 401s on the
+ * iframe asset GETs (regression history: PR #1041 follow-up).
+ */
+export const PITCH_ASSET_PATH_RE =
   /^\/api\/admin\/pitch\/decks\/[a-zA-Z0-9_-]+\/assets\/[a-zA-Z0-9_-]+$/;
 
 /**

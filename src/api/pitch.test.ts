@@ -2190,6 +2190,163 @@ describe("Pitch REST router", () => {
       expect(res.text).toContain("asset-new");
       expect(res.text).not.toContain("asset-old");
     });
+
+    // ── Pitch Present iframe asset-auth (background images) ──────────
+    //
+    // The Present route mounts /render?mode=present in a sandboxed iframe;
+    // <img>/data-background-image cannot send Authorization headers, so
+    // the asset URLs MUST carry ?token=<bearer> to clear the auth
+    // middleware allowlist.
+
+    it("/render?mode=present appends ?token= to background URLs when authed via Bearer", async () => {
+      writeAsset({
+        assetId: "asset-bg-present",
+        slideId,
+        kind: "background",
+      });
+      const res = await request(app)
+        .get(`/api/admin/pitch/decks/${deckId}/render?mode=present`)
+        .set("Authorization", "Bearer secret-bearer-1");
+      expect(res.status).toBe(200);
+      expect(res.text).toContain(
+        `data-background-image="/api/admin/pitch/decks/${deckId}/assets/asset-bg-present?token=${encodeURIComponent("secret-bearer-1")}"`,
+      );
+    });
+
+    it("/render?mode=present accepts ?token= query auth and propagates it to background URLs", async () => {
+      writeAsset({
+        assetId: "asset-bg-q",
+        slideId,
+        kind: "background",
+      });
+      const queryToken = "shared-link-token";
+      const res = await request(app).get(
+        `/api/admin/pitch/decks/${deckId}/render?mode=present&token=${encodeURIComponent(queryToken)}`,
+      );
+      expect(res.status).toBe(200);
+      expect(res.text).toContain(
+        `data-background-image="/api/admin/pitch/decks/${deckId}/assets/asset-bg-q?token=${encodeURIComponent(queryToken)}"`,
+      );
+    });
+
+    it("/render?mode=embedded also tokenizes background URLs (editor preview iframe)", async () => {
+      writeAsset({
+        assetId: "asset-bg-emb",
+        slideId,
+        kind: "background",
+      });
+      const res = await request(app)
+        .get(`/api/admin/pitch/decks/${deckId}/render?mode=embedded`)
+        .set("Authorization", "Bearer emb-token");
+      expect(res.status).toBe(200);
+      expect(res.text).toContain(
+        `data-background-image="/api/admin/pitch/decks/${deckId}/assets/asset-bg-emb?token=emb-token"`,
+      );
+    });
+
+    it("/render does NOT append ?token= when the request was unauthenticated", async () => {
+      writeAsset({
+        assetId: "asset-bg-noauth",
+        slideId,
+        kind: "background",
+      });
+      const res = await request(app).get(
+        `/api/admin/pitch/decks/${deckId}/render?mode=present`,
+      );
+      expect(res.status).toBe(200);
+      expect(res.text).toContain(
+        `data-background-image="/api/admin/pitch/decks/${deckId}/assets/asset-bg-noauth"`,
+      );
+      // Critical: never emit a literal `?token=` (would be empty/broken).
+      expect(res.text).not.toContain("?token=");
+    });
+
+    it("/render tokenizes inline image URLs that point at the local asset route, but NOT third-party https URLs", async () => {
+      // Build a deck with a bullet-list slide whose `image.url` points at
+      // a local asset, plus a two-column slide whose `right_image.url`
+      // points at a third-party CDN. Only the local URL should be
+      // tokenized; the CDN URL must be left alone (would leak the bearer).
+      const kitId = createCustomKit(harness, "inline-image kit");
+      const localAssetUrl = `/api/admin/pitch/decks/inline-deck/assets/asset-inline-1`;
+      const cdnUrl = "https://cdn.example.com/external.png";
+      const inlineDeck = harness.deps.pitchRepo.insertDeck({
+        id: "inline-deck",
+        title: "Inline Deck",
+        brand_kit_id: kitId,
+        aspect_ratio: "16:9",
+        metadata: { source_script: "", tone: "formal" },
+        slides: [
+          {
+            id: "inline-s1",
+            slide: SlideSchema.parse({
+              template: "bullet_list",
+              content: {
+                heading: "Local",
+                bullets: ["b1"],
+                image: { prompt: "local image", url: localAssetUrl, alt: "alt" },
+              },
+              speaker_notes: "",
+              transition: "slide",
+              fragments: [],
+            }),
+          },
+          {
+            id: "inline-s2",
+            slide: SlideSchema.parse({
+              template: "two_column",
+              content: {
+                heading: "Mixed",
+                left: "L",
+                right: "R",
+                right_image: { prompt: "cdn image", url: cdnUrl, alt: "cdn" },
+              },
+              speaker_notes: "",
+              transition: "slide",
+              fragments: [],
+            }),
+          },
+        ],
+      });
+      const res = await request(app)
+        .get(`/api/admin/pitch/decks/${inlineDeck.id}/render?mode=present`)
+        .set("Authorization", "Bearer inline-token");
+      expect(res.status).toBe(200);
+      // Local asset URL: tokenized.
+      expect(res.text).toContain(
+        `${localAssetUrl}?token=inline-token`,
+      );
+      // CDN URL: untouched.
+      expect(res.text).toContain(`src="${cdnUrl}"`);
+      expect(res.text).not.toContain(`${cdnUrl}?token=`);
+      expect(res.text).not.toContain(`${cdnUrl}&token=`);
+    });
+  });
+
+  // ─────────────────────────────────────────────────────────────────
+  // appendTokenToAssetUrl — direct unit tests (PR #1041 follow-up)
+  // ─────────────────────────────────────────────────────────────────
+  describe("appendTokenToAssetUrl (direct)", () => {
+    it("appends ?token=<encoded> to a matching pitch asset path with no query string", async () => {
+      const { appendTokenToAssetUrl } = await import("./pitch.js");
+      const url = "/api/admin/pitch/decks/deck-abc/assets/asset-xyz";
+      expect(appendTokenToAssetUrl(url, "tok 1+&")).toBe(
+        `${url}?token=${encodeURIComponent("tok 1+&")}`,
+      );
+    });
+
+    it("preserves an existing query string and appends &token=<encoded>", async () => {
+      const { appendTokenToAssetUrl } = await import("./pitch.js");
+      const url = "/api/admin/pitch/decks/deck-abc/assets/asset-xyz?v=2";
+      expect(appendTokenToAssetUrl(url, "abc")).toBe(
+        "/api/admin/pitch/decks/deck-abc/assets/asset-xyz?v=2&token=abc",
+      );
+    });
+
+    it("returns a non-matching URL unchanged (does NOT leak the token to third-party origins)", async () => {
+      const { appendTokenToAssetUrl } = await import("./pitch.js");
+      const url = "https://cdn.example.com/foo.png";
+      expect(appendTokenToAssetUrl(url, "tok")).toBe(url);
+    });
   });
 
   // ─────────────────────────────────────────────────────────────────
@@ -2296,6 +2453,77 @@ describe("Pitch REST router", () => {
       );
       expect(map.get(0)).toBe(
         "/api/admin/pitch/decks/deck%2Fwith%20space/assets/a%26special",
+      );
+    });
+
+    it("appends ?token=<encoded> when accessToken is supplied", async () => {
+      const { buildBackgroundImageUrlMap } = await import("./pitch.js");
+      const map = buildBackgroundImageUrlMap(
+        "deck-1",
+        [{ id: "s1", position: 0 }],
+        [
+          {
+            id: "asset-1",
+            slide_id: "s1",
+            kind: "background",
+            created_at: "2026-04-25T00:00:00Z",
+          },
+        ],
+        "secret-token",
+      );
+      expect(map.get(0)).toBe(
+        "/api/admin/pitch/decks/deck-1/assets/asset-1?token=secret-token",
+      );
+    });
+
+    it("URL-encodes a token containing reserved characters (security)", async () => {
+      const { buildBackgroundImageUrlMap } = await import("./pitch.js");
+      // A token containing `&` and `?` would otherwise inject extra
+      // query params or smuggle path segments.
+      const evilToken = "abc&injected=1?slide=999";
+      const map = buildBackgroundImageUrlMap(
+        "deck-1",
+        [{ id: "s1", position: 0 }],
+        [
+          {
+            id: "asset-1",
+            slide_id: "s1",
+            kind: "background",
+            created_at: "2026-04-25T00:00:00Z",
+          },
+        ],
+        evilToken,
+      );
+      const url = map.get(0)!;
+      expect(url).toBe(
+        `/api/admin/pitch/decks/deck-1/assets/asset-1?token=${encodeURIComponent(evilToken)}`,
+      );
+      // Sanity: the raw `&` and `?` must NOT appear in the final URL
+      // outside of the leading `?token=` separator.
+      expect(url.split("?token=")[1]).not.toMatch(/[&?]/);
+    });
+
+    it("omits the token suffix when accessToken is undefined or empty", async () => {
+      const { buildBackgroundImageUrlMap } = await import("./pitch.js");
+      const args = [
+        "deck-1",
+        [{ id: "s1", position: 0 }],
+        [
+          {
+            id: "asset-1",
+            slide_id: "s1",
+            kind: "background",
+            created_at: "2026-04-25T00:00:00Z",
+          },
+        ],
+      ] as const;
+      const noToken = buildBackgroundImageUrlMap(...args);
+      const emptyToken = buildBackgroundImageUrlMap(...args, "");
+      expect(noToken.get(0)).toBe(
+        "/api/admin/pitch/decks/deck-1/assets/asset-1",
+      );
+      expect(emptyToken.get(0)).toBe(
+        "/api/admin/pitch/decks/deck-1/assets/asset-1",
       );
     });
   });
