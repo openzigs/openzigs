@@ -2376,6 +2376,132 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
     res.json({ ok: true });
   });
 
+  // ── Sub-issue #1048 ─ Apply brand kit to a deck (re-point + clear overrides) ─
+  router.post(
+    "/decks/:deckId/apply-brand-kit",
+    crudLimiter,
+    (req, res) => {
+      const Body = z.object({ brandKitId: z.string().min(1) }).strict();
+      const body = parseBody(Body, res, req);
+      if (!body) return;
+
+      const deck = deps.pitchRepo.getDeck(req.params.deckId);
+      if (!deck) {
+        sendError(res, 404, "not_found", `deck ${req.params.deckId} not found`);
+        return;
+      }
+      const kit = deps.brandKitRepo.getById(body.brandKitId);
+      if (!kit) {
+        sendError(
+          res,
+          404,
+          "not_found",
+          `brand kit ${body.brandKitId} not found`,
+        );
+        return;
+      }
+
+      const updated = deps.pitchRepo.updateDeck(req.params.deckId, {
+        brand_kit_id: body.brandKitId,
+      });
+      // Strip per-slide branding overrides so the new kit is the single
+      // source of truth. (Slide branding is not currently persisted to DB
+      // columns, so this is presently a no-op for the storage layer; the
+      // contract still holds for any in-memory deck assemblies.)
+      const slides = deps.pitchRepo.listSlidesForDeck(req.params.deckId);
+      let slidesCleared = 0;
+      for (const row of slides) {
+        if (row.slide.branding) {
+          const { branding: _drop, ...rest } = row.slide;
+          void _drop;
+          deps.pitchRepo.updateSlide(row.id, { slide: rest as Slide });
+          slidesCleared += 1;
+        }
+      }
+      audit("system", "pitch_deck_brand_kit_applied", {
+        deckId: req.params.deckId,
+        brandKitId: body.brandKitId,
+        slidesCleared,
+      });
+      emit("pitch:deck:updated", {
+        deckId: req.params.deckId,
+        deck: updated,
+      });
+      res.json({ ok: true, deck: updated, slidesCleared });
+    },
+  );
+
+  // ── Sub-issue #1048 ─ Extract a deck's effective brand kit into a new kit ─
+  router.post(
+    "/decks/:deckId/extract-brand-kit",
+    crudLimiter,
+    (req, res) => {
+      const Body = z
+        .object({ name: z.string().min(1).max(120) })
+        .strict();
+      const body = parseBody(Body, res, req);
+      if (!body) return;
+
+      const deck = deps.pitchRepo.getDeck(req.params.deckId);
+      if (!deck) {
+        sendError(res, 404, "not_found", `deck ${req.params.deckId} not found`);
+        return;
+      }
+      const source = deps.brandKitRepo.getById(deck.brand_kit_id);
+      if (!source) {
+        sendError(
+          res,
+          404,
+          "not_found",
+          `brand kit ${deck.brand_kit_id} not found`,
+        );
+        return;
+      }
+
+      const newId = nanoid();
+      try {
+        const created = deps.brandKitRepo.create({
+          id: newId,
+          name: body.name,
+          primaryColor: source.primaryColor,
+          secondaryColor: source.secondaryColor,
+          accentColor: source.accentColor,
+          fontFamily: source.fontFamily,
+          fontHeading: source.fontHeading ?? null,
+          fontBody: source.fontBody ?? null,
+          footerText: source.footerText ?? null,
+          defaultLogoPlacement: source.defaultLogoPlacement ?? null,
+          showSlideNumbers: source.showSlideNumbers ?? null,
+          logoPath: source.logoPath ?? null,
+          watermarkPath: source.watermarkPath ?? null,
+          introTemplateId: source.introTemplateId ?? null,
+          outroTemplateId: source.outroTemplateId ?? null,
+        });
+        audit("system", "pitch_deck_brand_kit_extracted", {
+          deckId: req.params.deckId,
+          newBrandKitId: created.id,
+          sourceBrandKitId: source.id,
+        });
+        emit("pitch:brand-kit:created", { brandKitId: created.id });
+        res.status(201).json({
+          brandKit: { ...created, isStarter: false },
+        });
+      } catch (err) {
+        const msg = errMessage(err);
+        if (/UNIQUE constraint failed/i.test(msg)) {
+          sendError(
+            res,
+            409,
+            "conflict",
+            `brand kit name "${body.name}" already exists`,
+          );
+          return;
+        }
+        sendError(res, 500, "internal_error", `extract failed: ${msg}`);
+      }
+    },
+  );
+
   router.post(
     "/brand-kits/:id/logo",
     crudLimiter,

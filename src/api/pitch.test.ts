@@ -1272,6 +1272,76 @@ describe("Pitch REST router", () => {
       expect(res.status).toBe(200);
       expect(harness.deps.brandKitRepo.getById(id)).toBeNull();
     });
+
+    // ── Sub-issue #1048 — Apply / Copy brand kit ─────────────────────
+    describe("apply-brand-kit / extract-brand-kit (#1048)", () => {
+      it("POST /decks/:deckId/apply-brand-kit re-points a deck", async () => {
+        const kitA = createCustomKit(harness, "Kit A");
+        const kitB = createCustomKit(harness, "Kit B");
+        const { deckId } = createDeck(harness, kitA);
+        const res = await request(harness.app)
+          .post(`/api/admin/pitch/decks/${deckId}/apply-brand-kit`)
+          .send({ brandKitId: kitB });
+        expect(res.status).toBe(200);
+        expect(res.body.deck.brand_kit_id).toBe(kitB);
+        const reread = harness.deps.pitchRepo.getDeck(deckId);
+        expect(reread?.brand_kit_id).toBe(kitB);
+      });
+
+      it("POST /decks/:deckId/apply-brand-kit returns 404 for unknown deck", async () => {
+        const kitA = createCustomKit(harness, "Kit Only");
+        const res = await request(harness.app)
+          .post(`/api/admin/pitch/decks/no-such-deck/apply-brand-kit`)
+          .send({ brandKitId: kitA });
+        expect(res.status).toBe(404);
+      });
+
+      it("POST /decks/:deckId/apply-brand-kit returns 404 for unknown kit", async () => {
+        const kitA = createCustomKit(harness, "Real Kit");
+        const { deckId } = createDeck(harness, kitA);
+        const res = await request(harness.app)
+          .post(`/api/admin/pitch/decks/${deckId}/apply-brand-kit`)
+          .send({ brandKitId: "nope" });
+        expect(res.status).toBe(404);
+      });
+
+      it("POST /decks/:deckId/apply-brand-kit rejects unknown body fields", async () => {
+        const kitA = createCustomKit(harness, "Strict Kit");
+        const { deckId } = createDeck(harness, kitA);
+        const res = await request(harness.app)
+          .post(`/api/admin/pitch/decks/${deckId}/apply-brand-kit`)
+          .send({ brandKitId: kitA, rogue: 1 });
+        expect(res.status).toBe(400);
+      });
+
+      it("POST /decks/:deckId/extract-brand-kit clones source kit into a new one", async () => {
+        const kitA = createCustomKit(harness, "Source Kit");
+        const { deckId } = createDeck(harness, kitA);
+        const res = await request(harness.app)
+          .post(`/api/admin/pitch/decks/${deckId}/extract-brand-kit`)
+          .send({ name: "Cloned From Deck" });
+        expect(res.status).toBe(201);
+        expect(res.body.brandKit.name).toBe("Cloned From Deck");
+        expect(res.body.brandKit.primaryColor).toBe("#112233");
+        expect(res.body.brandKit.isStarter).toBe(false);
+      });
+
+      it("POST /decks/:deckId/extract-brand-kit 404s for missing deck", async () => {
+        const res = await request(harness.app)
+          .post(`/api/admin/pitch/decks/missing/extract-brand-kit`)
+          .send({ name: "X" });
+        expect(res.status).toBe(404);
+      });
+
+      it("POST /decks/:deckId/extract-brand-kit 409 on duplicate name", async () => {
+        const kitA = createCustomKit(harness, "Dup Source");
+        const { deckId } = createDeck(harness, kitA);
+        const res = await request(harness.app)
+          .post(`/api/admin/pitch/decks/${deckId}/extract-brand-kit`)
+          .send({ name: "Dup Source" });
+        expect(res.status).toBe(409);
+      });
+    });
   });
 
   describe("logo upload (#966)", () => {
