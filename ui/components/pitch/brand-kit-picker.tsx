@@ -44,6 +44,10 @@ export interface BrandKitPickerProps {
   onSelect: (id: string) => void;
   onEdit: (kit: BrandKitListEntry) => void;
   onCreate: () => void;
+  /** Sub-issue #1048 — Apply currently-selected kit to the open deck. */
+  onApplyToDeck?: (kit: BrandKitListEntry) => void;
+  /** Sub-issue #1048 — Copy the open deck's effective kit into a new kit. */
+  onCopyFromDeck?: () => void;
 }
 
 export const BrandKitPicker = ({
@@ -51,6 +55,8 @@ export const BrandKitPicker = ({
   onSelect,
   onEdit,
   onCreate,
+  onApplyToDeck,
+  onCopyFromDeck,
 }: BrandKitPickerProps) => {
   const kitsQuery = useQuery({
     queryKey: ["pitch", "brand-kits"],
@@ -121,6 +127,38 @@ export const BrandKitPicker = ({
       >
         + New
       </button>
+      {onApplyToDeck && (
+        <button
+          type="button"
+          data-testid="pitch-brand-kit-apply-to-deck"
+          disabled={!selected}
+          onClick={() => {
+            if (!selected) return;
+            if (
+              window.confirm(
+                `Apply "${selected.name}" to the deck and clear all per-slide branding overrides?`,
+              )
+            ) {
+              onApplyToDeck(selected);
+            }
+          }}
+          className="rounded border border-border px-2 py-1 text-xs hover:bg-muted/40 disabled:opacity-50"
+          title="Apply this kit to the deck"
+        >
+          Apply
+        </button>
+      )}
+      {onCopyFromDeck && (
+        <button
+          type="button"
+          data-testid="pitch-brand-kit-copy-from-deck"
+          onClick={onCopyFromDeck}
+          className="rounded border border-border px-2 py-1 text-xs hover:bg-muted/40"
+          title="Copy the deck's current kit into a new custom kit"
+        >
+          Copy from deck
+        </button>
+      )}
     </div>
   );
 };

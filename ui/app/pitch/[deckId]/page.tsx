@@ -274,6 +274,37 @@ export default function PitchDeckEditorPage() {
     onError: () => showToast("Could not change brand kit.", "error"),
   });
 
+  // Sub-issue #1048 — apply selected kit to the deck and clear per-slide
+  // overrides. Re-uses the same invalidation pattern so the picker reflects
+  // the change immediately.
+  const applyBrandKitMutation = useMutation({
+    mutationFn: async (brandKitId: string) =>
+      fetchJson(`/api/admin/pitch/decks/${deckId}/apply-brand-kit`, {
+        method: "POST",
+        body: JSON.stringify({ brandKitId }),
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["pitch", "deck", deckId] });
+      queryClient.invalidateQueries({ queryKey: ["pitch", "render", deckId] });
+      showToast("Brand kit applied to deck.", "info");
+    },
+    onError: () => showToast("Could not apply brand kit.", "error"),
+  });
+
+  // Sub-issue #1048 — clone the deck's effective kit into a new custom kit.
+  const extractBrandKitMutation = useMutation({
+    mutationFn: async (name: string) =>
+      fetchJson(`/api/admin/pitch/decks/${deckId}/extract-brand-kit`, {
+        method: "POST",
+        body: JSON.stringify({ name }),
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["pitch", "brand-kits"] });
+      showToast("Brand kit copied from deck.", "info");
+    },
+    onError: () => showToast("Could not copy brand kit from deck.", "error"),
+  });
+
   // PR #1044 walkthrough Bug #1 — toolbar-level image quality (FluxQ
   // model) selector. Patches `metadata.image_model` via the same admin
   // endpoint the brand-kit picker already uses, so cache invalidation
@@ -591,6 +622,16 @@ export default function PitchDeckEditorPage() {
             onCreate={() => {
               setBrandKitEditTarget(null);
               setBrandKitDialogOpen(true);
+            }}
+            onApplyToDeck={(kit) => applyBrandKitMutation.mutate(kit.id)}
+            onCopyFromDeck={() => {
+              const name = window.prompt(
+                "Name the new brand kit:",
+                `${deck.title} kit`,
+              );
+              if (name && name.trim()) {
+                extractBrandKitMutation.mutate(name.trim());
+              }
             }}
           />
           <ImageModelPicker
