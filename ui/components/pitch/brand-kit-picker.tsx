@@ -20,6 +20,18 @@ export interface BrandKitListEntry {
   accentColor: string;
   fontHeading?: string | null;
   fontBody?: string | null;
+  /** Footer text the editor pre-fills for round-trip (Sub-issue #1047). */
+  footerText?: string | null;
+  /** Default logo corner (Sub-issue #1047). */
+  defaultLogoPlacement?:
+    | "top-left"
+    | "top-right"
+    | "bottom-left"
+    | "bottom-right"
+    | "none"
+    | null;
+  /** Deck-wide slide-number toggle (Sub-issue #1047). */
+  showSlideNumbers?: boolean | null;
   isStarter?: boolean;
 }
 

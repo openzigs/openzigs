@@ -1121,3 +1121,56 @@ describe("renderDeckToHtml � per-slide branding (#1051)", () => {
     expect(out.html).toMatch(/<img class="pitch-logo pitch-logo-top-left"/);
   });
 });
+
+describe("renderDeckToHtml — slide-number indicator (#1047)", () => {
+  it("omits the indicator when showSlideNumbers is not set on the kit", () => {
+    const slide = s("bullet_list", { heading: "H", bullets: ["a"] });
+    const out = renderDeckToHtml(buildDeck([slide]), KIT, "embedded");
+    // CSS for the indicator is always emitted; check no actual rendered tag.
+    expect(out.html).not.toMatch(/<div class="pitch-slide-number /);
+  });
+
+  it("renders the indicator when showSlideNumbers is true", () => {
+    const kit: BrandKit = { ...KIT, showSlideNumbers: true };
+    const slide = s("bullet_list", { heading: "H", bullets: ["a"] });
+    const out = renderDeckToHtml(buildDeck([slide]), kit, "embedded");
+    expect(out.html).toMatch(/pitch-slide-number pitch-slide-number-/);
+    // Counts: position / total
+    expect(out.html).toMatch(/>1 \/ 1</);
+  });
+
+  it("auto-flips diagonally to avoid colliding with the logo corner", () => {
+    const cases: Array<
+      ["top-left" | "top-right" | "bottom-left" | "bottom-right", string]
+    > = [
+      ["top-left", "pitch-slide-number-bottom-right"],
+      ["top-right", "pitch-slide-number-bottom-left"],
+      ["bottom-left", "pitch-slide-number-top-right"],
+      ["bottom-right", "pitch-slide-number-top-left"],
+    ];
+    for (const [logoCorner, expectedNumberClass] of cases) {
+      const kit: BrandKit = {
+        ...KIT,
+        showSlideNumbers: true,
+        defaultLogoPlacement: logoCorner,
+      };
+      const slide = s("bullet_list", { heading: "H", bullets: ["a"] });
+      const out = renderDeckToHtml(buildDeck([slide]), kit, "embedded");
+      expect(out.html).toContain(expectedNumberClass);
+    }
+  });
+
+  it("falls back to bottom-right when the slide hides its logo", () => {
+    const kit: BrandKit = { ...KIT, showSlideNumbers: true };
+    const slide = SlideSchema.parse({
+      template: "bullet_list",
+      content: { heading: "H", bullets: ["a"] },
+      speaker_notes: "",
+      transition: "slide",
+      fragments: [],
+      branding: { logoPlacement: "none" },
+    });
+    const out = renderDeckToHtml(buildDeck([slide]), kit, "embedded");
+    expect(out.html).toContain("pitch-slide-number-bottom-right");
+  });
+});

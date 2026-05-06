@@ -56,6 +56,16 @@ interface FormState {
   fontHeading: string;
   fontBody: string;
   footerText: string;
+  /** Sub-issue #1047 — default logo corner; '' means "unset (renderer fallback)". */
+  defaultLogoPlacement:
+    | ""
+    | "top-left"
+    | "top-right"
+    | "bottom-left"
+    | "bottom-right"
+    | "none";
+  /** Sub-issue #1047 — deck-wide slide-number indicator toggle. */
+  showSlideNumbers: boolean;
 }
 
 const FONT_SUGGESTIONS = [
@@ -77,6 +87,8 @@ const blankForm = (): FormState => ({
   fontHeading: "Inter",
   fontBody: "Inter",
   footerText: "",
+  defaultLogoPlacement: "",
+  showSlideNumbers: false,
 });
 
 function contrastRatio(foreground: string, background: string): number {
@@ -123,7 +135,9 @@ export const BrandKitEditor = ({
         accentColor: kit.accentColor,
         fontHeading: kit.fontHeading ?? "Inter",
         fontBody: kit.fontBody ?? "Inter",
-        footerText: "",
+        footerText: kit.footerText ?? "",
+        defaultLogoPlacement: kit.defaultLogoPlacement ?? "",
+        showSlideNumbers: kit.showSlideNumbers === true,
       });
     } else {
       setForm(blankForm());
@@ -165,6 +179,10 @@ export const BrandKitEditor = ({
         fontHeading: form.fontHeading,
         fontBody: form.fontBody,
         footerText: form.footerText || undefined,
+        // Sub-issue #1047 — `''` means "do not change" on update; on create
+        // it means "omit so the renderer's default applies."
+        defaultLogoPlacement: form.defaultLogoPlacement || undefined,
+        showSlideNumbers: form.showSlideNumbers,
       };
       if (isCreate) {
         // Create requires fontFamily (no .optional() on backend); send a
@@ -408,6 +426,49 @@ export const BrandKitEditor = ({
               className="w-full rounded border border-border bg-background px-2 py-1"
             />
           </label>
+
+          {/* Sub-issue #1047 \u2014 default logo placement + slide-number toggle. */}
+          <div className="grid grid-cols-2 gap-2">
+            <label className="block">
+              <span className="mb-1 block font-semibold">
+                Default logo placement
+              </span>
+              <select
+                data-testid="pitch-bk-default-logo-placement"
+                value={form.defaultLogoPlacement}
+                disabled={isStarter}
+                onChange={(e) =>
+                  setForm((f) => ({
+                    ...f,
+                    defaultLogoPlacement: e.target.value as FormState["defaultLogoPlacement"],
+                  }))
+                }
+                className="w-full rounded border border-border bg-background px-2 py-1"
+              >
+                <option value="">Renderer default (bottom-right)</option>
+                <option value="top-left">Top-left</option>
+                <option value="top-right">Top-right</option>
+                <option value="bottom-left">Bottom-left</option>
+                <option value="bottom-right">Bottom-right</option>
+                <option value="none">None (hide logo)</option>
+              </select>
+            </label>
+            <label className="flex items-center gap-2 self-end pb-1">
+              <input
+                type="checkbox"
+                data-testid="pitch-bk-show-slide-numbers"
+                checked={form.showSlideNumbers}
+                disabled={isStarter}
+                onChange={(e) =>
+                  setForm((f) => ({
+                    ...f,
+                    showSlideNumbers: e.target.checked,
+                  }))
+                }
+              />
+              <span className="font-semibold">Show slide numbers</span>
+            </label>
+          </div>
 
           {!isCreate && !isStarter && kit && (
             <div>

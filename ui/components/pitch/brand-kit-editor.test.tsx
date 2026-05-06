@@ -298,4 +298,91 @@ describe("BrandKitEditor", () => {
     fireEvent.click(screen.getByText("Close"));
     expect(onOpenChange).toHaveBeenCalledWith(false);
   });
+
+  // Sub-issue #1047 — default logo placement + slide-number toggle UI.
+  describe("#1047 — default logo placement + slide-number toggle", () => {
+    it("renders both controls", () => {
+      render(<BrandKitEditor open onOpenChange={vi.fn()} kit={null} />, {
+        wrapper,
+      });
+      expect(
+        screen.getByTestId("pitch-bk-default-logo-placement"),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByTestId("pitch-bk-show-slide-numbers"),
+      ).toBeInTheDocument();
+    });
+
+    it("persists defaultLogoPlacement and showSlideNumbers on create", async () => {
+      vi.mocked(fetchJson).mockResolvedValue({ brandKit: { id: "new-1" } });
+      render(<BrandKitEditor open onOpenChange={vi.fn()} kit={null} />, {
+        wrapper,
+      });
+      fireEvent.change(screen.getByTestId("pitch-bk-name"), {
+        target: { value: "Brand A" },
+      });
+      fireEvent.change(
+        screen.getByTestId("pitch-bk-default-logo-placement"),
+        { target: { value: "top-left" } },
+      );
+      fireEvent.click(screen.getByTestId("pitch-bk-show-slide-numbers"));
+      fireEvent.click(screen.getByTestId("pitch-bk-save"));
+      await waitFor(() => expect(vi.mocked(fetchJson)).toHaveBeenCalled());
+      const init = vi.mocked(fetchJson).mock.calls[0][1] as { body: string };
+      const body = JSON.parse(init.body);
+      expect(body.defaultLogoPlacement).toBe("top-left");
+      expect(body.showSlideNumbers).toBe(true);
+    });
+
+    it("prefills the controls from an existing kit", () => {
+      render(
+        <BrandKitEditor
+          open
+          onOpenChange={vi.fn()}
+          kit={{
+            id: "k9",
+            name: "Existing",
+            primaryColor: "#111111",
+            secondaryColor: "#222222",
+            accentColor: "#333333",
+            defaultLogoPlacement: "bottom-left",
+            showSlideNumbers: true,
+            footerText: "(c) ACME",
+            isStarter: false,
+          }}
+        />,
+        { wrapper },
+      );
+      expect(
+        (screen.getByTestId(
+          "pitch-bk-default-logo-placement",
+        ) as HTMLSelectElement).value,
+      ).toBe("bottom-left");
+      expect(
+        (screen.getByTestId(
+          "pitch-bk-show-slide-numbers",
+        ) as HTMLInputElement).checked,
+      ).toBe(true);
+      expect(
+        (screen.getByTestId("pitch-bk-footer") as HTMLInputElement).value,
+      ).toBe("(c) ACME");
+    });
+
+    it("omits defaultLogoPlacement when the user keeps the renderer default", async () => {
+      vi.mocked(fetchJson).mockResolvedValue({ brandKit: { id: "new-1" } });
+      render(<BrandKitEditor open onOpenChange={vi.fn()} kit={null} />, {
+        wrapper,
+      });
+      fireEvent.change(screen.getByTestId("pitch-bk-name"), {
+        target: { value: "Brand B" },
+      });
+      fireEvent.click(screen.getByTestId("pitch-bk-save"));
+      await waitFor(() => expect(vi.mocked(fetchJson)).toHaveBeenCalled());
+      const body = JSON.parse(
+        (vi.mocked(fetchJson).mock.calls[0][1] as { body: string }).body,
+      );
+      expect(body.defaultLogoPlacement).toBeUndefined();
+      expect(body.showSlideNumbers).toBe(false);
+    });
+  });
 });
