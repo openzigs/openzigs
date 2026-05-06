@@ -51,7 +51,7 @@ import {
 } from "../pitch/pitch-condense.js";
 import { submitSlideRegenerateTask } from "../pitch/pitch-regenerate.js";
 import { enqueueSlideImage } from "../pitch/pitch-image-service.js";
-import { fanOutImageGeneration } from "../pitch/image-fanout.js";
+import { fanOutImageGeneration, recommendedDimsForSlot } from "../pitch/image-fanout.js";
 import {
   refreshFluxQGpuAvailable,
   getCachedFluxQGpuAvailable,
@@ -1992,16 +1992,34 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
     const effectiveSlot =
       body.mode === "inline" ? body.slot ?? "image" : "image";
 
+    // Bug-fix (PR #1044 walkthrough Bug #2): the studio's
+    // RegenerateImageDialog does not send width/height, so they were
+    // dropping through to clampToFluxQRecommendedDims(undefined,
+    // undefined) and producing the 1024×576 fallback for every
+    // regenerated background. Derive slot-aware defaults so a
+    // background regenerate stays at 1920×1080 and a two_column
+    // left_image stays at 960×1080. An explicit body.width/height
+    // still wins.
+    const effectiveKind: "image" | "background" =
+      body.mode === "inline" ? "image" : "background";
+    const dimsDefault = recommendedDimsForSlot(
+      slide.slide.template,
+      effectiveSlot,
+      effectiveKind,
+    );
+    const effectiveWidth = body.width ?? dimsDefault.width;
+    const effectiveHeight = body.height ?? dimsDefault.height;
+
     try {
       const result = enqueueSlideImage({
         deckId: req.params.deckId,
         slideId: req.params.slideId,
         prompt: finalPrompt,
-        kind: body.mode === "inline" ? "image" : "background",
+        kind: effectiveKind,
         slot: effectiveSlot,
         seed: body.seed,
-        width: body.width,
-        height: body.height,
+        width: effectiveWidth,
+        height: effectiveHeight,
         mediaQueueRepo: deps.mediaQueueRepo,
         characterRepo: deps.characterRepo,
         ...(effectiveImageStyle ? { imageStyle: effectiveImageStyle } : {}),

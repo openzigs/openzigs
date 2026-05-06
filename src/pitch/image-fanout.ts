@@ -151,8 +151,14 @@ export const SKIP_FALLBACK_BG_TEMPLATES: ReadonlySet<string> = new Set([
  * Slot-aware target dimensions (16:9 unless slot is portrait/square).
  * `clampToFluxQRecommendedDims` may pull these down further if the FluxQ
  * sidecar advertises a smaller cap.
+ *
+ * Exported (sub-issue: PR #1044 walkthrough Bug #2) so the per-slide
+ * regenerate route in `src/api/pitch.ts` can pick a slot-aware default
+ * when the studio UI does not supply explicit width/height (the
+ * RegenerateImageDialog omits them, which previously fell through to
+ * the 1024×576 FLUXQ_FALLBACK_DIMS for every regenerated background).
  */
-function targetDimsForSlot(
+export function recommendedDimsForSlot(
   template: string,
   slot: ImageSlot,
   kind: "image" | "background",
@@ -166,6 +172,9 @@ function targetDimsForSlot(
   // bullet_list inline image — narrower 4:3-ish thumbnail.
   return { width: 1280, height: 960 };
 }
+
+/** @deprecated Internal alias retained so existing call sites keep compiling. */
+const targetDimsForSlot = recommendedDimsForSlot;
 
 /** Pure: scan a deck and return the list of jobs that *would* be enqueued. */
 export function planImageJobs(

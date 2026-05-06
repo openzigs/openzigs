@@ -51,9 +51,16 @@ vi.mock("../pitch/pitch-image-service.js", () => ({
   enqueueSlideImage: (...a: unknown[]) => enqueueSlideImageMock(...a),
 }));
 
-vi.mock("../pitch/image-fanout.js", () => ({
-  fanOutImageGeneration: (...a: unknown[]) => fanOutImageGenerationMock(...a),
-}));
+vi.mock("../pitch/image-fanout.js", async () => {
+  const actual =
+    await vi.importActual<typeof import("../pitch/image-fanout.js")>(
+      "../pitch/image-fanout.js",
+    );
+  return {
+    ...actual,
+    fanOutImageGeneration: (...a: unknown[]) => fanOutImageGenerationMock(...a),
+  };
+});
 
 const refreshFluxQGpuAvailableMock = vi.fn();
 
@@ -820,6 +827,105 @@ describe("Pitch REST router", () => {
         .post(`/api/admin/pitch/decks/${deckId}/slides/${slideId}/image`)
         .send({ prompt: "x", mode: "wrong" });
       expect(res.status).toBe(400);
+    });
+
+    // PR #1044 walkthrough Bug #2 — when the studio's RegenerateImageDialog
+    // omits width/height, the route must derive slot-aware defaults
+    // (background → 1920×1080) instead of falling through to the
+    // FluxQ 1024×576 fallback.
+    it("POST .../image without dims uses slot-aware defaults (background → 1920×1080)", async () => {
+      const kitId = createCustomKit(harness);
+      const { deckId, slideId } = createDeck(harness, kitId);
+      enqueueSlideImageMock.mockReturnValue({
+        jobId: "j",
+        assetId: "a",
+        payload: {},
+      });
+      const res = await request(harness.app)
+        .post(`/api/admin/pitch/decks/${deckId}/slides/${slideId}/image`)
+        .send({ prompt: "moody backdrop", mode: "background" });
+      expect(res.status).toBe(202);
+      const args = enqueueSlideImageMock.mock.calls[0][0] as {
+        width: number;
+        height: number;
+        kind: string;
+      };
+      expect(args.kind).toBe("background");
+      expect(args.width).toBe(1920);
+      expect(args.height).toBe(1080);
+    });
+
+    it("POST .../image two_column left_image without dims defaults to 960×1080", async () => {
+      const kitId = createCustomKit(harness);
+      // Build a two_column slide so the slot-aware default applies.
+      const slide = SlideSchema.parse({
+        template: "two_column",
+        content: {
+          heading: "h",
+          left: "l",
+          right: "r",
+        },
+        speaker_notes: "",
+        transition: "slide",
+        fragments: [],
+      });
+      const deck = harness.deps.pitchRepo.insertDeck({
+        id: "deck-tc-bug2",
+        title: "tc",
+        brand_kit_id: kitId,
+        aspect_ratio: "16:9",
+        metadata: { source_script: "", tone: "formal" },
+        slides: [{ id: "slide-tc-bug2", slide }],
+      });
+      const slides = harness.deps.pitchRepo.listSlidesForDeck(deck.id);
+      enqueueSlideImageMock.mockReturnValue({
+        jobId: "j",
+        assetId: "a",
+        payload: {},
+      });
+      const res = await request(harness.app)
+        .post(
+          `/api/admin/pitch/decks/${deck.id}/slides/${slides[0].id}/image`,
+        )
+        .send({
+          prompt: "left side art",
+          mode: "inline",
+          slot: "left_image",
+        });
+      expect(res.status).toBe(202);
+      const args = enqueueSlideImageMock.mock.calls[0][0] as {
+        width: number;
+        height: number;
+        slot: string;
+      };
+      expect(args.slot).toBe("left_image");
+      expect(args.width).toBe(960);
+      expect(args.height).toBe(1080);
+    });
+
+    it("POST .../image with explicit width/height still wins over slot defaults", async () => {
+      const kitId = createCustomKit(harness);
+      const { deckId, slideId } = createDeck(harness, kitId);
+      enqueueSlideImageMock.mockReturnValue({
+        jobId: "j",
+        assetId: "a",
+        payload: {},
+      });
+      const res = await request(harness.app)
+        .post(`/api/admin/pitch/decks/${deckId}/slides/${slideId}/image`)
+        .send({
+          prompt: "explicit",
+          mode: "background",
+          width: 768,
+          height: 768,
+        });
+      expect(res.status).toBe(202);
+      const args = enqueueSlideImageMock.mock.calls[0][0] as {
+        width: number;
+        height: number;
+      };
+      expect(args.width).toBe(768);
+      expect(args.height).toBe(768);
     });
   });
 

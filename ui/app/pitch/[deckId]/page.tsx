@@ -24,6 +24,10 @@ import {
 } from "@/components/pitch/brand-kit-picker";
 import { BrandKitEditor } from "@/components/pitch/brand-kit-editor";
 import {
+  ImageModelPicker,
+  type PitchImageModel,
+} from "@/components/pitch/image-model-picker";
+import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -54,6 +58,7 @@ interface DeckPayload {
       source_script: string;
       tone?: string;
       audience?: string;
+      image_model?: "flux-schnell" | "flux-dev";
     };
     created_at: string;
     updated_at: string;
@@ -267,6 +272,22 @@ export default function PitchDeckEditorPage() {
       queryClient.invalidateQueries({ queryKey: ["pitch", "render", deckId] });
     },
     onError: () => showToast("Could not change brand kit.", "error"),
+  });
+
+  // PR #1044 walkthrough Bug #1 — toolbar-level image quality (FluxQ
+  // model) selector. Patches `metadata.image_model` via the same admin
+  // endpoint the brand-kit picker already uses, so cache invalidation
+  // and audit logging stay consistent.
+  const imageModelChangeMutation = useMutation({
+    mutationFn: async (imageModel: PitchImageModel) =>
+      fetchJson(`/api/admin/pitch/decks/${deckId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ metadata: { image_model: imageModel } }),
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["pitch", "deck", deckId] });
+    },
+    onError: () => showToast("Could not change image quality.", "error"),
   });
 
   const reorderMutation = useMutation({
@@ -571,6 +592,11 @@ export default function PitchDeckEditorPage() {
               setBrandKitEditTarget(null);
               setBrandKitDialogOpen(true);
             }}
+          />
+          <ImageModelPicker
+            value={deck.metadata.image_model ?? null}
+            onChange={(m) => imageModelChangeMutation.mutate(m)}
+            disabled={imageModelChangeMutation.isPending}
           />
           <GenerateAllImagesButton
             deckId={deckId}

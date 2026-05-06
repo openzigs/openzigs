@@ -869,10 +869,19 @@ html, body { height: 100%; margin: 0; padding: 0; }
    section children are lifted to z-index:1 so they sit on top. Reveal
    places the actual background-image in a separate .slide-background
    wrapper outside .slides > section, so the scrim does not occlude
-   the image, it dims it. */
+   the image, it dims it.
+
+   IMPORTANT (post-PR-#1044 walkthrough Bug #3): do NOT add
+   'position: relative' to '.slides > section.pitch-has-bg'. Reveal.js
+   sets 'position: absolute' on every '.slides > section' and toggles
+   'display:block' on past/future sections to drive transitions; an
+   override here makes inactive sections stack vertically and pushes
+   the active slide hundreds of pixels offscreen. Reveal already gives
+   the active section its own positioning context (absolute + 3D
+   transforms), which is enough for the absolutely-positioned '::before'
+   scrim to anchor correctly. */
 .pitch-deck-wrap .reveal .slides > section.pitch-has-bg {
   color: var(--pitch-on-image, #ffffff);
-  position: relative;
 }
 .pitch-deck-wrap .reveal .slides > section.pitch-has-bg::before {
   content: "";
@@ -886,12 +895,17 @@ html, body { height: 100%; margin: 0; padding: 0; }
   z-index: 0;
   pointer-events: none;
 }
-/* Issue #4: descendants of text-heavy templates need to live ABOVE the
-   scrim too, not just direct children. Without this, anything wrapped in
-   a column / list / nested div sat at z-index 0 underneath the scrim and
-   disappeared entirely on backgrounds. */
+/* Issue #4 (revised PR #1044 walkthrough Bug #3): descendants need to
+   live ABOVE the scrim, but the previous rule applied
+   'position: relative' to *every* descendant (including Reveal's own
+   absolutely-positioned wrappers), which collided with Reveal's
+   layout and caused TWO_COLUMN/BULLET_LIST content to render at the
+   wrong offset on slide 2+. 'z-index' alone is enough here because the
+   scrim is a sibling pseudo at 'z-index: 0' — children sit on top of
+   it via document order without needing their own positioned ancestor.
+   We keep 'position: relative' only on direct children so the column
+   flex layout still establishes a stacking context above the scrim. */
 .pitch-deck-wrap .reveal .slides > section.pitch-has-bg * {
-  position: relative;
   z-index: 1;
 }
 .pitch-deck-wrap .reveal .slides > section.pitch-has-bg > * {
