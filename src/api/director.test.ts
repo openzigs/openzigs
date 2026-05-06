@@ -2581,6 +2581,8 @@ describe("Director API router", () => {
           font_heading TEXT,
           font_body TEXT,
           footer_text TEXT,
+          default_logo_placement TEXT,
+          show_slide_numbers INTEGER,
           created_at TEXT NOT NULL,
           updated_at TEXT NOT NULL
         );

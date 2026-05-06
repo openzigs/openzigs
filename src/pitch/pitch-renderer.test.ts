@@ -1174,3 +1174,164 @@ describe("renderDeckToHtml — slide-number indicator (#1047)", () => {
     expect(out.html).toContain("pitch-slide-number-bottom-right");
   });
 });
+
+// === Sub-issue #1046 / #1049 / #1052: New Templates ============================
+describe("New templates from epic #1045", () => {
+  it("renders pricing_table with highlighted tier class", () => {
+    const slide = SlideSchema.parse({
+      template: "pricing_table",
+      content: {
+        heading: "Pricing",
+        tiers: [
+          { name: "Free", price: "$0", features: ["Basic"] },
+          { name: "Pro", price: "$29", features: ["Everything"], highlighted: true },
+        ],
+        footnote: "* tax not included",
+      },
+    });
+    const out = renderDeckToHtml(buildDeck([slide]), KIT, "embedded");
+    expect(out.html).toContain("pitch-pricing-grid");
+    expect(out.html).toContain("pitch-pricing-tier--highlighted");
+    expect(out.html).toContain("$29");
+    expect(out.html).toContain("tax not included");
+  });
+
+  it("renders big_number with trend arrow", () => {
+    const slide = SlideSchema.parse({
+      template: "big_number",
+      content: { value: "42%", label: "Conversion", trend: "up", trend_label: "vs Q3" },
+    });
+    const out = renderDeckToHtml(buildDeck([slide]), KIT, "embedded");
+    expect(out.html).toContain("pitch-bignum-trend--up");
+    expect(out.html).toContain("42%");
+    expect(out.html).toContain("vs Q3");
+  });
+
+  it("escapes XSS in big_number support text", () => {
+    const slide = SlideSchema.parse({
+      template: "big_number",
+      content: { value: "1", label: "L", support: XSS },
+    });
+    const out = renderDeckToHtml(buildDeck([slide]), KIT, "embedded");
+    expect(out.html).not.toMatch(/<script>alert/);
+    expect(out.html).not.toMatch(/onerror=alert/);
+  });
+
+  it("renders team_grid with members and links via safeUrl", () => {
+    const slide = SlideSchema.parse({
+      template: "team_grid",
+      content: {
+        members: [
+          { name: "Alice", role: "CEO", links: [{ label: "site", href: "https://a.com" }] },
+          { name: "Bob", role: "CTO" },
+          { name: "Eve", role: "X", links: [{ label: "x", href: "javascript:alert(1)" }] },
+        ],
+      },
+    });
+    const out = renderDeckToHtml(buildDeck([slide]), KIT, "embedded");
+    expect(out.html).toContain("Alice");
+    expect(out.html).toContain("CTO");
+    // safeUrl strips javascript: scheme
+    expect(out.html).not.toMatch(/href="javascript:/);
+    // Links carry rel hardening
+    expect(out.html).toContain('rel="nofollow noopener noreferrer"');
+  });
+
+  it("renders team_grid placeholder initials when no photo", () => {
+    const slide = SlideSchema.parse({
+      template: "team_grid",
+      content: {
+        members: [
+          { name: "Alice Smith", role: "CEO" },
+          { name: "Bob", role: "CTO" },
+        ],
+      },
+    });
+    const out = renderDeckToHtml(buildDeck([slide]), KIT, "embedded");
+    expect(out.html).toContain("pitch-team-photo--placeholder");
+  });
+
+  it("renders logo_grid with grayscale class", () => {
+    const slide = SlideSchema.parse({
+      template: "logo_grid",
+      content: {
+        grayscale: true,
+        logos: Array(4).fill({ alt: "Acme", imageUrl: "https://example.com/a.png" }),
+      },
+    });
+    const out = renderDeckToHtml(buildDeck([slide]), KIT, "embedded");
+    expect(out.html).toContain("pitch-logo-grid--grayscale");
+    expect(out.html).toContain("alt=\"Acme\"");
+  });
+
+  it("logo_grid drops javascript: imageUrl via safeUrl", () => {
+    const slide = SlideSchema.parse({
+      template: "logo_grid",
+      content: {
+        logos: [
+          { alt: "Bad", imageUrl: "javascript:alert(1)" },
+          { alt: "Good", imageUrl: "https://example.com/b.png" },
+          { alt: "G2", imageUrl: "https://example.com/c.png" },
+          { alt: "G3", imageUrl: "https://example.com/d.png" },
+        ],
+      },
+    });
+    const out = renderDeckToHtml(buildDeck([slide]), KIT, "embedded");
+    expect(out.html).not.toMatch(/src="javascript:/);
+  });
+
+  it("renders roadmap with status icons", () => {
+    const slide = SlideSchema.parse({
+      template: "roadmap",
+      content: {
+        heading: "Plan",
+        columns: ["Q1", "Q2"],
+        tracks: ["Eng", "Design"],
+        items: [
+          { column: 0, track: 0, label: "Ship MVP", status: "done" },
+          { column: 1, track: 1, label: "Polish UI", status: "in_progress" },
+        ],
+      },
+    });
+    const out = renderDeckToHtml(buildDeck([slide]), KIT, "embedded");
+    expect(out.html).toContain("Ship MVP");
+    expect(out.html).toContain("Polish UI");
+    // Status classes appear in matrix cells
+    expect(out.html).toMatch(/pitch-roadmap-item--done|pitch-roadmap-status--done/);
+  });
+
+  it("agenda auto-mode pulls from section_divider slides", () => {
+    const slides = [
+      SlideSchema.parse({ template: "agenda", content: { mode: "auto" } }),
+      SlideSchema.parse({
+        template: "section_divider",
+        content: { section_number: 1, title: "Intro" },
+      }),
+      SlideSchema.parse({
+        template: "section_divider",
+        content: { section_number: 2, title: "Demo" },
+      }),
+    ];
+    const out = renderDeckToHtml(buildDeck(slides), KIT, "embedded");
+    expect(out.html).toContain("Intro");
+    expect(out.html).toContain("Demo");
+  });
+
+  it("agenda auto-mode shows fallback when no sections exist", () => {
+    const slide = SlideSchema.parse({ template: "agenda", content: { mode: "auto" } });
+    const out = renderDeckToHtml(buildDeck([slide]), KIT, "embedded");
+    expect(out.html).toContain("No agenda items available");
+  });
+
+  it("agenda manual-mode renders provided items", () => {
+    const slide = SlideSchema.parse({
+      template: "agenda",
+      content: { mode: "manual", items: ["Welcome", "Q&A"], numbered: true },
+    });
+    const out = renderDeckToHtml(buildDeck([slide]), KIT, "embedded");
+    expect(out.html).toContain("Welcome");
+    expect(out.html).toMatch(/Q&(?:amp;)?A/);
+    // numbered=true → ordered list
+    expect(out.html).toContain("<ol");
+  });
+});

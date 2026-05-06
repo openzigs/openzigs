@@ -416,6 +416,242 @@ async function renderPptxSlide(
       });
       break;
     }
+    // ── Sub-issue #1046 ────────────────────────────────────────────
+    case "pricing_table": {
+      s.addText(slide.content.heading, {
+        x: MARGIN_X, y: 0.4, w: CONTENT_W, h: 0.7,
+        fontSize: 26, color: primary, bold: true, fontFace: brandKit.fontHeading,
+      });
+      const tiers = slide.content.tiers;
+      const colW = (CONTENT_W - 0.3 * (tiers.length - 1)) / tiers.length;
+      tiers.forEach((tier, i) => {
+        const x = MARGIN_X + i * (colW + 0.3);
+        const fill = tier.highlighted ? accent : "F4F4F6";
+        const fgPrice = tier.highlighted ? onPrimary : primary;
+        s.addShape("rect", {
+          x, y: 1.3, w: colW, h: 4.6,
+          fill: { color: fill }, line: { color: tier.highlighted ? accent : "DDDDDD", width: 1 },
+        });
+        s.addText(tier.name, {
+          x: x + 0.1, y: 1.4, w: colW - 0.2, h: 0.5,
+          fontSize: 14, bold: true, color: fgPrice, align: "center",
+          fontFace: brandKit.fontHeading,
+        });
+        s.addText(`${tier.price}${tier.period ? " " + tier.period : ""}`, {
+          x: x + 0.1, y: 1.95, w: colW - 0.2, h: 0.6,
+          fontSize: 22, bold: true, color: fgPrice, align: "center",
+          fontFace: brandKit.fontHeading,
+        });
+        s.addText(
+          tier.features.map((f) => ({ text: f, options: { bullet: true } })),
+          {
+            x: x + 0.15, y: 2.7, w: colW - 0.3, h: 2.6,
+            fontSize: 11, color: tier.highlighted ? onPrimary : "333333",
+            fontFace: brandKit.fontBody, paraSpaceAfter: 4,
+          },
+        );
+        if (tier.cta) {
+          s.addText(tier.cta, {
+            x: x + 0.1, y: 5.4, w: colW - 0.2, h: 0.4,
+            fontSize: 12, bold: true, color: tier.highlighted ? onPrimary : accent,
+            align: "center", fontFace: brandKit.fontBody,
+          });
+        }
+      });
+      if (slide.content.footnote) {
+        s.addText(slide.content.footnote, {
+          x: MARGIN_X, y: 6.1, w: CONTENT_W, h: 0.4,
+          fontSize: 10, italic: true, color: "888888", align: "center",
+          fontFace: brandKit.fontBody,
+        });
+      }
+      break;
+    }
+    case "big_number": {
+      s.addText(slide.content.value, {
+        x: MARGIN_X, y: 1.6, w: CONTENT_W, h: 2.4,
+        fontSize: 110, bold: true, color: accent, align: "center", valign: "middle",
+        fontFace: brandKit.fontHeading,
+      });
+      s.addText(slide.content.label, {
+        x: MARGIN_X, y: 4.1, w: CONTENT_W, h: 0.7,
+        fontSize: 22, color: primary, align: "center", bold: true,
+        fontFace: brandKit.fontHeading,
+      });
+      if (slide.content.trend) {
+        const arrow =
+          slide.content.trend === "up" ? "▲" :
+          slide.content.trend === "down" ? "▼" : "▬";
+        s.addText(`${arrow} ${slide.content.trend_label ?? slide.content.trend}`, {
+          x: MARGIN_X, y: 4.85, w: CONTENT_W, h: 0.4,
+          fontSize: 14, color:
+            slide.content.trend === "up" ? "15803D" :
+            slide.content.trend === "down" ? "B91C1C" : "475569",
+          align: "center", fontFace: brandKit.fontBody,
+        });
+      }
+      if (slide.content.support) {
+        s.addText(slide.content.support, {
+          x: MARGIN_X + 1, y: 5.4, w: CONTENT_W - 2, h: 1.2,
+          fontSize: 14, color: "555555", align: "center", italic: true,
+          fontFace: brandKit.fontBody,
+        });
+      }
+      break;
+    }
+    // ── Sub-issue #1049 ────────────────────────────────────────────
+    case "team_grid": {
+      const members = slide.content.members;
+      if (slide.content.heading) {
+        s.addText(slide.content.heading, {
+          x: MARGIN_X, y: 0.3, w: CONTENT_W, h: 0.6,
+          fontSize: 24, bold: true, color: primary,
+          fontFace: brandKit.fontHeading,
+        });
+      }
+      // Lay out as a grid sized for the count.
+      const cols = members.length <= 4 ? members.length : members.length <= 8 ? 4 : 6;
+      const rows = Math.ceil(members.length / cols);
+      const cardW = (CONTENT_W - 0.2 * (cols - 1)) / cols;
+      const cardH = Math.min(2.4, (SLIDE_H - 1.2) / rows - 0.2);
+      members.forEach((m, i) => {
+        const r = Math.floor(i / cols);
+        const c = i % cols;
+        const x = MARGIN_X + c * (cardW + 0.2);
+        const y = 1.0 + r * (cardH + 0.2);
+        s.addText(m.name, {
+          x, y: y + cardH * 0.55, w: cardW, h: 0.4,
+          fontSize: 14, bold: true, color: primary, align: "center",
+          fontFace: brandKit.fontHeading,
+        });
+        s.addText(m.role, {
+          x, y: y + cardH * 0.75, w: cardW, h: 0.35,
+          fontSize: 11, color: "666666", align: "center", italic: true,
+          fontFace: brandKit.fontBody,
+        });
+        if (m.bio) {
+          s.addText(m.bio, {
+            x, y: y + cardH * 0.95, w: cardW, h: 0.6,
+            fontSize: 9, color: "555555", align: "center",
+            fontFace: brandKit.fontBody,
+          });
+        }
+      });
+      break;
+    }
+    case "logo_grid": {
+      if (slide.content.heading) {
+        s.addText(slide.content.heading, {
+          x: MARGIN_X, y: 0.3, w: CONTENT_W, h: 0.6,
+          fontSize: 22, bold: true, color: primary,
+          fontFace: brandKit.fontHeading,
+        });
+      }
+      // Render alt-text labels as a grid (logo binaries skipped to keep
+      // PPTX deterministic; URL fetch is best-effort and may be blocked).
+      const logos = slide.content.logos;
+      const cols = Math.min(6, logos.length);
+      const rows = Math.ceil(logos.length / cols);
+      const cellW = (CONTENT_W - 0.2 * (cols - 1)) / cols;
+      const cellH = Math.min(0.9, (SLIDE_H - 1.6) / rows);
+      logos.forEach((logo, i) => {
+        const r = Math.floor(i / cols);
+        const c = i % cols;
+        const x = MARGIN_X + c * (cellW + 0.2);
+        const y = 1.1 + r * (cellH + 0.15);
+        s.addShape("rect", {
+          x, y, w: cellW, h: cellH,
+          fill: { color: "F4F4F6" }, line: { color: "DDDDDD", width: 1 },
+        });
+        s.addText(logo.alt, {
+          x, y, w: cellW, h: cellH,
+          fontSize: 10, color: "555555", align: "center", valign: "middle",
+          fontFace: brandKit.fontBody,
+        });
+      });
+      if (slide.content.caption) {
+        s.addText(slide.content.caption, {
+          x: MARGIN_X, y: SLIDE_H - 0.6, w: CONTENT_W, h: 0.4,
+          fontSize: 10, italic: true, color: "888888", align: "center",
+          fontFace: brandKit.fontBody,
+        });
+      }
+      break;
+    }
+    // ── Sub-issue #1052 ────────────────────────────────────────────
+    case "roadmap": {
+      s.addText(slide.content.heading, {
+        x: MARGIN_X, y: 0.3, w: CONTENT_W, h: 0.6,
+        fontSize: 22, bold: true, color: primary, fontFace: brandKit.fontHeading,
+      });
+      const cols = slide.content.columns;
+      const tracks = slide.content.tracks;
+      const headerRow = ["", ...cols].map((c) => ({
+        text: c,
+        options: {
+          bold: true,
+          color: primary,
+          fontFace: brandKit.fontHeading,
+          align: "center" as const,
+        },
+      }));
+      // Group items per cell.
+      const cellMap: Record<string, string[]> = {};
+      slide.content.items.forEach((it) => {
+        const key = `${it.track}:${it.column}`;
+        if (!cellMap[key]) cellMap[key] = [];
+        const prefix =
+          it.status === "done" ? "✓ " :
+          it.status === "in_progress" ? "● " : "○ ";
+        cellMap[key].push(prefix + it.label);
+      });
+      const bodyRows = tracks.map((trackName, ti) => {
+        const row: Array<{ text: string; options?: Record<string, unknown> }> = [
+          { text: trackName, options: { bold: true, color: onPrimary, fill: { color: primary }, align: "center" } },
+        ];
+        cols.forEach((_c, ci) => {
+          const items = cellMap[`${ti}:${ci}`] ?? [];
+          row.push({
+            text: items.join("\n"),
+            options: { fontSize: 9, color: "333333", fontFace: brandKit.fontBody, valign: "top" },
+          });
+        });
+        return row;
+      });
+      s.addTable([headerRow, ...bodyRows], {
+        x: MARGIN_X, y: 1.1, w: CONTENT_W,
+        colW: Array(cols.length + 1).fill(CONTENT_W / (cols.length + 1)),
+        border: { type: "solid", color: "DDDDDD", pt: 1 },
+        fontSize: 10, fontFace: brandKit.fontBody,
+      });
+      break;
+    }
+    case "agenda": {
+      const heading = slide.content.heading ?? "Agenda";
+      s.addText(heading, {
+        x: MARGIN_X, y: 0.4, w: CONTENT_W, h: 0.7,
+        fontSize: 28, bold: true, color: primary, fontFace: brandKit.fontHeading,
+      });
+      // Resolve auto-mode by scanning the deck would need extra plumbing;
+      // PPTX exporter only sees one slide at a time, so for "auto" we emit
+      // an instructional placeholder. The HTML render path handles auto
+      // correctly via its deck context.
+      const items =
+        slide.content.mode === "manual"
+          ? slide.content.items ?? []
+          : ["(auto-generated from section dividers in HTML render)"];
+      s.addText(
+        items.map((t) => ({
+          text: t,
+          options: { bullet: slide.content.numbered ? { type: "number" } : true },
+        })),
+        {
+          x: MARGIN_X + 0.5, y: 1.4, w: CONTENT_W - 1, h: SLIDE_H - 2.0,
+          fontSize: 18, color: "333333", fontFace: brandKit.fontBody, paraSpaceAfter: 8,
+        },
+      );
+      break;
+    }
   }
 
   if (slide.speaker_notes) {

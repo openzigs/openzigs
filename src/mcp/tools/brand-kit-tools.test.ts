@@ -17,6 +17,8 @@ const mockKit: BrandKit = {
   fontHeading: null,
   fontBody: null,
   footerText: null,
+  defaultLogoPlacement: null,
+  showSlideNumbers: null,
   createdAt: "2026-01-01T00:00:00Z",
   updatedAt: "2026-01-01T00:00:00Z",
 };

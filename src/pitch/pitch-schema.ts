@@ -375,7 +375,160 @@ export const MermaidSlideSchema = Common.extend({
   }),
 });
 
-/** Discriminated union over all 14 slide templates. */
+// ── Sub-issue #1046 — Pricing Table + Big Number ─────────────────────
+
+/** 15. Pricing table — 2..4 tiers, at most one highlighted. */
+export const PricingTableSlideSchema = Common.extend({
+  template: z.literal("pricing_table"),
+  content: z
+    .object({
+      heading: z.string().min(1).max(120),
+      tiers: z
+        .array(
+          z.object({
+            name: z.string().min(1).max(40),
+            price: z.string().min(1).max(40),
+            // Optional period qualifier: "/mo", "/seat/yr", etc.
+            period: z.string().max(20).optional(),
+            // 1..10 short bullet features.
+            features: z.array(z.string().min(1).max(120)).min(1).max(10),
+            cta: z.string().max(40).optional(),
+            highlighted: z.boolean().optional(),
+          }),
+        )
+        .min(2)
+        .max(4),
+      footnote: z.string().max(160).optional(),
+    })
+    .superRefine((c, ctx) => {
+      const highlighted = c.tiers.filter((t) => t.highlighted).length;
+      if (highlighted > 1) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["tiers"],
+          message: "Only one tier may be highlighted",
+        });
+      }
+    }),
+});
+
+/** 16. Big Number — single hero metric with optional support text + trend. */
+export const BigNumberSlideSchema = Common.extend({
+  template: z.literal("big_number"),
+  content: z.object({
+    value: z.string().min(1).max(20),
+    label: z.string().min(1).max(80),
+    support: z.string().max(240).optional(),
+    trend: z.enum(["up", "down", "flat"]).optional(),
+    trend_label: z.string().max(40).optional(),
+  }),
+});
+
+// ── Sub-issue #1049 — Team Grid + Logo Grid ──────────────────────────
+
+/** 17. Team Grid — 2..12 member cards. */
+export const TeamGridSlideSchema = Common.extend({
+  template: z.literal("team_grid"),
+  content: z.object({
+    heading: z.string().max(120).optional(),
+    members: z
+      .array(
+        z.object({
+          name: z.string().min(1).max(60),
+          role: z.string().min(1).max(80),
+          bio: z.string().max(280).optional(),
+          // photoUrl must be either a relative `/uploads/...` path or
+          // an https URL pointing at the local API origin. Validated
+          // server-side at write time too.
+          photoUrl: z.string().max(500).optional(),
+          links: z
+            .array(
+              z.object({
+                label: z.string().min(1).max(40),
+                href: z.string().min(1).max(500),
+              }),
+            )
+            .max(4)
+            .optional(),
+        }),
+      )
+      .min(2)
+      .max(12),
+  }),
+});
+
+/** 18. Logo Grid — 4..24 partner/customer logos. */
+export const LogoGridSlideSchema = Common.extend({
+  template: z.literal("logo_grid"),
+  content: z.object({
+    heading: z.string().max(120).optional(),
+    caption: z.string().max(120).optional(),
+    grayscale: z.boolean().optional(),
+    logos: z
+      .array(
+        z.object({
+          alt: z.string().min(1).max(80),
+          imageUrl: z.string().min(1).max(500),
+          href: z.string().max(500).optional(),
+        }),
+      )
+      .min(4)
+      .max(24),
+  }),
+});
+
+// ── Sub-issue #1052 — Roadmap + Agenda ───────────────────────────────
+
+const RoadmapStatusEnum = z.enum(["planned", "in_progress", "done"]);
+export type RoadmapStatus = z.infer<typeof RoadmapStatusEnum>;
+
+/** 19. Roadmap — 2..6 columns × 1..4 tracks of timeline items. */
+export const RoadmapSlideSchema = Common.extend({
+  template: z.literal("roadmap"),
+  content: z.object({
+    heading: z.string().min(1).max(120),
+    columns: z.array(z.string().min(1).max(40)).min(2).max(6),
+    tracks: z.array(z.string().min(1).max(40)).min(1).max(4),
+    items: z
+      .array(
+        z.object({
+          // Index into `columns` (0-based).
+          column: z.number().int().min(0).max(5),
+          // Index into `tracks` (0-based).
+          track: z.number().int().min(0).max(3),
+          label: z.string().min(1).max(80),
+          status: RoadmapStatusEnum.optional(),
+        }),
+      )
+      .max(60),
+  }),
+});
+
+/** 20. Agenda — auto (derived from section dividers) or manual. */
+export const AgendaSlideSchema = Common.extend({
+  template: z.literal("agenda"),
+  content: z
+    .object({
+      heading: z.string().max(120).optional(),
+      mode: z.enum(["auto", "manual"]).default("auto"),
+      // 1..20 manually-supplied items; required only when mode==="manual".
+      items: z.array(z.string().min(1).max(120)).max(20).optional(),
+      numbered: z.boolean().optional(),
+    })
+    .superRefine((c, ctx) => {
+      if (c.mode === "manual") {
+        if (!c.items || c.items.length < 1) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["items"],
+            message: "Manual agenda must have at least one item",
+          });
+        }
+      }
+    }),
+});
+
+/** Discriminated union over all 20 slide templates. */
 export const SlideSchema = z.discriminatedUnion("template", [
   TitleSlideSchema,
   SectionDividerSlideSchema,
@@ -391,6 +544,12 @@ export const SlideSchema = z.discriminatedUnion("template", [
   QaSlideSchema,
   ChartSlideSchema,
   MermaidSlideSchema,
+  PricingTableSlideSchema,
+  BigNumberSlideSchema,
+  TeamGridSlideSchema,
+  LogoGridSlideSchema,
+  RoadmapSlideSchema,
+  AgendaSlideSchema,
 ]);
 export type Slide = z.infer<typeof SlideSchema>;
 
@@ -479,6 +638,15 @@ export const SLIDE_TEMPLATES = [
   "qa",
   "chart",
   "mermaid",
+  // Sub-issue #1046
+  "pricing_table",
+  "big_number",
+  // Sub-issue #1049
+  "team_grid",
+  "logo_grid",
+  // Sub-issue #1052
+  "roadmap",
+  "agenda",
 ] as const;
 export type SlideTemplate = (typeof SLIDE_TEMPLATES)[number];
 

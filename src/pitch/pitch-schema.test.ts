@@ -143,9 +143,9 @@ describe("Schema URL-field SSRF audit", () => {
 
 // ── SlideSchema (one positive + one negative test per template) ───────────
 
-describe("SlideSchema — discriminated union covers all 14 templates", () => {
-  it("declares exactly 14 templates", () => {
-    expect(SLIDE_TEMPLATES).toHaveLength(14);
+describe("SlideSchema — discriminated union covers all 20 templates", () => {
+  it("declares exactly 20 templates", () => {
+    expect(SLIDE_TEMPLATES).toHaveLength(20);
   });
 
   it("rejects unknown template", () => {
@@ -790,7 +790,7 @@ describe("DraftDeckBodySchema � wizard ? backend contract", () => {
   });
 });
 
-// -- Sub-issue #1051 � branding overrides + LogoPlacementEnum ------------
+// -- Sub-issue #1051 � branding overrides + LogoPlacementEnum ------------
 
 import { BrandingOverrideSchema, LogoPlacementEnum } from "./pitch-schema.js";
 
@@ -836,7 +836,7 @@ describe("BrandingOverrideSchema (#1051)", () => {
   });
 });
 
-describe("BrandKitSchema � branding defaults (#1051/#1047)", () => {
+describe("BrandKitSchema � branding defaults (#1051/#1047)", () => {
   it("accepts defaultLogoPlacement and showSlideNumbers", () => {
     const kit = BrandKitSchema.parse({
       ...validBrandKit(),
@@ -873,3 +873,6 @@ describe("Slide schema backwards compat (#1051)", () => {
     );
   });
 });
+
+// -- New templates: pricing_table / big_number / team_grid / logo_grid / roadmap / agenda --
+
