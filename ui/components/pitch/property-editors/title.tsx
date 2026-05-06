@@ -61,6 +61,7 @@ const TitleEditor = ({ slide, onChange, deckId }: PropertyEditorProps<TitleSlide
           value={slide.background_image_prompt ?? ""}
           maxLength={400}
           rows={2}
+          placeholder="Optional — leave empty and use Generate all images to auto-prompt from this slide’s text"
           onChange={(v) =>
             onChange({
               ...slide,
@@ -68,6 +69,10 @@ const TitleEditor = ({ slide, onChange, deckId }: PropertyEditorProps<TitleSlide
             })
           }
         />
+        <p className="mt-1 text-xs text-muted-foreground">
+          Flux uses the deck image style plus this prompt. When empty, bulk
+          generation builds a prompt from the title and headlines.
+        </p>
       </FieldLabel>
       <button
         type="button"

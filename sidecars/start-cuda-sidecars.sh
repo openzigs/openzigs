@@ -50,6 +50,23 @@ fi
 
 echo "=== Starting CUDA Sidecars ==="
 
+# ── CUDA driver health pre-flight ─────────────────────────
+# If any GPU is "lost", the CUDA driver is often corrupted system-wide.
+# Warn loudly so the operator knows a full reboot is needed.
+if command -v nvidia-smi &>/dev/null; then
+    _LOST_GPUS=$(nvidia-smi 2>&1 | grep -c "GPU is lost" || true)
+    if [ "$_LOST_GPUS" -gt 0 ]; then
+        echo ""
+        echo "╔══════════════════════════════════════════════════════════════╗"
+        echo "║  WARNING: $_LOST_GPUS GPU(s) reported as LOST by nvidia-smi.       ║"
+        echo "║  The CUDA driver is likely corrupted system-wide.          ║"
+        echo "║  A full system REBOOT is required to recover.              ║"
+        echo "║  Sidecars will start but GPU compute may be unavailable.   ║"
+        echo "╚══════════════════════════════════════════════════════════════╝"
+        echo ""
+    fi
+fi
+
 # ── vLLM coexistence guard (Epic #888, Issue #916) ──────────
 # When OPENZIGS_ENABLE_VLLM=1, vLLM owns BOTH GPUs (TP=2). The video worker,
 # lipsync, sadtalker, and the FLUX manual-pool image-gen mode all conflict
@@ -73,27 +90,39 @@ fi
 #   image-gen + audio → GPU 0
 #   worker (video) + lipsync + sadtalker → GPU 1
 # Override per-sidecar via *_GPU_INDEX env vars (e.g. WORKER_GPU_INDEX=0).
-GPU_COUNT=0
+#
+# NOTE: nvidia-smi -L still lists GPUs that the driver reports as "lost".
+# We validate each GPU with a lightweight query and only count healthy ones.
+HEALTHY_GPUS=()
 if command -v nvidia-smi &>/dev/null; then
-    GPU_COUNT=$(nvidia-smi -L 2>/dev/null | wc -l || echo 0)
+    _RAW_COUNT=$(nvidia-smi -L 2>/dev/null | wc -l || echo 0)
+    for _idx in $(seq 0 $((_RAW_COUNT - 1))); do
+        if nvidia-smi -i "$_idx" --query-gpu=index,name --format=csv,noheader 2>/dev/null | grep -q '^'; then
+            HEALTHY_GPUS+=("$_idx")
+        else
+            echo "WARNING: GPU $_idx is lost/unreachable — excluding from sidecar pinning"
+        fi
+    done
 fi
-echo "Detected $GPU_COUNT NVIDIA GPU(s)"
+GPU_COUNT=${#HEALTHY_GPUS[@]}
+echo "Detected $GPU_COUNT healthy NVIDIA GPU(s)${HEALTHY_GPUS[*]:+ (indices: ${HEALTHY_GPUS[*]})}"
 
 if [ "$GPU_COUNT" -ge 2 ]; then
-    IMAGE_GEN_GPU_INDEX="${IMAGE_GEN_GPU_INDEX:-0}"
-    AUDIO_GPU_INDEX="${AUDIO_GPU_INDEX:-0}"
-    WORKER_GPU_INDEX="${WORKER_GPU_INDEX:-1}"
-    LIPSYNC_GPU_INDEX="${LIPSYNC_GPU_INDEX:-1}"
-    SADTALKER_GPU_INDEX="${SADTALKER_GPU_INDEX:-1}"
-    MUSIC_GPU_INDEX="${MUSIC_GPU_INDEX:-0}"
+    IMAGE_GEN_GPU_INDEX="${IMAGE_GEN_GPU_INDEX:-${HEALTHY_GPUS[0]}}"
+    AUDIO_GPU_INDEX="${AUDIO_GPU_INDEX:-${HEALTHY_GPUS[0]}}"
+    WORKER_GPU_INDEX="${WORKER_GPU_INDEX:-${HEALTHY_GPUS[1]}}"
+    LIPSYNC_GPU_INDEX="${LIPSYNC_GPU_INDEX:-${HEALTHY_GPUS[1]}}"
+    SADTALKER_GPU_INDEX="${SADTALKER_GPU_INDEX:-${HEALTHY_GPUS[1]}}"
+    MUSIC_GPU_INDEX="${MUSIC_GPU_INDEX:-${HEALTHY_GPUS[0]}}"
     echo "Multi-GPU pinning: image-gen=$IMAGE_GEN_GPU_INDEX, audio=$AUDIO_GPU_INDEX, worker=$WORKER_GPU_INDEX, lipsync=$LIPSYNC_GPU_INDEX, sadtalker=$SADTALKER_GPU_INDEX, music=$MUSIC_GPU_INDEX"
 else
-    IMAGE_GEN_GPU_INDEX="${IMAGE_GEN_GPU_INDEX:-0}"
-    AUDIO_GPU_INDEX="${AUDIO_GPU_INDEX:-0}"
-    WORKER_GPU_INDEX="${WORKER_GPU_INDEX:-0}"
-    LIPSYNC_GPU_INDEX="${LIPSYNC_GPU_INDEX:-0}"
-    SADTALKER_GPU_INDEX="${SADTALKER_GPU_INDEX:-0}"
-    MUSIC_GPU_INDEX="${MUSIC_GPU_INDEX:-0}"
+    _FIRST_GPU="${HEALTHY_GPUS[0]:-0}"
+    IMAGE_GEN_GPU_INDEX="${IMAGE_GEN_GPU_INDEX:-$_FIRST_GPU}"
+    AUDIO_GPU_INDEX="${AUDIO_GPU_INDEX:-$_FIRST_GPU}"
+    WORKER_GPU_INDEX="${WORKER_GPU_INDEX:-$_FIRST_GPU}"
+    LIPSYNC_GPU_INDEX="${LIPSYNC_GPU_INDEX:-$_FIRST_GPU}"
+    SADTALKER_GPU_INDEX="${SADTALKER_GPU_INDEX:-$_FIRST_GPU}"
+    MUSIC_GPU_INDEX="${MUSIC_GPU_INDEX:-$_FIRST_GPU}"
 fi
 
 # Kill any existing sidecar processes
@@ -107,10 +136,10 @@ for port in 5005 5006 5007 5009 5010 5011; do
 done
 
 # ── Image Generation (port 5005) ────────────────────────────
-# When IMAGE_GEN_POOLING_MODE=manual-flux, expose ALL GPUs to image-gen so it
-# can split FLUX components across them. Otherwise pin to a single device.
+# When IMAGE_GEN_POOLING_MODE=manual-flux, expose ALL healthy GPUs to image-gen
+# so it can split FLUX components across them. Otherwise pin to a single device.
 if [ "${IMAGE_GEN_POOLING_MODE:-off}" = "manual-flux" ] && [ "$GPU_COUNT" -ge 2 ]; then
-    IMAGE_GEN_CUDA_VISIBLE="0,1"
+    IMAGE_GEN_CUDA_VISIBLE=$(IFS=,; echo "${HEALTHY_GPUS[*]}")
     echo "  image-gen pooling=manual-flux \u2192 CUDA_VISIBLE_DEVICES=$IMAGE_GEN_CUDA_VISIBLE"
 else
     IMAGE_GEN_CUDA_VISIBLE="$IMAGE_GEN_GPU_INDEX"

@@ -425,6 +425,12 @@ export interface WorkerStatus {
    * `null`/`undefined` means "unknown" — do not gate on it.
    */
   vram_free_gb?: number | null;
+  /**
+   * Whether the sidecar reports itself as ready to accept jobs.
+   * Optional; when missing defaults to `true` (backwards compat).
+   * FluxQ sets this to `false` while the FastAPI app is starting up.
+   */
+  ready?: boolean;
 }
 
 // ── Webhook Completion ────────────────────────────────────────

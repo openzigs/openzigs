@@ -37,6 +37,7 @@ export const GenerateAllImagesButton = ({
 }: GenerateAllImagesButtonProps) => {
   const [state, setState] = useState<ButtonState>("idle");
   const [expected, setExpected] = useState(0);
+  const [regenerateBackgrounds, setRegenerateBackgrounds] = useState(false);
   const { counts, reset } = useSlideImageStatus(deckId);
   const completedToastFiredRef = useRef(false);
 
@@ -67,14 +68,24 @@ export const GenerateAllImagesButton = ({
     setState("in_progress");
     setExpected(0);
     try {
+      const body = regenerateBackgrounds
+        ? JSON.stringify({ regenerateBackgrounds: true })
+        : JSON.stringify({});
       const res = await fetchJson<GenerateAllResponse>(
         `/api/admin/pitch/decks/${deckId}/images/generate-all`,
-        { method: "POST", body: JSON.stringify({}) },
+        { method: "POST", body },
       );
       setExpected(res.enqueued);
       if (res.enqueued === 0) {
         setState("done");
-        onShowToast?.("Nothing to generate", "success");
+        if (res.skipped > 0 && !regenerateBackgrounds) {
+          onShowToast?.(
+            "Nothing new to generate. All slots already have images — check “Replace existing backgrounds” to regenerate.",
+            "success",
+          );
+        } else {
+          onShowToast?.("Nothing to generate", "success");
+        }
       }
     } catch (err) {
       setState("idle");
@@ -112,6 +123,17 @@ export const GenerateAllImagesButton = ({
 
   return (
     <div className="inline-flex flex-col items-end gap-0.5">
+      <label className="flex cursor-pointer select-none items-center gap-1.5 text-[10px] text-muted-foreground">
+        <input
+          type="checkbox"
+          data-testid="pitch-editor-regenerate-backgrounds"
+          checked={regenerateBackgrounds}
+          onChange={(e) => setRegenerateBackgrounds(e.target.checked)}
+          disabled={disabled || state === "in_progress"}
+          className="h-3 w-3 rounded border-border"
+        />
+        Replace existing backgrounds
+      </label>
       <button
         type="button"
         data-testid="pitch-editor-generate-all-images"

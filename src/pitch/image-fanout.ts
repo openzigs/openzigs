@@ -257,7 +257,7 @@ export function deriveFallbackBackgroundPrompt(
     if (trimmed.length < 3) continue;
     // Cap length so the derived prompt stays focused.
     const focus = trimmed.slice(0, 140);
-    return `Abstract conceptual background illustration evoking: ${focus}`;
+    return `Abstract conceptual background illustration evoking: ${focus}, soft gradient, generous negative space, readable behind bold headline text`;
   }
   return undefined;
 }

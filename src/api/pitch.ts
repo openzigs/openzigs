@@ -21,7 +21,7 @@
  *   - Returns JSON for `/decks/draft` (no SSE pattern exists in the
  *     codebase today; tracked as a follow-up in the PR description).
  */
-import { mkdir, rename, stat, unlink, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { extname, join, relative, resolve } from "node:path";
@@ -72,8 +72,10 @@ import {
   DeckAspectRatioEnum,
   DeckToneEnum,
   DraftDeckBodySchema,
+  ImageStyleEnum,
   SlideSchema,
   type BrandKit as PitchBrandKit,
+  type Deck,
   type Slide,
 } from "../pitch/pitch-schema.js";
 import { STARTER_BRAND_KITS } from "../pitch/starter-brand-kits.js";
@@ -299,6 +301,114 @@ export function buildBackgroundImageUrlMap(
   return out;
 }
 
+/**
+ * Build a slide-index → `data:` URI map by reading every per-slide
+ * background asset off disk and base64-encoding it. Used by the PDF
+ * exporter because `decktape` opens the standalone HTML through a
+ * `file://` URL — relative `/api/admin/pitch/decks/.../assets/...`
+ * paths cannot resolve from a `file://` document and the embedded
+ * Reveal background plugin silently drops them, leaving the deck with
+ * its theme background instead of the brand-generated artwork.
+ *
+ * Same per-slide selection rules as {@link buildBackgroundImageUrlMap}
+ * (latest `kind="background"` asset wins). Files outside the assets
+ * base directory or missing on disk are skipped; the slide simply
+ * renders without a background image. Read failures are logged but
+ * never bubble up — a failed PDF export over a missing asset would be
+ * worse for the user than a slide with no background.
+ */
+async function buildBackgroundImageDataUriMap(
+  deckId: string,
+  slides: ReadonlyArray<{ id: string; position: number }>,
+  assets: ReadonlyArray<{
+    id: string;
+    deck_id: string;
+    slide_id: string | null;
+    kind: string;
+    local_path: string;
+    mime_type?: string | null;
+    created_at: string;
+  }>,
+  assetsBaseDir: string,
+): Promise<Map<number, string>> {
+  const positionBySlideId = new Map<string, number>();
+  for (const s of slides) positionBySlideId.set(s.id, s.position);
+  const latestByPosition = new Map<
+    number,
+    {
+      id: string;
+      created_at: string;
+      local_path: string;
+      mime_type?: string | null;
+    }
+  >();
+  for (const asset of assets) {
+    if (asset.kind !== "background") continue;
+    if (!asset.slide_id) continue;
+    if (asset.deck_id !== deckId) continue;
+    const position = positionBySlideId.get(asset.slide_id);
+    if (position === undefined) continue;
+    const prior = latestByPosition.get(position);
+    if (!prior || asset.created_at > prior.created_at) {
+      latestByPosition.set(position, {
+        id: asset.id,
+        created_at: asset.created_at,
+        local_path: asset.local_path,
+        mime_type: asset.mime_type ?? null,
+      });
+    }
+  }
+  const out = new Map<number, string>();
+  await Promise.all(
+    Array.from(latestByPosition.entries()).map(async ([position, asset]) => {
+      try {
+        const absPath = resolve(asset.local_path);
+        const rel = relative(assetsBaseDir, absPath);
+        if (rel.startsWith("..") || resolve(assetsBaseDir, rel) !== absPath) {
+          return;
+        }
+        if (!existsSync(absPath)) return;
+        const bytes = await readFile(absPath);
+        const mime = asset.mime_type && /^image\//.test(asset.mime_type)
+          ? asset.mime_type
+          : sniffImageMime(bytes) ?? "image/png";
+        out.set(position, `data:${mime};base64,${bytes.toString("base64")}`);
+      } catch (err) {
+        logger.warn(
+          `[Pitch API] PDF bg asset read failed (deck ${deckId}, slide pos ${position}, asset ${asset.id}): ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }),
+  );
+  return out;
+}
+
+/**
+ * Best-effort image MIME sniff using the first few bytes. Limited to the
+ * formats produced by the Pitch image pipeline (PNG, JPEG, WEBP) plus
+ * GIF for completeness. Returns `undefined` when the magic bytes don't
+ * match any known image type so callers can fall back to a default.
+ */
+function sniffImageMime(bytes: Buffer): string | undefined {
+  if (bytes.length >= 8 && bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47) {
+    return "image/png";
+  }
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
+    return "image/jpeg";
+  }
+  if (
+    bytes.length >= 12 &&
+    bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46 &&
+    bytes[8] === 0x57 && bytes[9] === 0x45 && bytes[10] === 0x42 && bytes[11] === 0x50
+  ) {
+    return "image/webp";
+  }
+  if (bytes.length >= 6 && bytes[0] === 0x47 && bytes[1] === 0x49 && bytes[2] === 0x46) {
+    return "image/gif";
+  }
+  return undefined;
+}
+
 // ── Render-iframe auth-token plumbing (Pitch Present bug fix) ───────────
 //
 // The Present route mounts `/render?mode=present` HTML inside a sandboxed
@@ -393,8 +503,43 @@ const DeckMetadataSchema = z
     audience: z.string().max(120).optional(),
     tone: DeckToneEnum.default("formal"),
     estimated_minutes: z.number().int().min(1).max(180).optional(),
+    image_style: ImageStyleEnum.optional(),
   })
   .strict();
+
+/** PATCH /decks/:id — all keys optional so a client can update e.g. `image_style` alone. */
+const DeckMetadataPatchSchema = z
+  .object({
+    source_script: z.string().max(50_000).optional(),
+    source_summary: z.string().max(2000).optional(),
+    audience: z.string().max(120).optional(),
+    tone: DeckToneEnum.optional(),
+    estimated_minutes: z.number().int().min(1).max(180).optional(),
+    image_style: ImageStyleEnum.optional(),
+  })
+  .strict();
+
+function mergeDeckMetadata(
+  prev: Deck["metadata"],
+  patch: z.infer<typeof DeckMetadataPatchSchema>,
+): Deck["metadata"] {
+  return {
+    source_script:
+      patch.source_script !== undefined ? patch.source_script : prev.source_script,
+    source_summary:
+      patch.source_summary !== undefined
+        ? patch.source_summary
+        : prev.source_summary,
+    audience: patch.audience !== undefined ? patch.audience : prev.audience,
+    tone: patch.tone !== undefined ? patch.tone : prev.tone,
+    estimated_minutes:
+      patch.estimated_minutes !== undefined
+        ? patch.estimated_minutes
+        : prev.estimated_minutes,
+    image_style:
+      patch.image_style !== undefined ? patch.image_style : prev.image_style,
+  };
+}
 
 const CreateDeckBody = z
   .object({
@@ -410,7 +555,7 @@ const UpdateDeckBody = z
     title: z.string().min(1).max(160).optional(),
     brand_kit_id: z.string().min(1).optional(),
     aspect_ratio: DeckAspectRatioEnum.optional(),
-    metadata: DeckMetadataSchema.optional(),
+    metadata: DeckMetadataPatchSchema.optional(),
   })
   .strict()
   .refine((v) => Object.keys(v).length > 0, {
@@ -1163,8 +1308,26 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
       if (!res.writableEnded) ac.abort();
     });
     try {
+      // Decktape opens the standalone HTML over `file://`, so we materialise
+      // every per-slide background asset into a `data:` URI here. The
+      // helper reads each asset's bytes off disk (under `assetsBaseDir`)
+      // and base64-encodes them, which produces a fully self-contained
+      // PDF — no network fetches, no token plumbing, no surprise 401s
+      // from the asset route's auth middleware. Other export paths
+      // (`/render`, `/export.html`) keep using the relative asset URLs
+      // because they run inside the authenticated app origin.
+      const backgroundImageUrlBySlideIndex = await buildBackgroundImageDataUriMap(
+        ctx.deck.id,
+        deps.pitchRepo.listSlidesForDeck(ctx.deck.id),
+        deps.pitchRepo.listAssetsForDeck(ctx.deck.id),
+        assetsBaseDir,
+      );
+      logger.info(
+        `[Pitch API] PDF export bg map for deck ${ctx.deck.id}: ${backgroundImageUrlBySlideIndex.size} backgrounds embedded`,
+      );
       const { buffer, contentType } = await pdfExporter(ctx.deck, ctx.brandKit, {
         signal: ac.signal,
+        backgroundImageUrlBySlideIndex,
       });
       setDownloadHeaders(res, contentType, ctx.deck.title, ctx.deck.id, ".pdf");
       audit("system", "pitch_deck_exported", {
@@ -1229,6 +1392,12 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
     const body = parseBody(UpdateDeckBody, res, req);
     if (!body) return;
 
+    const existingDeck = deps.pitchRepo.getDeck(req.params.deckId);
+    if (!existingDeck) {
+      sendError(res, 404, "not_found", `deck ${req.params.deckId} not found`);
+      return;
+    }
+
     if (
       body.brand_kit_id &&
       !deps.brandKitRepo.getById(body.brand_kit_id)
@@ -1247,13 +1416,7 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
       brand_kit_id: body.brand_kit_id,
       aspect_ratio: body.aspect_ratio,
       metadata: body.metadata
-        ? {
-            source_script: body.metadata.source_script ?? "",
-            source_summary: body.metadata.source_summary,
-            audience: body.metadata.audience,
-            tone: body.metadata.tone ?? "formal",
-            estimated_minutes: body.metadata.estimated_minutes,
-          }
+        ? mergeDeckMetadata(existingDeck.metadata, body.metadata)
         : undefined,
     });
     if (!updated) {
@@ -1842,6 +2005,8 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
   const GenerateAllImagesBody = z
     .object({
       slideIds: z.array(z.string().min(1)).max(200).optional(),
+      /** When true, enqueue new background jobs even if a background asset already exists for each slide. */
+      regenerateBackgrounds: z.boolean().optional(),
     })
     .strict();
 
@@ -1922,12 +2087,15 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
         );
         return;
       }
-      const existingBackgroundSlideIds = new Set(
-        deps.pitchRepo
-          .listAssetsForDeck(deckId)
-          .filter((a) => a.kind === "background" && a.slide_id)
-          .map((a) => a.slide_id as string),
-      );
+      const existingBackgroundSlideIds =
+        body.regenerateBackgrounds === true
+          ? new Set<string>()
+          : new Set(
+              deps.pitchRepo
+                .listAssetsForDeck(deckId)
+                .filter((a) => a.kind === "background" && a.slide_id)
+                .map((a) => a.slide_id as string),
+            );
 
       // Sub-issue #998 — honour the deck-level image-style preset
       // persisted on `metadata.image_style` so re-running generate-all

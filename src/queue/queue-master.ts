@@ -833,6 +833,13 @@ export class QueueMaster extends EventEmitter {
       return;
     }
 
+    if (this.imageGenStatus.ready === false) {
+      logger.debug(
+        "[QueueMaster] Image-gen not ready (still loading), skipping dispatch",
+      );
+      return;
+    }
+
     // Issue #1022 — VRAM headroom gate: if FluxQ reports less than the
     // configured minimum free VRAM, defer dispatch and arm the cooldown
     // so we don't hammer /status every tick. The sidecar's OOM self-heal
@@ -1166,7 +1173,7 @@ export class QueueMaster extends EventEmitter {
     const data = (await res.json()) as Record<string, unknown>;
 
     if (node === "image-gen") {
-      // FluxQ /status returns { is_busy, loaded_model, vram_free_gb, ... }
+      // FluxQ /status returns { is_busy, loaded_model, vram_free_gb, ready, ... }
       const vramRaw = data.vram_free_gb;
       const vram_free_gb =
         typeof vramRaw === "number" && Number.isFinite(vramRaw) ? vramRaw : null;
@@ -1174,6 +1181,7 @@ export class QueueMaster extends EventEmitter {
         is_busy: !!(data.is_busy as boolean),
         loaded_model: (data.loaded_model as string) ?? null,
         vram_free_gb,
+        ready: typeof data.ready === "boolean" ? data.ready : true,
       };
     }
 

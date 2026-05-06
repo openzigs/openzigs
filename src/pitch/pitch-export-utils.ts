@@ -13,6 +13,7 @@
  *     after resize.
  */
 import { spawn, type ChildProcess } from "node:child_process";
+import { createRequire } from "node:module";
 import { randomUUID } from "node:crypto";
 import { realpathSync } from "node:fs";
 import { readFile, unlink, writeFile } from "node:fs/promises";
@@ -90,7 +91,7 @@ export async function htmlToPdf(
   const timeoutMs = opts.timeoutMs ?? DEFAULT_PDF_TIMEOUT_MS;
   const command = opts.command ?? "reveal";
   const size = opts.size ?? "1920x1080";
-  const decktapeBin = opts.decktapeBin ?? "decktape";
+  const resolved = resolveDecktapeInvocation(opts.decktapeBin);
   const spawnFn = opts.spawnImpl ?? spawn;
 
   const id = randomUUID();
@@ -121,10 +122,27 @@ export async function htmlToPdf(
   try {
     await writeFile(tempHtmlPath, html, "utf8");
 
-    const pdfBytes = await new Promise<Buffer>((resolve, reject) => {
+    const pdfBytes = await new Promise<Buffer>((resolveBuf, reject) => {
+      // `--load-pause` gives the CDN-loaded Reveal.js bundle a beat to
+      // execute its inline init before decktape's `page.evaluate` probes
+      // for `window.Reveal`. Without it, decktape races the script tag
+      // and aborts with "Unable to activate the Reveal JS DeckTape
+      // plugin" — even though Reveal would be loaded a few hundred
+      // milliseconds later. 2s is enough for jsdelivr-cached payloads
+      // and conservative for cold cache; the overall 60 s subprocess
+      // timeout is the upper bound.
       child = spawnFn(
-        decktapeBin,
-        [command, "--size", size, tempHtmlUrl, tempPdfPath],
+        resolved.command,
+        [
+          ...resolved.prefixArgs,
+          command,
+          "--load-pause",
+          "2000",
+          "--size",
+          size,
+          tempHtmlUrl,
+          tempPdfPath,
+        ],
         { stdio: ["ignore", "pipe", "pipe"] },
       );
 
@@ -168,13 +186,56 @@ export async function htmlToPdf(
           );
           return;
         }
-        readFile(tempPdfPath).then(resolve, reject);
+        readFile(tempPdfPath).then(resolveBuf, reject);
       });
     });
 
     return pdfBytes;
   } finally {
     await cleanupTemp();
+  }
+}
+
+/**
+ * Resolve how to invoke `decktape` cross-platform.
+ *
+ * Background: `child_process.spawn("decktape", …)` does not resolve npm
+ * `.cmd`/`.bat` shims on Windows without `shell: true` (and Node 17+
+ * actively rejects them with `EINVAL` for security). The previous
+ * production code that relied on a global `decktape` binary on PATH
+ * therefore failed on Windows installs even when `pnpm install` had
+ * placed a working `node_modules/.bin/decktape.cmd` shim.
+ *
+ * Strategy:
+ *   1. **Preferred** — locate the package's own JS entry through
+ *      `require.resolve('decktape/decktape.js')`. We then spawn
+ *      `process.execPath` (the running Node binary) with that script
+ *      as the first argument. This works on every OS, never needs a
+ *      shell, and bypasses both the PATH lookup and the `.cmd`-shim
+ *      ENOENT/EINVAL trap. Decktape's own `require()` calls keep
+ *      working because Node resolves them relative to the script's
+ *      real path inside `node_modules/.pnpm/...`.
+ *   2. **Test override** — when callers pass `decktapeBin`, honour it
+ *      verbatim and call it with no extra argv prefix. Tests inject a
+ *      fake here (eg. `/usr/bin/false`) and assert spawn invocation.
+ *   3. **Fallback** — when the package can't be resolved (decktape not
+ *      installed, build artefact stripped), try the bare `decktape`
+ *      name. On Linux/macOS PATH installs this still works; on
+ *      Windows it'll surface a clear ENOENT to the caller, which the
+ *      router maps to a 503 + "warm the cache" hint.
+ */
+function resolveDecktapeInvocation(
+  override: string | undefined,
+): { command: string; prefixArgs: readonly string[] } {
+  if (override) {
+    return { command: override, prefixArgs: [] };
+  }
+  try {
+    const requireFromCwd = createRequire(join(process.cwd(), "package.json"));
+    const entry = requireFromCwd.resolve("decktape/decktape.js");
+    return { command: process.execPath, prefixArgs: [entry] };
+  } catch {
+    return { command: "decktape", prefixArgs: [] };
   }
 }
 

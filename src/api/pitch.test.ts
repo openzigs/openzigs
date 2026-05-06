@@ -898,6 +898,37 @@ describe("Pitch REST router", () => {
       expect(fanOutImageGenerationMock).toHaveBeenCalledTimes(1);
     });
 
+    it("POST .../images/generate-all with regenerateBackgrounds clears bg-asset skip set", async () => {
+      const kitId = createCustomKit(harness);
+      const { deckId, slideId } = createDeck(harness, kitId);
+      harness.deps.pitchRepo.insertAsset({
+        id: "bg-regen-test",
+        deck_id: deckId,
+        slide_id: slideId,
+        kind: "background",
+        source: "fluxq",
+        prompt: "old",
+        local_path: join(harness.brandKitsDir, "bg-regen-test.png"),
+        mime: "image/png",
+        width: 16,
+        height: 16,
+        created_at: FROZEN().toISOString(),
+      });
+      fanOutImageGenerationMock.mockResolvedValue({
+        enqueued: 2,
+        skipped: 0,
+        total: 2,
+      });
+      const res = await request(harness.app)
+        .post(`/api/admin/pitch/decks/${deckId}/images/generate-all`)
+        .send({ regenerateBackgrounds: true });
+      expect(res.status).toBe(200);
+      const args = fanOutImageGenerationMock.mock.calls[0]?.[0] as {
+        existingBackgroundSlideIds: Set<string>;
+      };
+      expect(args.existingBackgroundSlideIds.size).toBe(0);
+    });
+
     it("POST .../images/generate-all returns 404 for unknown deck", async () => {
       const res = await request(harness.app)
         .post("/api/admin/pitch/decks/missing/images/generate-all")

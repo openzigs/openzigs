@@ -116,7 +116,10 @@ describe("GenerateAllImagesButton", () => {
         screen.getByTestId("pitch-editor-generate-all-images"),
       ).toHaveAttribute("data-state", "done"),
     );
-    expect(toast).toHaveBeenCalledWith("Nothing to generate", "success");
+    expect(toast).toHaveBeenCalledWith(
+      expect.stringMatching(/Nothing new to generate.*Replace existing backgrounds/),
+      "success",
+    );
   });
 
   it("returns to idle and toasts an error when the request fails", async () => {
@@ -132,6 +135,23 @@ describe("GenerateAllImagesButton", () => {
     expect(toast).toHaveBeenCalledWith(
       expect.stringContaining("Generate failed"),
       "error",
+    );
+  });
+
+  it("sends regenerateBackgrounds when the checkbox is enabled", async () => {
+    fetchJsonMock.mockResolvedValue({ enqueued: 2, skipped: 0, total: 2 });
+    render(<GenerateAllImagesButton deckId="d1" />);
+    fireEvent.click(
+      screen.getByTestId("pitch-editor-regenerate-backgrounds"),
+    );
+    fireEvent.click(screen.getByTestId("pitch-editor-generate-all-images"));
+    await waitFor(() => expect(fetchJsonMock).toHaveBeenCalled());
+    expect(fetchJsonMock).toHaveBeenCalledWith(
+      "/api/admin/pitch/decks/d1/images/generate-all",
+      {
+        method: "POST",
+        body: JSON.stringify({ regenerateBackgrounds: true }),
+      },
     );
   });
 

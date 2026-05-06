@@ -211,10 +211,20 @@ export function renderDeckToHtml(
     const initialIndex = Number.isInteger(opts.initialSlideIndex)
       ? Math.max(0, Math.min(opts.initialSlideIndex as number, slidesToRender.length - 1))
       : 0;
+    // Reveal config — explicit 1920×1080 logical viewport matches the
+    // PDF export size (decktape `--size 1920x1080`) and gives long
+    // headings (e.g. "OpenZigs: Platform Overview & Operational
+    // Playbook") enough horizontal real estate to wrap on two lines
+    // instead of clipping descenders against the slide bottom. Reveal
+    // still scales the slide to fit whatever physical container the
+    // iframe occupies, so the embedded preview, the present canvas,
+    // and the headless-Chromium PDF render all share the same logical
+    // layout. Margin 0.04 keeps slide content off the brand's accent
+    // bar (6px gradient at the top of every deck).
     const embeddedInit = autoInit
       ? `<script type="module">
 import Reveal from "https://cdn.jsdelivr.net/npm/reveal.js@5/dist/reveal.esm.js";
-const deck = new Reveal({ embedded: ${mode === "embedded" ? "true" : "false"}, hash: false, controls: ${mode === "present" ? "true" : "false"}, progress: ${mode === "present" ? "true" : "false"}, transition: "slide" });
+const deck = new Reveal({ embedded: ${mode === "embedded" ? "true" : "false"}, hash: false, controls: ${mode === "present" ? "true" : "false"}, progress: ${mode === "present" ? "true" : "false"}, transition: "slide", width: 1920, height: 1080, margin: 0.04 });
 await deck.initialize();
 if (${initialIndex} > 0) { try { deck.slide(${initialIndex}); } catch {} }
 window.addEventListener("message", (e) => {
@@ -249,11 +259,45 @@ ${embeddedInit}
     };
   }
 
-  // standalone mode — full HTML document
+  // standalone mode — full HTML document.
+  //
+  // Loading + API-shape constraints for the PDF exporter:
+  //
+  //   - Decktape's bundled `reveal` plugin probes for a globally-reachable
+  //     `Reveal` constructor BEFORE the document's `DOMContentLoaded`
+  //     event. `<script type="module">` is deferred until after parsing,
+  //     so the ESM bundle (which the embedded preview path uses) races
+  //     decktape and the plugin probe fails with "Unable to activate the
+  //     Reveal JS DeckTape plugin". The classic UMD bundle installs
+  //     `window.Reveal` synchronously while the document is still
+  //     parsing, which is the timing decktape (and any other static
+  //     consumer of standalone HTML) expects.
+  //
+  //   - Decktape's plugin shape is older than Reveal.js 5: it pivots on
+  //     `Reveal.availableFragments` for its compat check and on the
+  //     legacy STATIC API surface (`Reveal.next()`, `Reveal.getIndices()`,
+  //     `Reveal.getTotalSlides()`, …) for navigation. Reveal 5 retains
+  //     those static helpers when initialised via the global `Reveal`
+  //     constructor, but `availableFragments` was renamed in newer
+  //     releases — we keep a defensive no-op shim so the gate stays
+  //     green regardless of which patch level the CDN serves.
+  //
+  // `hash: false` keeps file-loaded decks from polluting the URL bar.
   const initScript = autoInit
-    ? `<script type="module">
-import Reveal from "https://cdn.jsdelivr.net/npm/reveal.js@5/dist/reveal.esm.js";
-new Reveal({ hash: false, controls: true, progress: true, transition: "slide" }).initialize();
+    ? `<script src="https://cdn.jsdelivr.net/npm/reveal.js@5/dist/reveal.js"></script>
+<script>
+(function () {
+  if (typeof Reveal === "undefined") return;
+  if (typeof Reveal.availableFragments !== "function") {
+    Reveal.availableFragments = function () { return { prev: 0, next: 0 }; };
+  }
+  // Match the PDF/decktape size (1920×1080) so the standalone deck
+  // shares the same logical layout as the embedded preview. Without
+  // this Reveal falls back to 960×700 and long titles like "OpenZigs:
+  // Platform Overview & Operational Playbook" overflow the bottom of
+  // the slide.
+  Reveal.initialize({ hash: false, controls: true, progress: true, transition: "slide", width: 1920, height: 1080, margin: 0.04 });
+})();
 </script>`
     : "";
 
@@ -463,11 +507,23 @@ function embeddedChromeStyles(): string {
   // string literal so no user value reaches CSS context.
   return `
 /* Bug-fix 2026-04-28 — fill the iframe viewport so Reveal doesn't
-   collapse to ~84px and scale down to 0.2x. */
+   collapse to ~84px and scale down to 0.2x.
+
+   Bug-fix 2026-05-05 — the standalone modifier was missing from the
+   viewport-fill rule, so when the deck was opened as a downloaded HTML
+   file or rendered through a print-to-PDF pipeline, pitch-deck-wrap
+   collapsed to its content height (0px), .reveal inherited 0 height,
+   and Reveal's auto-scale algorithm shrank the active slide to ~20%
+   and translated it off the viewport. The exported standalone deck
+   appeared as a black page. We now apply the same viewport-fill (using
+   flex column + 100vh) to all three modifiers so Reveal's sizing
+   algorithm has a real container regardless of how the deck is
+   consumed downstream. */
 html, body { height: 100%; margin: 0; padding: 0; }
 .pitch-deck-wrap { box-sizing: border-box; padding: 0; background: transparent; }
 .pitch-deck-wrap--embedded,
-.pitch-deck-wrap--present {
+.pitch-deck-wrap--present,
+.pitch-deck-wrap--standalone {
   display: flex;
   flex-direction: column;
   width: 100vw;
@@ -480,11 +536,11 @@ html, body { height: 100%; margin: 0; padding: 0; }
   background: var(--pitch-secondary, #f8fafc);
   position: relative;
   overflow: hidden;
+  flex: 1 1 auto;
+  min-height: 0;
 }
 .pitch-deck-wrap--embedded .reveal,
 .pitch-deck-wrap--present .reveal {
-  flex: 1 1 auto;
-  min-height: 0;
   box-shadow: 0 12px 40px rgba(0,0,0,0.18);
 }
 /* Accent signature: a 6px brand bar across the top of every deck. */

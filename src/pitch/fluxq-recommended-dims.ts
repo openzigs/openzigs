@@ -112,30 +112,47 @@ export function getCachedFluxQGpuAvailable(): boolean | undefined {
  * shape error the cache is cleared (set back to `undefined`) and
  * `undefined` is returned so callers can distinguish "definitely no GPU"
  * from "we don't know yet".
+ *
+ * Bug-fix: previously used a 2 s timeout which was too short when the
+ * sidecar was mid-model-load — the timeout silently returned `undefined`
+ * instead of the definitive `available: false`, bypassing the 503
+ * guard and enqueuing doomed jobs. Now retries up to 3 times with a
+ * 5 s timeout per attempt so a slow-but-reachable sidecar still
+ * delivers a definitive answer.
  */
 export async function refreshFluxQGpuAvailable(
   url?: string,
 ): Promise<boolean | undefined> {
   const target = url ?? defaultSidecarUrl();
-  try {
-    const res = await fetch(`${target}/gpu-info`, {
-      signal: AbortSignal.timeout(2_000),
-    });
-    if (!res.ok) {
+  const maxAttempts = 3;
+  const timeoutMs = 5_000;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const res = await fetch(`${target}/gpu-info`, {
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+      if (!res.ok) {
+        cachedGpuAvailable = undefined;
+        return undefined;
+      }
+      const data = (await res.json()) as { available?: unknown };
+      if (typeof data.available === "boolean") {
+        cachedGpuAvailable = data.available;
+        return cachedGpuAvailable;
+      }
+      cachedGpuAvailable = undefined;
+      return undefined;
+    } catch {
+      if (attempt < maxAttempts) {
+        await new Promise((r) => setTimeout(r, 500));
+        continue;
+      }
       cachedGpuAvailable = undefined;
       return undefined;
     }
-    const data = (await res.json()) as { available?: unknown };
-    if (typeof data.available === "boolean") {
-      cachedGpuAvailable = data.available;
-      return cachedGpuAvailable;
-    }
-    cachedGpuAvailable = undefined;
-    return undefined;
-  } catch {
-    cachedGpuAvailable = undefined;
-    return undefined;
   }
+  cachedGpuAvailable = undefined;
+  return undefined;
 }
 
 /**

@@ -27,6 +27,17 @@ export interface ExportPdfOpts {
   spawnImpl?: HtmlToPdfOpts["spawnImpl"];
   /** Test-only decktape binary override. */
   decktapeBin?: string;
+  /**
+   * Map of 0-based slide index → background image URL. Decktape opens
+   * the standalone HTML through a `file://` URL, which means relative
+   * Pitch asset paths (`/api/admin/pitch/decks/.../assets/...`) cannot
+   * resolve. The PDF route is therefore expected to materialise each
+   * background image as a `data:image/<mime>;base64,…` URI so the
+   * exported deck is fully self-contained. Embedded/HTML-export modes
+   * still pass the relative HTTP form because those run inside the
+   * authenticated app origin and benefit from CDN-style asset reuse.
+   */
+  backgroundImageUrlBySlideIndex?: ReadonlyMap<number, string>;
 }
 
 export interface ExportPdfResult {
@@ -53,7 +64,9 @@ export async function exportDeckToPdf(
     throw new Error("PDF export aborted");
   }
 
-  const { html } = renderDeckToHtml(deck, brandKit, "standalone");
+  const { html } = renderDeckToHtml(deck, brandKit, "standalone", {
+    backgroundImageUrlBySlideIndex: opts.backgroundImageUrlBySlideIndex,
+  });
   const buffer = await htmlToPdf(html, {
     timeoutMs: opts.timeoutMs ?? DEFAULT_PDF_TIMEOUT_MS,
     signal: opts.signal,
