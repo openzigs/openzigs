@@ -2405,19 +2405,12 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
         brand_kit_id: body.brandKitId,
       });
       // Strip per-slide branding overrides so the new kit is the single
-      // source of truth. (Slide branding is not currently persisted to DB
-      // columns, so this is presently a no-op for the storage layer; the
-      // contract still holds for any in-memory deck assemblies.)
-      const slides = deps.pitchRepo.listSlidesForDeck(req.params.deckId);
-      let slidesCleared = 0;
-      for (const row of slides) {
-        if (row.slide.branding) {
-          const { branding: _drop, ...rest } = row.slide;
-          void _drop;
-          deps.pitchRepo.updateSlide(row.id, { slide: rest as Slide });
-          slidesCleared += 1;
-        }
-      }
+      // source of truth. Wrapped in a transaction inside the repository
+      // (#1048 follow-up) so a mid-loop failure can't leave the deck with
+      // a half-cleared override set.
+      const slidesCleared = deps.pitchRepo.clearAllSlideBranding(
+        req.params.deckId,
+      );
       audit("system", "pitch_deck_brand_kit_applied", {
         deckId: req.params.deckId,
         brandKitId: body.brandKitId,

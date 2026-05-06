@@ -1314,6 +1314,83 @@ describe("Pitch REST router", () => {
         expect(res.status).toBe(400);
       });
 
+      // ── Sub-issue #1048 (PR #1044 review) — slidesCleared contract ──────
+      // Guards the wipe loop in the apply-brand-kit route. Seeds a deck with
+      // 3 slides (two branded, one not), POSTs the route, then asserts BOTH
+      // the returned `slidesCleared` count AND that each slide's persisted
+      // `branding` field reflects reality: cleared on the two that had
+      // overrides, untouched on the third. Without this assertion a future
+      // regression that no-ops the wipe (e.g. dropping the loop) would pass
+      // tests silently.
+      it("POST /decks/:deckId/apply-brand-kit clears per-slide branding overrides and reports the count", async () => {
+        const kitA = createCustomKit(harness, "Source Apply Kit");
+        const kitB = createCustomKit(harness, "Target Apply Kit");
+        const slideBrandedLogo = buildSampleSlide({
+          branding: { logoPlacement: "top-right" },
+        });
+        const slideBrandedFooter = buildSampleSlide({
+          branding: { footerOverride: "Confidential" },
+        });
+        const slidePlain = buildSampleSlide();
+        const deck = harness.deps.pitchRepo.insertDeck({
+          id: "deck-apply-clear",
+          title: "Apply Clear Test",
+          brand_kit_id: kitA,
+          aspect_ratio: "16:9",
+          metadata: { source_script: "", tone: "formal" },
+          slides: [
+            { id: "slide-branded-logo", slide: slideBrandedLogo },
+            { id: "slide-branded-footer", slide: slideBrandedFooter },
+            { id: "slide-plain", slide: slidePlain },
+          ],
+        });
+
+        // Sanity-check the seed actually persisted branding.
+        const seeded = harness.deps.pitchRepo.listSlidesForDeck(deck.id);
+        const seedById = new Map(seeded.map((s) => [s.id, s]));
+        expect(
+          (seedById.get("slide-branded-logo")?.slide as { branding?: unknown })
+            .branding,
+        ).toBeDefined();
+        expect(
+          (seedById.get("slide-branded-footer")?.slide as { branding?: unknown })
+            .branding,
+        ).toBeDefined();
+        expect(
+          (seedById.get("slide-plain")?.slide as { branding?: unknown })
+            .branding,
+        ).toBeUndefined();
+
+        const res = await request(harness.app)
+          .post(`/api/admin/pitch/decks/${deck.id}/apply-brand-kit`)
+          .send({ brandKitId: kitB });
+
+        expect(res.status).toBe(200);
+        // (a) Response contract: count of branded slides only (2 of 3).
+        expect(res.body.slidesCleared).toBe(2);
+        expect(res.body.deck.brand_kit_id).toBe(kitB);
+
+        // (b) Persistence: re-fetch each slide and assert branding state.
+        const after = harness.deps.pitchRepo.listSlidesForDeck(deck.id);
+        const afterById = new Map(after.map((s) => [s.id, s]));
+        expect(
+          (afterById.get("slide-branded-logo")?.slide as {
+            branding?: unknown;
+          }).branding,
+        ).toBeUndefined();
+        expect(
+          (afterById.get("slide-branded-footer")?.slide as {
+            branding?: unknown;
+          }).branding,
+        ).toBeUndefined();
+        // The third slide had no branding to begin with — it must remain
+        // untouched (no spurious writes / no surprise field appearance).
+        expect(
+          (afterById.get("slide-plain")?.slide as { branding?: unknown })
+            .branding,
+        ).toBeUndefined();
+      });
+
       it("POST /decks/:deckId/extract-brand-kit clones source kit into a new one", async () => {
         const kitA = createCustomKit(harness, "Source Kit");
         const { deckId } = createDeck(harness, kitA);

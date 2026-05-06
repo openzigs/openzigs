@@ -196,4 +196,66 @@ describe("BrandKitPicker (#1048 Apply / Copy)", () => {
     fireEvent.click(screen.getByTestId("pitch-brand-kit-apply-to-deck"));
     expect(onApply).not.toHaveBeenCalled();
   });
+
+  // AC #1048.4 — the confirm dialog must list the count of slides whose
+  // per-slide branding overrides Apply will clear, so the user can see the
+  // blast radius before confirming.
+  it("Apply confirm includes the override count when overrideCount > 0", async () => {
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    render(
+      <BrandKitPicker
+        selectedId="k2"
+        onSelect={vi.fn()}
+        onEdit={vi.fn()}
+        onCreate={vi.fn()}
+        onApplyToDeck={vi.fn()}
+        overrideCount={3}
+      />,
+      { wrapper },
+    );
+    await waitFor(() => expect(screen.getByText(/Custom/)).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId("pitch-brand-kit-apply-to-deck"));
+    const msg = String(confirmSpy.mock.calls[0]?.[0] ?? "");
+    expect(msg).toMatch(/clear branding overrides on 3 slides/);
+    expect(msg).toMatch(/^Apply "Custom" to the deck/);
+  });
+
+  it("Apply confirm uses singular 'slide' when overrideCount === 1", async () => {
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    render(
+      <BrandKitPicker
+        selectedId="k2"
+        onSelect={vi.fn()}
+        onEdit={vi.fn()}
+        onCreate={vi.fn()}
+        onApplyToDeck={vi.fn()}
+        overrideCount={1}
+      />,
+      { wrapper },
+    );
+    await waitFor(() => expect(screen.getByText(/Custom/)).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId("pitch-brand-kit-apply-to-deck"));
+    const msg = String(confirmSpy.mock.calls[0]?.[0] ?? "");
+    expect(msg).toMatch(/clear branding overrides on 1 slide\?/);
+  });
+
+  it("Apply confirm omits the 'and clear...' clause when overrideCount === 0", async () => {
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    render(
+      <BrandKitPicker
+        selectedId="k2"
+        onSelect={vi.fn()}
+        onEdit={vi.fn()}
+        onCreate={vi.fn()}
+        onApplyToDeck={vi.fn()}
+        overrideCount={0}
+      />,
+      { wrapper },
+    );
+    await waitFor(() => expect(screen.getByText(/Custom/)).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId("pitch-brand-kit-apply-to-deck"));
+    const msg = String(confirmSpy.mock.calls[0]?.[0] ?? "");
+    expect(msg).toBe('Apply "Custom" to the deck?');
+    expect(msg).not.toMatch(/clear/i);
+  });
 });

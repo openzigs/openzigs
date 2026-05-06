@@ -43,6 +43,20 @@ interface DeckSlideRow {
     template: string;
     content: Record<string, unknown>;
     speaker_notes?: string;
+    /**
+     * Sub-issue #1048 AC4 — per-slide branding overrides. Read here so the
+     * editor can count how many slides Apply will clobber and surface that
+     * count in the BrandKitPicker confirm dialog. Optional fields mirror
+     * BrandingOverrideSchema in src/pitch/pitch-schema.ts.
+     */
+    branding?: {
+      logoPlacement?: string;
+      hideLogo?: boolean;
+      footerOverride?: string;
+      hideFooter?: boolean;
+      hideSlideNumber?: boolean;
+      watermarkOverride?: string | null;
+    };
   };
   created_at: string;
   updated_at: string;
@@ -442,6 +456,24 @@ export default function PitchDeckEditorPage() {
     [deckQuery.data?.slides],
   );
 
+  // Sub-issue #1048 AC4 — count slides that currently carry per-slide
+  // branding overrides so the BrandKitPicker can surface the blast radius
+  // ("Apply 'X' to the deck and clear branding overrides on N slide(s)?")
+  // in its confirm dialog. A slide is "overridden" if its branding bag
+  // has any defined key (any non-default override).
+  const overriddenSlideCount = useMemo(
+    () =>
+      slides.reduce((acc, row) => {
+        const b = row.slide.branding;
+        if (!b) return acc;
+        const hasOverride = Object.values(b).some(
+          (v) => v !== undefined && v !== null,
+        );
+        return acc + (hasOverride ? 1 : 0);
+      }, 0),
+    [slides],
+  );
+
   // Track per-slide image generation status (#993). Drives the rail badges
   // and the "Generate all images" button progress counter.
   const { slideStatus: imageSlideStatus } = useSlideImageStatus(deckId);
@@ -624,6 +656,7 @@ export default function PitchDeckEditorPage() {
               setBrandKitDialogOpen(true);
             }}
             onApplyToDeck={(kit) => applyBrandKitMutation.mutate(kit.id)}
+            overrideCount={overriddenSlideCount}
             onCopyFromDeck={() => {
               const name = window.prompt(
                 "Name the new brand kit:",

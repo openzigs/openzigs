@@ -48,6 +48,14 @@ export interface BrandKitPickerProps {
   onApplyToDeck?: (kit: BrandKitListEntry) => void;
   /** Sub-issue #1048 — Copy the open deck's effective kit into a new kit. */
   onCopyFromDeck?: () => void;
+  /**
+   * Sub-issue #1048 AC4 — number of slides in the open deck that currently
+   * have per-slide branding overrides (logoPlacement, footerOverride, etc.)
+   * which Apply will clear. Surfaced in the confirm dialog so the user
+   * sees the blast radius before clobbering. Defaults to 0 — when 0 the
+   * "and clear..." clause is dropped from the prompt entirely.
+   */
+  overrideCount?: number;
 }
 
 export const BrandKitPicker = ({
@@ -57,6 +65,7 @@ export const BrandKitPicker = ({
   onCreate,
   onApplyToDeck,
   onCopyFromDeck,
+  overrideCount = 0,
 }: BrandKitPickerProps) => {
   const kitsQuery = useQuery({
     queryKey: ["pitch", "brand-kits"],
@@ -134,9 +143,15 @@ export const BrandKitPicker = ({
           disabled={!selected}
           onClick={() => {
             if (!selected) return;
+            const overrideClause =
+              overrideCount > 0
+                ? ` and clear branding overrides on ${overrideCount} slide${
+                    overrideCount === 1 ? "" : "s"
+                  }`
+                : "";
             if (
               window.confirm(
-                `Apply "${selected.name}" to the deck and clear all per-slide branding overrides?`,
+                `Apply "${selected.name}" to the deck${overrideClause}?`,
               )
             ) {
               onApplyToDeck(selected);
