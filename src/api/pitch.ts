@@ -229,6 +229,11 @@ export function repoToPitchBrandKit(kit: RepoBrandKit): PitchBrandKit {
     logoUrl,
     watermarkUrl,
     footerText: kit.footerText,
+    // #1047 \u2014 brand-kit defaults for per-slide logo + slide-number
+    // indicator. `undefined` (not null) so the optional Zod fields stay
+    // omitted when the column is unset (legacy rows).
+    defaultLogoPlacement: kit.defaultLogoPlacement ?? undefined,
+    showSlideNumbers: kit.showSlideNumbers ?? undefined,
   });
 }
 
@@ -647,6 +652,11 @@ const CreateBrandKitBody = z
     fontHeading: z.string().min(1).max(60).optional(),
     fontBody: z.string().min(1).max(60).optional(),
     footerText: z.string().max(120).optional(),
+    // #1047 — brand-kit defaults for per-slide chrome.
+    defaultLogoPlacement: z
+      .enum(["top-left", "top-right", "bottom-left", "bottom-right", "none"])
+      .optional(),
+    showSlideNumbers: z.boolean().optional(),
   })
   .strict();
 
@@ -669,6 +679,12 @@ const UpdateBrandKitBody = z
     fontHeading: z.string().min(1).max(60).nullable().optional(),
     fontBody: z.string().min(1).max(60).nullable().optional(),
     footerText: z.string().max(120).nullable().optional(),
+    // #1047 — brand-kit defaults; nullable so callers can clear them.
+    defaultLogoPlacement: z
+      .enum(["top-left", "top-right", "bottom-left", "bottom-right", "none"])
+      .nullable()
+      .optional(),
+    showSlideNumbers: z.boolean().nullable().optional(),
   })
   .strict()
   .refine((v) => Object.keys(v).length > 0, {
@@ -2261,6 +2277,8 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
         fontHeading: body.fontHeading,
         fontBody: body.fontBody,
         footerText: body.footerText,
+        defaultLogoPlacement: body.defaultLogoPlacement,
+        showSlideNumbers: body.showSlideNumbers,
         logoPath: null,
         watermarkPath: null,
         introTemplateId: null,
