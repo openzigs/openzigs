@@ -890,11 +890,10 @@ describe("renderRichBody (#1007)", () => {
     expect(html).not.toContain("<ul>");
   });
 
-  it("renders inline content for single-line input", () => {
+  it("wraps single-line plain prose in <p> so .pitch-has-bg colour overrides target a block element (Issue: two_column content visibility 2026-05)", () => {
     const html = renderRichBody("Just one line.");
     expect(html).not.toContain("<ul>");
-    expect(html).not.toContain("<p>");
-    expect(html).toContain("Just one line.");
+    expect(html).toBe("<p>Just one line.</p>");
   });
 });
 

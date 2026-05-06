@@ -366,6 +366,20 @@ export const DeckSchema = z.object({
      * unless a slide carries its own `image_style` override.
      */
     image_style: ImageStyleEnum.optional(),
+    /**
+     * Deck-level FluxQ model selection. `flux-schnell` is the 4-step
+     * distilled model (fast, lower fidelity); `flux-dev` is the higher
+     * quality dev model. Defaults to `flux-schnell` (omitted) for
+     * backwards compatibility with existing decks.
+     */
+    image_model: z.enum(["flux-schnell", "flux-dev"]).optional(),
+    /**
+     * When `false`, the deck's auto-fan-out + bulk generate-all paths
+     * skip deriving a fallback background prompt for slides that have
+     * no explicit `background_image_prompt`. Defaults to `true`
+     * (omitted) so existing decks keep generating backgrounds.
+     */
+    auto_generate_backgrounds: z.boolean().optional(),
   }),
   created_at: z.string(),
   updated_at: z.string(),
@@ -437,6 +451,19 @@ export const DraftDeckOptionsSchema = z
      * every queued FluxQ job.
      */
     imageStyle: ImageStyleEnum.optional(),
+    /**
+     * Deck-level FluxQ model. `flux-schnell` (default) is the 4-step
+     * distilled model — fast, lower fidelity. `flux-dev` is higher
+     * quality at the cost of generation time. Persisted on
+     * `metadata.image_model`.
+     */
+    imageModel: z.enum(["flux-schnell", "flux-dev"]).optional(),
+    /**
+     * When `false`, the auto-fan-out skips deriving a fallback
+     * background prompt for slides without an explicit
+     * `background_image_prompt`. Defaults to `true` for back-compat.
+     */
+    autoGenerateBackgrounds: z.boolean().optional(),
   })
   .strict();
 export type DraftDeckOptions = z.infer<typeof DraftDeckOptionsSchema>;

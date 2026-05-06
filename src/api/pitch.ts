@@ -504,6 +504,8 @@ const DeckMetadataSchema = z
     tone: DeckToneEnum.default("formal"),
     estimated_minutes: z.number().int().min(1).max(180).optional(),
     image_style: ImageStyleEnum.optional(),
+    image_model: z.enum(["flux-schnell", "flux-dev"]).optional(),
+    auto_generate_backgrounds: z.boolean().optional(),
   })
   .strict();
 
@@ -516,6 +518,8 @@ const DeckMetadataPatchSchema = z
     tone: DeckToneEnum.optional(),
     estimated_minutes: z.number().int().min(1).max(180).optional(),
     image_style: ImageStyleEnum.optional(),
+    image_model: z.enum(["flux-schnell", "flux-dev"]).optional(),
+    auto_generate_backgrounds: z.boolean().optional(),
   })
   .strict();
 
@@ -538,6 +542,12 @@ function mergeDeckMetadata(
         : prev.estimated_minutes,
     image_style:
       patch.image_style !== undefined ? patch.image_style : prev.image_style,
+    image_model:
+      patch.image_model !== undefined ? patch.image_model : prev.image_model,
+    auto_generate_backgrounds:
+      patch.auto_generate_backgrounds !== undefined
+        ? patch.auto_generate_backgrounds
+        : prev.auto_generate_backgrounds,
   };
 }
 
@@ -603,6 +613,14 @@ const SlideImageBody = z
   .object({
     prompt: z.string().min(3).max(400),
     mode: z.enum(["background", "inline"]),
+    /**
+     * For inline images on multi-slot templates (`two_column`), pin the
+     * regenerate to a specific slot. Defaults to `"image"` for the
+     * single-slot templates and `background` mode.
+     */
+    slot: z.enum(["image", "left_image", "right_image"]).optional(),
+    /** Per-regenerate FluxQ model override; falls back to deck-level. */
+    model: z.enum(["flux-schnell", "flux-dev"]).optional(),
     loraTriggerWord: z.string().max(80).optional(),
     seed: z.number().int().min(0).optional(),
     width: z.number().int().min(64).max(4096).optional(),
@@ -1797,9 +1815,19 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
               ...(body.options?.imageStyle
                 ? { imageStyle: body.options.imageStyle }
                 : {}),
+              ...(body.options?.imageModel
+                ? { imageModel: body.options.imageModel }
+                : persisted.metadata.image_model
+                ? { imageModel: persisted.metadata.image_model }
+                : {}),
               concurrency: 4,
-              // Issue #1007 — ensure every slide gets a background image.
-              deriveFallbackBackgrounds: true,
+              // Issue #1007 — derive a fallback background image when the
+              // AI/user did not author one. Honour the deck-level
+              // `auto_generate_backgrounds` toggle (defaults to ON).
+              deriveFallbackBackgrounds:
+                body.options?.autoGenerateBackgrounds ??
+                persisted.metadata.auto_generate_backgrounds ??
+                true,
               onEnqueued: (info) => {
                 emit("pitch:image:queued", {
                   deckId: persisted.id,
@@ -1948,13 +1976,21 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
     // the deck-level default persisted on `metadata.image_style`.
     const deckForStyle = deps.pitchRepo.getDeck(req.params.deckId);
     const deckMeta = deckForStyle?.metadata as
-      | { image_style?: string }
+      | { image_style?: string; image_model?: "flux-schnell" | "flux-dev" }
       | undefined;
     const effectiveImageStyle =
       slide.slide.image_style ??
       (typeof deckMeta?.image_style === "string"
         ? (deckMeta.image_style as never)
         : undefined);
+    // Per-regenerate model override beats the deck default.
+    const effectiveModel = body.model ?? deckMeta?.image_model;
+    // Slot resolution: explicit body.slot wins; otherwise inline mode
+    // defaults to the generic "image" slot (the right one for
+    // single-image templates) and background mode is forced to "image"
+    // because background is identified by `kind`, not `slot`.
+    const effectiveSlot =
+      body.mode === "inline" ? body.slot ?? "image" : "image";
 
     try {
       const result = enqueueSlideImage({
@@ -1962,12 +1998,14 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
         slideId: req.params.slideId,
         prompt: finalPrompt,
         kind: body.mode === "inline" ? "image" : "background",
+        slot: effectiveSlot,
         seed: body.seed,
         width: body.width,
         height: body.height,
         mediaQueueRepo: deps.mediaQueueRepo,
         characterRepo: deps.characterRepo,
         ...(effectiveImageStyle ? { imageStyle: effectiveImageStyle } : {}),
+        ...(effectiveModel ? { preferredModel: effectiveModel } : {}),
       });
       audit("tool", "pitch_image_queued", {
         deckId: req.params.deckId,
@@ -1979,7 +2017,7 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
       emit("pitch:image:queued", {
         deckId: req.params.deckId,
         slideId: req.params.slideId,
-        slot: body.mode === "inline" ? "image" : "background",
+        slot: body.mode === "inline" ? effectiveSlot : "background",
         jobId: result.jobId,
         assetId: result.assetId,
         mode: body.mode,
@@ -2100,7 +2138,13 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
       // Sub-issue #998 — honour the deck-level image-style preset
       // persisted on `metadata.image_style` so re-running generate-all
       // produces visually consistent imagery with the original draft.
-      const deckMeta = deck.metadata as { image_style?: string } | undefined;
+      const deckMeta = deck.metadata as
+        | {
+            image_style?: string;
+            image_model?: "flux-schnell" | "flux-dev";
+            auto_generate_backgrounds?: boolean;
+          }
+        | undefined;
       const deckImageStyle =
         typeof deckMeta?.image_style === "string"
           ? deckMeta.image_style
@@ -2115,10 +2159,17 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
           ...(deckImageStyle
             ? { imageStyle: deckImageStyle as never }
             : {}),
+          ...(deckMeta?.image_model
+            ? { imageModel: deckMeta.image_model }
+            : {}),
           concurrency: 4,
           existingBackgroundSlideIds,
-          // Issue #1007 — ensure every slide gets a background image.
-          deriveFallbackBackgrounds: true,
+          // Issue #1007 — derive a fallback background image when the
+          // AI/user did not author one. Honour the deck-level
+          // `auto_generate_backgrounds` toggle (defaults to ON for
+          // back-compat with decks created before the toggle existed).
+          deriveFallbackBackgrounds:
+            deckMeta?.auto_generate_backgrounds ?? true,
           onEnqueued: (info) => {
             emit("pitch:image:queued", {
               deckId,

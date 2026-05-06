@@ -464,8 +464,13 @@ export function renderRichBody(input: string): string {
   if (lines.length > 1) {
     return lines.map((l) => `<p>${sanitize(l)}</p>`).join("");
   }
-  // Single-line plain prose — sanitize handles inline tags.
-  return sanitize(text);
+  // Single-line plain prose — sanitize handles inline tags. Wrap in
+  // `<p>` so the property-editor rich-text scoping rules (e.g. white text
+  // + drop shadow on `.pitch-has-bg` text-heavy templates) actually
+  // target a block-level element instead of a bare text node — without
+  // the wrapper, the colour overrides slid off the text and it
+  // disappeared on coloured backgrounds (Issue #4: two_column invisible).
+  return `<p>${sanitize(text)}</p>`;
 }
 
 function brandKitLogoTag(kit: BrandKit): string {
@@ -873,9 +878,21 @@ html, body { height: 100%; margin: 0; padding: 0; }
   content: "";
   position: absolute;
   inset: 0;
-  background: linear-gradient(180deg, rgba(0,0,0,0.55) 0%, rgba(0,0,0,0.25) 60%, rgba(0,0,0,0.55) 100%);
+  /* Issue (2026-05): replaced the gradient (which had a weak 0.25
+     middle band that let backgrounds bleed through long body copy)
+     with a uniform 0.55 scrim. Stronger, predictable contrast for
+     every text-heavy template. */
+  background: rgba(0,0,0,0.55);
   z-index: 0;
   pointer-events: none;
+}
+/* Issue #4: descendants of text-heavy templates need to live ABOVE the
+   scrim too, not just direct children. Without this, anything wrapped in
+   a column / list / nested div sat at z-index 0 underneath the scrim and
+   disappeared entirely on backgrounds. */
+.pitch-deck-wrap .reveal .slides > section.pitch-has-bg * {
+  position: relative;
+  z-index: 1;
 }
 .pitch-deck-wrap .reveal .slides > section.pitch-has-bg > * {
   position: relative;
@@ -902,6 +919,36 @@ html, body { height: 100%; margin: 0; padding: 0; }
   color: var(--pitch-on-image, #ffffff);
   border-bottom-color: rgba(255,255,255,0.6);
   text-shadow: 0 1px 6px rgba(0,0,0,0.55);
+}
+/* Issue #4: text-heavy templates that paired a background image with
+   long-form body copy were rendering the body in the theme's default
+   foreground colour, which often matched the background image and
+   vanished. Force white + drop-shadow on EVERY descendant of these
+   templates when a background is active so the content reads cleanly
+   over any image. Cascades through nested wrappers (columns, list
+   items, paragraphs, spans). */
+.pitch-deck-wrap .reveal .slides > section.pitch-has-bg.pitch-tpl-two_column,
+.pitch-deck-wrap .reveal .slides > section.pitch-has-bg.pitch-tpl-two_column *,
+.pitch-deck-wrap .reveal .slides > section.pitch-has-bg.pitch-tpl-bullet_list,
+.pitch-deck-wrap .reveal .slides > section.pitch-has-bg.pitch-tpl-bullet_list *,
+.pitch-deck-wrap .reveal .slides > section.pitch-has-bg.pitch-tpl-image_caption,
+.pitch-deck-wrap .reveal .slides > section.pitch-has-bg.pitch-tpl-image_caption *,
+.pitch-deck-wrap .reveal .slides > section.pitch-has-bg.pitch-tpl-quote,
+.pitch-deck-wrap .reveal .slides > section.pitch-has-bg.pitch-tpl-quote *,
+.pitch-deck-wrap .reveal .slides > section.pitch-has-bg.pitch-tpl-qa,
+.pitch-deck-wrap .reveal .slides > section.pitch-has-bg.pitch-tpl-qa * {
+  color: #ffffff !important;
+  text-shadow: 0 1px 6px rgba(0,0,0,0.7);
+}
+/* Optional translucent dark surface card behind the column content of
+   text-heavy templates with a background image. Pure visual polish —
+   keeps body copy readable when the background image has high-contrast
+   detail (faces, foliage, etc.) instead of relying on text-shadow alone. */
+.pitch-deck-wrap .reveal .slides > section.pitch-has-bg.pitch-tpl-two_column .pitch-twocol-col,
+.pitch-deck-wrap .reveal .slides > section.pitch-has-bg.pitch-tpl-bullet_list ul {
+  background: rgba(0,0,0,0.28);
+  border-radius: 12px;
+  padding: 18px 22px;
 }
 `.trim();
 }

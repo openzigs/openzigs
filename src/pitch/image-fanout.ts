@@ -64,10 +64,22 @@ export interface FanOutImageGenerationOpts {
    * slide's title/heading/quote so every slide has a background image.
    * The API layer sets this for both auto-fan-out (after deck draft) and
    * the manual `generate-all` endpoint. Defaults to false.
+   *
+   * Templates listed in {@link SKIP_FALLBACK_BG_TEMPLATES} are exempted
+   * from this even when the flag is on — those templates are visually
+   * better served by inline imagery or the title text itself, and
+   * background images on them tend to ghost into the foreground text.
    */
   deriveFallbackBackgrounds?: boolean;
   /** Slide IDs that already have a persisted background asset. */
   existingBackgroundSlideIds?: ReadonlySet<string>;
+  /**
+   * Optional FluxQ model override threaded into every `enqueueSlideImage`
+   * call (e.g. `flux-schnell` for fast / low fidelity, `flux-dev` for
+   * higher quality). When omitted, `enqueueSlideImage` falls back to its
+   * default `flux-schnell`.
+   */
+  imageModel?: string;
   /**
    * Optional hook invoked synchronously after each successful enqueue.
    * Used by the API layer to emit `pitch:image:queued` and audit log.
@@ -104,6 +116,55 @@ interface PlannedJob {
   prompt: string;
   /** Per-slide override (already resolved); deck-level applied in caller. */
   perSlideStyle?: ImageStyle;
+  /** Target render width in pixels (slot-aware default). */
+  width: number;
+  /** Target render height in pixels (slot-aware default). */
+  height: number;
+}
+
+/**
+ * Templates that should NOT receive an auto-derived fallback background
+ * even when `deriveFallbackBackgrounds` is enabled. These templates
+ * either have stronger non-background image options (`two_column`,
+ * `bullet_list`, `image_caption`) or ARE the visual hero themselves
+ * (`title`, `quote`, `qa`) — adding a generated bg over them ghosts the
+ * literal title text into the slide pixels and obscures the foreground
+ * content.
+ *
+ * Background fallback DOES still apply for: `section_divider`,
+ * `full_bleed`, `closing` (not in this set), and the explicit
+ * hand-authored `background_image_prompt` is honoured for every template.
+ *
+ * Adjust this list rather than editing call sites — every fan-out path
+ * funnels through `planImageJobs`.
+ */
+export const SKIP_FALLBACK_BG_TEMPLATES: ReadonlySet<string> = new Set([
+  "title",
+  "two_column",
+  "bullet_list",
+  "image_caption",
+  "quote",
+  "qa",
+]);
+
+/**
+ * Slot-aware target dimensions (16:9 unless slot is portrait/square).
+ * `clampToFluxQRecommendedDims` may pull these down further if the FluxQ
+ * sidecar advertises a smaller cap.
+ */
+function targetDimsForSlot(
+  template: string,
+  slot: ImageSlot,
+  kind: "image" | "background",
+): { width: number; height: number } {
+  if (kind === "background") return { width: 1920, height: 1080 };
+  if (template === "two_column" && (slot === "left_image" || slot === "right_image")) {
+    return { width: 960, height: 1080 };
+  }
+  if (template === "image_caption") return { width: 1280, height: 720 };
+  if (template === "full_bleed") return { width: 1920, height: 1080 };
+  // bullet_list inline image — narrower 4:3-ish thumbnail.
+  return { width: 1280, height: 960 };
 }
 
 /** Pure: scan a deck and return the list of jobs that *would* be enqueued. */
@@ -122,15 +183,24 @@ export function planImageJobs(
 
   for (const { id: slideId, slide } of slides) {
     const perSlideStyle = slide.image_style;
+    const template = slide.template;
     // 1. Background prompt (any template).
     // Issue #1007 — when `deriveFallbackBackgrounds` is enabled and the
-    // AI/user did not emit a background prompt, derive a fallback from
-    // the slide's most descriptive text field (title / heading / quote)
-    // so EVERY slide gets a background image. Disabled by default to
+    // AI/user did not emit a background prompt, derive a fallback so
+    // every slide gets a background image. Disabled by default to
     // preserve the historical "opt-in only" semantics that existing
     // call sites rely on.
+    //
+    // Issue (2026-05): templates listed in SKIP_FALLBACK_BG_TEMPLATES
+    // are exempted from the *fallback* derivation (they still honour an
+    // explicit hand-authored prompt) so we don't ghost titles into bg
+    // pixels or fight inline imagery for visual attention.
     let bgPrompt = slide.background_image_prompt?.trim();
-    if ((!bgPrompt || bgPrompt.length < 3) && opts.deriveFallbackBackgrounds) {
+    if (
+      (!bgPrompt || bgPrompt.length < 3) &&
+      opts.deriveFallbackBackgrounds &&
+      !SKIP_FALLBACK_BG_TEMPLATES.has(template)
+    ) {
       const derived = deriveFallbackBackgroundPrompt(slide);
       if (derived) bgPrompt = derived;
     }
@@ -142,11 +212,14 @@ export function planImageJobs(
         // expose a persisted background URL. Callers that can cheaply look
         // up pitch_assets pass existingBackgroundSlideIds so repeated bulk
         // requests do not enqueue unbounded duplicate background jobs.
+        const dims = targetDimsForSlot(template, "image", "background");
         plan.push({
           slideId,
           slot: "image",
           kind: "background",
           prompt: bgPrompt,
+          width: dims.width,
+          height: dims.height,
           ...(perSlideStyle ? { perSlideStyle } : {}),
         });
       }
@@ -156,11 +229,14 @@ export function planImageJobs(
     if (slide.template === "bullet_list") {
       const img = slide.content.image;
       if (img && shouldEnqueueImage(img)) {
+        const dims = targetDimsForSlot("bullet_list", "image", "image");
         plan.push({
           slideId,
           slot: "image",
           kind: "image",
           prompt: img.prompt,
+          width: dims.width,
+          height: dims.height,
           ...(perSlideStyle ? { perSlideStyle } : {}),
         });
       } else if (img) {
@@ -170,22 +246,28 @@ export function planImageJobs(
       const left = slide.content.left_image;
       const right = slide.content.right_image;
       if (left && shouldEnqueueImage(left)) {
+        const dims = targetDimsForSlot("two_column", "left_image", "image");
         plan.push({
           slideId,
           slot: "left_image",
           kind: "image",
           prompt: left.prompt,
+          width: dims.width,
+          height: dims.height,
           ...(perSlideStyle ? { perSlideStyle } : {}),
         });
       } else if (left) {
         skipped += 1;
       }
       if (right && shouldEnqueueImage(right)) {
+        const dims = targetDimsForSlot("two_column", "right_image", "image");
         plan.push({
           slideId,
           slot: "right_image",
           kind: "image",
           prompt: right.prompt,
+          width: dims.width,
+          height: dims.height,
           ...(perSlideStyle ? { perSlideStyle } : {}),
         });
       } else if (right) {
@@ -194,11 +276,14 @@ export function planImageJobs(
     } else if (slide.template === "image_caption") {
       const img = slide.content.image;
       if (shouldEnqueueImage(img)) {
+        const dims = targetDimsForSlot("image_caption", "image", "image");
         plan.push({
           slideId,
           slot: "image",
           kind: "image",
           prompt: img.prompt,
+          width: dims.width,
+          height: dims.height,
           ...(perSlideStyle ? { perSlideStyle } : {}),
         });
       } else {
@@ -207,11 +292,14 @@ export function planImageJobs(
     } else if (slide.template === "full_bleed") {
       const img = slide.content.image;
       if (shouldEnqueueImage(img)) {
+        const dims = targetDimsForSlot("full_bleed", "image", "image");
         plan.push({
           slideId,
           slot: "image",
           kind: "image",
           prompt: img.prompt,
+          width: dims.width,
+          height: dims.height,
           ...(perSlideStyle ? { perSlideStyle } : {}),
         });
       } else {
@@ -232,10 +320,38 @@ function shouldEnqueueImage(img: SlideImage): boolean {
 }
 
 /**
- * Issue #1007 — derive a short background-image prompt from a slide's
- * most descriptive text field when the AI did not emit one. Pure / no
- * dependencies, deterministic for a given slide. Returns `undefined` if
- * the slide has no usable text.
+ * Negative-style suffix appended to every derived fallback background
+ * prompt to discourage FluxQ from baking literal text / typography into
+ * the image pixels (which produces the "ghost title" artefact).
+ */
+const FALLBACK_BG_NEGATIVE_TOKENS =
+  ", no text, no typography, no letters, no captions, no words, abstract only";
+
+/** Common stop words filtered out when distilling a slide's text into bg keywords. */
+const STOP_WORDS = new Set([
+  "a", "an", "and", "or", "but", "the", "of", "in", "on", "at", "to", "for",
+  "with", "from", "by", "is", "are", "was", "were", "be", "been", "being",
+  "this", "that", "these", "those", "it", "its", "we", "us", "our", "you",
+  "your", "they", "their", "i", "me", "my", "as", "if", "than", "then",
+  "so", "do", "does", "did", "have", "has", "had", "will", "would",
+  "could", "should", "can", "may", "might", "must", "shall", "what",
+  "when", "where", "why", "how", "who", "which",
+]);
+
+/**
+ * Derive an abstract, text-free background prompt from a slide's most
+ * descriptive text field (title / heading / caption / quote).
+ *
+ * Returns a string that NEVER contains the literal slide text — only one
+ * or two extracted keyword "concepts" — and ALWAYS appends explicit
+ * negative-text tokens so FluxQ doesn't ghost the heading text into the
+ * image pixels behind the rendered slide.
+ *
+ * If no usable text is found, falls back to a pure-abstract prompt
+ * (instead of returning `undefined` like the prior implementation) so the
+ * caller still gets a usable bg.
+ *
+ * Pure / no dependencies; deterministic for a given slide.
  *
  * Exported for unit testing.
  */
@@ -251,15 +367,39 @@ export function deriveFallbackBackgroundPrompt(
     c.overlay_text,
     c.quote,
   ];
+  let source: string | undefined;
   for (const candidate of candidates) {
     if (typeof candidate !== "string") continue;
     const trimmed = candidate.trim();
     if (trimmed.length < 3) continue;
-    // Cap length so the derived prompt stays focused.
-    const focus = trimmed.slice(0, 140);
-    return `Abstract conceptual background illustration evoking: ${focus}, soft gradient, generous negative space, readable behind bold headline text`;
+    source = trimmed;
+    break;
   }
-  return undefined;
+
+  // Always append the same negative-text tail so FluxQ avoids baking
+  // typography into the pixels.
+  const ABSTRACT_FALLBACK =
+    "Abstract conceptual background, soft gradient, generous negative space, readable behind bold headline text";
+
+  if (!source) {
+    return `${ABSTRACT_FALLBACK}${FALLBACK_BG_NEGATIVE_TOKENS}`;
+  }
+
+  // Distill at most 2 short content keywords from the source text. We
+  // intentionally drop punctuation, numbers, and very short tokens so
+  // FluxQ doesn't latch onto them as text-rendering hints.
+  const keywords = source
+    .toLowerCase()
+    .replace(/[^a-z\s]/g, " ")
+    .split(/\s+/)
+    .filter((w) => w.length >= 4 && !STOP_WORDS.has(w))
+    .slice(0, 2);
+
+  if (keywords.length === 0) {
+    return `${ABSTRACT_FALLBACK}${FALLBACK_BG_NEGATIVE_TOKENS}`;
+  }
+
+  return `Abstract conceptual background evoking ${keywords.join(" and ")}, soft gradient, generous negative space, readable behind bold headline text${FALLBACK_BG_NEGATIVE_TOKENS}`;
 }
 
 /**
@@ -305,9 +445,12 @@ export async function fanOutImageGeneration(
           prompt: job.prompt,
           kind: job.kind,
           slot: job.slot,
+          width: job.width,
+          height: job.height,
           mediaQueueRepo: opts.mediaQueueRepo,
           ...(opts.characterRepo ? { characterRepo: opts.characterRepo } : {}),
           ...(effectiveStyle ? { imageStyle: effectiveStyle } : {}),
+          ...(opts.imageModel ? { preferredModel: opts.imageModel } : {}),
         });
         enqueued += 1;
         opts.onEnqueued?.({

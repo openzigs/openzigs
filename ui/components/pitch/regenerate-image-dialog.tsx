@@ -45,6 +45,19 @@ export interface RegenerateImageDialogProps {
   /** "background" for full-bleed/title, "inline" for image_caption etc. */
   mode: "background" | "inline";
   /**
+   * Which inline image slot the regenerate is targeting. Omit for
+   * single-slot templates (defaults to `"image"` server-side); pin to
+   * `"left_image"` / `"right_image"` for `two_column`. Ignored when
+   * `mode === "background"`.
+   */
+  slot?: "image" | "left_image" | "right_image";
+  /**
+   * Optional per-regenerate FluxQ model override. Defaults to whatever
+   * the deck-level `metadata.image_model` is (or `flux-schnell` if the
+   * deck didn't pick one).
+   */
+  model?: "flux-schnell" | "flux-dev";
+  /**
    * Sub-issue #992 — when set, render a small thumbnail of the current
    * image with a "Replace?" caption above the prompt. Caller is
    * responsible for supplying a safe URL (root-relative path or http(s)).
@@ -77,6 +90,8 @@ export const RegenerateImageDialog = ({
   slideId,
   initialPrompt,
   mode,
+  slot,
+  model,
   currentImageUrl,
   onQueued,
 }: RegenerateImageDialogProps) => {
@@ -119,6 +134,12 @@ export const RegenerateImageDialog = ({
         prompt: prompt.trim(),
         mode,
       };
+      if (mode === "inline" && slot) {
+        body.slot = slot;
+      }
+      if (model) {
+        body.model = model;
+      }
       if (useLora && triggerWord) {
         body.loraTriggerWord = triggerWord;
       }

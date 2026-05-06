@@ -34,7 +34,7 @@ import type { MediaJob, MediaJobPayload } from "../queue/types.js";
 import type { PitchRepository } from "./pitch-repository.js";
 import type { Slide, SlideAsset } from "./pitch-schema.js";
 import { injectCharacterLora } from "../api/inject-character-lora.js";
-import { applyStylePreset, type ImageStyle } from "./image-style-prompts.js";
+import { applyStylePreset, appendQualityTokens, type ImageStyle } from "./image-style-prompts.js";
 import { clampToFluxQRecommendedDims } from "./fluxq-recommended-dims.js";
 
 /** Slots inside a slide's `content` object that can hold a `SlideImage`. */
@@ -132,7 +132,13 @@ export function enqueueSlideImage(opts: EnqueueSlideImageOpts): EnqueueSlideImag
   // the payload is built. injectCharacterLora may further mutate the prompt
   // by prepending LoRA trigger words, so style → LoRA → user-prompt is the
   // final left-to-right order in the payload.
-  const styledPrompt = applyStylePreset(opts.prompt, opts.imageStyle);
+  // Issue (2026-05): also append a quality-token suffix to nudge FluxQ
+  // toward sharper output. Skipped when the style preset already carries
+  // equivalent quality vocabulary (cinematic / 3d_render / corporate_photo).
+  const styledPrompt = appendQualityTokens(
+    applyStylePreset(opts.prompt, opts.imageStyle),
+    opts.imageStyle,
+  );
 
   // Bug-fix (post-PR-#1017 walkthrough): clamp the requested dims down to
   // FluxQ's advertised recommended_width/height. Slide templates render at

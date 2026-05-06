@@ -489,7 +489,7 @@ describe("fanOutImageGeneration — image style preset (#998)", () => {
     expect(payload.prompt.toLowerCase()).not.toContain("cinematic");
   });
 
-  it("no preset → prompt is unchanged (backwards compatible)", async () => {
+  it("no preset → prompt is unchanged except for quality-token suffix (Issue: pitch image quality 2026-05)", async () => {
     const repo = mockQueueRepo();
     const slides: SlideForFanout[] = [
       makeSlide(
@@ -512,7 +512,11 @@ describe("fanOutImageGeneration — image style preset (#998)", () => {
     const payload = repo.createJob.mock.calls[0]![0]!.payload as {
       prompt: string;
     };
-    expect(payload.prompt).toBe("raw prompt only");
+    // No style preset prefix prepended; user prompt preserved verbatim
+    // at the head; quality tokens appended once at the tail.
+    expect(payload.prompt.startsWith("raw prompt only")).toBe(true);
+    expect(payload.prompt).toContain("sharp focus");
+    expect(payload.prompt).toContain("8k");
   });
 });
 
@@ -520,7 +524,7 @@ describe("fanOutImageGeneration — image style preset (#998)", () => {
 import { deriveFallbackBackgroundPrompt } from "./image-fanout.js";
 
 describe("deriveFallbackBackgroundPrompt (#1007)", () => {
-  it("derives a prompt from the slide title", () => {
+  it("does NOT include the literal slide title and DOES include negative-text tokens (Issue: pitch title text rendering 2026-05)", () => {
     const slide = {
       template: "title" as const,
       content: { title: "Our Vision for 2030", subtitle: "Bold but achievable" },
@@ -529,10 +533,17 @@ describe("deriveFallbackBackgroundPrompt (#1007)", () => {
     };
     const out = deriveFallbackBackgroundPrompt(slide as never);
     expect(out).toBeTruthy();
-    expect(out).toContain("Our Vision for 2030");
+    // Must NOT bake the literal title into the prompt — that ghosts
+    // typography into the image pixels behind the rendered slide.
+    expect(out).not.toContain("Our Vision for 2030");
+    // Must append the negative-text suffix so FluxQ avoids text glyphs.
+    expect(out).toContain("no text");
+    expect(out).toContain("abstract only");
+    // Should distill at least one keyword from the title.
+    expect(out!.toLowerCase()).toMatch(/vision/);
   });
 
-  it("falls back to heading for a bullet_list", () => {
+  it("distills heading keywords for a bullet_list without copying the literal heading", () => {
     const slide = {
       template: "bullet_list" as const,
       content: { heading: "Quarterly Highlights", bullets: ["a", "b"] },
@@ -540,10 +551,12 @@ describe("deriveFallbackBackgroundPrompt (#1007)", () => {
       transition: "slide" as const,
     };
     const out = deriveFallbackBackgroundPrompt(slide as never);
-    expect(out).toContain("Quarterly Highlights");
+    expect(out).not.toContain("Quarterly Highlights");
+    expect(out!.toLowerCase()).toMatch(/quarterly|highlights/);
+    expect(out).toContain("no text");
   });
 
-  it("returns undefined when no usable text is present", () => {
+  it("returns the pure-abstract fallback (with negative-text tokens) when no usable text is present", () => {
     const slide = {
       template: "qa" as const,
       content: { heading: "" },
@@ -551,15 +564,20 @@ describe("deriveFallbackBackgroundPrompt (#1007)", () => {
       transition: "slide" as const,
     };
     const out = deriveFallbackBackgroundPrompt(slide as never);
-    expect(out).toBeUndefined();
+    // Behaviour change (Issue: pitch image quality 2026-05): instead of
+    // returning undefined we emit a generic abstract prompt so callers
+    // still get a usable background.
+    expect(out).toBeTruthy();
+    expect(out).toContain("Abstract conceptual background");
+    expect(out).toContain("no text");
   });
 
-  it("planImageJobs uses the fallback when background_image_prompt is missing", () => {
+  it("planImageJobs uses the fallback for templates NOT in SKIP_FALLBACK_BG_TEMPLATES (e.g. section_divider)", () => {
     const slides = [
       {
         id: "s1",
         slide: {
-          template: "title" as const,
+          template: "section_divider" as const,
           content: { title: "Hello World", subtitle: "demo" },
           speaker_notes: "",
           transition: "slide" as const,
@@ -570,8 +588,39 @@ describe("deriveFallbackBackgroundPrompt (#1007)", () => {
       deriveFallbackBackgrounds: true,
     });
     expect(skipped).toBe(0);
-    // One background job planned because the fallback derived a prompt.
+    // One background job planned because the fallback derived a prompt
+    // and section_divider is not in the skip set.
     expect(plan.length).toBeGreaterThanOrEqual(1);
     expect(plan.some((p) => p.kind === "background")).toBe(true);
+  });
+
+  it("planImageJobs SKIPS background fallback for skip-set templates (title, two_column, etc.) — Issue 2 (background-only images)", () => {
+    const slides = [
+      {
+        id: "s1",
+        slide: {
+          template: "title" as const,
+          content: { title: "Hello World", subtitle: "demo" },
+          speaker_notes: "",
+          transition: "slide" as const,
+        } as never,
+      },
+      {
+        id: "s2",
+        slide: {
+          template: "bullet_list" as const,
+          content: { heading: "Topic", bullets: ["a", "b"] },
+          speaker_notes: "",
+          transition: "slide" as const,
+        } as never,
+      },
+    ];
+    const { plan } = planImageJobs(slides, {
+      deriveFallbackBackgrounds: true,
+    });
+    // Neither slide carries an explicit background_image_prompt or
+    // inline image, and both templates are in SKIP_FALLBACK_BG_TEMPLATES,
+    // so no background jobs should be planned.
+    expect(plan.filter((p) => p.kind === "background").length).toBe(0);
   });
 });
