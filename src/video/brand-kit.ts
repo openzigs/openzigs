@@ -132,7 +132,9 @@ export class BrandKitRepository {
       "ALTER TABLE brand_kits ADD COLUMN font_heading TEXT",
       "ALTER TABLE brand_kits ADD COLUMN font_body TEXT",
       "ALTER TABLE brand_kits ADD COLUMN footer_text TEXT",
-      // #1047 — brand-kit defaults for the per-slide logo + slide-number.
+      // ── #1047 columns ──────────────────────────────────────────────
+      // Brand-kit-level defaults for per-slide logo placement and the
+      // deck-wide slide-number toggle. Added in PR #1044.
       "ALTER TABLE brand_kits ADD COLUMN default_logo_placement TEXT",
       "ALTER TABLE brand_kits ADD COLUMN show_slide_numbers INTEGER",
     ];
