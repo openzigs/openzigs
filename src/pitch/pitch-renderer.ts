@@ -160,8 +160,27 @@ export function renderDeckToHtml(
     }
   }
 
+  // Sub-issue #1051 — per-slide branding chrome (logo + slide-number
+  // indicator + footer/watermark overrides) is rendered INSIDE each
+  // <section> so a slide can hide or relocate the logo independently.
+  // The deck-level `<footer>` / `<.pitch-watermark>` remain as fallbacks
+  // for slides that did not opt out.
+  const totalSlides = deck.slides.length;
   const slidesHtml = slidesToRender
-    .map((slide, index) => renderSlide(slide, bgMapToUse?.get(index)))
+    .map((slide, index) => {
+      // When `slideIndex` filtered the array, preserve the deck position
+      // for the slide-number badge (otherwise filtered single-slide
+      // thumbnails would always read "1 / 1").
+      const deckPosition =
+        opts.slideIndex !== undefined ? opts.slideIndex + 1 : index + 1;
+      return renderSlide(
+        slide,
+        bgMapToUse?.get(index),
+        brandKit,
+        deckPosition,
+        totalSlides,
+      );
+    })
     .join("\n");
   const wrapperStyle = brandKitInlineStyle(brandKit);
   const footer = brandKit.footerText
@@ -172,11 +191,10 @@ export function renderDeckToHtml(
         safeUrl(brandKit.watermarkUrl) ?? "",
       )})"></div>`
     : "";
-  const logoTag = brandKitLogoTag(brandKit);
 
   const reveal = `<div class="reveal" data-deck-id="${attr(deck.id)}" data-aspect="${attr(
     deck.aspect_ratio,
-  )}"><div class="slides">${slidesHtml}</div>${footer}${watermark}${logoTag}</div>`;
+  )}"><div class="slides">${slidesHtml}</div>${footer}${watermark}</div>`;
 
   // Pick a theme: caller-supplied wins for any mode (allowlist [a-z0-9-]).
   // Embedded/present default to `white` for a presentation-grade light
@@ -473,10 +491,80 @@ export function renderRichBody(input: string): string {
   return `<p>${sanitize(text)}</p>`;
 }
 
-function brandKitLogoTag(kit: BrandKit): string {
+/**
+ * Resolve the corner where a slide's logo should render. Honors:
+ *   1. Per-slide explicit `branding.logoPlacement` (highest priority)
+ *   2. Per-slide `branding.hideLogo = true` → "none"
+ *   3. Default-hidden templates (`title`, `qa`) per Q1 epic decision
+ *   4. Brand-kit `defaultLogoPlacement`
+ *   5. Hard fallback `bottom-right`
+ *
+ * Returns `"none"` when the logo must not render.
+ */
+export function resolveLogoPlacement(
+  slide: Slide,
+  kit: BrandKit,
+): "top-left" | "top-right" | "bottom-left" | "bottom-right" | "none" {
+  const branding = slide.branding;
+  if (branding?.hideLogo) return "none";
+  if (branding?.logoPlacement) return branding.logoPlacement;
+  // Q1: hide on title / qa unless explicitly placed by the slide.
+  if (slide.template === "title" || slide.template === "qa") return "none";
+  return kit.defaultLogoPlacement ?? "bottom-right";
+}
+
+/**
+ * Resolve the corner where the slide-number indicator should render.
+ * Auto-flips to a free corner so it never collides with the logo.
+ * Returns `null` when slide numbers are disabled on the kit.
+ */
+export function resolveSlideNumberPlacement(
+  slide: Slide,
+  kit: BrandKit,
+): "top-left" | "top-right" | "bottom-left" | "bottom-right" | null {
+  if (!kit.showSlideNumbers) return null;
+  const logoCorner = resolveLogoPlacement(slide, kit);
+  if (logoCorner === "none") return "bottom-right";
+  // Diagonal opposite for maximum separation.
+  switch (logoCorner) {
+    case "top-left":
+      return "bottom-right";
+    case "top-right":
+      return "bottom-left";
+    case "bottom-left":
+      return "top-right";
+    case "bottom-right":
+    default:
+      return "top-left";
+  }
+}
+
+function slideLogoTag(slide: Slide, kit: BrandKit): string {
+  const placement = resolveLogoPlacement(slide, kit);
+  if (placement === "none") return "";
   const url = safeUrl(kit.logoUrl);
   if (!url) return "";
-  return `<img class="pitch-logo" src="${attr(url)}" alt="${attr(kit.name)} logo">`;
+  return `<img class="pitch-logo pitch-logo-${placement}" src="${attr(url)}" alt="${attr(kit.name)} logo">`;
+}
+
+function slideNumberTag(slide: Slide, kit: BrandKit, position: number, total: number): string {
+  const placement = resolveSlideNumberPlacement(slide, kit);
+  if (!placement) return "";
+  return `<div class="pitch-slide-number pitch-slide-number-${placement}" aria-hidden="true">${escapeHtml(String(position))} / ${escapeHtml(String(total))}</div>`;
+}
+
+function slideFooterOverrideTag(slide: Slide): string {
+  const text = slide.branding?.footerOverride;
+  if (!text) return "";
+  return `<footer class="pitch-footer pitch-footer--override">${sanitize(text)}</footer>`;
+}
+
+function slideWatermarkOverrideTag(slide: Slide): string {
+  const raw = slide.branding?.watermarkOverride;
+  if (!raw) return "";
+  const url = safeUrl(raw);
+  if (!url) return "";
+  return `<div class="pitch-watermark pitch-watermark--override" aria-hidden="true" style="background-image:url(${attr(url)})"></div>`;
 }
 
 function standaloneStyles(): string {
@@ -831,10 +919,40 @@ html, body { height: 100%; margin: 0; padding: 0; }
 }
 .pitch-deck-wrap .reveal .pitch-logo {
   position: absolute;
-  top: 20px;
-  right: 24px;
   max-height: 28px;
   opacity: 0.9;
+  z-index: 4;
+}
+/* Sub-issue #1051 \u2014 per-slide logo placement (4 corners). */
+.pitch-deck-wrap .reveal .pitch-logo-top-left { top: 20px; left: 24px; }
+.pitch-deck-wrap .reveal .pitch-logo-top-right { top: 20px; right: 24px; }
+.pitch-deck-wrap .reveal .pitch-logo-bottom-left { bottom: 20px; left: 24px; }
+.pitch-deck-wrap .reveal .pitch-logo-bottom-right { bottom: 20px; right: 24px; }
+/* Sub-issue #1047 \u2014 slide-number indicator. */
+.pitch-deck-wrap .reveal .pitch-slide-number {
+  position: absolute;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  color: var(--pitch-muted);
+  z-index: 4;
+  padding: 2px 6px;
+  background: rgba(255,255,255,0.6);
+  border-radius: 4px;
+}
+.pitch-deck-wrap .reveal .pitch-slide-number-top-left { top: 20px; left: 24px; }
+.pitch-deck-wrap .reveal .pitch-slide-number-top-right { top: 20px; right: 24px; }
+.pitch-deck-wrap .reveal .pitch-slide-number-bottom-left { bottom: 20px; left: 24px; }
+.pitch-deck-wrap .reveal .pitch-slide-number-bottom-right { bottom: 20px; right: 24px; }
+.pitch-deck-wrap .reveal .pitch-footer--override {
+  position: absolute;
+  bottom: 16px;
+  left: 72px;
+  right: 72px;
+  text-align: center;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--pitch-muted);
   z-index: 4;
 }
 .pitch-deck-wrap .reveal .pitch-watermark {
@@ -969,13 +1087,27 @@ html, body { height: 100%; margin: 0; padding: 0; }
 
 // ── Per-template renderers ─────────────────────────────────────────────
 
-function renderSlide(slide: Slide, backgroundUrl?: string): string {
+function renderSlide(
+  slide: Slide,
+  backgroundUrl?: string,
+  brandKit?: BrandKit,
+  position?: number,
+  total?: number,
+): string {
   const sectionAttrs = sectionAttributes(slide, backgroundUrl);
   const body = renderTemplateBody(slide);
   const notes = slide.speaker_notes
     ? `<aside class="notes">${sanitize(slide.speaker_notes)}</aside>`
     : "";
-  return `<section ${sectionAttrs}>${body}${notes}</section>`;
+  // Sub-issue #1051: per-slide branding chrome (logo + slide-number +
+  // optional footer/watermark overrides). Only emit when a brand kit
+  // was supplied — keeps unit-test renderers that call `renderSlide`
+  // directly without a kit working as before.
+  const chrome =
+    brandKit && position !== undefined && total !== undefined
+      ? `${slideFooterOverrideTag(slide)}${slideWatermarkOverrideTag(slide)}${slideLogoTag(slide, brandKit)}${slideNumberTag(slide, brandKit, position, total)}`
+      : "";
+  return `<section ${sectionAttrs}>${body}${chrome}${notes}</section>`;
 }
 
 function sectionAttributes(slide: Slide, backgroundUrl?: string): string {

@@ -45,7 +45,7 @@ const PptxGenJS = ((PptxGenJSNs as unknown as { default: PptxGenJSCtor }).defaul
   (PptxGenJSNs as unknown as PptxGenJSCtor)) as PptxGenJSCtor;
 type PptxGenJSInstance = InstanceType<PptxGenJSCtor>;
 import type { BrandKit, Deck, Slide } from "./pitch-schema.js";
-import { buildReadableColorTokens } from "./pitch-renderer.js";
+import { buildReadableColorTokens, resolveLogoPlacement } from "./pitch-renderer.js";
 import {
   resizeImageForPptx,
   safeFilename,
@@ -420,6 +420,62 @@ async function renderPptxSlide(
 
   if (slide.speaker_notes) {
     s.addNotes(slide.speaker_notes);
+  }
+
+  // Sub-issue #1051 \u2014 per-slide logo emission. Resolves placement via
+  // the same rules the HTML renderer uses (per-slide override > kit
+  // default, hidden on title/qa unless overridden). Failure to load the
+  // logo is silently skipped so a missing asset never breaks the export.
+  await emitSlideLogoAndOverrides(s, slide, brandKit, resize, fetchUrl);
+}
+
+/**
+ * Sub-issue #1051 \u2014 corner-to-(X,Y) mapping for the per-slide logo.
+ * Logo is rendered at ~0.6\" tall, anchored to the corner with a 0.3\"
+ * margin. Returns `null` when the slide must not show a logo.
+ */
+export function pptxLogoCornerXY(
+  corner: "top-left" | "top-right" | "bottom-left" | "bottom-right",
+): { x: number; y: number; w: number; h: number } {
+  const w = 1.0;
+  const h = 0.6;
+  const m = 0.3;
+  switch (corner) {
+    case "top-left":
+      return { x: m, y: m, w, h };
+    case "top-right":
+      return { x: SLIDE_W - w - m, y: m, w, h };
+    case "bottom-left":
+      return { x: m, y: SLIDE_H - h - m, w, h };
+    case "bottom-right":
+    default:
+      return { x: SLIDE_W - w - m, y: SLIDE_H - h - m, w, h };
+  }
+}
+
+async function emitSlideLogoAndOverrides(
+  s: PptxSlide,
+  slide: Slide,
+  brandKit: BrandKit,
+  resize: typeof resizeImageForPptx,
+  fetchUrl: (url: string) => Promise<Buffer>,
+): Promise<void> {
+  const placement = resolveLogoPlacement(slide, brandKit);
+  if (placement !== "none" && brandKit.logoUrl) {
+    const data = await loadImageDataUrl(brandKit.logoUrl, resize, fetchUrl);
+    if (data) {
+      const { x, y, w, h } = pptxLogoCornerXY(placement);
+      s.addImage({ data, x, y, w, h, sizing: { type: "contain", w, h } });
+    }
+  }
+
+  // Per-slide footer override beats the master footer.
+  const footerOverride = slide.branding?.footerOverride;
+  if (footerOverride) {
+    s.addText(footerOverride, {
+      x: 0.5, y: SLIDE_H - 0.35, w: SLIDE_W - 1.0, h: 0.25,
+      fontSize: 9, color: "999999", align: "center",
+    });
   }
 }
 

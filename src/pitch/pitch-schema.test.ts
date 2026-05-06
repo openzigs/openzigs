@@ -789,3 +789,87 @@ describe("DraftDeckBodySchema ï¿½ wizard ? backend contract", () => {
     ).toThrow();
   });
 });
+
+// -- Sub-issue #1051 — branding overrides + LogoPlacementEnum ------------
+
+import { BrandingOverrideSchema, LogoPlacementEnum } from "./pitch-schema.js";
+
+describe("LogoPlacementEnum (#1051)", () => {
+  it.each(["top-left", "top-right", "bottom-left", "bottom-right", "none"])(
+    "accepts %s",
+    (v) => {
+      expect(LogoPlacementEnum.parse(v)).toBe(v);
+    },
+  );
+
+  it("rejects unknown placement values", () => {
+    expect(() => LogoPlacementEnum.parse("middle")).toThrow();
+  });
+});
+
+describe("BrandingOverrideSchema (#1051)", () => {
+  it("accepts an empty branding block (all fields optional)", () => {
+    expect(BrandingOverrideSchema.parse({})).toEqual({});
+  });
+
+  it("round-trips a fully-populated override", () => {
+    const parsed = BrandingOverrideSchema.parse({
+      logoPlacement: "top-right",
+      hideLogo: false,
+      footerOverride: "Confidential",
+      watermarkOverride: "/brand-kits/wm.png",
+    });
+    expect(parsed.logoPlacement).toBe("top-right");
+    expect(parsed.footerOverride).toBe("Confidential");
+  });
+
+  it("rejects unknown fields (strict)", () => {
+    expect(() =>
+      BrandingOverrideSchema.parse({ unknown: true } as unknown as Record<string, unknown>),
+    ).toThrow();
+  });
+
+  it("caps footerOverride at 120 chars", () => {
+    expect(() =>
+      BrandingOverrideSchema.parse({ footerOverride: "x".repeat(121) }),
+    ).toThrow();
+  });
+});
+
+describe("BrandKitSchema — branding defaults (#1051/#1047)", () => {
+  it("accepts defaultLogoPlacement and showSlideNumbers", () => {
+    const kit = BrandKitSchema.parse({
+      ...validBrandKit(),
+      defaultLogoPlacement: "bottom-right",
+      showSlideNumbers: true,
+    });
+    expect(kit.defaultLogoPlacement).toBe("bottom-right");
+    expect(kit.showSlideNumbers).toBe(true);
+  });
+
+  it("treats both new fields as optional (backwards compat)", () => {
+    const kit = BrandKitSchema.parse(validBrandKit());
+    expect(kit.defaultLogoPlacement).toBeUndefined();
+    expect(kit.showSlideNumbers).toBeUndefined();
+  });
+});
+
+describe("Slide schema backwards compat (#1051)", () => {
+  it("parses a slide with no branding block (legacy decks)", () => {
+    const slide = SlideSchema.parse(
+      validSlide("bullet_list", { heading: "H", bullets: ["a"] }),
+    );
+    expect((slide as { branding?: unknown }).branding).toBeUndefined();
+  });
+
+  it("attaches a branding block to any template", () => {
+    const slide = SlideSchema.parse({
+      template: "bullet_list",
+      content: { heading: "H", bullets: ["a"] },
+      branding: { logoPlacement: "top-left", hideLogo: false },
+    });
+    expect((slide as { branding?: { logoPlacement?: string } }).branding?.logoPlacement).toBe(
+      "top-left",
+    );
+  });
+});

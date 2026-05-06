@@ -271,3 +271,82 @@ async function collectPptxXml(buffer: Buffer): Promise<string> {
   const parts = await Promise.all(files.map((f) => f.async("string")));
   return parts.join("\n");
 }
+
+
+// -- Sub-issue #1051 — per-slide logo placement in PPTX ---------------
+
+import { pptxLogoCornerXY } from "./pitch-export-pptx.js";
+
+describe("pptxLogoCornerXY (#1051)", () => {
+  it("places top-left at (0.3, 0.3)", () => {
+    const r = pptxLogoCornerXY("top-left");
+    expect(r.x).toBeCloseTo(0.3);
+    expect(r.y).toBeCloseTo(0.3);
+  });
+
+  it("places top-right anchored to slide width", () => {
+    const r = pptxLogoCornerXY("top-right");
+    // SLIDE_W=13.333, w=1.0, m=0.3 ? x=12.033
+    expect(r.x).toBeCloseTo(12.033);
+    expect(r.y).toBeCloseTo(0.3);
+  });
+
+  it("places bottom-left anchored to slide height", () => {
+    const r = pptxLogoCornerXY("bottom-left");
+    expect(r.x).toBeCloseTo(0.3);
+    // SLIDE_H=7.5, h=0.6, m=0.3 ? y=6.6
+    expect(r.y).toBeCloseTo(6.6);
+  });
+
+  it("places bottom-right at the far corner", () => {
+    const r = pptxLogoCornerXY("bottom-right");
+    expect(r.x).toBeCloseTo(12.033);
+    expect(r.y).toBeCloseTo(6.6);
+  });
+});
+
+describe("exportDeckToPptx — per-slide logo (#1051)", () => {
+  it("emits a logo image when a slide opts in via branding override on a title", async () => {
+    const resizeImage = vi
+      .fn()
+      .mockResolvedValue({ dataUrl: `data:image/png;base64,${PNG_TINY.toString("base64")}`, bytes: 100 });
+    const fetchImpl = vi.fn().mockResolvedValue(PNG_TINY);
+
+    const titleWithLogo = SlideSchema.parse({
+      template: "title",
+      content: { title: "T" },
+      speaker_notes: "",
+      transition: "slide",
+      fragments: [],
+      branding: { logoPlacement: "top-right" },
+    } as unknown);
+
+    const kit = buildKit({ logoUrl: "https://x/logo.png" });
+    const out = await exportDeckToPptx(buildDeck([titleWithLogo]), kit, {
+      resizeImage,
+      fetchImpl,
+    });
+    expect(out.buffer.length).toBeGreaterThan(0);
+    // fetch + resize should be called once for the logo on the single slide.
+    expect(fetchImpl).toHaveBeenCalledWith("https://x/logo.png");
+    expect(resizeImage).toHaveBeenCalled();
+  });
+
+  it("does not fetch the logo when every slide has it hidden (title/qa default)", async () => {
+    const resizeImage = vi
+      .fn()
+      .mockResolvedValue({ dataUrl: `data:image/png;base64,${PNG_TINY.toString("base64")}`, bytes: 100 });
+    const fetchImpl = vi.fn().mockResolvedValue(PNG_TINY);
+
+    const kit = buildKit({ logoUrl: "https://x/logo.png" });
+    await exportDeckToPptx(
+      buildDeck([
+        makeSlide("title", { title: "T" }),
+        makeSlide("qa", { contact: "hi@example.com" }),
+      ]),
+      kit,
+      { resizeImage, fetchImpl },
+    );
+    expect(fetchImpl).not.toHaveBeenCalledWith("https://x/logo.png");
+  });
+});

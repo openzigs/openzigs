@@ -38,6 +38,23 @@ export const HexColor = z
  * allowed to carry — adding a new `z.string().url()` field will fail
  * that test until the SSRF guard is wired in.
  */
+/**
+ * Logo placement enum (Epic #1045 / sub-issue #1051 + #1047).
+ *
+ * Used both at the brand-kit level (`defaultLogoPlacement`) and per-slide
+ * (`branding.logoPlacement`). `none` hides the logo on the affected
+ * surface; the per-slide field also accepts `inherit` (the default) which
+ * means "fall back to the kit-level default".
+ */
+export const LogoPlacementEnum = z.enum([
+  "top-left",
+  "top-right",
+  "bottom-left",
+  "bottom-right",
+  "none",
+]);
+export type LogoPlacement = z.infer<typeof LogoPlacementEnum>;
+
 export const BrandKitSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1).max(80),
@@ -49,8 +66,44 @@ export const BrandKitSchema = z.object({
   logoUrl: z.string().url().nullable(),
   watermarkUrl: z.string().url().nullable(),
   footerText: z.string().max(120).nullable(),
+  /**
+   * Default corner the logo renders in unless a slide overrides it
+   * (sub-issue #1047). When omitted, the renderer falls back to
+   * `bottom-right`.
+   */
+  defaultLogoPlacement: LogoPlacementEnum.optional(),
+  /**
+   * When `true`, slides render a small "n / total" indicator in the
+   * corner opposite the resolved logo (sub-issue #1047). Defaults to
+   * `false` for backwards compatibility.
+   */
+  showSlideNumbers: z.boolean().optional(),
 });
 export type BrandKit = z.infer<typeof BrandKitSchema>;
+
+/**
+ * Per-slide branding override block (sub-issue #1051).
+ *
+ * Every field is optional; an empty / missing block means the slide
+ * inherits the brand-kit defaults entirely. Strings are sanitized at
+ * render time via `sanitizeRichText`.
+ */
+export const BrandingOverrideSchema = z
+  .object({
+    logoPlacement: LogoPlacementEnum.optional(),
+    /** When true, force-hide the logo on this slide regardless of placement. */
+    hideLogo: z.boolean().optional(),
+    /** Per-slide footer text override (≤120 chars). */
+    footerOverride: z.string().max(120).optional(),
+    /**
+     * Per-slide watermark image URL override. Must reuse the existing
+     * upload pipeline (root-relative path or `http(s)://`); `safeUrl`
+     * blocks anything else at render time.
+     */
+    watermarkOverride: z.string().max(500).optional(),
+  })
+  .strict();
+export type BrandingOverride = z.infer<typeof BrandingOverrideSchema>;
 
 /** Per-block fragment animation. */
 export const FragmentEnum = z.enum([
@@ -104,6 +157,14 @@ const Common = z.object({
    * camelCase `imageStyle` deck option.
    */
   image_style: ImageStyleEnum.optional(),
+  /**
+   * Per-slide branding overrides (Epic #1045 / sub-issue #1051). When
+   * omitted (the default), the slide inherits the deck's brand kit
+   * settings entirely. Field names are camelCase so the UI editor can
+   * round-trip them without translation; the surrounding slide schema
+   * stays snake_case for backwards compat with existing decks.
+   */
+  branding: BrandingOverrideSchema.optional(),
 });
 
 /** Inline image — always carries a generation prompt; `url` is filled later. */

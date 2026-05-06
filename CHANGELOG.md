@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Pitch per-slide branding overrides (`Closes #1051`).** Slides can now carry an optional `branding` block — `logoPlacement` (`top-left | top-right | bottom-left | bottom-right | none`), `hideLogo`, `footerOverride` (≤120 chars, sanitized), `watermarkOverride` (URL-allowlisted) — that wins over the brand-kit defaults at render time. The deck-level logo emission was replaced with a per-slide chrome layer in both `pitch-renderer` (HTML/Reveal) and `pitch-export-pptx` (PowerPoint), each anchored to the resolved corner. `BrandKitSchema` gained `defaultLogoPlacement` and `showSlideNumbers` (both optional, backward compatible). New helpers exported: `resolveLogoPlacement(slide, kit)`, `resolveSlideNumberPlacement(slide, kit)`, `pptxLogoCornerXY(corner)`. Title and Q&A slides hide the logo by default unless an explicit per-slide placement opts back in (epic decision Q1).
 - **Pitch editor toolbar: "Image quality" dropdown (`ImageModelPicker`) on `/pitch/[deckId]`** that lets users switch the deck-level FluxQ model (`flux-schnell` "Fast" / `flux-dev` "High quality") after the deck has already been created. PATCHes `metadata.image_model` via the same admin endpoint the brand-kit picker uses.
 - **`recommendedDimsForSlot(template, slot, kind)`** export from `src/pitch/image-fanout.ts` — slot-aware target dimensions reused by both the bulk fan-out and the per-slide regenerate route.
 

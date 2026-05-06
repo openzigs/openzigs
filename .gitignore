@@ -203,3 +203,29 @@ ui/vitest-out.*
 
 # Transient PR body drafts written by gh CLI flows
 pr_body*.md
+
+# Ephemeral developer scratch files (do not commit)
+_*.json
+_*.txt
+_*.cjs
+_*.ps1
+_*.html
+_*.diff
+_*.md
+deck-*.pdf
+deck-*.html
+deck-standalone.html
+render-*.html
+pinterest-snapshots-*.json
+pinterest-daily-summary-*.md
+pr-body-*.md
+smoke-*.txt
+lint-out.txt
+test-out.txt
+typecheck-out.txt
+coverage_out.txt
+leaks*.txt
+issues.json
+code_scanning_alerts.json
+dependabot_alerts.json
+eng.traineddata
