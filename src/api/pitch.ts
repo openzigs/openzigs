@@ -25,7 +25,7 @@ import { mkdir, readFile, rename, stat, unlink, writeFile } from "node:fs/promis
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { extname, join, relative, resolve } from "node:path";
-import { Router, type Request, type Response } from "express";
+import { Router, type Request, type RequestHandler, type Response } from "express";
 import express from "express";
 import multer from "multer";
 import { nanoid } from "nanoid";
@@ -2424,75 +2424,85 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
     },
   );
 
-  // ── Sub-issue #1048 ─ Extract a deck's effective brand kit into a new kit ─
-  router.post(
-    "/decks/:deckId/extract-brand-kit",
-    crudLimiter,
-    (req, res) => {
-      const Body = z
-        .object({ name: z.string().min(1).max(120) })
-        .strict();
-      const body = parseBody(Body, res, req);
-      if (!body) return;
+  // ── Sub-issue #1048 ─ Clone a deck's effective brand kit into a new kit ──
+  //
+  // Naming note (follow-up to PR #1044): this endpoint was originally named
+  // `extract-brand-kit`, but it does not extract anything from the deck's
+  // current state — it clones the brand kit row the deck currently points at
+  // under a new name. The route is now `clone-brand-kit`; the legacy path is
+  // retained below as a deprecation alias so existing clients keep working.
+  const cloneBrandKitHandler: RequestHandler = (req, res) => {
+    const Body = z.object({ name: z.string().min(1).max(120) }).strict();
+    const body = parseBody(Body, res, req);
+    if (!body) return;
 
-      const deck = deps.pitchRepo.getDeck(req.params.deckId);
-      if (!deck) {
-        sendError(res, 404, "not_found", `deck ${req.params.deckId} not found`);
-        return;
-      }
-      const source = deps.brandKitRepo.getById(deck.brand_kit_id);
-      if (!source) {
+    const deck = deps.pitchRepo.getDeck(req.params.deckId);
+    if (!deck) {
+      sendError(res, 404, "not_found", `deck ${req.params.deckId} not found`);
+      return;
+    }
+    const source = deps.brandKitRepo.getById(deck.brand_kit_id);
+    if (!source) {
+      sendError(
+        res,
+        404,
+        "not_found",
+        `brand kit ${deck.brand_kit_id} not found`,
+      );
+      return;
+    }
+
+    const newId = nanoid();
+    try {
+      const created = deps.brandKitRepo.create({
+        id: newId,
+        name: body.name,
+        primaryColor: source.primaryColor,
+        secondaryColor: source.secondaryColor,
+        accentColor: source.accentColor,
+        fontFamily: source.fontFamily,
+        fontHeading: source.fontHeading ?? null,
+        fontBody: source.fontBody ?? null,
+        footerText: source.footerText ?? null,
+        defaultLogoPlacement: source.defaultLogoPlacement ?? null,
+        showSlideNumbers: source.showSlideNumbers ?? null,
+        logoPath: source.logoPath ?? null,
+        watermarkPath: source.watermarkPath ?? null,
+        introTemplateId: source.introTemplateId ?? null,
+        outroTemplateId: source.outroTemplateId ?? null,
+      });
+      audit("system", "pitch_deck_brand_kit_cloned", {
+        deckId: req.params.deckId,
+        newBrandKitId: created.id,
+        sourceBrandKitId: source.id,
+      });
+      emit("pitch:brand-kit:created", { brandKitId: created.id });
+      res.status(201).json({
+        brandKit: { ...created, isStarter: false },
+      });
+    } catch (err) {
+      const msg = errMessage(err);
+      if (/UNIQUE constraint failed/i.test(msg)) {
         sendError(
           res,
-          404,
-          "not_found",
-          `brand kit ${deck.brand_kit_id} not found`,
+          409,
+          "conflict",
+          `brand kit name "${body.name}" already exists`,
         );
         return;
       }
+      sendError(res, 500, "internal_error", `clone failed: ${msg}`);
+    }
+  };
 
-      const newId = nanoid();
-      try {
-        const created = deps.brandKitRepo.create({
-          id: newId,
-          name: body.name,
-          primaryColor: source.primaryColor,
-          secondaryColor: source.secondaryColor,
-          accentColor: source.accentColor,
-          fontFamily: source.fontFamily,
-          fontHeading: source.fontHeading ?? null,
-          fontBody: source.fontBody ?? null,
-          footerText: source.footerText ?? null,
-          defaultLogoPlacement: source.defaultLogoPlacement ?? null,
-          showSlideNumbers: source.showSlideNumbers ?? null,
-          logoPath: source.logoPath ?? null,
-          watermarkPath: source.watermarkPath ?? null,
-          introTemplateId: source.introTemplateId ?? null,
-          outroTemplateId: source.outroTemplateId ?? null,
-        });
-        audit("system", "pitch_deck_brand_kit_extracted", {
-          deckId: req.params.deckId,
-          newBrandKitId: created.id,
-          sourceBrandKitId: source.id,
-        });
-        emit("pitch:brand-kit:created", { brandKitId: created.id });
-        res.status(201).json({
-          brandKit: { ...created, isStarter: false },
-        });
-      } catch (err) {
-        const msg = errMessage(err);
-        if (/UNIQUE constraint failed/i.test(msg)) {
-          sendError(
-            res,
-            409,
-            "conflict",
-            `brand kit name "${body.name}" already exists`,
-          );
-          return;
-        }
-        sendError(res, 500, "internal_error", `extract failed: ${msg}`);
-      }
-    },
+  router.post("/decks/:deckId/clone-brand-kit", crudLimiter, cloneBrandKitHandler);
+  // @deprecated 2026-05 — use `clone-brand-kit`. Kept as alias for backwards
+  // compatibility with clients (incl. the older UI bundle and any external
+  // scripts) that still POST to the original path.
+  router.post(
+    "/decks/:deckId/extract-brand-kit",
+    crudLimiter,
+    cloneBrandKitHandler,
   );
 
   router.post(

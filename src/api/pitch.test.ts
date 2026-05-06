@@ -1274,7 +1274,7 @@ describe("Pitch REST router", () => {
     });
 
     // ── Sub-issue #1048 — Apply / Copy brand kit ─────────────────────
-    describe("apply-brand-kit / extract-brand-kit (#1048)", () => {
+    describe("apply-brand-kit / clone-brand-kit (#1048)", () => {
       it("POST /decks/:deckId/apply-brand-kit re-points a deck", async () => {
         const kitA = createCustomKit(harness, "Kit A");
         const kitB = createCustomKit(harness, "Kit B");
@@ -1391,11 +1391,11 @@ describe("Pitch REST router", () => {
         ).toBeUndefined();
       });
 
-      it("POST /decks/:deckId/extract-brand-kit clones source kit into a new one", async () => {
+      it("POST /decks/:deckId/clone-brand-kit clones source kit into a new one", async () => {
         const kitA = createCustomKit(harness, "Source Kit");
         const { deckId } = createDeck(harness, kitA);
         const res = await request(harness.app)
-          .post(`/api/admin/pitch/decks/${deckId}/extract-brand-kit`)
+          .post(`/api/admin/pitch/decks/${deckId}/clone-brand-kit`)
           .send({ name: "Cloned From Deck" });
         expect(res.status).toBe(201);
         expect(res.body.brandKit.name).toBe("Cloned From Deck");
@@ -1403,18 +1403,32 @@ describe("Pitch REST router", () => {
         expect(res.body.brandKit.isStarter).toBe(false);
       });
 
-      it("POST /decks/:deckId/extract-brand-kit 404s for missing deck", async () => {
+      // Backwards-compat: the legacy `extract-brand-kit` path is retained
+      // as a deprecation alias for the renamed route. Once the UI/clients
+      // have all migrated to `clone-brand-kit` this can be removed.
+      it("POST /decks/:deckId/extract-brand-kit (legacy alias) still clones the source kit", async () => {
+        const kitA = createCustomKit(harness, "Legacy Alias Source");
+        const { deckId } = createDeck(harness, kitA);
         const res = await request(harness.app)
-          .post(`/api/admin/pitch/decks/missing/extract-brand-kit`)
+          .post(`/api/admin/pitch/decks/${deckId}/extract-brand-kit`)
+          .send({ name: "Cloned Via Legacy Path" });
+        expect(res.status).toBe(201);
+        expect(res.body.brandKit.name).toBe("Cloned Via Legacy Path");
+        expect(res.body.brandKit.isStarter).toBe(false);
+      });
+
+      it("POST /decks/:deckId/clone-brand-kit 404s for missing deck", async () => {
+        const res = await request(harness.app)
+          .post(`/api/admin/pitch/decks/missing/clone-brand-kit`)
           .send({ name: "X" });
         expect(res.status).toBe(404);
       });
 
-      it("POST /decks/:deckId/extract-brand-kit 409 on duplicate name", async () => {
+      it("POST /decks/:deckId/clone-brand-kit 409 on duplicate name", async () => {
         const kitA = createCustomKit(harness, "Dup Source");
         const { deckId } = createDeck(harness, kitA);
         const res = await request(harness.app)
-          .post(`/api/admin/pitch/decks/${deckId}/extract-brand-kit`)
+          .post(`/api/admin/pitch/decks/${deckId}/clone-brand-kit`)
           .send({ name: "Dup Source" });
         expect(res.status).toBe(409);
       });

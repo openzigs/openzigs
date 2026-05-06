@@ -306,9 +306,12 @@ export default function PitchDeckEditorPage() {
   });
 
   // Sub-issue #1048 — clone the deck's effective kit into a new custom kit.
-  const extractBrandKitMutation = useMutation({
+  // Note: backend route was renamed extract-brand-kit → clone-brand-kit
+  // (the operation is a clone, not an extraction). The legacy path is
+  // still served as an alias for any external clients.
+  const cloneBrandKitMutation = useMutation({
     mutationFn: async (name: string) =>
-      fetchJson(`/api/admin/pitch/decks/${deckId}/extract-brand-kit`, {
+      fetchJson(`/api/admin/pitch/decks/${deckId}/clone-brand-kit`, {
         method: "POST",
         body: JSON.stringify({ name }),
       }),
@@ -663,7 +666,7 @@ export default function PitchDeckEditorPage() {
                 `${deck.title} kit`,
               );
               if (name && name.trim()) {
-                extractBrandKitMutation.mutate(name.trim());
+                cloneBrandKitMutation.mutate(name.trim());
               }
             }}
           />

@@ -36,8 +36,8 @@ import { BrandKitPicker } from "./pages/brand-kit-picker.page";
  * | #1047 AC1                              | "rehydrates the new controls from the persisted brand kit on open" |
  * | #1048 AC1                              | "shows a confirmation prompt and POSTs to apply-brand-kit when Apply is clicked" |
  * | #1048 AC1 + AC4 (cancel guard)         | "does not POST to apply-brand-kit when the confirmation is cancelled" |
- * | #1048 AC2 + AC3 (extract route)        | "prompts for a kit name and POSTs to extract-brand-kit when Copy from deck is clicked" |
- * | #1048 AC2 (cancel guard)               | "does not POST to extract-brand-kit when the prompt is cancelled" |
+ * | #1048 AC2 + AC3 (clone route)          | "prompts for a kit name and POSTs to clone-brand-kit when Copy from deck is clicked" |
+ * | #1048 AC2 (cancel guard)               | "does not POST to clone-brand-kit when the prompt is cancelled" |
  *
  * Network is fully mocked via `page.route()` so the suite is hermetic
  * (no backend, no SQLite, no brand-kit fixtures required).
@@ -365,20 +365,22 @@ test.describe("Epic #1045 — Apply / Copy from deck (#1048)", () => {
   });
 
   // AC #1048.2 + AC #1048.3: clicking "Copy from deck" prompts for a
-  // name and POSTs to /extract-brand-kit with that name.
-  test("prompts for a kit name and POSTs to extract-brand-kit when Copy from deck is clicked", async ({
+  // name and POSTs to /clone-brand-kit with that name. (Route was
+  // renamed from extract-brand-kit; the legacy path is still served as
+  // an alias by the backend but the UI now targets the new path.)
+  test("prompts for a kit name and POSTs to clone-brand-kit when Copy from deck is clicked", async ({
     page,
   }) => {
     const NEW_KIT_NAME = "Copied kit";
-    let extractBody: Record<string, unknown> | null = null;
+    let cloneBody: Record<string, unknown> | null = null;
     await page.route(
-      `**/api/admin/pitch/decks/${DECK_ID}/extract-brand-kit`,
+      `**/api/admin/pitch/decks/${DECK_ID}/clone-brand-kit`,
       async (route: Route) => {
         if (route.request().method() !== "POST") return route.continue();
         try {
-          extractBody = JSON.parse(route.request().postData() ?? "{}");
+          cloneBody = JSON.parse(route.request().postData() ?? "{}");
         } catch {
-          extractBody = {};
+          cloneBody = {};
         }
         return route.fulfill({
           status: 200,
@@ -401,18 +403,18 @@ test.describe("Epic #1045 — Apply / Copy from deck (#1048)", () => {
     await expect(picker.copyFromDeckButton).toBeVisible();
     await picker.copyFromDeckButton.click();
 
-    await expect.poll(() => extractBody?.name).toBe(NEW_KIT_NAME);
+    await expect.poll(() => cloneBody?.name).toBe(NEW_KIT_NAME);
   });
 
   // AC #1048.2 (cancel guard): dismissing the prompt makes no changes.
-  test("does not POST to extract-brand-kit when the prompt is cancelled", async ({
+  test("does not POST to clone-brand-kit when the prompt is cancelled", async ({
     page,
   }) => {
-    let extractPostCount = 0;
+    let clonePostCount = 0;
     await page.route(
-      `**/api/admin/pitch/decks/${DECK_ID}/extract-brand-kit`,
+      `**/api/admin/pitch/decks/${DECK_ID}/clone-brand-kit`,
       (route: Route) => {
-        if (route.request().method() === "POST") extractPostCount += 1;
+        if (route.request().method() === "POST") clonePostCount += 1;
         return route.fulfill({
           status: 200,
           contentType: "application/json",
@@ -431,7 +433,7 @@ test.describe("Epic #1045 — Apply / Copy from deck (#1048)", () => {
     const picker = new BrandKitPicker(page);
     await picker.copyFromDeckButton.click();
 
-    await expect.poll(() => extractPostCount).toBe(0);
+    await expect.poll(() => clonePostCount).toBe(0);
   });
 });
 
