@@ -80,7 +80,12 @@ describe("exportNotesToPdf", () => {
     // would race; instead we inspect the spawn call args for the path.
     expect(spawnImpl).toHaveBeenCalledOnce();
     const args = spawnImpl.mock.calls[0]?.[1] as string[];
-    expect(args[0]).toBe("generic");
+    // `resolveDecktapeInvocation` may prepend the resolved decktape.js
+    // path to argv (when the package is installed locally — i.e. in CI
+    // and most dev environments). The decktape sub-command (`generic`
+    // for the notes doc) therefore lives somewhere in argv, not
+    // necessarily at index 0. Just assert it's present.
+    expect(args).toContain("generic");
   });
 
   it("propagates errors from htmlToPdf", async () => {
