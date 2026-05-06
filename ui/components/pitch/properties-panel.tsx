@@ -84,6 +84,26 @@ const editorComponents: Record<string, RegistryEditor> = {
   mermaid: dynamic(() => import("./property-editors/mermaid"), {
     ssr: false,
   }) as unknown as RegistryEditor,
+  // Six new templates from epic #1045 — inline editors so the amber
+  // "No editor available" notice no longer fires for these.
+  pricing_table: dynamic(() => import("./property-editors/pricing_table"), {
+    ssr: false,
+  }) as unknown as RegistryEditor,
+  big_number: dynamic(() => import("./property-editors/big_number"), {
+    ssr: false,
+  }) as unknown as RegistryEditor,
+  team_grid: dynamic(() => import("./property-editors/team_grid"), {
+    ssr: false,
+  }) as unknown as RegistryEditor,
+  logo_grid: dynamic(() => import("./property-editors/logo_grid"), {
+    ssr: false,
+  }) as unknown as RegistryEditor,
+  roadmap: dynamic(() => import("./property-editors/roadmap"), {
+    ssr: false,
+  }) as unknown as RegistryEditor,
+  agenda: dynamic(() => import("./property-editors/agenda"), {
+    ssr: false,
+  }) as unknown as RegistryEditor,
 };
 
 const DEBOUNCE_MS = 400;
