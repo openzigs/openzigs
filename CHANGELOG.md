@@ -7,12 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Pitch branding & template library expansion (epic `#1045`).**
+  - **Six new slide templates** in the LLM template library — discriminated-union schemas with strict bounds + `superRefine` invariants, paired HTML/PPTX renderers, and prompt descriptions surfaced in `buildDraftSystemPrompt`:
+    - `pricing_table` (Closes #1046) — 2-4 tiers with optional single-highlight enforcement, ≤10 features per tier, optional CTA + footnote.
+    - `big_number` (Closes #1046) — hero metric with `value ≤20`, `label ≤80`, optional `support ≤240` + `trend (up|down|flat)` + `trend_label`.
+    - `team_grid` (Closes #1049) — 2-12 members with name / role / optional bio / photoUrl / ≤4 social links (URLs hardened via `safeUrl()` + `rel="nofollow noopener noreferrer"`).
+    - `logo_grid` (Closes #1049) — 4-24 partner/customer logos with optional grayscale toggle.
+    - `roadmap` (Closes #1052) — 2-6 columns × 1-4 tracks matrix with status-coded items (`planned | in_progress | done`).
+    - `agenda` (Closes #1052) — auto-derived from the deck's `section_divider` slides at render time, or a manual ordered/unordered list.
+  - **Generator + wizard awareness (Closes #1050).** All six new templates are now described in `TEMPLATE_DESCRIPTIONS` and enumerated by `describeTemplates()` so the deck-draft system prompt (Pitch wizard) can pick them when the script naturally calls for pricing, hero metrics, team intros, customer logos, roadmaps, or auto agendas.
+  - **Brand-kit defaults: `defaultLogoPlacement` + `showSlideNumbers` (Closes #1047).** Brand kits gained two new optional persisted fields exposed in the brand-kit editor (`pitch-bk-default-logo-placement` select + `pitch-bk-show-slide-numbers` checkbox). The renderer respects them when no per-slide override is set.
+  - **Apply-to-deck and Copy-from-deck flows (Closes #1048).** Two new admin routes (`POST /api/admin/pitch/decks/:deckId/apply-brand-kit` and `POST /api/admin/pitch/decks/:deckId/extract-brand-kit`) plus matching buttons on `BrandKitPicker` (guarded by `window.confirm` / `window.prompt`) let users re-point a deck to a different kit (clearing per-slide overrides) or clone the deck's effective kit into a brand-new custom kit.
+
+### Changed
+
+- **`BrandKitSchema`** gained two optional fields: `defaultLogoPlacement` (`top-left | top-right | bottom-left | bottom-right | none`) and `showSlideNumbers` (boolean). All existing decks are unaffected.
+- **`BrandKit` interface (`src/video/brand-kit.ts`)** gained required-nullable `defaultLogoPlacement` + `showSlideNumbers` columns; an idempotent `ALTER TABLE brand_kits ADD COLUMN …` migration runs on first start. The brand-kit editor now exposes both fields.
+- **`pitch-prompts.ts` `TEMPLATE_DESCRIPTIONS`** is now keyed by `Record<SlideTemplate, string>` so any future addition to `SLIDE_TEMPLATES` will fail typecheck until described — prevents silent prompt drift.
+
 ### Fixed
 
 - **Pitch present + editor: TWO_COLUMN/BULLET_LIST slides 2+ no longer render their content offscreen.** PR #1044 added `position: relative` to `.pitch-deck-wrap .reveal .slides > section.pitch-has-bg`, which overrode Reveal.js's required `position: absolute` on `.slides > section`. Past/future sections (which Reveal toggles to `display:block` while inactive) then stacked vertically and pushed the active slide hundreds of pixels below the iframe viewport, leaving headings + columns clipped offscreen on every slide after the title. The override has been removed (Reveal already gives the active section its own positioning context via absolute + 3D transforms, which is enough for the absolutely-positioned `::before` scrim to anchor). The companion `.pitch-has-bg * { position: relative }` cascade was scoped down to `z-index: 1` only; only direct children retain `position: relative` so the column flex layout keeps its stacking context above the scrim without fighting Reveal's internal layout.
 - **Pitch per-slide "Regenerate background image" no longer downsizes everything to 1024×576.** `POST /api/admin/pitch/decks/:deckId/slides/:slideId/image` was passing `body.width` / `body.height` straight into `enqueueSlideImage`, but the studio's `RegenerateImageDialog` does not send those fields, so they fell through to `clampToFluxQRecommendedDims(undefined, undefined)` and returned the `FLUXQ_FALLBACK_DIMS` 1024×576 default for every regenerated background. The handler now derives slot-aware defaults via the newly-exported `recommendedDimsForSlot()` (background → 1920×1080, two_column left/right → 960×1080, image_caption → 1280×720, full_bleed → 1920×1080, default inline → 1280×960). Explicit body dims still win.
 
-### Added
+### Added (PR #1044, prior)
 
 - **Pitch per-slide branding overrides (`Closes #1051`).** Slides can now carry an optional `branding` block — `logoPlacement` (`top-left | top-right | bottom-left | bottom-right | none`), `hideLogo`, `footerOverride` (≤120 chars, sanitized), `watermarkOverride` (URL-allowlisted) — that wins over the brand-kit defaults at render time. The deck-level logo emission was replaced with a per-slide chrome layer in both `pitch-renderer` (HTML/Reveal) and `pitch-export-pptx` (PowerPoint), each anchored to the resolved corner. `BrandKitSchema` gained `defaultLogoPlacement` and `showSlideNumbers` (both optional, backward compatible). New helpers exported: `resolveLogoPlacement(slide, kit)`, `resolveSlideNumberPlacement(slide, kit)`, `pptxLogoCornerXY(corner)`. Title and Q&A slides hide the logo by default unless an explicit per-slide placement opts back in (epic decision Q1).
 - **Pitch editor toolbar: "Image quality" dropdown (`ImageModelPicker`) on `/pitch/[deckId]`** that lets users switch the deck-level FluxQ model (`flux-schnell` "Fast" / `flux-dev` "High quality") after the deck has already been created. PATCHes `metadata.image_model` via the same admin endpoint the brand-kit picker uses.
