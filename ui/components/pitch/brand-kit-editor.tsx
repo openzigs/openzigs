@@ -123,6 +123,12 @@ export const BrandKitEditor = ({
   const [form, setForm] = useState<FormState>(blankForm());
   const [logoError, setLogoError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  // PR #1044 follow-up — in create mode there is no kit id yet, so we
+  // queue the chosen file in state and upload it right after the kit is
+  // persisted. Avoids the trap where Save closes the dialog before the
+  // user can ever reach the upload control.
+  const [pendingLogo, setPendingLogo] = useState<File | null>(null);
+  const [pendingLogoUrl, setPendingLogoUrl] = useState<string | null>(null);
 
   // Prime form when the dialog opens or the target kit changes.
   useEffect(() => {
@@ -143,7 +149,19 @@ export const BrandKitEditor = ({
       setForm(blankForm());
     }
     setLogoError(null);
+    setPendingLogo(null);
+    setPendingLogoUrl((prev) => {
+      if (prev) URL.revokeObjectURL(prev);
+      return null;
+    });
   }, [open, kit]);
+
+  // Revoke object URL on unmount to avoid leaking blobs.
+  useEffect(() => {
+    return () => {
+      if (pendingLogoUrl) URL.revokeObjectURL(pendingLogoUrl);
+    };
+  }, [pendingLogoUrl]);
 
   const colourErrors = {
     primaryColor: !HEX_RE.test(form.primaryColor),
@@ -204,9 +222,32 @@ export const BrandKitEditor = ({
       });
       return kit.id;
     },
-    onSuccess: (id) => {
+    onSuccess: async (id) => {
+      // Flush any queued logo (only set in create mode).
+      if (pendingLogo) {
+        try {
+          const fd = new FormData();
+          fd.append("logo", pendingLogo);
+          const url = buildUrl(`/api/admin/pitch/brand-kits/${id}/logo`);
+          const headers: HeadersInit = AUTH_TOKEN
+            ? { Authorization: `Bearer ${AUTH_TOKEN}` }
+            : {};
+          const res = await fetch(url, { method: "POST", headers, body: fd });
+          if (!res.ok) {
+            const text = await res.text();
+            throw new Error(text || `HTTP ${res.status}`);
+          }
+          showToast("Brand kit saved with logo.", "success");
+        } catch (err) {
+          showToast(
+            `Kit saved but logo upload failed: ${err instanceof Error ? err.message : String(err)}`,
+            "error",
+          );
+        }
+      } else {
+        showToast("Brand kit saved.", "success");
+      }
       queryClient.invalidateQueries({ queryKey: ["pitch", "brand-kits"] });
-      showToast("Brand kit saved.", "success");
       onSaved?.(id);
       onOpenChange(false);
     },
@@ -259,11 +300,17 @@ export const BrandKitEditor = ({
       setLogoError("Logo exceeds 2 MB cap.");
       return;
     }
+    setLogoError(null);
     if (!kit) {
-      setLogoError("Save the kit first, then upload a logo.");
+      // Create mode — queue locally; saveMutation.onSuccess will upload
+      // it once the kit has an id.
+      setPendingLogo(file);
+      setPendingLogoUrl((prev) => {
+        if (prev) URL.revokeObjectURL(prev);
+        return URL.createObjectURL(file);
+      });
       return;
     }
-    setLogoError(null);
     const fd = new FormData();
     fd.append("logo", file);
     const url = buildUrl(`/api/admin/pitch/brand-kits/${kit.id}/logo`);
@@ -490,10 +537,10 @@ export const BrandKitEditor = ({
           {!isStarter && (
             <div data-testid="pitch-bk-logo-section">
               <span className="mb-1 block font-semibold">Logo</span>
-              {kit?.logoUrl ? (
+              {kit?.logoUrl || pendingLogoUrl ? (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img
-                  src={kit.logoUrl}
+                  src={pendingLogoUrl ?? kit?.logoUrl ?? ""}
                   alt="Current brand kit logo"
                   data-testid="pitch-bk-logo-preview"
                   className="h-12 w-auto rounded border border-border bg-muted/30 object-contain"
@@ -509,19 +556,14 @@ export const BrandKitEditor = ({
               <div className="mt-2 flex flex-wrap items-center gap-2">
                 <label
                   data-testid="pitch-bk-logo-upload-label"
-                  className={`rounded border border-primary px-3 py-1 text-xs font-semibold text-primary ${
-                    isCreate
-                      ? "cursor-not-allowed opacity-50"
-                      : "cursor-pointer hover:bg-primary/10"
-                  }`}
+                  className="cursor-pointer rounded border border-primary px-3 py-1 text-xs font-semibold text-primary hover:bg-primary/10"
                 >
-                  {kit?.logoUrl ? "Replace logo" : "Upload logo"}
+                  {kit?.logoUrl || pendingLogoUrl ? "Replace logo" : "Upload logo"}
                   <input
                     ref={fileInputRef}
                     type="file"
                     data-testid="pitch-bk-logo-input"
                     accept={ALLOWED_LOGO_MIMES.join(",")}
-                    disabled={isCreate}
                     onChange={async (e) => {
                       const file = e.target.files?.[0];
                       if (file) await handleLogoFile(file);
@@ -530,7 +572,7 @@ export const BrandKitEditor = ({
                     className="sr-only"
                   />
                 </label>
-                {kit?.logoUrl && (
+                {(kit?.logoUrl || pendingLogoUrl) && (
                   <button
                     type="button"
                     data-testid="pitch-bk-logo-remove"
@@ -544,6 +586,14 @@ export const BrandKitEditor = ({
                       ) {
                         return;
                       }
+                      if (isCreate) {
+                        setPendingLogo(null);
+                        setPendingLogoUrl((prev) => {
+                          if (prev) URL.revokeObjectURL(prev);
+                          return null;
+                        });
+                        return;
+                      }
                       removeLogoMutation.mutate();
                     }}
                     className="rounded border border-red-500 px-3 py-1 text-xs font-semibold text-red-500 hover:bg-red-500/10 disabled:opacity-50"
@@ -553,8 +603,8 @@ export const BrandKitEditor = ({
                 )}
               </div>
               <p className="mt-1 text-xs text-muted-foreground">
-                {isCreate
-                  ? "Save the kit first to upload a logo."
+                {isCreate && pendingLogo
+                  ? `Will upload "${pendingLogo.name}" when you save.`
                   : "PNG / JPEG / WebP, ≤ 2 MB."}
               </p>
               {logoError && (

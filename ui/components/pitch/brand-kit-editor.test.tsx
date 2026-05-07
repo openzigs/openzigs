@@ -442,19 +442,51 @@ describe("BrandKitEditor", () => {
       expect(screen.getByTestId("pitch-bk-logo-remove")).toBeInTheDocument();
     });
 
-    it("renders the section in create mode with a disabled upload + 'Save first' hint", () => {
+    it("renders the section in create mode with an enabled upload (queue-then-upload flow)", () => {
       render(<BrandKitEditor open onOpenChange={vi.fn()} kit={null} />, {
         wrapper,
       });
       expect(screen.getByTestId("pitch-bk-logo-section")).toBeInTheDocument();
+      // Upload is enabled in create mode now \u2014 file is queued locally
+      // and flushed after the kit is saved.
       expect(
         (screen.getByTestId("pitch-bk-logo-input") as HTMLInputElement).disabled,
-      ).toBe(true);
-      expect(screen.getByTestId("pitch-bk-logo-section")).toHaveTextContent(
-        /Save the kit first to upload a logo/i,
+      ).toBe(false);
+      expect(screen.getByTestId("pitch-bk-logo-upload-label")).toHaveTextContent(
+        /Upload logo/i,
       );
     });
 
+    it("queues a logo file in create mode and previews it before save", async () => {
+      // jsdom doesn't implement createObjectURL — stub it.
+      const createObjectURL = vi.fn(() => "blob:mock");
+      const revokeObjectURL = vi.fn();
+      // @ts-expect-error — jsdom URL doesn't expose these by default.
+      URL.createObjectURL = createObjectURL;
+      // @ts-expect-error — same.
+      URL.revokeObjectURL = revokeObjectURL;
+      render(<BrandKitEditor open onOpenChange={vi.fn()} kit={null} />, {
+        wrapper,
+      });
+      const file = new File([new Uint8Array(1)], "logo.png", { type: "image/png" });
+      Object.defineProperty(file, "size", { value: 1024 });
+      fireEvent.change(
+        screen.getByTestId("pitch-bk-logo-input") as HTMLInputElement,
+        { target: { files: [file] } },
+      );
+      await waitFor(() => {
+        expect(screen.getByTestId("pitch-bk-logo-preview")).toHaveAttribute(
+          "src",
+          "blob:mock",
+        );
+      });
+      expect(screen.getByTestId("pitch-bk-logo-upload-label")).toHaveTextContent(
+        /Replace logo/i,
+      );
+      expect(screen.getByTestId("pitch-bk-logo-section")).toHaveTextContent(
+        /Will upload "logo\.png"/,
+      );
+    });
     it("DELETEs the logo when Remove is clicked and the user confirms", async () => {
       const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
       vi.mocked(fetchJson).mockResolvedValue({});
