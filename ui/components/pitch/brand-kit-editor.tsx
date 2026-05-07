@@ -283,6 +283,23 @@ export const BrandKitEditor = ({
     }
   };
 
+  // Sub-issue #1044 follow-up — explicit "remove logo" action so users
+  // can clear an uploaded logo without having to re-upload a placeholder.
+  const removeLogoMutation = useMutation({
+    mutationFn: async () => {
+      if (!kit) throw new Error("missing kit");
+      await fetchJson(`/api/admin/pitch/brand-kits/${kit.id}/logo`, {
+        method: "DELETE",
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["pitch", "brand-kits"] });
+      showToast("Logo removed.", "success");
+    },
+    onError: (err) =>
+      setLogoError(err instanceof Error ? err.message : String(err)),
+  });
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
@@ -470,28 +487,80 @@ export const BrandKitEditor = ({
             </label>
           </div>
 
-          {!isCreate && !isStarter && kit && (
-            <div>
+          {!isStarter && (
+            <div data-testid="pitch-bk-logo-section">
               <span className="mb-1 block font-semibold">Logo</span>
-              <input
-                ref={fileInputRef}
-                type="file"
-                data-testid="pitch-bk-logo-input"
-                accept={ALLOWED_LOGO_MIMES.join(",")}
-                onChange={async (e) => {
-                  const file = e.target.files?.[0];
-                  if (file) await handleLogoFile(file);
-                  e.target.value = "";
-                }}
-                className="text-[11px]"
-              />
-              <p className="mt-0.5 text-[10px] text-muted-foreground">
-                PNG / JPEG / WebP, ≤ 2 MB.
+              {kit?.logoUrl ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={kit.logoUrl}
+                  alt="Current brand kit logo"
+                  data-testid="pitch-bk-logo-preview"
+                  className="h-12 w-auto rounded border border-border bg-muted/30 object-contain"
+                />
+              ) : (
+                <div
+                  data-testid="pitch-bk-logo-empty"
+                  className="grid h-12 place-items-center rounded border border-dashed border-border bg-muted/10 px-3 text-xs text-muted-foreground"
+                >
+                  No logo uploaded
+                </div>
+              )}
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <label
+                  data-testid="pitch-bk-logo-upload-label"
+                  className={`rounded border border-primary px-3 py-1 text-xs font-semibold text-primary ${
+                    isCreate
+                      ? "cursor-not-allowed opacity-50"
+                      : "cursor-pointer hover:bg-primary/10"
+                  }`}
+                >
+                  {kit?.logoUrl ? "Replace logo" : "Upload logo"}
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    data-testid="pitch-bk-logo-input"
+                    accept={ALLOWED_LOGO_MIMES.join(",")}
+                    disabled={isCreate}
+                    onChange={async (e) => {
+                      const file = e.target.files?.[0];
+                      if (file) await handleLogoFile(file);
+                      e.target.value = "";
+                    }}
+                    className="sr-only"
+                  />
+                </label>
+                {kit?.logoUrl && (
+                  <button
+                    type="button"
+                    data-testid="pitch-bk-logo-remove"
+                    disabled={removeLogoMutation.isPending}
+                    onClick={() => {
+                      if (
+                        typeof window !== "undefined" &&
+                        !window.confirm(
+                          "Remove the current logo from this brand kit?",
+                        )
+                      ) {
+                        return;
+                      }
+                      removeLogoMutation.mutate();
+                    }}
+                    className="rounded border border-red-500 px-3 py-1 text-xs font-semibold text-red-500 hover:bg-red-500/10 disabled:opacity-50"
+                  >
+                    {removeLogoMutation.isPending ? "Removing…" : "Remove"}
+                  </button>
+                )}
+              </div>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {isCreate
+                  ? "Save the kit first to upload a logo."
+                  : "PNG / JPEG / WebP, ≤ 2 MB."}
               </p>
               {logoError && (
                 <p
                   data-testid="pitch-bk-logo-error"
-                  className="mt-0.5 text-[10px] text-red-500"
+                  className="mt-0.5 text-xs text-red-500"
                 >
                   {logoError}
                 </p>

@@ -2251,12 +2251,19 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
   // Brand kits (#966)
   // ────────────────────────────────────────────────────────────────────
 
+  // Build the HTTP-servable URL for a brand-kit logo. Returns null when
+  // the kit has no logo on disk so the UI can render an empty-state
+  // placeholder instead of a broken `<img>`.
+  const brandKitLogoUrl = (kit: { id: string; logoPath: string | null }) =>
+    kit.logoPath ? `/api/admin/pitch/brand-kits/${kit.id}/logo` : null;
+
   router.get("/brand-kits", crudLimiter, (_req, res) => {
     const kits = deps.brandKitRepo.getAll();
     res.json({
       brandKits: kits.map((k) => ({
         ...k,
         isStarter: STARTER_KIT_IDS.has(k.id),
+        logoUrl: brandKitLogoUrl(k),
       })),
     });
   });
@@ -2306,7 +2313,7 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
       return;
     }
     res.json({
-      brandKit: { ...kit, isStarter: STARTER_KIT_IDS.has(kit.id) },
+      brandKit: { ...kit, isStarter: STARTER_KIT_IDS.has(kit.id), logoUrl: brandKitLogoUrl(kit) },
     });
   });
 
@@ -2717,6 +2724,114 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
       }
     },
   );
+
+  // GET /brand-kits/:id/logo — serve the stored logo bytes for in-browser
+  // preview in the brand-kit editor. The repo-stored `logoPath` is
+  // confined to `brandKitsDir` (see POST handler above) but we re-verify
+  // path containment here as defence-in-depth in case a future code path
+  // ever writes a traversal value into the row.
+  router.get("/brand-kits/:id/logo", crudLimiter, (req, res) => {
+    const kit = deps.brandKitRepo.getById(req.params.id);
+    if (!kit) {
+      sendError(res, 404, "not_found", `brand kit ${req.params.id} not found`);
+      return;
+    }
+    if (!kit.logoPath) {
+      sendError(res, 404, "not_found", "no logo set for this brand kit");
+      return;
+    }
+    const absPath = resolve(kit.logoPath);
+    const rel = relative(brandKitsDir, absPath);
+    if (rel.startsWith("..") || resolve(brandKitsDir, rel) !== absPath) {
+      audit(
+        "security",
+        "pitch_brand_kit_logo_path_outside_root",
+        { brandKitId: kit.id, absPath, brandKitsDir },
+        "warn",
+      );
+      sendError(res, 404, "not_found", "logo not found");
+      return;
+    }
+    if (!existsSync(absPath)) {
+      sendError(res, 404, "not_found", "logo file missing");
+      return;
+    }
+    const ext = extname(absPath).toLowerCase().replace(/^\./, "");
+    const mime =
+      ext === "png"
+        ? "image/png"
+        : ext === "jpg" || ext === "jpeg"
+          ? "image/jpeg"
+          : ext === "webp"
+            ? "image/webp"
+            : "application/octet-stream";
+    res.setHeader("Content-Type", mime);
+    res.setHeader("Cache-Control", "no-store");
+    res.sendFile(absPath, (err) => {
+      if (err && !res.headersSent) {
+        sendError(res, 500, "internal_error", "logo send failed");
+      }
+    });
+  });
+
+  // DELETE /brand-kits/:id/logo — clear the stored logo. Mirrors the
+  // 403/404 contract of the POST handler (starter kits are immutable).
+  // Idempotent: a second call after the file is gone still returns 200
+  // with logoPath: null. The on-disk unlink is best-effort — ENOENT is
+  // swallowed because the row's truth is what counts for the renderer.
+  router.delete("/brand-kits/:id/logo", crudLimiter, async (req, res) => {
+    const kit = deps.brandKitRepo.getById(req.params.id);
+    if (!kit) {
+      sendError(res, 404, "not_found", `brand kit ${req.params.id} not found`);
+      return;
+    }
+    if (STARTER_KIT_IDS.has(req.params.id)) {
+      audit(
+        "security",
+        "pitch_brand_kit_mutation_blocked",
+        { brandKitId: req.params.id, reason: "starter_immutable" },
+        "warn",
+      );
+      sendError(res, 403, "forbidden", "starter brand kits are immutable");
+      return;
+    }
+
+    if (kit.logoPath) {
+      const absPath = resolve(kit.logoPath);
+      const rel = relative(brandKitsDir, absPath);
+      const inside =
+        !rel.startsWith("..") && resolve(brandKitsDir, rel) === absPath;
+      if (inside) {
+        try {
+          await unlink(absPath);
+        } catch (err) {
+          // ENOENT is fine — the row will still be cleared below.
+          if ((err as NodeJS.ErrnoException)?.code !== "ENOENT") {
+            logger.warn(
+              `[Pitch API] brand-kit logo unlink failed: ${errMessage(err)}`,
+            );
+          }
+        }
+      }
+    }
+
+    const updated = deps.brandKitRepo.update(kit.id, { logoPath: null });
+    audit("system", "pitch_brand_kit_logo_removed", {
+      brandKitId: kit.id,
+      previousPath: kit.logoPath,
+    });
+    const payload = {
+      ...(updated ?? { ...kit, logoPath: null }),
+      isStarter: false,
+      logoUrl: null,
+    };
+    emit("pitch:brand-kit:updated", {
+      brandKitId: kit.id,
+      brandKit: payload,
+      source: "logo",
+    });
+    res.json({ brandKit: payload });
+  });
 
   // ────────────────────────────────────────────────────────────────────
   // Public share-link admin routes (sub-issue #1000)

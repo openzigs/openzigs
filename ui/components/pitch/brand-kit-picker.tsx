@@ -32,6 +32,12 @@ export interface BrandKitListEntry {
     | null;
   /** Deck-wide slide-number toggle (Sub-issue #1047). */
   showSlideNumbers?: boolean | null;
+  /**
+   * HTTP-servable URL of the kit's logo (`/api/admin/pitch/brand-kits/:id/logo`)
+   * or `null` when no logo has been uploaded. Surfaced by the brand-kit
+   * editor preview row (PR #1044 follow-up).
+   */
+  logoUrl?: string | null;
   isStarter?: boolean;
 }
 

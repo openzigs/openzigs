@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Brand-kit editor: discoverable logo upload + preview + remove (PR #1044 follow-up).** The brand-kit editor now shows the current logo preview (or a `"No logo uploaded"` placeholder), a clearly-labeled `Upload logo` / `Replace logo` button (real button styling, no more bare 11 px file input), and a `Remove` button gated by a `window.confirm` prompt. Create-mode renders the section with a disabled upload and a `"Save the kit first to upload a logo."` hint so the feature is discoverable from the moment the dialog opens. Backed by a new `DELETE /api/admin/pitch/brand-kits/:id/logo` endpoint (starter-immutable, idempotent, best-effort `unlink`) and a new `GET /api/admin/pitch/brand-kits/:id/logo` byte-serving endpoint with brand-kits-dir path containment. Brand-kit list/get responses now include `logoUrl`.
+
 - **Pitch branding & template library expansion (epic `#1045`).**
   - **Six new slide templates** in the LLM template library — discriminated-union schemas with strict bounds + `superRefine` invariants, paired HTML/PPTX renderers, and prompt descriptions surfaced in `buildDraftSystemPrompt`:
     - `pricing_table` (Closes #1046) — 2-4 tiers with optional single-highlight enforcement, ≤10 features per tier, optional CTA + footnote.

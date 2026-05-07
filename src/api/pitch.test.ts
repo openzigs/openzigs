@@ -1519,6 +1519,55 @@ describe("Pitch REST router", () => {
       );
       expect(res.status).toBe(400);
     });
+
+    // ── DELETE /brand-kits/:id/logo (PR #1044 follow-up) ──────────────
+    it("DELETE /brand-kits/:id/logo clears logoPath after a successful upload", async () => {
+      const id = createCustomKit(harness);
+      const upload = await request(harness.app)
+        .post(`/api/admin/pitch/brand-kits/${id}/logo`)
+        .attach("logo", PNG_BYTES, {
+          filename: "logo.png",
+          contentType: "image/png",
+        });
+      expect(upload.status).toBe(200);
+      expect(harness.deps.brandKitRepo.getById(id)?.logoPath).toBeTruthy();
+
+      const del = await request(harness.app).delete(
+        `/api/admin/pitch/brand-kits/${id}/logo`,
+      );
+      expect(del.status).toBe(200);
+      expect(del.body.brandKit.logoPath).toBeNull();
+      expect(del.body.brandKit.logoUrl).toBeNull();
+      expect(harness.deps.brandKitRepo.getById(id)?.logoPath).toBeNull();
+    });
+
+    it("DELETE /brand-kits/:id/logo returns 404 for an unknown kit", async () => {
+      const res = await request(harness.app).delete(
+        "/api/admin/pitch/brand-kits/no-such/logo",
+      );
+      expect(res.status).toBe(404);
+    });
+
+    it("DELETE /brand-kits/:id/logo returns 403 on a starter kit", async () => {
+      const res = await request(harness.app).delete(
+        "/api/admin/pitch/brand-kits/starter-modern-minimal/logo",
+      );
+      expect(res.status).toBe(403);
+    });
+
+    it("DELETE /brand-kits/:id/logo is idempotent — second call still 200s", async () => {
+      const id = createCustomKit(harness);
+      const first = await request(harness.app).delete(
+        `/api/admin/pitch/brand-kits/${id}/logo`,
+      );
+      expect(first.status).toBe(200);
+      expect(first.body.brandKit.logoPath).toBeNull();
+      const second = await request(harness.app).delete(
+        `/api/admin/pitch/brand-kits/${id}/logo`,
+      );
+      expect(second.status).toBe(200);
+      expect(second.body.brandKit.logoPath).toBeNull();
+    });
   });
 
   // ── Additional branch-coverage tests ────────────────────────────────
