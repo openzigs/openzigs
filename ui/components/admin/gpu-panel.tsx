@@ -5,6 +5,10 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { fetchJson } from "@/lib/api";
 import { showToast } from "@/components/toast";
 import { RefreshCw, Cpu, Loader2 } from "lucide-react";
+import {
+  GpuDispatcherSection,
+  type DispatcherLaneSnapshot,
+} from "./gpu-dispatcher-card";
 
 type GpuInfo = {
   index: number;
@@ -25,6 +29,9 @@ type GpuProfile = {
   same_arch: boolean;
   pinning: Record<string, number>;
   detected_at: string;
+  /** Issue #1060 — per-GPU dispatcher lane state. Optional; absent on legacy
+   *  servers and on no-dispatcher tests. */
+  dispatcher?: { gpus: DispatcherLaneSnapshot[] };
 };
 
 type OllamaModel = {
@@ -251,6 +258,9 @@ export const GpuPanel = () => {
           ))}
         </div>
       )}
+
+      {/* GPU dispatcher state (Issue #1060) */}
+      <GpuDispatcherSection lanes={profile.dispatcher?.gpus} />
 
       {/* Pooling mode control */}
       {profile.pooling_supported && (
