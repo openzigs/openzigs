@@ -70,7 +70,20 @@ export type ProviderConfig =
       apiKey?: string;
       bearerToken?: string;
     }
-  | { type: "ollama"; baseUrl: string };
+  | { type: "ollama"; baseUrl: string }
+  /**
+   * Local first-party provider for epic #1053. Wraps a local OpenAI-compatible
+   * endpoint (Ollama or vLLM) and runs the SDK with COPILOT_OFFLINE=true so
+   * the Copilot CLI never reaches out to githubcopilot.com. The endpoint is
+   * the FULL OpenAI-compatible URL including /v1 (autodetect already appends it).
+   */
+  | {
+      type: "local-copilot";
+      endpoint: string;
+      model: string;
+      apiKey?: string;
+      timeoutMs?: number;
+    };
 
 // ── Native Custom Agent Definition ──
 export type CustomAgentDefinition = {
@@ -795,6 +808,14 @@ export class CopilotWrapperService
 
   setProvider(provider: ProviderConfig | undefined): void {
     this.providerConfig = provider;
+    // Local-copilot provider runs entirely offline; flip the SDK switch.
+    // Cleared back to undefined when switching back to a remote provider so
+    // we don't leak the offline flag into other sessions in the same process.
+    if (provider?.type === "local-copilot") {
+      process.env.COPILOT_OFFLINE = "true";
+    } else if (process.env.COPILOT_OFFLINE === "true") {
+      delete process.env.COPILOT_OFFLINE;
+    }
     // Provider change invalidates all cached sessions
     void this.clearAllSessions();
   }
@@ -812,6 +833,17 @@ export class CopilotWrapperService
       let base = this.providerConfig.baseUrl;
       while (base.endsWith("/")) base = base.slice(0, -1);
       return { type: "openai", baseUrl: `${base}/v1`, wireApi: "completions" };
+    }
+    if (this.providerConfig.type === "local-copilot") {
+      // endpoint already includes /v1 (autodetect appends it).
+      let endpoint = this.providerConfig.endpoint;
+      while (endpoint.endsWith("/")) endpoint = endpoint.slice(0, -1);
+      return {
+        type: "openai",
+        baseUrl: endpoint,
+        apiKey: this.providerConfig.apiKey,
+        wireApi: "completions",
+      };
     }
     return this.providerConfig;
   }
