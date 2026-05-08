@@ -72,6 +72,12 @@ beforeEach(() => {
   // resolves to {} unless an individual test overrides per-URL.
   fetchJsonMock.mockImplementation((url: string) => {
     if (url === "/api/admin/local-llm/status") return Promise.resolve(baseStatus);
+    if (url === "/api/admin/local-llm/router")
+      return Promise.resolve({
+        enabled: true,
+        cloudThresholdTokens: 4096,
+        thresholdStops: [256, 1024, 4096, 8192],
+      });
     return Promise.resolve({});
   });
   // Mock window.confirm to return true unless overridden.
@@ -266,5 +272,75 @@ describe("LocalLlmPanel", () => {
       vllmKey: { masked: "ABC…xyz", present: true },
     });
     expect(screen.getByText("ABC…xyz")).toBeInTheDocument();
+  });
+
+  describe("smart router section", () => {
+    it("renders toggle in the configured state from GET /router", async () => {
+      fetchJsonMock.mockImplementation((url: string) => {
+        if (url === "/api/admin/local-llm/status")
+          return Promise.resolve(baseStatus);
+        if (url === "/api/admin/local-llm/router")
+          return Promise.resolve({
+            enabled: false,
+            cloudThresholdTokens: 1024,
+            thresholdStops: [256, 1024, 4096, 8192],
+          });
+        return Promise.resolve({});
+      });
+      renderPanel();
+      await waitFor(() => {
+        const toggle = screen.getByTestId("smart-router-toggle") as HTMLInputElement;
+        expect(toggle.checked).toBe(false);
+      });
+      expect(screen.getByTestId("smart-router-threshold-value")).toHaveTextContent(
+        "1024",
+      );
+    });
+
+    it("toggling the checkbox POSTs the new state preserving threshold", async () => {
+      renderPanel();
+      // Wait for router GET to settle so the toggle reflects defaults.
+      await waitFor(() => {
+        expect(screen.getByTestId("smart-router-toggle")).toBeInTheDocument();
+      });
+      const toggle = screen.getByTestId("smart-router-toggle") as HTMLInputElement;
+      // Initial state from default mock: enabled=true, threshold=4096.
+      expect(toggle.checked).toBe(true);
+      fireEvent.click(toggle);
+      await waitFor(() => {
+        const calls = fetchJsonMock.mock.calls as Array<[string, RequestInit]>;
+        const postCall = calls.find(
+          ([url, init]) =>
+            url === "/api/admin/local-llm/router" && init?.method === "POST",
+        );
+        expect(postCall).toBeDefined();
+        expect(JSON.parse(String(postCall![1].body))).toEqual({
+          enabled: false,
+          cloudThresholdTokens: 4096,
+        });
+      });
+    });
+
+    it("changing the slider POSTs the new threshold", async () => {
+      renderPanel();
+      await waitFor(() => {
+        expect(screen.getByTestId("smart-router-threshold")).toBeInTheDocument();
+      });
+      const slider = screen.getByTestId("smart-router-threshold") as HTMLInputElement;
+      // Stops = [256, 1024, 4096, 8192]. Move slider to index 0 → 256.
+      fireEvent.change(slider, { target: { value: "0" } });
+      await waitFor(() => {
+        const calls = fetchJsonMock.mock.calls as Array<[string, RequestInit]>;
+        const postCall = calls.find(
+          ([url, init]) =>
+            url === "/api/admin/local-llm/router" && init?.method === "POST",
+        );
+        expect(postCall).toBeDefined();
+        expect(JSON.parse(String(postCall![1].body))).toEqual({
+          enabled: true,
+          cloudThresholdTokens: 256,
+        });
+      });
+    });
   });
 });

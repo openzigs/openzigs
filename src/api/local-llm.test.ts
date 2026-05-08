@@ -312,4 +312,62 @@ describe("local-llm admin router", () => {
       expect(onDisk.localLlm.vllmApiKey).toBe(result.apiKey);
     });
   });
+
+  describe("smart router (POST /router)", () => {
+    it("GET /router returns defaults when nothing on disk", async () => {
+      const app = buildApp();
+      const r = await request(app).get("/api/admin/local-llm/router");
+      expect(r.status).toBe(200);
+      expect(r.body.enabled).toBe(true);
+      expect(r.body.cloudThresholdTokens).toBe(4096);
+      expect(r.body.thresholdStops).toEqual([256, 1024, 4096, 8192]);
+    });
+
+    it("POST /router persists, fires runtime hook, audit-logs", async () => {
+      const hookCalls: Array<{ enabled: boolean; cloudThresholdTokens: number }> =
+        [];
+      const app = buildApp({
+        onSmartRouterChanged: (cfg) => hookCalls.push(cfg),
+      });
+      const r = await request(app)
+        .post("/api/admin/local-llm/router")
+        .send({ enabled: false, cloudThresholdTokens: 1024 });
+      expect(r.status).toBe(200);
+      expect(r.body.smartRouter).toEqual({
+        enabled: false,
+        cloudThresholdTokens: 1024,
+      });
+      const onDisk = JSON.parse(await fs.readFile(tmpConfigPath, "utf-8"));
+      expect(onDisk.localLlm.smartRouter).toEqual({
+        enabled: false,
+        cloudThresholdTokens: 1024,
+      });
+      expect(hookCalls).toEqual([
+        { enabled: false, cloudThresholdTokens: 1024 },
+      ]);
+      const log = auditLogs.find((l) => l.event === "router.config_changed");
+      expect(log?.category).toBe("system");
+      expect(log?.details).toMatchObject({
+        enabled: false,
+        cloudThresholdTokens: 1024,
+      });
+    });
+
+    it("rejects out-of-spec threshold values", async () => {
+      const app = buildApp();
+      const r = await request(app)
+        .post("/api/admin/local-llm/router")
+        .send({ enabled: true, cloudThresholdTokens: 999 });
+      expect(r.status).toBe(400);
+      expect(r.body.error).toBe("invalid_router_config");
+    });
+
+    it("rejects missing fields", async () => {
+      const app = buildApp();
+      const r = await request(app)
+        .post("/api/admin/local-llm/router")
+        .send({ enabled: true });
+      expect(r.status).toBe(400);
+    });
+  });
 });

@@ -1377,6 +1377,12 @@ const localLlmRouter = createLocalLlmRouter({
   configPath: localLlmConfigPath,
   auditLogger,
   healthMonitor: localEndpointHealthMonitor,
+  // Phase 3.5: keep the wrapper's smart-router runtime config in sync with
+  // POST /api/admin/local-llm/router so admin toggle/threshold changes apply
+  // without a server restart.
+  onSmartRouterChanged: (cfg) => {
+    copilot.setSmartRouterConfig(cfg);
+  },
 });
 app.use("/api/admin/local-llm", authMiddleware, localLlmRouter);
 
@@ -1385,6 +1391,58 @@ app.use("/api/admin/local-llm", authMiddleware, localLlmRouter);
 // fetches the live pricing table at startup with a hardcoded fallback for
 // air-gapped installs.
 const costMeter = new CostMeter({ db, auditLogger });
+// Phase 3.5: hand the meter + audit logger to the wrapper so every call's
+// router decision and cost row is recorded automatically.
+copilot.setCostMeter(costMeter);
+copilot.setAuditLogger(auditLogger);
+// Bootstrap dual-provider state from disk so smart-router routing kicks in
+// immediately if the user has a local provider configured + a cloud provider
+// in copilot config.
+try {
+  const cfgRaw = await fs.readFile(localLlmConfigPath, "utf-8").catch(() => "{}");
+  const cfgParsed = JSON.parse(cfgRaw) as {
+    localLlm?: {
+      provider?: {
+        type?: string;
+        endpoint?: string;
+        model?: string;
+        apiKey?: string;
+        timeoutMs?: number;
+      } | null;
+      privacyMode?: { globalLockdown?: boolean };
+      smartRouter?: { enabled?: boolean; cloudThresholdTokens?: number };
+    };
+  };
+  const localProvider = cfgParsed.localLlm?.provider;
+  if (localProvider?.endpoint && localProvider.model) {
+    copilot.setLocalProvider({
+      type: "local-copilot",
+      endpoint: localProvider.endpoint,
+      model: localProvider.model,
+      apiKey: localProvider.apiKey,
+      timeoutMs: localProvider.timeoutMs,
+    });
+  }
+  // The configured `provider` field on the wrapper acts as the cloud counterpart.
+  // (config.copilot.provider's type union excludes local-copilot at the schema layer.)
+  if (config.copilot?.provider) {
+    copilot.setCloudProvider(config.copilot.provider);
+  }
+  if (cfgParsed.localLlm?.privacyMode?.globalLockdown) {
+    copilot.setPrivacyMode("global");
+  }
+  const sr = cfgParsed.localLlm?.smartRouter;
+  if (sr) {
+    copilot.setSmartRouterConfig({
+      enabled: sr.enabled ?? true,
+      cloudThresholdTokens: sr.cloudThresholdTokens ?? 4096,
+    });
+  }
+} catch (err) {
+  logger.warn("Smart router bootstrap from local-llm config failed", {
+    error: err instanceof Error ? err.message : String(err),
+  });
+}
 // Best-effort live pricing fetch on startup; failure is silent and the meter
 // keeps the bundled fallback. Re-fetched periodically by the meter is left
 // for a follow-up — startup-only is enough for v1.

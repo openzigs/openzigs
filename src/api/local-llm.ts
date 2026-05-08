@@ -55,6 +55,15 @@ export type LocalLlmDeps = {
   };
   /** Override fetch (autodetect). */
   fetchImpl?: typeof fetch;
+  /**
+   * Optional callback invoked whenever the smart-router config is mutated via
+   * `POST /router`. Wired by `server.ts` to push the new toggle/threshold
+   * straight into `CopilotWrapperService` without a server restart.
+   */
+  onSmartRouterChanged?: (config: {
+    enabled: boolean;
+    cloudThresholdTokens: number;
+  }) => void;
 };
 
 const defaultConfigPath = () =>
@@ -149,6 +158,22 @@ const setProviderBodySchema = localCopilotProviderSchema;
 
 const privacyBodySchema = z.object({
   globalLockdown: z.boolean(),
+});
+
+/** Allowed slider stops for the cloud-threshold value. `null` = "disabled" sentinel. */
+const ROUTER_THRESHOLD_STOPS = [256, 1024, 4096, 8192] as const;
+const routerBodySchema = z.object({
+  enabled: z.boolean(),
+  cloudThresholdTokens: z
+    .number()
+    .int()
+    .refine(
+      (n): n is (typeof ROUTER_THRESHOLD_STOPS)[number] =>
+        (ROUTER_THRESHOLD_STOPS as readonly number[]).includes(n),
+      {
+        message: `cloudThresholdTokens must be one of ${ROUTER_THRESHOLD_STOPS.join(", ")}`,
+      },
+    ),
 });
 
 export function createLocalLlmRouter(deps: LocalLlmDeps = {}): Router {
@@ -307,6 +332,56 @@ export function createLocalLlmRouter(deps: LocalLlmDeps = {}): Router {
       masked: maskKey(localLlm.vllmApiKey),
       present: !!localLlm.vllmApiKey,
     });
+  });
+
+  router.get("/router", async (_req: Request, res: Response) => {
+    const { localLlm } = await readLocalLlmBlock(configPath);
+    res.json({
+      enabled: localLlm.smartRouter?.enabled ?? true,
+      cloudThresholdTokens: localLlm.smartRouter?.cloudThresholdTokens ?? 4096,
+      thresholdStops: ROUTER_THRESHOLD_STOPS,
+    });
+  });
+
+  router.post("/router", async (req: Request, res: Response): Promise<void> => {
+    const parsed = routerBodySchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({
+        error: "invalid_router_config",
+        details: parsed.error.flatten(),
+      });
+      return;
+    }
+    const { raw, localLlm } = await readLocalLlmBlock(configPath);
+    const next = {
+      ...localLlm,
+      smartRouter: {
+        enabled: parsed.data.enabled,
+        cloudThresholdTokens: parsed.data.cloudThresholdTokens,
+      },
+    };
+    await persistLocalLlmBlock(configPath, raw, next);
+    if (deps.onSmartRouterChanged) {
+      try {
+        deps.onSmartRouterChanged(next.smartRouter);
+      } catch (err) {
+        logger.warn("smart-router runtime hook threw", {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+    if (audit) {
+      await audit.log({
+        level: "info",
+        category: "system",
+        event: "router.config_changed",
+        details: {
+          enabled: parsed.data.enabled,
+          cloudThresholdTokens: parsed.data.cloudThresholdTokens,
+        },
+      });
+    }
+    res.json({ ok: true, smartRouter: next.smartRouter });
   });
 
   return router;

@@ -26,8 +26,53 @@ import type {
 } from "./token-tracker.js";
 import { getUserSelectedModel } from "../config/user-model.js";
 import { logger } from "../logging/logger.js";
+import {
+  routeRequest,
+  RouterPrivacyError,
+  type PrivacyMode,
+  type RoutingDecision,
+} from "./smart-router.js";
 
 export type { TokenUsage, TokenUsageEvent, CompactionEvent };
+
+/**
+ * Minimal cost-meter surface consumed by the wrapper. Kept structural so that
+ * tests can pass a tiny stub instead of constructing a real `CostMeter` (which
+ * needs better-sqlite3). The real `CostMeter` from `src/costs/cost-meter.ts`
+ * satisfies this.
+ */
+export interface CostMeterLike {
+  record(input: {
+    sessionId: string;
+    modelId: string;
+    inputTokens: number;
+    outputTokens: number;
+    cachedTokens?: number;
+    providerKind: "local-copilot" | "cloud";
+    cloudEquivalentModelId?: string;
+    callId?: string;
+    occurredAt?: Date;
+  }): unknown;
+}
+
+/** Audit-logger surface (only the `log` method is used by the wrapper). */
+export interface AuditLoggerLike {
+  log(entry: {
+    level: "info" | "warn" | "error" | "security";
+    category: "session" | "message" | "tool" | "security" | "system";
+    sessionId?: string;
+    event: string;
+    details: Record<string, unknown>;
+  }): Promise<unknown>;
+}
+
+/** Smart-router runtime config. */
+export interface SmartRouterRuntimeConfig {
+  enabled: boolean;
+  cloudThresholdTokens: number;
+}
+
+export type { PrivacyMode };
 
 export type DeviceAuthInfo = {
   verificationUri: string;
@@ -428,6 +473,8 @@ export type ChatOptions = {
   enableSubagents?: boolean;
   /** Override agent for this session — the SDK will use this agent's persona/tools. */
   agent?: string;
+  /** Per-call privacy override. When set, supersedes the wrapper-level privacy mode. */
+  privacyMode?: PrivacyMode;
 };
 
 export interface CopilotWrapper {
@@ -523,6 +570,25 @@ export type CopilotWrapperOptions = {
   nativeMcpServers?: Record<string, NativeMcpServerDefinition>;
   /** Directories containing SKILL.md files for agent persona injection. */
   skillDirectories?: string[];
+  /**
+   * Local-copilot provider for smart-router routing. When set alongside
+   * `cloudProvider` the wrapper picks per-call between the two using the
+   * smart router. Setting just `provider` retains legacy single-provider
+   * behaviour.
+   */
+  localProvider?: ProviderConfig;
+  /** Cloud provider counterpart used by the smart router (defaults to `provider`). */
+  cloudProvider?: ProviderConfig;
+  /** Smart-router runtime config. Default `{ enabled: true, cloudThresholdTokens: 4096 }`. */
+  smartRouter?: SmartRouterRuntimeConfig;
+  /** Privacy mode (`off` | `session` | `global`). Default `off`. */
+  privacyMode?: PrivacyMode;
+  /** Cost meter that receives every completed call. */
+  costMeter?: CostMeterLike;
+  /** Audit logger that receives router decisions. */
+  auditLogger?: AuditLoggerLike;
+  /** Cloud model id used as the "would-have-cost" reference for local-copilot calls. */
+  cloudEquivalentModelId?: string;
 };
 
 const defaultAuthPath = () => path.join(os.homedir(), ".openzigs", "auth.json");
@@ -740,6 +806,27 @@ export class CopilotWrapperService
   readonly tokenTracker = new TokenTracker();
   private memoryContextProvider?: () => Promise<string | null>;
 
+  // ── Smart router + cost meter (epic #1053 / phase 3.5) ──
+  private localProvider?: ProviderConfig;
+  private cloudProvider?: ProviderConfig;
+  private smartRouterConfig: SmartRouterRuntimeConfig = {
+    enabled: true,
+    cloudThresholdTokens: 4096,
+  };
+  private privacyMode: PrivacyMode = "off";
+  private costMeter?: CostMeterLike;
+  private auditLogger?: AuditLoggerLike;
+  private cloudEquivalentModelId?: string;
+  /**
+   * Per-cached-session metadata captured at the start of `chat()` so the
+   * `assistant.usage` event handler (registered in `wireSessionEvents`) can
+   * persist a cost row tagged with the routed provider for that call.
+   */
+  private callContextBySession = new Map<
+    string,
+    { providerKind: "local-copilot" | "cloud"; modelId: string }
+  >();
+
   constructor({
     client,
     toolRegistry,
@@ -761,6 +848,13 @@ export class CopilotWrapperService
     customAgents,
     nativeMcpServers,
     skillDirectories,
+    localProvider,
+    cloudProvider,
+    smartRouter,
+    privacyMode,
+    costMeter,
+    auditLogger,
+    cloudEquivalentModelId,
   }: CopilotWrapperOptions = {}) {
     super();
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -784,6 +878,13 @@ export class CopilotWrapperService
     this.customAgentsConfig = customAgents ?? [];
     this.nativeMcpServersConfig = nativeMcpServers ?? {};
     this.skillDirectoriesConfig = skillDirectories ?? [];
+    this.localProvider = localProvider;
+    this.cloudProvider = cloudProvider;
+    if (smartRouter) this.smartRouterConfig = { ...smartRouter };
+    if (privacyMode) this.privacyMode = privacyMode;
+    this.costMeter = costMeter;
+    this.auditLogger = auditLogger;
+    this.cloudEquivalentModelId = cloudEquivalentModelId;
   }
 
   setMaxToolsPerRequest(n: number): void {
@@ -818,6 +919,171 @@ export class CopilotWrapperService
     }
     // Provider change invalidates all cached sessions
     void this.clearAllSessions();
+  }
+
+  // ── Smart-router + cost-meter wiring (epic #1053 / phase 3.5) ──
+
+  /** Configure the local-copilot provider used by the smart router. */
+  setLocalProvider(provider: ProviderConfig | undefined): void {
+    this.localProvider = provider;
+    void this.clearAllSessions();
+  }
+
+  /** Get the configured local-copilot provider. */
+  getLocalProvider(): ProviderConfig | undefined {
+    return this.localProvider;
+  }
+
+  /** Configure the cloud provider used by the smart router. */
+  setCloudProvider(provider: ProviderConfig | undefined): void {
+    this.cloudProvider = provider;
+    void this.clearAllSessions();
+  }
+
+  /** Get the configured cloud provider. */
+  getCloudProvider(): ProviderConfig | undefined {
+    return this.cloudProvider;
+  }
+
+  /** Update the smart router runtime config (toggle + threshold). */
+  setSmartRouterConfig(config: Partial<SmartRouterRuntimeConfig>): void {
+    this.smartRouterConfig = { ...this.smartRouterConfig, ...config };
+  }
+
+  /** Read the current smart router runtime config. */
+  getSmartRouterConfig(): SmartRouterRuntimeConfig {
+    return { ...this.smartRouterConfig };
+  }
+
+  /** Set the wrapper-level privacy mode (per-call override is also supported). */
+  setPrivacyMode(mode: PrivacyMode): void {
+    this.privacyMode = mode;
+  }
+
+  getPrivacyMode(): PrivacyMode {
+    return this.privacyMode;
+  }
+
+  setCostMeter(meter: CostMeterLike | undefined): void {
+    this.costMeter = meter;
+  }
+
+  setAuditLogger(logger: AuditLoggerLike | undefined): void {
+    this.auditLogger = logger;
+  }
+
+  setCloudEquivalentModelId(modelId: string | undefined): void {
+    this.cloudEquivalentModelId = modelId;
+  }
+
+  /**
+   * Resolve which provider should service the next call. Returns null when
+   * smart-router is not active (i.e. dual providers are not configured), in
+   * which case the existing `providerConfig` continues to be used.
+   *
+   * Side effects:
+   *   - Sets `this.providerConfig` to the chosen provider (so the SDK call
+   *     picks it up via `toSdkProvider()` and the session-config signature).
+   *   - Audit-logs the routing decision under category `system`.
+   *
+   * Throws `RouterPrivacyError` when privacy mode forbids cloud and no local
+   * provider is configured. Callers (chat()) propagate the error to the user.
+   */
+  private routeForRequest(
+    prompt: string,
+    options?: { conversationId?: string; privacyMode?: PrivacyMode },
+  ): RoutingDecision | null {
+    const effectivePrivacyMode = options?.privacyMode ?? this.privacyMode;
+
+    // Privacy guard runs FIRST so it cannot be bypassed by a single-provider
+    // setup. If privacy mode forbids cloud and no local provider is configured,
+    // surface the error to the caller.
+    if (effectivePrivacyMode !== "off" && !this.localProvider) {
+      throw new RouterPrivacyError();
+    }
+
+    // Smart router only kicks in when BOTH a local and a cloud provider are
+    // configured. With a single provider the existing wrapper behaviour is
+    // preserved.
+    if (!this.localProvider || !this.cloudProvider) {
+      return null;
+    }
+
+    const decision = routeRequest({
+      prompt,
+      localProviderConfigured: !!this.localProvider,
+      privacyMode: effectivePrivacyMode,
+      cloudThresholdTokens: this.smartRouterConfig.cloudThresholdTokens,
+      enabled: this.smartRouterConfig.enabled,
+    });
+
+    const chosen =
+      decision.provider === "local"
+        ? this.localProvider
+        : this.cloudProvider;
+    this.providerConfig = chosen;
+    if (chosen?.type === "local-copilot") {
+      process.env.COPILOT_OFFLINE = "true";
+    } else if (process.env.COPILOT_OFFLINE === "true") {
+      delete process.env.COPILOT_OFFLINE;
+    }
+
+    if (this.auditLogger) {
+      void this.auditLogger
+        .log({
+          level: "info",
+          category: "system",
+          sessionId: options?.conversationId,
+          event: "router.decision",
+          details: {
+            router: decision.provider,
+            reason: decision.reason,
+            inputTokens: decision.estimatedTokens,
+            thresholdTokens: decision.thresholdTokens,
+            privacyMode: decision.privacyMode,
+            providerType: chosen?.type,
+          },
+        })
+        .catch(() => {
+          /* audit logging is best-effort — never block chat */
+        });
+    }
+
+    return decision;
+  }
+
+  /**
+   * Persist a cost row for the call that just completed on `sessionId`.
+   * Called from the per-session `assistant.usage` handler. Best-effort —
+   * meter failures are logged and swallowed so a meter outage never breaks
+   * an in-progress chat stream.
+   */
+  private recordCallCost(
+    sessionId: string,
+    inputTokens: number,
+    outputTokens: number,
+  ): void {
+    if (!this.costMeter) return;
+    const ctx = this.callContextBySession.get(sessionId);
+    if (!ctx) return;
+    try {
+      this.costMeter.record({
+        sessionId,
+        modelId: ctx.modelId,
+        inputTokens,
+        outputTokens,
+        providerKind: ctx.providerKind,
+        cloudEquivalentModelId:
+          ctx.providerKind === "local-copilot"
+            ? this.cloudEquivalentModelId
+            : undefined,
+      });
+    } catch (err) {
+      logger.warn("cost meter record failed", {
+        error: err instanceof Error ? err.message : String(err),
+        sessionId,
+      });
+    }
   }
 
   /**
@@ -959,6 +1225,17 @@ export class CopilotWrapperService
       options?.model ?? (await getUserSelectedModel()) ?? this.model;
     const perCallToolCallback = options?.onToolCall;
 
+    // Smart-router: when both providers are configured, pick per-call.
+    // RouterPrivacyError surfaces directly to the caller so the user sees
+    // the privacy violation instead of silently falling back to cloud.
+    const routingDecision: RoutingDecision | null = this.routeForRequest(
+      message,
+      {
+        conversationId: options?.conversationId,
+        privacyMode: options?.privacyMode,
+      },
+    );
+
     // When availableTools is specified (skill scoping or explicit client filter),
     // draw from ALL registered tools (not just enabled ones) so that tools
     // explicitly requested by a dialog or skill are available even if the user
@@ -1064,6 +1341,26 @@ export class CopilotWrapperService
         enableSubagents: options?.enableSubagents,
       },
     );
+
+    // Stash routing/call context for the per-session `assistant.usage` handler
+    // so the cost meter records the right providerKind for THIS call. Cached
+    // sessions can serve multiple sequential calls — last write wins.
+    if (options?.conversationId) {
+      const providerKind: "local-copilot" | "cloud" = (() => {
+        if (routingDecision) {
+          return routingDecision.provider === "local"
+            ? "local-copilot"
+            : "cloud";
+        }
+        return this.providerConfig?.type === "local-copilot"
+          ? "local-copilot"
+          : "cloud";
+      })();
+      this.callContextBySession.set(options.conversationId, {
+        providerKind,
+        modelId: effectiveModel,
+      });
+    }
 
     const queue = new AsyncQueue<string>();
     let sendError: unknown;
@@ -1622,6 +1919,16 @@ export class CopilotWrapperService
       systemMode: extra?.systemMessage?.mode,
       systemContent: extra?.systemMessage?.content,
       enableSubagents: extra?.enableSubagents ?? false,
+      // Provider identity is part of the cache key so per-call routing decisions
+      // (smart router) correctly invalidate cached SDK sessions when the active
+      // provider flips between local-copilot and cloud.
+      providerType: this.providerConfig?.type,
+      providerEndpoint:
+        this.providerConfig && "endpoint" in this.providerConfig
+          ? this.providerConfig.endpoint
+          : this.providerConfig && "baseUrl" in this.providerConfig
+            ? this.providerConfig.baseUrl
+            : undefined,
     });
   }
 
@@ -1664,6 +1971,8 @@ export class CopilotWrapperService
           outputTokens,
         );
         this.emit("token:usage", usageEvent);
+        // Persist a cost row tagged with the providerKind chosen for this call.
+        this.recordCallCost(sessionId, inputTokens, outputTokens);
       },
     );
 

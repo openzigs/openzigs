@@ -52,6 +52,15 @@ interface StatusResponse {
   vllmKey: { masked: string | null; present: boolean };
 }
 
+interface SmartRouterResponse {
+  enabled: boolean;
+  cloudThresholdTokens: number;
+  thresholdStops: number[];
+}
+
+const ROUTER_THRESHOLD_STOPS = [256, 1024, 4096, 8192] as const;
+type RouterThreshold = (typeof ROUTER_THRESHOLD_STOPS)[number];
+
 const PRIVACY_LS_KEY = "openzigs:privacy-mode";
 
 const HEALTH_BADGE = {
@@ -186,6 +195,36 @@ export function LocalLlmPanel() {
       setRevealedKey(data.apiKey);
       showToast("vLLM API key rotated. Copy now — you won't see it again.", "info");
       void queryClient.invalidateQueries({ queryKey: ["local-llm"] });
+    },
+    onError: (err) => showToast(extractError(err), "error"),
+  });
+
+  // ── Smart router (Phase 3.5) ──
+  const routerQuery = useQuery({
+    queryKey: ["local-llm", "router"],
+    queryFn: () =>
+      fetchJson<SmartRouterResponse>("/api/admin/local-llm/router"),
+  });
+
+  const routerEnabled = routerQuery.data?.enabled ?? true;
+  const routerThreshold = (routerQuery.data?.cloudThresholdTokens ??
+    4096) as RouterThreshold;
+
+  const updateRouter = useMutation({
+    mutationFn: (next: { enabled: boolean; cloudThresholdTokens: RouterThreshold }) =>
+      fetchJson("/api/admin/local-llm/router", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(next),
+      }),
+    onSuccess: (_data, vars) => {
+      showToast(
+        vars.enabled
+          ? `Smart router enabled (≤ ${vars.cloudThresholdTokens} tokens → local)`
+          : "Smart router disabled",
+        "success",
+      );
+      void queryClient.invalidateQueries({ queryKey: ["local-llm", "router"] });
     },
     onError: (err) => showToast(extractError(err), "error"),
   });
@@ -392,6 +431,69 @@ export function LocalLlmPanel() {
           {rotateKey.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
           Rotate key
         </button>
+      </section>
+
+      <section
+        className="space-y-3 rounded border border-blue-200 bg-blue-50 p-4"
+        data-testid="smart-router-section"
+      >
+        <h3 className="text-sm font-semibold text-blue-900">Smart router</h3>
+        <p className="text-xs text-blue-900/80">
+          When enabled, requests with an estimated input ≤ the threshold go to
+          the local provider; everything else goes to cloud. Privacy mode always
+          overrides the router.
+        </p>
+        <label className="flex items-center gap-3 text-sm">
+          <input
+            type="checkbox"
+            checked={routerEnabled}
+            disabled={routerQuery.isPending || updateRouter.isPending}
+            onChange={(e) =>
+              updateRouter.mutate({
+                enabled: e.target.checked,
+                cloudThresholdTokens: routerThreshold,
+              })
+            }
+            aria-label="Smart router enabled"
+            data-testid="smart-router-toggle"
+          />
+          <span>
+            <strong>Enabled</strong>: route per-call based on token estimate.
+          </span>
+        </label>
+        <div className="space-y-1">
+          <label
+            htmlFor="smart-router-threshold"
+            className="block text-xs font-medium text-blue-900"
+          >
+            Cloud threshold (tokens):{" "}
+            <span data-testid="smart-router-threshold-value">{routerThreshold}</span>
+          </label>
+          <input
+            id="smart-router-threshold"
+            type="range"
+            min={0}
+            max={ROUTER_THRESHOLD_STOPS.length - 1}
+            step={1}
+            value={ROUTER_THRESHOLD_STOPS.indexOf(routerThreshold)}
+            disabled={!routerEnabled || updateRouter.isPending}
+            onChange={(e) => {
+              const next = ROUTER_THRESHOLD_STOPS[Number(e.target.value)];
+              updateRouter.mutate({
+                enabled: routerEnabled,
+                cloudThresholdTokens: next,
+              });
+            }}
+            aria-label="Cloud threshold tokens"
+            data-testid="smart-router-threshold"
+            className="w-full"
+          />
+          <div className="flex justify-between text-[10px] text-blue-900/70">
+            {ROUTER_THRESHOLD_STOPS.map((stop) => (
+              <span key={stop}>{stop}</span>
+            ))}
+          </div>
+        </div>
       </section>
     </div>
   );
