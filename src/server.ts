@@ -64,6 +64,7 @@ import {
   createLocalLlmRouter,
   ensureVllmApiKey,
 } from "./api/local-llm.js";
+import { LocalEndpointHealthMonitor } from "./sentinel/local-endpoint-health.js";
 import { GpuCoordinator } from "./gpu/gpu-coordinator.js";
 import { autoRegisterIfDetected } from "./llm/vllm-detect.js";
 import { launchChrome, killChrome } from "./browser/chrome-launcher.js";
@@ -1282,9 +1283,53 @@ ensureVllmApiKey(localLlmConfigPath).catch((err) => {
     error: err instanceof Error ? err.message : String(err),
   });
 });
+
+// Local-endpoint health monitor (#1055) — only spun up when a local-copilot
+// provider is configured. We instantiate lazily in the router by checking
+// config on each /status read; a long-running poller is started here only if
+// the user already has a provider on disk so /status is meaningful from t=0.
+let localEndpointHealthMonitor: LocalEndpointHealthMonitor | undefined;
+try {
+  const cfgRaw = await fs.readFile(localLlmConfigPath, "utf-8").catch(() => "{}");
+  const cfgParsed = JSON.parse(cfgRaw) as {
+    localLlm?: {
+      provider?: { endpoint?: string; apiKey?: string } | null;
+      privacyMode?: { globalLockdown?: boolean };
+    };
+    sentinel?: { localLlmHealth?: { enabled?: boolean; intervalMs?: number; failoverThreshold?: number; failoverWindowMs?: number; failbackSuccesses?: number; probeTimeoutMs?: number } };
+  };
+  const provider = cfgParsed.localLlm?.provider;
+  const healthCfg = cfgParsed.sentinel?.localLlmHealth ?? {};
+  if (provider?.endpoint && healthCfg.enabled !== false) {
+    localEndpointHealthMonitor = new LocalEndpointHealthMonitor({
+      endpoint: provider.endpoint,
+      apiKey: provider.apiKey,
+      intervalMs: healthCfg.intervalMs,
+      failoverThreshold: healthCfg.failoverThreshold,
+      failoverWindowMs: healthCfg.failoverWindowMs,
+      failbackSuccesses: healthCfg.failbackSuccesses,
+      probeTimeoutMs: healthCfg.probeTimeoutMs,
+      auditLogger,
+      isPrivacyLocked: () => Boolean(cfgParsed.localLlm?.privacyMode?.globalLockdown),
+    });
+    localEndpointHealthMonitor.start();
+    localEndpointHealthMonitor.on("failover", (info) => {
+      io.emit("sentinel:local-endpoint-failover", info);
+    });
+    localEndpointHealthMonitor.on("failback", (info) => {
+      io.emit("sentinel:local-endpoint-failback", info);
+    });
+  }
+} catch (err) {
+  logger.warn("Failed to bootstrap LocalEndpointHealthMonitor", {
+    error: err instanceof Error ? err.message : String(err),
+  });
+}
+
 const localLlmRouter = createLocalLlmRouter({
   configPath: localLlmConfigPath,
   auditLogger,
+  healthMonitor: localEndpointHealthMonitor,
 });
 app.use("/api/admin/local-llm", authMiddleware, localLlmRouter);
 
