@@ -457,6 +457,87 @@ Internet → Cloudflare Edge → cloudflared sidecar → http://agent:3000 (Dock
 
 ---
 
+## GPU Dispatcher
+
+OpenZigs runs LLM inference (vLLM / Ollama) and diffusion workloads (Flux / SDXL / LTX video) on the same physical GPUs. Without coordination, two heavy workloads can race for VRAM and either OOM or starve each other.
+
+### Why data-parallel, not tensor-parallel
+
+The original plan was to **tensor-split** image/video diffusion across both GPUs to halve render time. Empirically this fell over:
+
+- Diffusion U-Nets do not split cleanly across devices — most layers are sequential and the cross-attention blocks force frequent all-reduce traffic.
+- We are on **PCIe Gen4**, not NVLink. Measured TP scaling for FLUX on 2× consumer GPUs over PCIe was **1.4–1.5×**, vs. the NVLink-required ~1.84× threshold to even justify the extra software complexity.
+- Worse, every TP run also blocked the LLM, because both shards needed VRAM headroom on **both** GPUs.
+
+We replaced TP with a **data-parallel per-GPU dispatcher**. Each physical GPU gets its own FIFO lane, and the dispatcher owns the policy of *which workload goes to which GPU*. On a dual-GPU host the default is:
+
+| Workload | Pinned to |
+|----------|-----------|
+| `llm`    | GPU 0     |
+| `image`  | GPU 1     |
+| `video`  | GPU 1     |
+
+— which lets a vLLM session and a video render run **truly in parallel** instead of fighting over the same device.
+
+### Mutual exclusion
+
+Even when workloads land on different GPUs, **LLM ↔ image/video** is a mutex. This is intentional: vLLM holds nontrivial CPU/host RAM for KV cache management, and a long video render that pegs the host PCIe bus will visibly stall LLM token streaming. Image and video can co-locate on the same GPU (no mutex between them), because both go through the same diffusion sidecar process which serializes internally.
+
+The mutex is enforced **across GPUs**, not just within a single lane: a `busy` lane on GPU 0 with workload `llm` will mark GPU 1's `idle` lane as `mutexBlockedBy: "llm"` until the LLM job completes. The admin UI surfaces this as an amber tooltip on the dependent lane so operators can see at a glance why a render did not start immediately.
+
+### Architecture
+
+```
+                                ┌────────────────────────────┐
+                                │  GpuDispatcher (in-proc)   │
+                                │                            │
+ImageGenService ──withGpuLane──▶│ ┌──────────┐  ┌──────────┐ │
+VideoGenService ──withGpuLane──▶│ │ GPU 0    │  │ GPU 1    │ │
+LLM provider   ──withGpuLane──▶│ │  FIFO    │  │  FIFO    │ │
+                                │ │  state   │  │  state   │ │
+                                │ └──────────┘  └──────────┘ │
+                                │      │             │       │
+                                │      ▼             ▼       │
+                                │   Audit log + Socket.IO    │
+                                └────────────────────────────┘
+                                              │
+                            /api/system/gpu  ◄─┴─► Admin GPU panel (live)
+                            /api/admin/gpu/dispatcher (cancel / clear-error)
+```
+
+- `withGpuLane(workloadType, run, opts?)` is a tiny module-singleton helper. When no dispatcher is registered (tests, headless single-GPU runs, the old code path) it runs `run()` inline with `gpuIndex=0` — fully backward-compatible.
+- Cancellation is via `AbortSignal`. A cancelled job returns the lane to `idle`. An uncaught exception poisons the lane to `error` and requires `clearError()` (the admin UI's **Retry** button) before new jobs will dispatch — this is deliberate, since CUDA-OOM almost always requires a sidecar restart anyway.
+- `GpuCoordinator` (issue #917) still owns the persistent SQLite-backed cross-restart claim used by vLLM ↔ FLUX. The dispatcher layers on top of it as an in-process queue. The two are complementary: coordinator survives restarts, dispatcher provides per-job `await` semantics + UI visibility.
+
+### Configuration
+
+```jsonc
+{
+  "gpu": {
+    "dispatcher": {
+      "pinning": {
+        "llm":   [0],     // optional — default: [0]
+        "image": [1],     // optional — default: [gpuCount-1]
+        "video": [1]      // optional — default: [gpuCount-1]
+      },
+      "mutualExclusion": true,   // default true; set false to allow LLM + render in parallel
+      "allowFallback": false      // default false; if true, jobs may dispatch to off-pin GPUs when pin is busy
+    }
+  }
+}
+```
+
+A `pinning.<workload>` of `[]` removes pinning entirely for that workload — every GPU becomes a candidate (subject to mutex). Pinning is never enforced on no-GPU hosts; everything runs on the synthetic lane `-1`.
+
+### Observability
+
+- **`/api/system/gpu`** includes `dispatcher.gpus[]` — full lane state including `currentJob`, `queueDepth`, `mutexBlockedBy`.
+- **`/api/admin/gpu/dispatcher`** — admin-auth: `GET /` (snapshot), `POST /:gpuIndex/cancel` (returns `200 {cancelled:true}` or `404 {cancelled:false}`), `POST /:gpuIndex/clear-error` (`200` or `409`).
+- **Socket.IO** broadcasts `gpu:dispatcher:state` (full snapshot on every transition), `gpu:dispatcher:job-started`, `gpu:dispatcher:job-completed`, `gpu:dispatcher:job-failed`.
+- **AuditLogger** records every queue/dispatch/cancel/mutex event with workload type, job id, and duration.
+
+---
+
 ## Python AI Sidecars
 
 OpenZigs ships with a suite of optional **local Python FastAPI services** that run as separate processes on the host machine (not inside Docker). All sidecars are optimised for **Apple Silicon (MLX / Metal)** and communicate with the agent over localhost HTTP.

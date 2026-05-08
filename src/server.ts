@@ -66,6 +66,12 @@ import {
 } from "./api/local-llm.js";
 import { LocalEndpointHealthMonitor } from "./sentinel/local-endpoint-health.js";
 import { GpuCoordinator } from "./gpu/gpu-coordinator.js";
+import {
+  GpuDispatcher,
+  setActiveGpuDispatcher,
+} from "./gpu/gpu-dispatcher.js";
+import { createGpuDispatcherAdminRouter } from "./api/admin/gpu-dispatcher.js";
+import { getGpuProfile } from "./system/gpu-profile.js";
 import { autoRegisterIfDetected } from "./llm/vllm-detect.js";
 import { launchChrome, killChrome } from "./browser/chrome-launcher.js";
 import {
@@ -310,6 +316,30 @@ const gpuCoordinator = new GpuCoordinator({
   db,
   warn: (msg, details) => logger.warn(msg, details ?? {}),
 });
+
+// ── GPU dispatcher (Issue #1056) ──────────────────────────────────────────
+// Per-GPU job queue with mutual exclusion. Detects GPU count up-front and
+// surfaces lane state via /api/system/gpu + /api/admin/gpu/dispatcher and
+// over Socket.IO (`gpu:dispatcher:state`).
+const _bootGpuProfile = await getGpuProfile().catch(() => null);
+const _gpuCount = _bootGpuProfile?.gpus?.length ?? 0;
+const _gpuDispatcherCfg = config.gpu?.dispatcher;
+const gpuDispatcher = new GpuDispatcher({
+  gpuCount: _gpuCount,
+  pinning: _gpuDispatcherCfg?.pinning,
+  mutualExclusion: _gpuDispatcherCfg?.mutualExclusion ?? true,
+  defaultAllowFallback: _gpuDispatcherCfg?.allowFallback ?? false,
+  audit: (event, details) => {
+    void auditLogger.log({
+      level: event.endsWith("_failed") || event.includes("error") ? "warn" : "info",
+      category: "system",
+      event,
+      details,
+    });
+  },
+});
+setActiveGpuDispatcher(gpuDispatcher);
+
 const promptManager = new PromptManager({ db });
 const personalityManager = new PersonalityManager({ db });
 const brandVoiceRepo = new BrandVoiceRepository(db);
@@ -1234,7 +1264,10 @@ app.use("/api/models", authMiddleware, modelsRouter);
 app.use(
   "/api/system",
   authMiddleware,
-  createSystemRouter({ coordinator: gpuCoordinator }),
+  createSystemRouter({
+    coordinator: gpuCoordinator,
+    dispatcher: gpuDispatcher,
+  }),
 );
 
 // Setup API routes — no auth required (needed before auth is configured)
@@ -1272,6 +1305,17 @@ app.use("/api/admin", authMiddleware, adminRouter);
 // vLLM admin routes (Epic #888 / Issue #922) — kept out of admin.ts.
 const vllmAdminRouter = createVllmAdminRouter({ coordinator: gpuCoordinator });
 app.use("/api/admin/gpu/vllm", authMiddleware, vllmAdminRouter);
+
+// GPU dispatcher admin routes (Epic #1053 / Issue #1056, #1060) — cancel
+// in-flight jobs + clear poisoned lanes from the admin UI.
+app.use(
+  "/api/admin/gpu/dispatcher",
+  authMiddleware,
+  createGpuDispatcherAdminRouter({
+    dispatcher: gpuDispatcher,
+    auditLogger,
+  }),
+);
 
 // Local LLM admin routes (Epic #1053 / Issues #1057, #1058) — kept out of admin.ts.
 const localLlmConfigPath =
@@ -2603,6 +2647,22 @@ setDirectorIO(io);
 setPitchIO(io);
 // Bind Socket.IO to Admin router for skill update events
 setAdminIO(io);
+
+// GPU dispatcher live updates — relay every state transition to admin clients
+// so the GPU panel can render real-time queue depth + current job + mutex
+// status without polling. Listeners are added once at boot.
+gpuDispatcher.on("gpu:state-changed", (snapshot) => {
+  io.emit("gpu:dispatcher:state", snapshot);
+});
+gpuDispatcher.on("job:started", (payload) => {
+  io.emit("gpu:dispatcher:job-started", payload);
+});
+gpuDispatcher.on("job:completed", (payload) => {
+  io.emit("gpu:dispatcher:job-completed", payload);
+});
+gpuDispatcher.on("job:failed", (payload) => {
+  io.emit("gpu:dispatcher:job-failed", payload);
+});
 // Bind Socket.IO to Character router for training progress events
 setCharacterIO(io);
 // Wire ChannelManager into Character router for opt-in Telegram training notifications (Issue #415)

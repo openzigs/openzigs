@@ -13,6 +13,7 @@ import {
   summariseClaims,
   type GpuCoordinator,
 } from "../gpu/gpu-coordinator.js";
+import type { GpuDispatcher, GpuLaneSnapshot } from "../gpu/gpu-dispatcher.js";
 
 export interface SystemRouterDeps {
   /** Override profile loader for tests. */
@@ -24,19 +25,30 @@ export interface SystemRouterDeps {
    * conflicts.
    */
   coordinator?: Pick<GpuCoordinator, "currentClaims">;
+  /**
+   * GPU dispatcher (Issue #1056) used to surface per-GPU lane state
+   * (`idle | busy | error`), current job, queue depth, and mutex-blocked
+   * indicators. Optional — when omitted, the response omits the
+   * `dispatcher` block entirely so the admin UI can keep its legacy
+   * "no dispatcher" fallback.
+   */
+  dispatcher?: Pick<GpuDispatcher, "state">;
 }
 
 export function createSystemRouter(deps: SystemRouterDeps = {}): Router {
   const router = Router();
   const loader = deps.loadProfile ?? (() => getGpuProfile());
   const coordinator = deps.coordinator;
+  const dispatcher = deps.dispatcher;
 
   router.get("/gpu", async (_req, res) => {
     try {
       const profile = await loader();
       const claims = coordinator ? coordinator.currentClaims() : [];
       const summary = summariseClaims(claims);
-      res.json({ ...profile, ...summary });
+      const dispatcherBlock: { dispatcher?: { gpus: GpuLaneSnapshot[] } } =
+        dispatcher ? { dispatcher: { gpus: dispatcher.state() } } : {};
+      res.json({ ...profile, ...summary, ...dispatcherBlock });
     } catch (err) {
       res.status(500).json({
         error: "Failed to detect GPU profile",

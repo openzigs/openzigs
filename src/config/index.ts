@@ -383,6 +383,19 @@ export type AppConfig = {
   musicGen?: MusicGenAppConfig;
   lipSync?: LipSyncAppConfig;
   media?: MediaAppConfig;
+  /** GPU dispatcher (Issue #1056) — pinning + mutex policy. */
+  gpu?: {
+    poolingMode?: string;
+    dispatcher?: {
+      pinning?: {
+        llm?: number[];
+        image?: number[];
+        video?: number[];
+      };
+      mutualExclusion?: boolean;
+      allowFallback?: boolean;
+    };
+  };
   socialBrain?: SocialBrainAppConfig;
   sentinel?: SentinelAppConfig;
   knowledge?: KnowledgeAppConfig;
@@ -671,6 +684,31 @@ const appConfigSchema = z.object({
             .optional()
             .default(120_000),
           autoRegister: z.boolean().optional().default(true),
+        })
+        .optional(),
+    })
+    .optional(),
+  /**
+   * GPU dispatcher (Issue #1056). Optional; when omitted, the dispatcher
+   * uses defaults: pin LLM workloads to GPU 0 and image/video to the last
+   * GPU on multi-GPU hosts; everything on GPU 0 on single-GPU hosts;
+   * mutual exclusion enabled. A `pinning.<workload>` of `[]` disables
+   * pinning for that workload (every GPU becomes a candidate).
+   */
+  gpu: z
+    .object({
+      poolingMode: z.string().optional(),
+      dispatcher: z
+        .object({
+          pinning: z
+            .object({
+              llm: z.array(z.number().int().min(0)).optional(),
+              image: z.array(z.number().int().min(0)).optional(),
+              video: z.array(z.number().int().min(0)).optional(),
+            })
+            .optional(),
+          mutualExclusion: z.boolean().optional().default(true),
+          allowFallback: z.boolean().optional().default(false),
         })
         .optional(),
     })
