@@ -468,6 +468,40 @@ Remove-Item -Recurse -Force .openzigs
 
 ---
 
+## Running Fully Offline (Local LLM)
+
+OpenZigs can run end-to-end against a local OpenAI-compatible endpoint (Ollama or vLLM). The fastest path is the **offline setup wizard** at <http://localhost:3001/setup/offline>:
+
+1. **Detect** — the wizard probes your hardware (OS, chip, memory, GPU) and recommends a Gemma 4 variant sized to your host.
+2. **Recommend** — see the variant + minimum memory required.
+3. **Install** — copy the OS-specific commands shown:
+   - **Windows:** `winget install Ollama.Ollama` then `ollama pull <model>`
+   - **macOS (Apple Silicon):** `brew install ollama`, then `OLLAMA_USE_MLX=1 ollama serve`, then `ollama pull <model>` — the MLX backend uses Apple's Metal Performance Shaders for ~2× throughput on M-series chips.
+   - **Linux:** `curl -fsSL https://ollama.com/install.sh | sh` then `ollama pull <model>`
+4. **Test** — click "Probe local endpoints" to confirm Ollama (port 11434) or vLLM (port 8000) is reachable.
+5. **Switch** — flip the active provider to local. From here every request that fits under the smart-router threshold (default 4096 input tokens) runs locally.
+
+### Privacy Mode
+
+Privacy mode is a hard kill switch. When enabled per-session (toggle in chat) or globally (admin panel), every request must go to the local provider. If no local provider is configured, the request **fails** rather than silently falling back to cloud — by design.
+
+### Cost Meter
+
+Every model call records both its actual cost and what the equivalent cloud model would have cost. The chat UI shows a running `spent X · cloud-equiv Y · saved Z by going local` strip. The full per-call breakdown is at `GET /api/admin/sessions/:id/cost`.
+
+### Smart Router Tuning
+
+`localLlm.smartRouter.cloudThresholdTokens` (default `4096`) controls the cutoff. Common tunings:
+
+| Threshold | Behavior |
+|---|---|
+| `256` | Send almost everything to cloud; only the tiniest prompts go local. |
+| `4096` | **Default.** Most chat goes local; long-context tasks (full-file reviews, large diffs) go cloud. |
+| `131072` | Send essentially everything local. Best when your local model can handle long context. |
+| set `enabled: false` | Disable the router entirely — always cloud (unless privacy mode is on). |
+
+---
+
 ## First-Time Authentication
 
 On first launch, the agent must authenticate with GitHub Copilot:

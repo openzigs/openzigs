@@ -23,12 +23,16 @@ export {
   localCopilotProviderSchema,
   localLlmHealthSchema,
   privacyModeSchema,
+  smartRouterSchema,
+  costMeterSchema,
 } from "./local-llm-schema.js";
 export type {
   LocalLlmConfig,
   LocalLlmHealthConfig,
   LocalCopilotProviderConfig,
   PrivacyModeConfig,
+  SmartRouterConfig,
+  CostMeterConfig,
 } from "./local-llm-schema.js";
 
 export type RateLimitConfig = {

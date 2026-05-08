@@ -71,6 +71,9 @@ import {
   setActiveGpuDispatcher,
 } from "./gpu/gpu-dispatcher.js";
 import { createGpuDispatcherAdminRouter } from "./api/admin/gpu-dispatcher.js";
+import { createSessionCostsRouter } from "./api/session-costs.js";
+import { CostMeter } from "./costs/cost-meter.js";
+import { fetchPricingTable } from "./costs/copilot-pricing.js";
 import { getGpuProfile } from "./system/gpu-profile.js";
 import { autoRegisterIfDetected } from "./llm/vllm-detect.js";
 import { launchChrome, killChrome } from "./browser/chrome-launcher.js";
@@ -1376,6 +1379,43 @@ const localLlmRouter = createLocalLlmRouter({
   healthMonitor: localEndpointHealthMonitor,
 });
 app.use("/api/admin/local-llm", authMiddleware, localLlmRouter);
+
+// Per-session cost meter (Epic #1053 / Issue #1059) — tracks model spend +
+// "would have cost" against the GitHub Copilot pricing table. The meter
+// fetches the live pricing table at startup with a hardcoded fallback for
+// air-gapped installs.
+const costMeter = new CostMeter({ db, auditLogger });
+// Best-effort live pricing fetch on startup; failure is silent and the meter
+// keeps the bundled fallback. Re-fetched periodically by the meter is left
+// for a follow-up — startup-only is enough for v1.
+void (async () => {
+  try {
+    const cfgRaw = await fs
+      .readFile(localLlmConfigPath, "utf-8")
+      .catch(() => "{}");
+    const cfgParsed = JSON.parse(cfgRaw) as {
+      localLlm?: { costMeter?: { enabled?: boolean; fetchLivePricing?: boolean; pricingUrl?: string } };
+    };
+    const costCfg = cfgParsed.localLlm?.costMeter ?? {};
+    if (costCfg.enabled === false || costCfg.fetchLivePricing === false) return;
+    const table = await fetchPricingTable({ url: costCfg.pricingUrl });
+    costMeter.setPricing(table);
+    logger.info("Copilot pricing table loaded", {
+      source: table.source,
+      version: table.version,
+      fetchedAt: table.fetchedAt,
+    });
+  } catch (err) {
+    logger.warn("Cost meter pricing init failed; using bundled fallback", {
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+})();
+app.use(
+  "/api/admin",
+  authMiddleware,
+  createSessionCostsRouter({ costMeter }),
+);
 
 // Knowledge Base API routes
 const knowledgeRouter = createKnowledgeRouter({ knowledgeService });

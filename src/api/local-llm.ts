@@ -114,6 +114,8 @@ async function readLocalLlmBlock(
       provider: (block.provider ?? null) as LocalCopilotProviderConfig | null,
       vllmApiKey: typeof block.vllmApiKey === "string" ? block.vllmApiKey : undefined,
       privacyMode: block.privacyMode ?? { globalLockdown: false },
+      smartRouter: block.smartRouter ?? { enabled: true, cloudThresholdTokens: 4096 },
+      costMeter: block.costMeter ?? { enabled: true, fetchLivePricing: true },
     },
   };
 }

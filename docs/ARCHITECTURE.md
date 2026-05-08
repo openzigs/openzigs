@@ -694,6 +694,57 @@ Additionally, the Docker sidecar auto-provisioning step in `server.ts` is skippe
 
 ---
 
+## Local LLM as Primary Provider (Epic #1053)
+
+OpenZigs supports running fully offline against a local OpenAI-compatible endpoint (Ollama or vLLM) as a first-class peer of cloud Copilot. Phase 3 ships the polish layer that makes the local-first stack usable by non-engineers.
+
+### Hardware Detection (Issue #1063)
+
+**`src/system/platform-detector.ts`** — `detectPlatformProfile()` probes:
+
+- OS / arch (`darwin|win32|linux` × `arm64|x64`)
+- Chip name (Apple `sysctl machdep.cpu.brand_string`, otherwise `os.cpus()[0].model`)
+- Total memory + Apple unified memory budget
+- GPU kind: `apple-silicon` (Apple Silicon), `nvidia` (`nvidia-smi` succeeds), `cpu` otherwise
+- Recommended Ollama backend: `ollama-mlx` for Apple Silicon (set `OLLAMA_USE_MLX=1`), `ollama-cuda` for NVIDIA, `ollama-cpu` everything else
+
+`recommendGemma4Variant(profile, { largestGpuVramBytes })` picks the right Gemma 4 variant for the host (`gemma4:31b` for ≥ 64 GB unified memory or ≥ 24 GB VRAM, `gemma4:18b` for the 32–48 GB tier, `gemma4:9b` for tighter Mac configs and CPU-only Linux/Windows). All shellouts are dependency-injected so the Mac code paths are unit-tested on the Windows dev rig.
+
+The result is exposed at `GET /api/system/platform` and rendered by `<SystemRequirementsCard>` on the admin page.
+
+### Smart Router (Issue #1062)
+
+**`src/copilot/smart-router.ts`** — pure `routeRequest(input): RoutingDecision`. Decides per request whether to hit local or cloud:
+
+| Condition | Decision | `reason` |
+|---|---|---|
+| `privacyMode != "off"` and local provider configured | **local** | `privacy_mode_local` |
+| `privacyMode != "off"` and **no** local provider | **throws `RouterPrivacyError`** | `ROUTER_PRIVACY_NO_LOCAL_PROVIDER` |
+| `enabled: false` | **cloud** | `router_disabled` |
+| no local provider configured | **cloud** | `no_local_provider` |
+| `estimatedTokens <= cloudThresholdTokens` (default 4096) | **local** | `below_threshold_local` |
+| `estimatedTokens > cloudThresholdTokens` | **cloud** | `above_threshold_cloud` |
+
+Privacy mode is a **hard kill switch** — under privacy mode the router never silently falls back to cloud; it raises a typed error so the wrapper can surface a 412/409 to the caller. Threshold tuning lives in `localLlm.smartRouter.cloudThresholdTokens` (default `4096`, range `0..1_000_000`).
+
+### Per-Session Cost Meter (Issue #1059)
+
+**`src/costs/cost-meter.ts`** — writes to SQLite table `session_costs` (`PRIMARY KEY (session_id, call_id)` for retry idempotency). Each row stores both the **actual** cost (`0` for `local-copilot` calls) and the **would-have** cost priced against the call's `cloudEquivalentModelId`. `aggregate(sessionId)` returns `{ totalActualCost, totalWouldHaveCost, savedByLocal = max(0, would − actual) }` for the chat-UI cost widget.
+
+Pricing comes from a three-tier loader (`src/costs/copilot-pricing.ts`):
+
+1. Live fetch from `https://docs.github.com/api/copilot-pricing.json` (5 s timeout)
+2. On-disk cache at `~/.openzigs/cache/copilot-pricing.json` (`0o600`)
+3. Bundled fallback (`BUNDLED_VERSION = "2026-06-01"`, includes gpt-4.1, gpt-5, claude-sonnet-4.5, claude-opus-4.5, gemini-2.5-pro)
+
+Each row is stamped with `pricingVersion` and `pricingSource` (`"live" | "cached" | "bundled"`) so finance can reconcile spend later. `GET /api/admin/sessions/:id/cost` exposes the aggregate + per-call rows.
+
+### Offline Setup Wizard (Issue #1061)
+
+`/setup/offline` — five steps: detect host → recommend Gemma 4 variant → show OS-specific install commands (winget / brew / curl) → test local endpoints via `/api/admin/local-llm/autodetect` → switch active provider via `POST /api/admin/local-llm/provider`. Idempotent: when a `local-copilot` provider is already active the wizard shows a "you're already running offline" banner with a Re-run button.
+
+---
+
 ## Desktop Shell (Electron)
 
 OpenZigs ships as a native desktop application via Electron. The desktop shell wraps the existing Express backend + Next.js UI inside a managed BrowserWindow, adding system tray integration, lifecycle management, and auto-update support.

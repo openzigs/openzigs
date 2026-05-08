@@ -48,6 +48,44 @@ export type PrivacyModeConfig = z.infer<typeof privacyModeSchema>;
 
 // ── localLlm top-level block ─────────────────────────────────────────────
 
+// ── smart router (#1062) ────────────────────────────────────────────────
+
+/**
+ * Latency-based smart router config. When enabled and a local provider is
+ * configured, requests with an estimated input <= `cloudThresholdTokens` go
+ * to the local provider; everything else goes to cloud. Privacy mode always
+ * overrides this.
+ */
+export const smartRouterSchema = z
+  .object({
+    enabled: z.boolean().optional().default(true),
+    /** Default 4096 tokens — planner's locked decision (2026-05-08). */
+    cloudThresholdTokens: z.number().int().min(0).max(1_000_000).optional().default(4096),
+  })
+  .optional()
+  .default({ enabled: true, cloudThresholdTokens: 4096 });
+
+export type SmartRouterConfig = z.infer<typeof smartRouterSchema>;
+
+// ── cost meter (#1059) ──────────────────────────────────────────────────
+
+/**
+ * Per-session cost meter config. Controls whether the meter fetches the live
+ * pricing table from GitHub docs at startup, and where the cache lives.
+ */
+export const costMeterSchema = z
+  .object({
+    enabled: z.boolean().optional().default(true),
+    /** Try to fetch the live pricing table on startup. Falls back to cache → bundled on failure. */
+    fetchLivePricing: z.boolean().optional().default(true),
+    /** Override the upstream pricing URL (rarely needed; here for tests + air-gapped mirrors). */
+    pricingUrl: z.string().url().optional(),
+  })
+  .optional()
+  .default({ enabled: true, fetchLivePricing: true });
+
+export type CostMeterConfig = z.infer<typeof costMeterSchema>;
+
 export const localLlmSchema = z
   .object({
     /** Probe `/v1/models` on Ollama (11434) and vLLM (8000) at startup. */
@@ -61,12 +99,18 @@ export const localLlmSchema = z
      */
     vllmApiKey: z.string().optional(),
     privacyMode: privacyModeSchema.optional().default({ globalLockdown: false }),
+    /** Latency-based smart router (#1062). */
+    smartRouter: smartRouterSchema,
+    /** Per-session cost meter (#1059). */
+    costMeter: costMeterSchema,
   })
   .optional()
   .default({
     autodetect: true,
     provider: null,
     privacyMode: { globalLockdown: false },
+    smartRouter: { enabled: true, cloudThresholdTokens: 4096 },
+    costMeter: { enabled: true, fetchLivePricing: true },
   });
 
 export type LocalLlmConfig = z.infer<typeof localLlmSchema>;
