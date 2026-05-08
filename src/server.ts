@@ -60,6 +60,10 @@ import { createTasksRouter } from "./api/tasks.js";
 import { createSeoRouter } from "./api/seo.js";
 import { createFilesRouter } from "./api/files.js";
 import { createVllmAdminRouter } from "./api/admin/vllm.js";
+import {
+  createLocalLlmRouter,
+  ensureVllmApiKey,
+} from "./api/local-llm.js";
 import { GpuCoordinator } from "./gpu/gpu-coordinator.js";
 import { autoRegisterIfDetected } from "./llm/vllm-detect.js";
 import { launchChrome, killChrome } from "./browser/chrome-launcher.js";
@@ -1267,6 +1271,22 @@ app.use("/api/admin", authMiddleware, adminRouter);
 // vLLM admin routes (Epic #888 / Issue #922) — kept out of admin.ts.
 const vllmAdminRouter = createVllmAdminRouter({ coordinator: gpuCoordinator });
 app.use("/api/admin/gpu/vllm", authMiddleware, vllmAdminRouter);
+
+// Local LLM admin routes (Epic #1053 / Issues #1057, #1058) — kept out of admin.ts.
+const localLlmConfigPath =
+  process.env.OPENZIGS_CONFIG_PATH ??
+  path.join(os.homedir(), ".openzigs", "config.json");
+// First-launch: idempotently generate a vLLM API key with 0o600 perms.
+ensureVllmApiKey(localLlmConfigPath).catch((err) => {
+  logger.warn("Failed to ensure vLLM API key on startup", {
+    error: err instanceof Error ? err.message : String(err),
+  });
+});
+const localLlmRouter = createLocalLlmRouter({
+  configPath: localLlmConfigPath,
+  auditLogger,
+});
+app.use("/api/admin/local-llm", authMiddleware, localLlmRouter);
 
 // Knowledge Base API routes
 const knowledgeRouter = createKnowledgeRouter({ knowledgeService });
