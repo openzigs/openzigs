@@ -56,6 +56,16 @@ interface FormState {
   fontHeading: string;
   fontBody: string;
   footerText: string;
+  /** Sub-issue #1047 — default logo corner; '' means "unset (renderer fallback)". */
+  defaultLogoPlacement:
+    | ""
+    | "top-left"
+    | "top-right"
+    | "bottom-left"
+    | "bottom-right"
+    | "none";
+  /** Sub-issue #1047 — deck-wide slide-number indicator toggle. */
+  showSlideNumbers: boolean;
 }
 
 const FONT_SUGGESTIONS = [
@@ -77,6 +87,8 @@ const blankForm = (): FormState => ({
   fontHeading: "Inter",
   fontBody: "Inter",
   footerText: "",
+  defaultLogoPlacement: "",
+  showSlideNumbers: false,
 });
 
 function contrastRatio(foreground: string, background: string): number {
@@ -111,6 +123,12 @@ export const BrandKitEditor = ({
   const [form, setForm] = useState<FormState>(blankForm());
   const [logoError, setLogoError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  // PR #1044 follow-up — in create mode there is no kit id yet, so we
+  // queue the chosen file in state and upload it right after the kit is
+  // persisted. Avoids the trap where Save closes the dialog before the
+  // user can ever reach the upload control.
+  const [pendingLogo, setPendingLogo] = useState<File | null>(null);
+  const [pendingLogoUrl, setPendingLogoUrl] = useState<string | null>(null);
 
   // Prime form when the dialog opens or the target kit changes.
   useEffect(() => {
@@ -123,13 +141,27 @@ export const BrandKitEditor = ({
         accentColor: kit.accentColor,
         fontHeading: kit.fontHeading ?? "Inter",
         fontBody: kit.fontBody ?? "Inter",
-        footerText: "",
+        footerText: kit.footerText ?? "",
+        defaultLogoPlacement: kit.defaultLogoPlacement ?? "",
+        showSlideNumbers: kit.showSlideNumbers === true,
       });
     } else {
       setForm(blankForm());
     }
     setLogoError(null);
+    setPendingLogo(null);
+    setPendingLogoUrl((prev) => {
+      if (prev) URL.revokeObjectURL(prev);
+      return null;
+    });
   }, [open, kit]);
+
+  // Revoke object URL on unmount to avoid leaking blobs.
+  useEffect(() => {
+    return () => {
+      if (pendingLogoUrl) URL.revokeObjectURL(pendingLogoUrl);
+    };
+  }, [pendingLogoUrl]);
 
   const colourErrors = {
     primaryColor: !HEX_RE.test(form.primaryColor),
@@ -165,6 +197,10 @@ export const BrandKitEditor = ({
         fontHeading: form.fontHeading,
         fontBody: form.fontBody,
         footerText: form.footerText || undefined,
+        // Sub-issue #1047 — `''` means "do not change" on update; on create
+        // it means "omit so the renderer's default applies."
+        defaultLogoPlacement: form.defaultLogoPlacement || undefined,
+        showSlideNumbers: form.showSlideNumbers,
       };
       if (isCreate) {
         // Create requires fontFamily (no .optional() on backend); send a
@@ -186,9 +222,32 @@ export const BrandKitEditor = ({
       });
       return kit.id;
     },
-    onSuccess: (id) => {
+    onSuccess: async (id) => {
+      // Flush any queued logo (only set in create mode).
+      if (pendingLogo) {
+        try {
+          const fd = new FormData();
+          fd.append("logo", pendingLogo);
+          const url = buildUrl(`/api/admin/pitch/brand-kits/${id}/logo`);
+          const headers: HeadersInit = AUTH_TOKEN
+            ? { Authorization: `Bearer ${AUTH_TOKEN}` }
+            : {};
+          const res = await fetch(url, { method: "POST", headers, body: fd });
+          if (!res.ok) {
+            const text = await res.text();
+            throw new Error(text || `HTTP ${res.status}`);
+          }
+          showToast("Brand kit saved with logo.", "success");
+        } catch (err) {
+          showToast(
+            `Kit saved but logo upload failed: ${err instanceof Error ? err.message : String(err)}`,
+            "error",
+          );
+        }
+      } else {
+        showToast("Brand kit saved.", "success");
+      }
       queryClient.invalidateQueries({ queryKey: ["pitch", "brand-kits"] });
-      showToast("Brand kit saved.", "success");
       onSaved?.(id);
       onOpenChange(false);
     },
@@ -241,11 +300,17 @@ export const BrandKitEditor = ({
       setLogoError("Logo exceeds 2 MB cap.");
       return;
     }
+    setLogoError(null);
     if (!kit) {
-      setLogoError("Save the kit first, then upload a logo.");
+      // Create mode — queue locally; saveMutation.onSuccess will upload
+      // it once the kit has an id.
+      setPendingLogo(file);
+      setPendingLogoUrl((prev) => {
+        if (prev) URL.revokeObjectURL(prev);
+        return URL.createObjectURL(file);
+      });
       return;
     }
-    setLogoError(null);
     const fd = new FormData();
     fd.append("logo", file);
     const url = buildUrl(`/api/admin/pitch/brand-kits/${kit.id}/logo`);
@@ -264,6 +329,23 @@ export const BrandKitEditor = ({
       setLogoError(err instanceof Error ? err.message : String(err));
     }
   };
+
+  // Sub-issue #1044 follow-up — explicit "remove logo" action so users
+  // can clear an uploaded logo without having to re-upload a placeholder.
+  const removeLogoMutation = useMutation({
+    mutationFn: async () => {
+      if (!kit) throw new Error("missing kit");
+      await fetchJson(`/api/admin/pitch/brand-kits/${kit.id}/logo`, {
+        method: "DELETE",
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["pitch", "brand-kits"] });
+      showToast("Logo removed.", "success");
+    },
+    onError: (err) =>
+      setLogoError(err instanceof Error ? err.message : String(err)),
+  });
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -409,28 +491,126 @@ export const BrandKitEditor = ({
             />
           </label>
 
-          {!isCreate && !isStarter && kit && (
-            <div>
-              <span className="mb-1 block font-semibold">Logo</span>
+          {/* Sub-issue #1047 \u2014 default logo placement + slide-number toggle. */}
+          <div className="grid grid-cols-2 gap-2">
+            <label className="block">
+              <span className="mb-1 block font-semibold">
+                Default logo placement
+              </span>
+              <select
+                data-testid="pitch-bk-default-logo-placement"
+                value={form.defaultLogoPlacement}
+                disabled={isStarter}
+                onChange={(e) =>
+                  setForm((f) => ({
+                    ...f,
+                    defaultLogoPlacement: e.target.value as FormState["defaultLogoPlacement"],
+                  }))
+                }
+                className="w-full rounded border border-border bg-background px-2 py-1"
+              >
+                <option value="">Renderer default (bottom-right)</option>
+                <option value="top-left">Top-left</option>
+                <option value="top-right">Top-right</option>
+                <option value="bottom-left">Bottom-left</option>
+                <option value="bottom-right">Bottom-right</option>
+                <option value="none">None (hide logo)</option>
+              </select>
+            </label>
+            <label className="flex items-center gap-2 self-end pb-1">
               <input
-                ref={fileInputRef}
-                type="file"
-                data-testid="pitch-bk-logo-input"
-                accept={ALLOWED_LOGO_MIMES.join(",")}
-                onChange={async (e) => {
-                  const file = e.target.files?.[0];
-                  if (file) await handleLogoFile(file);
-                  e.target.value = "";
-                }}
-                className="text-[11px]"
+                type="checkbox"
+                data-testid="pitch-bk-show-slide-numbers"
+                checked={form.showSlideNumbers}
+                disabled={isStarter}
+                onChange={(e) =>
+                  setForm((f) => ({
+                    ...f,
+                    showSlideNumbers: e.target.checked,
+                  }))
+                }
               />
-              <p className="mt-0.5 text-[10px] text-muted-foreground">
-                PNG / JPEG / WebP, ≤ 2 MB.
+              <span className="font-semibold">Show slide numbers</span>
+            </label>
+          </div>
+
+          {!isStarter && (
+            <div data-testid="pitch-bk-logo-section">
+              <span className="mb-1 block font-semibold">Logo</span>
+              {kit?.logoUrl || pendingLogoUrl ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={pendingLogoUrl ?? kit?.logoUrl ?? ""}
+                  alt="Current brand kit logo"
+                  data-testid="pitch-bk-logo-preview"
+                  className="h-12 w-auto rounded border border-border bg-muted/30 object-contain"
+                />
+              ) : (
+                <div
+                  data-testid="pitch-bk-logo-empty"
+                  className="grid h-12 place-items-center rounded border border-dashed border-border bg-muted/10 px-3 text-xs text-muted-foreground"
+                >
+                  No logo uploaded
+                </div>
+              )}
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <label
+                  data-testid="pitch-bk-logo-upload-label"
+                  className="cursor-pointer rounded border border-primary px-3 py-1 text-xs font-semibold text-primary hover:bg-primary/10"
+                >
+                  {kit?.logoUrl || pendingLogoUrl ? "Replace logo" : "Upload logo"}
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    data-testid="pitch-bk-logo-input"
+                    accept={ALLOWED_LOGO_MIMES.join(",")}
+                    onChange={async (e) => {
+                      const file = e.target.files?.[0];
+                      if (file) await handleLogoFile(file);
+                      e.target.value = "";
+                    }}
+                    className="sr-only"
+                  />
+                </label>
+                {(kit?.logoUrl || pendingLogoUrl) && (
+                  <button
+                    type="button"
+                    data-testid="pitch-bk-logo-remove"
+                    disabled={removeLogoMutation.isPending}
+                    onClick={() => {
+                      if (
+                        typeof window !== "undefined" &&
+                        !window.confirm(
+                          "Remove the current logo from this brand kit?",
+                        )
+                      ) {
+                        return;
+                      }
+                      if (isCreate) {
+                        setPendingLogo(null);
+                        setPendingLogoUrl((prev) => {
+                          if (prev) URL.revokeObjectURL(prev);
+                          return null;
+                        });
+                        return;
+                      }
+                      removeLogoMutation.mutate();
+                    }}
+                    className="rounded border border-red-500 px-3 py-1 text-xs font-semibold text-red-500 hover:bg-red-500/10 disabled:opacity-50"
+                  >
+                    {removeLogoMutation.isPending ? "Removing…" : "Remove"}
+                  </button>
+                )}
+              </div>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {isCreate && pendingLogo
+                  ? `Will upload "${pendingLogo.name}" when you save.`
+                  : "PNG / JPEG / WebP, ≤ 2 MB."}
               </p>
               {logoError && (
                 <p
                   data-testid="pitch-bk-logo-error"
-                  className="mt-0.5 text-[10px] text-red-500"
+                  className="mt-0.5 text-xs text-red-500"
                 >
                   {logoError}
                 </p>

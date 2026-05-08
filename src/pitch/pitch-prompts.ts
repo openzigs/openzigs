@@ -53,6 +53,21 @@ const TEMPLATE_DESCRIPTIONS: Record<(typeof SLIDE_TEMPLATES)[number], string> = 
     "Heading + chart_type (bar/line/pie/area) + 1–5 series. Each series is { name, data: [{x,y}] }.",
   mermaid:
     "Mermaid diagram. Specify diagram_type (flowchart/sequence/gantt/class/state/er/pie/timeline) + source.",
+  // Sub-issue #1046
+  pricing_table:
+    "Heading + 2–4 pricing tiers. Each tier has name, price, optional period, 1–10 short features, optional CTA, optional `highlighted` (at most one tier).",
+  big_number:
+    "Single hero metric. value (≤20 chars), label (≤80 chars), optional support paragraph (≤240) and trend (up/down/flat) with optional trend_label.",
+  // Sub-issue #1049
+  team_grid:
+    "Heading + 2–12 team members. Each member: name, role, optional bio (≤280), optional photoUrl (uploaded asset only), optional links.",
+  logo_grid:
+    "Heading + 4–24 partner/customer logos. Each logo: alt text + imageUrl (uploaded asset). Optional caption + grayscale toggle.",
+  // Sub-issue #1052
+  roadmap:
+    "Heading + 2–6 column labels (e.g. quarters) + 1–4 track labels (e.g. teams). items[] place a label in a column×track cell with optional status (planned/in_progress/done).",
+  agenda:
+    "Auto-derived agenda from the deck's section_divider slides, or a manual list of 1–20 items. Optional `numbered: true` to use an ordered list.",
 };
 
 function describeTemplates(): string {

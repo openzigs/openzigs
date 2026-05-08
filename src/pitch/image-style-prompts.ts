@@ -69,3 +69,47 @@ export function applyStylePreset(
   const prefix = IMAGE_STYLE_PROMPTS[style];
   return `${prefix}${prompt.trimStart()}`;
 }
+
+/**
+ * Quality-boosting tokens appended to the prompt to nudge FluxQ towards
+ * sharper, higher-detail output. Used by {@link appendQualityTokens}.
+ *
+ * Kept short; only emitted once per prompt; skipped when the active style
+ * preset (e.g. `cinematic`, `corporate_photo`) already conveys equivalent
+ * quality cues so we don't double-up and crowd out the actual subject.
+ */
+export const QUALITY_TOKEN_SUFFIX =
+  ", sharp focus, high detail, photographic, 8k";
+
+/**
+ * Style presets that already carry their own quality / detail vocabulary
+ * — appending the generic suffix would be redundant and waste prompt
+ * tokens.
+ */
+const PRESET_HAS_QUALITY: ReadonlySet<ImageStyle> = new Set<ImageStyle>([
+  "cinematic",
+  "3d_render",
+  "corporate_photo",
+]);
+
+/**
+ * Append the quality-token suffix to `prompt` unless the active style
+ * preset is known to already include equivalent tokens, OR the prompt
+ * already mentions one of the suffix tokens (defensive idempotency for
+ * regenerate flows that re-submit a previously-suffixed prompt).
+ *
+ * Pure / no side effects. Returns the original `prompt` when input is
+ * empty / whitespace.
+ */
+export function appendQualityTokens(
+  prompt: string,
+  style: ImageStyle | undefined,
+): string {
+  const trimmed = prompt.trimEnd();
+  if (trimmed.length === 0) return prompt;
+  if (style && PRESET_HAS_QUALITY.has(style)) return prompt;
+  // Idempotency — if the prompt already carries a recognised quality
+  // marker, leave it alone.
+  if (/(8k|sharp focus|high detail|photographic)/i.test(prompt)) return prompt;
+  return `${trimmed}${QUALITY_TOKEN_SUFFIX}`;
+}

@@ -25,7 +25,7 @@ import { mkdir, readFile, rename, stat, unlink, writeFile } from "node:fs/promis
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { extname, join, relative, resolve } from "node:path";
-import { Router, type Request, type Response } from "express";
+import { Router, type Request, type RequestHandler, type Response } from "express";
 import express from "express";
 import multer from "multer";
 import { nanoid } from "nanoid";
@@ -51,7 +51,7 @@ import {
 } from "../pitch/pitch-condense.js";
 import { submitSlideRegenerateTask } from "../pitch/pitch-regenerate.js";
 import { enqueueSlideImage } from "../pitch/pitch-image-service.js";
-import { fanOutImageGeneration } from "../pitch/image-fanout.js";
+import { fanOutImageGeneration, recommendedDimsForSlot } from "../pitch/image-fanout.js";
 import {
   refreshFluxQGpuAvailable,
   getCachedFluxQGpuAvailable,
@@ -229,6 +229,11 @@ export function repoToPitchBrandKit(kit: RepoBrandKit): PitchBrandKit {
     logoUrl,
     watermarkUrl,
     footerText: kit.footerText,
+    // #1047 \u2014 brand-kit defaults for per-slide logo + slide-number
+    // indicator. `undefined` (not null) so the optional Zod fields stay
+    // omitted when the column is unset (legacy rows).
+    defaultLogoPlacement: kit.defaultLogoPlacement ?? undefined,
+    showSlideNumbers: kit.showSlideNumbers ?? undefined,
   });
 }
 
@@ -504,6 +509,8 @@ const DeckMetadataSchema = z
     tone: DeckToneEnum.default("formal"),
     estimated_minutes: z.number().int().min(1).max(180).optional(),
     image_style: ImageStyleEnum.optional(),
+    image_model: z.enum(["flux-schnell", "flux-dev"]).optional(),
+    auto_generate_backgrounds: z.boolean().optional(),
   })
   .strict();
 
@@ -516,6 +523,8 @@ const DeckMetadataPatchSchema = z
     tone: DeckToneEnum.optional(),
     estimated_minutes: z.number().int().min(1).max(180).optional(),
     image_style: ImageStyleEnum.optional(),
+    image_model: z.enum(["flux-schnell", "flux-dev"]).optional(),
+    auto_generate_backgrounds: z.boolean().optional(),
   })
   .strict();
 
@@ -538,6 +547,12 @@ function mergeDeckMetadata(
         : prev.estimated_minutes,
     image_style:
       patch.image_style !== undefined ? patch.image_style : prev.image_style,
+    image_model:
+      patch.image_model !== undefined ? patch.image_model : prev.image_model,
+    auto_generate_backgrounds:
+      patch.auto_generate_backgrounds !== undefined
+        ? patch.auto_generate_backgrounds
+        : prev.auto_generate_backgrounds,
   };
 }
 
@@ -603,6 +618,14 @@ const SlideImageBody = z
   .object({
     prompt: z.string().min(3).max(400),
     mode: z.enum(["background", "inline"]),
+    /**
+     * For inline images on multi-slot templates (`two_column`), pin the
+     * regenerate to a specific slot. Defaults to `"image"` for the
+     * single-slot templates and `background` mode.
+     */
+    slot: z.enum(["image", "left_image", "right_image"]).optional(),
+    /** Per-regenerate FluxQ model override; falls back to deck-level. */
+    model: z.enum(["flux-schnell", "flux-dev"]).optional(),
     loraTriggerWord: z.string().max(80).optional(),
     seed: z.number().int().min(0).optional(),
     width: z.number().int().min(64).max(4096).optional(),
@@ -629,6 +652,11 @@ const CreateBrandKitBody = z
     fontHeading: z.string().min(1).max(60).optional(),
     fontBody: z.string().min(1).max(60).optional(),
     footerText: z.string().max(120).optional(),
+    // #1047 — brand-kit defaults for per-slide chrome.
+    defaultLogoPlacement: z
+      .enum(["top-left", "top-right", "bottom-left", "bottom-right", "none"])
+      .optional(),
+    showSlideNumbers: z.boolean().optional(),
   })
   .strict();
 
@@ -651,6 +679,12 @@ const UpdateBrandKitBody = z
     fontHeading: z.string().min(1).max(60).nullable().optional(),
     fontBody: z.string().min(1).max(60).nullable().optional(),
     footerText: z.string().max(120).nullable().optional(),
+    // #1047 — brand-kit defaults; nullable so callers can clear them.
+    defaultLogoPlacement: z
+      .enum(["top-left", "top-right", "bottom-left", "bottom-right", "none"])
+      .nullable()
+      .optional(),
+    showSlideNumbers: z.boolean().nullable().optional(),
   })
   .strict()
   .refine((v) => Object.keys(v).length > 0, {
@@ -1797,9 +1831,19 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
               ...(body.options?.imageStyle
                 ? { imageStyle: body.options.imageStyle }
                 : {}),
+              ...(body.options?.imageModel
+                ? { imageModel: body.options.imageModel }
+                : persisted.metadata.image_model
+                ? { imageModel: persisted.metadata.image_model }
+                : {}),
               concurrency: 4,
-              // Issue #1007 — ensure every slide gets a background image.
-              deriveFallbackBackgrounds: true,
+              // Issue #1007 — derive a fallback background image when the
+              // AI/user did not author one. Honour the deck-level
+              // `auto_generate_backgrounds` toggle (defaults to ON).
+              deriveFallbackBackgrounds:
+                body.options?.autoGenerateBackgrounds ??
+                persisted.metadata.auto_generate_backgrounds ??
+                true,
               onEnqueued: (info) => {
                 emit("pitch:image:queued", {
                   deckId: persisted.id,
@@ -1948,26 +1992,54 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
     // the deck-level default persisted on `metadata.image_style`.
     const deckForStyle = deps.pitchRepo.getDeck(req.params.deckId);
     const deckMeta = deckForStyle?.metadata as
-      | { image_style?: string }
+      | { image_style?: string; image_model?: "flux-schnell" | "flux-dev" }
       | undefined;
     const effectiveImageStyle =
       slide.slide.image_style ??
       (typeof deckMeta?.image_style === "string"
         ? (deckMeta.image_style as never)
         : undefined);
+    // Per-regenerate model override beats the deck default.
+    const effectiveModel = body.model ?? deckMeta?.image_model;
+    // Slot resolution: explicit body.slot wins; otherwise inline mode
+    // defaults to the generic "image" slot (the right one for
+    // single-image templates) and background mode is forced to "image"
+    // because background is identified by `kind`, not `slot`.
+    const effectiveSlot =
+      body.mode === "inline" ? body.slot ?? "image" : "image";
+
+    // Bug-fix (PR #1044 walkthrough Bug #2): the studio's
+    // RegenerateImageDialog does not send width/height, so they were
+    // dropping through to clampToFluxQRecommendedDims(undefined,
+    // undefined) and producing the 1024×576 fallback for every
+    // regenerated background. Derive slot-aware defaults so a
+    // background regenerate stays at 1920×1080 and a two_column
+    // left_image stays at 960×1080. An explicit body.width/height
+    // still wins.
+    const effectiveKind: "image" | "background" =
+      body.mode === "inline" ? "image" : "background";
+    const dimsDefault = recommendedDimsForSlot(
+      slide.slide.template,
+      effectiveSlot,
+      effectiveKind,
+    );
+    const effectiveWidth = body.width ?? dimsDefault.width;
+    const effectiveHeight = body.height ?? dimsDefault.height;
 
     try {
       const result = enqueueSlideImage({
         deckId: req.params.deckId,
         slideId: req.params.slideId,
         prompt: finalPrompt,
-        kind: body.mode === "inline" ? "image" : "background",
+        kind: effectiveKind,
+        slot: effectiveSlot,
         seed: body.seed,
-        width: body.width,
-        height: body.height,
+        width: effectiveWidth,
+        height: effectiveHeight,
         mediaQueueRepo: deps.mediaQueueRepo,
         characterRepo: deps.characterRepo,
         ...(effectiveImageStyle ? { imageStyle: effectiveImageStyle } : {}),
+        ...(effectiveModel ? { preferredModel: effectiveModel } : {}),
       });
       audit("tool", "pitch_image_queued", {
         deckId: req.params.deckId,
@@ -1979,7 +2051,7 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
       emit("pitch:image:queued", {
         deckId: req.params.deckId,
         slideId: req.params.slideId,
-        slot: body.mode === "inline" ? "image" : "background",
+        slot: body.mode === "inline" ? effectiveSlot : "background",
         jobId: result.jobId,
         assetId: result.assetId,
         mode: body.mode,
@@ -2100,7 +2172,13 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
       // Sub-issue #998 — honour the deck-level image-style preset
       // persisted on `metadata.image_style` so re-running generate-all
       // produces visually consistent imagery with the original draft.
-      const deckMeta = deck.metadata as { image_style?: string } | undefined;
+      const deckMeta = deck.metadata as
+        | {
+            image_style?: string;
+            image_model?: "flux-schnell" | "flux-dev";
+            auto_generate_backgrounds?: boolean;
+          }
+        | undefined;
       const deckImageStyle =
         typeof deckMeta?.image_style === "string"
           ? deckMeta.image_style
@@ -2115,10 +2193,17 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
           ...(deckImageStyle
             ? { imageStyle: deckImageStyle as never }
             : {}),
+          ...(deckMeta?.image_model
+            ? { imageModel: deckMeta.image_model }
+            : {}),
           concurrency: 4,
           existingBackgroundSlideIds,
-          // Issue #1007 — ensure every slide gets a background image.
-          deriveFallbackBackgrounds: true,
+          // Issue #1007 — derive a fallback background image when the
+          // AI/user did not author one. Honour the deck-level
+          // `auto_generate_backgrounds` toggle (defaults to ON for
+          // back-compat with decks created before the toggle existed).
+          deriveFallbackBackgrounds:
+            deckMeta?.auto_generate_backgrounds ?? true,
           onEnqueued: (info) => {
             emit("pitch:image:queued", {
               deckId,
@@ -2166,12 +2251,19 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
   // Brand kits (#966)
   // ────────────────────────────────────────────────────────────────────
 
+  // Build the HTTP-servable URL for a brand-kit logo. Returns null when
+  // the kit has no logo on disk so the UI can render an empty-state
+  // placeholder instead of a broken `<img>`.
+  const brandKitLogoUrl = (kit: { id: string; logoPath: string | null }) =>
+    kit.logoPath ? `/api/admin/pitch/brand-kits/${kit.id}/logo` : null;
+
   router.get("/brand-kits", crudLimiter, (_req, res) => {
     const kits = deps.brandKitRepo.getAll();
     res.json({
       brandKits: kits.map((k) => ({
         ...k,
         isStarter: STARTER_KIT_IDS.has(k.id),
+        logoUrl: brandKitLogoUrl(k),
       })),
     });
   });
@@ -2192,6 +2284,8 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
         fontHeading: body.fontHeading,
         fontBody: body.fontBody,
         footerText: body.footerText,
+        defaultLogoPlacement: body.defaultLogoPlacement,
+        showSlideNumbers: body.showSlideNumbers,
         logoPath: null,
         watermarkPath: null,
         introTemplateId: null,
@@ -2219,7 +2313,7 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
       return;
     }
     res.json({
-      brandKit: { ...kit, isStarter: STARTER_KIT_IDS.has(kit.id) },
+      brandKit: { ...kit, isStarter: STARTER_KIT_IDS.has(kit.id), logoUrl: brandKitLogoUrl(kit) },
     });
   });
 
@@ -2288,6 +2382,135 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
     emit("pitch:brand-kit:deleted", { brandKitId: req.params.id });
     res.json({ ok: true });
   });
+
+  // ── Sub-issue #1048 ─ Apply brand kit to a deck (re-point + clear overrides) ─
+  router.post(
+    "/decks/:deckId/apply-brand-kit",
+    crudLimiter,
+    (req, res) => {
+      const Body = z.object({ brandKitId: z.string().min(1) }).strict();
+      const body = parseBody(Body, res, req);
+      if (!body) return;
+
+      const deck = deps.pitchRepo.getDeck(req.params.deckId);
+      if (!deck) {
+        sendError(res, 404, "not_found", `deck ${req.params.deckId} not found`);
+        return;
+      }
+      const kit = deps.brandKitRepo.getById(body.brandKitId);
+      if (!kit) {
+        sendError(
+          res,
+          404,
+          "not_found",
+          `brand kit ${body.brandKitId} not found`,
+        );
+        return;
+      }
+
+      const updated = deps.pitchRepo.updateDeck(req.params.deckId, {
+        brand_kit_id: body.brandKitId,
+      });
+      // Strip per-slide branding overrides so the new kit is the single
+      // source of truth. Wrapped in a transaction inside the repository
+      // (#1048 follow-up) so a mid-loop failure can't leave the deck with
+      // a half-cleared override set.
+      const slidesCleared = deps.pitchRepo.clearAllSlideBranding(
+        req.params.deckId,
+      );
+      audit("system", "pitch_deck_brand_kit_applied", {
+        deckId: req.params.deckId,
+        brandKitId: body.brandKitId,
+        slidesCleared,
+      });
+      emit("pitch:deck:updated", {
+        deckId: req.params.deckId,
+        deck: updated,
+      });
+      res.json({ ok: true, deck: updated, slidesCleared });
+    },
+  );
+
+  // ── Sub-issue #1048 ─ Clone a deck's effective brand kit into a new kit ──
+  //
+  // Naming note (follow-up to PR #1044): this endpoint was originally named
+  // `extract-brand-kit`, but it does not extract anything from the deck's
+  // current state — it clones the brand kit row the deck currently points at
+  // under a new name. The route is now `clone-brand-kit`; the legacy path is
+  // retained below as a deprecation alias so existing clients keep working.
+  const cloneBrandKitHandler: RequestHandler = (req, res) => {
+    const Body = z.object({ name: z.string().min(1).max(120) }).strict();
+    const body = parseBody(Body, res, req);
+    if (!body) return;
+
+    const deck = deps.pitchRepo.getDeck(req.params.deckId);
+    if (!deck) {
+      sendError(res, 404, "not_found", `deck ${req.params.deckId} not found`);
+      return;
+    }
+    const source = deps.brandKitRepo.getById(deck.brand_kit_id);
+    if (!source) {
+      sendError(
+        res,
+        404,
+        "not_found",
+        `brand kit ${deck.brand_kit_id} not found`,
+      );
+      return;
+    }
+
+    const newId = nanoid();
+    try {
+      const created = deps.brandKitRepo.create({
+        id: newId,
+        name: body.name,
+        primaryColor: source.primaryColor,
+        secondaryColor: source.secondaryColor,
+        accentColor: source.accentColor,
+        fontFamily: source.fontFamily,
+        fontHeading: source.fontHeading ?? null,
+        fontBody: source.fontBody ?? null,
+        footerText: source.footerText ?? null,
+        defaultLogoPlacement: source.defaultLogoPlacement ?? null,
+        showSlideNumbers: source.showSlideNumbers ?? null,
+        logoPath: source.logoPath ?? null,
+        watermarkPath: source.watermarkPath ?? null,
+        introTemplateId: source.introTemplateId ?? null,
+        outroTemplateId: source.outroTemplateId ?? null,
+      });
+      audit("system", "pitch_deck_brand_kit_cloned", {
+        deckId: req.params.deckId,
+        newBrandKitId: created.id,
+        sourceBrandKitId: source.id,
+      });
+      emit("pitch:brand-kit:created", { brandKitId: created.id });
+      res.status(201).json({
+        brandKit: { ...created, isStarter: false },
+      });
+    } catch (err) {
+      const msg = errMessage(err);
+      if (/UNIQUE constraint failed/i.test(msg)) {
+        sendError(
+          res,
+          409,
+          "conflict",
+          `brand kit name "${body.name}" already exists`,
+        );
+        return;
+      }
+      sendError(res, 500, "internal_error", `clone failed: ${msg}`);
+    }
+  };
+
+  router.post("/decks/:deckId/clone-brand-kit", crudLimiter, cloneBrandKitHandler);
+  // @deprecated 2026-05 — use `clone-brand-kit`. Kept as alias for backwards
+  // compatibility with clients (incl. the older UI bundle and any external
+  // scripts) that still POST to the original path.
+  router.post(
+    "/decks/:deckId/extract-brand-kit",
+    crudLimiter,
+    cloneBrandKitHandler,
+  );
 
   router.post(
     "/brand-kits/:id/logo",
@@ -2501,6 +2724,114 @@ export function createPitchRouter(deps: PitchRouterDeps): Router {
       }
     },
   );
+
+  // GET /brand-kits/:id/logo — serve the stored logo bytes for in-browser
+  // preview in the brand-kit editor. The repo-stored `logoPath` is
+  // confined to `brandKitsDir` (see POST handler above) but we re-verify
+  // path containment here as defence-in-depth in case a future code path
+  // ever writes a traversal value into the row.
+  router.get("/brand-kits/:id/logo", crudLimiter, (req, res) => {
+    const kit = deps.brandKitRepo.getById(req.params.id);
+    if (!kit) {
+      sendError(res, 404, "not_found", `brand kit ${req.params.id} not found`);
+      return;
+    }
+    if (!kit.logoPath) {
+      sendError(res, 404, "not_found", "no logo set for this brand kit");
+      return;
+    }
+    const absPath = resolve(kit.logoPath);
+    const rel = relative(brandKitsDir, absPath);
+    if (rel.startsWith("..") || resolve(brandKitsDir, rel) !== absPath) {
+      audit(
+        "security",
+        "pitch_brand_kit_logo_path_outside_root",
+        { brandKitId: kit.id, absPath, brandKitsDir },
+        "warn",
+      );
+      sendError(res, 404, "not_found", "logo not found");
+      return;
+    }
+    if (!existsSync(absPath)) {
+      sendError(res, 404, "not_found", "logo file missing");
+      return;
+    }
+    const ext = extname(absPath).toLowerCase().replace(/^\./, "");
+    const mime =
+      ext === "png"
+        ? "image/png"
+        : ext === "jpg" || ext === "jpeg"
+          ? "image/jpeg"
+          : ext === "webp"
+            ? "image/webp"
+            : "application/octet-stream";
+    res.setHeader("Content-Type", mime);
+    res.setHeader("Cache-Control", "no-store");
+    res.sendFile(absPath, (err) => {
+      if (err && !res.headersSent) {
+        sendError(res, 500, "internal_error", "logo send failed");
+      }
+    });
+  });
+
+  // DELETE /brand-kits/:id/logo — clear the stored logo. Mirrors the
+  // 403/404 contract of the POST handler (starter kits are immutable).
+  // Idempotent: a second call after the file is gone still returns 200
+  // with logoPath: null. The on-disk unlink is best-effort — ENOENT is
+  // swallowed because the row's truth is what counts for the renderer.
+  router.delete("/brand-kits/:id/logo", crudLimiter, async (req, res) => {
+    const kit = deps.brandKitRepo.getById(req.params.id);
+    if (!kit) {
+      sendError(res, 404, "not_found", `brand kit ${req.params.id} not found`);
+      return;
+    }
+    if (STARTER_KIT_IDS.has(req.params.id)) {
+      audit(
+        "security",
+        "pitch_brand_kit_mutation_blocked",
+        { brandKitId: req.params.id, reason: "starter_immutable" },
+        "warn",
+      );
+      sendError(res, 403, "forbidden", "starter brand kits are immutable");
+      return;
+    }
+
+    if (kit.logoPath) {
+      const absPath = resolve(kit.logoPath);
+      const rel = relative(brandKitsDir, absPath);
+      const inside =
+        !rel.startsWith("..") && resolve(brandKitsDir, rel) === absPath;
+      if (inside) {
+        try {
+          await unlink(absPath);
+        } catch (err) {
+          // ENOENT is fine — the row will still be cleared below.
+          if ((err as NodeJS.ErrnoException)?.code !== "ENOENT") {
+            logger.warn(
+              `[Pitch API] brand-kit logo unlink failed: ${errMessage(err)}`,
+            );
+          }
+        }
+      }
+    }
+
+    const updated = deps.brandKitRepo.update(kit.id, { logoPath: null });
+    audit("system", "pitch_brand_kit_logo_removed", {
+      brandKitId: kit.id,
+      previousPath: kit.logoPath,
+    });
+    const payload = {
+      ...(updated ?? { ...kit, logoPath: null }),
+      isStarter: false,
+      logoUrl: null,
+    };
+    emit("pitch:brand-kit:updated", {
+      brandKitId: kit.id,
+      brandKit: payload,
+      source: "logo",
+    });
+    res.json({ brandKit: payload });
+  });
 
   // ────────────────────────────────────────────────────────────────────
   // Public share-link admin routes (sub-issue #1000)

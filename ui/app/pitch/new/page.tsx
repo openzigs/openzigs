@@ -69,6 +69,17 @@ export default function NewPitchDeckPage() {
     | "corporate_photo"
     | "minimal_vector"
   >("");
+  // Issue (2026-05): deck-level FluxQ model. `flux-schnell` is the fast
+  // 4-step distilled model (default for back-compat); `flux-dev` trades
+  // longer generation for higher fidelity.
+  const [imageModel, setImageModel] = useState<"flux-schnell" | "flux-dev">(
+    "flux-schnell",
+  );
+  // Issue (2026-05): Issue 2 — toggle deciding whether the auto-fan-out
+  // derives a fallback background prompt for slides that don't have one.
+  // Defaults to true to preserve existing-deck behaviour.
+  const [autoGenerateBackgrounds, setAutoGenerateBackgrounds] =
+    useState<boolean>(true);
   // Optional LLM override for both the condense + draft endpoints.
   // Empty string → omit `model` from the POST body so the wrapper's
   // own default model is used (PR #987 hard-coded `gpt-4o-mini` and
@@ -253,6 +264,14 @@ export default function NewPitchDeckPage() {
             audience: audience || undefined,
             tone,
             ...(imageStyle ? { imageStyle } : {}),
+            // Always send the image model — defaults to flux-schnell
+            // for back-compat with decks created before this option
+            // existed.
+            imageModel,
+            // Issue 2 (2026-05) — opt-in/out of fallback background
+            // derivation for the deck. Sent unconditionally so the
+            // server uses the user's choice rather than the default.
+            autoGenerateBackgrounds,
             ...(model ? { model } : {}),
           },
         }),
@@ -613,6 +632,57 @@ export default function NewPitchDeckPage() {
               <p className="mt-1 text-[11px] text-muted-foreground">
                 Applied to every generated slide image. Per-slide overrides
                 can be set later in the editor.
+              </p>
+            </div>
+            <div className="mt-4">
+              <label
+                htmlFor="wizard-image-model"
+                className="text-xs font-semibold"
+              >
+                Image quality
+              </label>
+              <select
+                id="wizard-image-model"
+                data-testid="wizard-image-model"
+                value={imageModel}
+                onChange={(e) =>
+                  setImageModel(
+                    e.target.value as "flux-schnell" | "flux-dev",
+                  )
+                }
+                className="mt-1 w-full rounded border border-border bg-background p-2 text-sm"
+              >
+                <option value="flux-schnell">
+                  Fast (flux-schnell · 4-step distilled)
+                </option>
+                <option value="flux-dev">
+                  High quality (flux-dev · slower)
+                </option>
+              </select>
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                flux-dev produces sharper, more detailed images at the
+                cost of generation time. Stored on the deck and reused
+                by every regenerate.
+              </p>
+            </div>
+            <div className="mt-4">
+              <label className="inline-flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  data-testid="wizard-auto-bg"
+                  checked={autoGenerateBackgrounds}
+                  onChange={(e) =>
+                    setAutoGenerateBackgrounds(e.target.checked)
+                  }
+                />
+                <span className="font-semibold">
+                  Auto-generate background images
+                </span>
+              </label>
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                When enabled, slides without a background prompt get an
+                abstract one derived from the slide content. Disable for
+                cleaner text-heavy decks.
               </p>
             </div>
           </div>

@@ -19,6 +19,23 @@ export interface BrandKit {
   fontBody: string | null;
   /** Optional footer line (Pitch Brand Kit). Null when unset. */
   footerText: string | null;
+  /**
+   * Sub-issue #1047 — default corner for the per-slide logo when a slide
+   * does not specify its own `branding.logoPlacement`. Null on legacy
+   * rows; renderer treats that as `bottom-right`.
+   */
+  defaultLogoPlacement:
+    | "top-left"
+    | "top-right"
+    | "bottom-left"
+    | "bottom-right"
+    | "none"
+    | null;
+  /**
+   * Sub-issue #1047 — deck-wide toggle for the slide-number indicator.
+   * Null on legacy rows; renderer treats that as `false`.
+   */
+  showSlideNumbers: boolean | null;
   logoPath: string | null;
   watermarkPath: string | null;
   introTemplateId: string | null;
@@ -37,6 +54,10 @@ interface BrandKitRow {
   font_heading: string | null;
   font_body: string | null;
   footer_text: string | null;
+  /** #1047 — nullable on legacy rows. */
+  default_logo_placement: string | null;
+  /** #1047 — SQLite booleans are 0/1; nullable on legacy rows. */
+  show_slide_numbers: number | null;
   logo_path: string | null;
   watermark_path: string | null;
   intro_template_id: string | null;
@@ -46,6 +67,21 @@ interface BrandKitRow {
 }
 
 function rowToKit(row: BrandKitRow): BrandKit {
+  // #1047 — narrow the persisted string to the placement enum so callers
+  // never have to revalidate. Unknown values fall back to null (legacy
+  // safety) so the renderer can apply its own default.
+  const placement = (() => {
+    switch (row.default_logo_placement) {
+      case "top-left":
+      case "top-right":
+      case "bottom-left":
+      case "bottom-right":
+      case "none":
+        return row.default_logo_placement;
+      default:
+        return null;
+    }
+  })();
   return {
     id: row.id,
     name: row.name,
@@ -56,6 +92,9 @@ function rowToKit(row: BrandKitRow): BrandKit {
     fontHeading: row.font_heading,
     fontBody: row.font_body,
     footerText: row.footer_text,
+    defaultLogoPlacement: placement,
+    showSlideNumbers:
+      row.show_slide_numbers === null ? null : row.show_slide_numbers === 1,
     logoPath: row.logo_path,
     watermarkPath: row.watermark_path,
     introTemplateId: row.intro_template_id,
@@ -93,6 +132,11 @@ export class BrandKitRepository {
       "ALTER TABLE brand_kits ADD COLUMN font_heading TEXT",
       "ALTER TABLE brand_kits ADD COLUMN font_body TEXT",
       "ALTER TABLE brand_kits ADD COLUMN footer_text TEXT",
+      // ── #1047 columns ──────────────────────────────────────────────
+      // Brand-kit-level defaults for per-slide logo placement and the
+      // deck-wide slide-number toggle. Added in PR #1044.
+      "ALTER TABLE brand_kits ADD COLUMN default_logo_placement TEXT",
+      "ALTER TABLE brand_kits ADD COLUMN show_slide_numbers INTEGER",
     ];
     for (const ddl of additiveColumns) {
       try {
@@ -108,20 +152,41 @@ export class BrandKitRepository {
   create(
     kit: Omit<
       BrandKit,
-      "createdAt" | "updatedAt" | "fontHeading" | "fontBody" | "footerText"
+      | "createdAt"
+      | "updatedAt"
+      | "fontHeading"
+      | "fontBody"
+      | "footerText"
+      | "defaultLogoPlacement"
+      | "showSlideNumbers"
     > &
-      Partial<Pick<BrandKit, "fontHeading" | "fontBody" | "footerText">>,
+      Partial<
+        Pick<
+          BrandKit,
+          | "fontHeading"
+          | "fontBody"
+          | "footerText"
+          | "defaultLogoPlacement"
+          | "showSlideNumbers"
+        >
+      >,
   ): BrandKit {
     const now = new Date().toISOString();
     const fontHeading = kit.fontHeading ?? null;
     const fontBody = kit.fontBody ?? null;
     const footerText = kit.footerText ?? null;
+    const defaultLogoPlacement = kit.defaultLogoPlacement ?? null;
+    const showSlideNumbers =
+      kit.showSlideNumbers === undefined || kit.showSlideNumbers === null
+        ? null
+        : kit.showSlideNumbers;
     this.db
       .prepare(
         `INSERT INTO brand_kits (id, name, primary_color, secondary_color, accent_color, font_family,
         font_heading, font_body, footer_text,
+        default_logo_placement, show_slide_numbers,
         logo_path, watermark_path, intro_template_id, outro_template_id, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         kit.id,
@@ -133,6 +198,8 @@ export class BrandKitRepository {
         fontHeading,
         fontBody,
         footerText,
+        defaultLogoPlacement,
+        showSlideNumbers === null ? null : showSlideNumbers ? 1 : 0,
         kit.logoPath ?? null,
         kit.watermarkPath ?? null,
         kit.introTemplateId ?? null,
@@ -145,6 +212,8 @@ export class BrandKitRepository {
       fontHeading,
       fontBody,
       footerText,
+      defaultLogoPlacement,
+      showSlideNumbers,
       createdAt: now,
       updatedAt: now,
     };
@@ -188,6 +257,14 @@ export class BrandKitRepository {
         fields.footerText !== undefined
           ? fields.footerText
           : existing.footerText,
+      defaultLogoPlacement:
+        fields.defaultLogoPlacement !== undefined
+          ? fields.defaultLogoPlacement
+          : existing.defaultLogoPlacement,
+      showSlideNumbers:
+        fields.showSlideNumbers !== undefined
+          ? fields.showSlideNumbers
+          : existing.showSlideNumbers,
       logoPath:
         fields.logoPath !== undefined ? fields.logoPath : existing.logoPath,
       watermarkPath:
@@ -208,6 +285,7 @@ export class BrandKitRepository {
       .prepare(
         `UPDATE brand_kits SET name = ?, primary_color = ?, secondary_color = ?, accent_color = ?,
         font_family = ?, font_heading = ?, font_body = ?, footer_text = ?,
+        default_logo_placement = ?, show_slide_numbers = ?,
         logo_path = ?, watermark_path = ?, intro_template_id = ?,
         outro_template_id = ?, updated_at = ? WHERE id = ?`,
       )
@@ -220,6 +298,12 @@ export class BrandKitRepository {
         merged.fontHeading,
         merged.fontBody,
         merged.footerText,
+        merged.defaultLogoPlacement,
+        merged.showSlideNumbers === null
+          ? null
+          : merged.showSlideNumbers
+            ? 1
+            : 0,
         merged.logoPath,
         merged.watermarkPath,
         merged.introTemplateId,

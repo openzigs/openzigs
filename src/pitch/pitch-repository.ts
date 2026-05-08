@@ -21,6 +21,36 @@ import {
   type SlideImage,
 } from "./pitch-schema.js";
 
+// ── Helpers ────────────────────────────────────────────────────────────────
+
+/**
+ * Sub-issue #1048 — serialise a slide's `branding` override bag for the
+ * `pitch_slides.branding` JSON column. Returns `null` for slides without
+ * any branding override so the wipe in apply-brand-kit (and downstream
+ * "is this slide branded?" checks) can use a simple `IS NOT NULL` semantics.
+ */
+function serializeBranding(slide: Slide): string | null {
+  const b = (slide as { branding?: Record<string, unknown> }).branding;
+  if (!b) return null;
+  const definedKeys = Object.entries(b).filter(
+    ([, v]) => v !== undefined && v !== null,
+  );
+  if (definedKeys.length === 0) return null;
+  return JSON.stringify(Object.fromEntries(definedKeys));
+}
+
+/**
+ * Sub-issue #1048 — parse a `pitch_slides.branding` JSON blob. Returns
+ * `undefined` (not `null`) on garbage so downstream Zod parsing stays clean.
+ */
+function parseBranding(raw: string): unknown {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return undefined;
+  }
+}
+
 // ── Public API types (rich, JSON-decoded) ──────────────────────────────────
 
 /** Persisted deck row mapped back to the `Deck` shape. */
@@ -88,6 +118,8 @@ interface SlideRow {
   background_image_prompt: string | null;
   source_anchor: string | null;
   image_style: string | null;
+  /** Sub-issue #1048 — JSON-serialized branding override bag (or NULL). */
+  branding: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -181,6 +213,16 @@ export class PitchRepository {
       const msg = err instanceof Error ? err.message : String(err);
       if (!/duplicate column name/i.test(msg)) throw err;
     }
+    // ── #1048 column ──────────────────────────────────────────────
+    // Per-slide branding override bag (logoPlacement, footerOverride, …)
+    // persisted as JSON. apply-brand-kit clears it deck-wide and reports
+    // `slidesCleared`; without a real column the count was always 0.
+    try {
+      this.db.exec(`ALTER TABLE pitch_slides ADD COLUMN branding TEXT`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (!/duplicate column name/i.test(msg)) throw err;
+    }
   }
 
   // ── Decks ─────────────────────────────────────────────────────────────
@@ -210,9 +252,9 @@ export class PitchRepository {
     );
     const insertSlideStmt = this.db.prepare(
       `INSERT INTO pitch_slides (id, deck_id, position, template, content, speaker_notes,
-         transition, fragments, background_image_prompt, source_anchor, image_style,
+         transition, fragments, background_image_prompt, source_anchor, image_style, branding,
          created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     );
 
     const tx = this.db.transaction(() => {
@@ -238,6 +280,7 @@ export class PitchRepository {
           slide.background_image_prompt ?? null,
           slide.source_anchor ?? null,
           slide.image_style ?? null,
+          serializeBranding(slide),
           now,
           now,
         );
@@ -348,9 +391,9 @@ export class PitchRepository {
     this.db
       .prepare(
         `INSERT INTO pitch_slides (id, deck_id, position, template, content, speaker_notes,
-           transition, fragments, background_image_prompt, source_anchor, image_style,
+           transition, fragments, background_image_prompt, source_anchor, image_style, branding,
            created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         input.id,
@@ -364,6 +407,7 @@ export class PitchRepository {
         slide.background_image_prompt ?? null,
         slide.source_anchor ?? null,
         slide.image_style ?? null,
+        serializeBranding(slide),
         now,
         now,
       );
@@ -430,6 +474,7 @@ export class PitchRepository {
         "background_image_prompt = ?",
         "source_anchor = ?",
         "image_style = ?",
+        "branding = ?",
       );
       params.push(
         validated.template,
@@ -440,6 +485,7 @@ export class PitchRepository {
         validated.background_image_prompt ?? null,
         validated.source_anchor ?? null,
         validated.image_style ?? null,
+        serializeBranding(validated),
       );
     }
     if (fields.position !== undefined) {
@@ -459,6 +505,27 @@ export class PitchRepository {
       .prepare(`DELETE FROM pitch_slides WHERE id = ?`)
       .run(id);
     return result.changes > 0;
+  }
+
+  /**
+   * Sub-issue #1048 — Strip every per-slide `branding.*` override on a deck
+   * in a single transaction. Returns the number of slides that actually had
+   * branding (i.e. were modified). Used by `apply-brand-kit` so the new kit
+   * is the single source of truth without partial-write windows.
+   */
+  clearAllSlideBranding(deckId: string): number {
+    const slides = this.listSlidesForDeck(deckId);
+    const targets = slides.filter((row) => row.slide.branding);
+    if (targets.length === 0) return 0;
+    const tx = this.db.transaction(() => {
+      for (const row of targets) {
+        const { branding: _drop, ...rest } = row.slide;
+        void _drop;
+        this.updateSlide(row.id, { slide: rest as Slide });
+      }
+    });
+    tx();
+    return targets.length;
   }
 
   /**
@@ -643,6 +710,7 @@ export class PitchRepository {
       background_image_prompt: row.background_image_prompt ?? undefined,
       source_anchor: row.source_anchor ?? undefined,
       image_style: row.image_style ?? undefined,
+      ...(row.branding ? { branding: parseBranding(row.branding) } : {}),
     });
     return {
       id: row.id,

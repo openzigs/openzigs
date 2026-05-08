@@ -1,6 +1,8 @@
 "use client";
 
-import { FieldLabel, TextInput, type PropertyEditorProps } from "./shared";
+import { useState } from "react";
+import { FieldLabel, TextArea, TextInput, type PropertyEditorProps } from "./shared";
+import { RegenerateImageDialog } from "../regenerate-image-dialog";
 
 interface BulletListSlide {
   template: "bullet_list";
@@ -16,14 +18,26 @@ interface BulletListSlide {
 const MAX_BULLETS = 7;
 const BULLET_MAX_CHARS = 160;
 
+const EMPTY_IMAGE = { prompt: "", url: null, alt: "" } as const;
+
 const BulletListEditor = ({
   slide,
   onChange,
+  deckId,
 }: PropertyEditorProps<BulletListSlide>) => {
   const c = slide.content;
+  const [regenOpen, setRegenOpen] = useState(false);
 
   const setBullets = (next: string[]) =>
     onChange({ ...slide, content: { ...c, bullets: next } });
+  const updateImage = (
+    patch: Partial<NonNullable<BulletListSlide["content"]["image"]>>,
+  ) =>
+    onChange({
+      ...slide,
+      content: { ...c, image: { ...(c.image ?? EMPTY_IMAGE), ...patch } },
+    });
+  const slideId = (slide as BulletListSlide & { id?: string }).id ?? "";
 
   const addBullet = () => {
     if (c.bullets.length >= MAX_BULLETS) return;
@@ -113,6 +127,54 @@ const BulletListEditor = ({
           + Add bullet
         </button>
       </FieldLabel>
+
+      {/* Issue (2026-05): expose the optional inline image controls so
+          users can author + regenerate the bullet-list thumbnail without
+          dropping into JSON. */}
+      <fieldset className="mt-3 space-y-2 rounded border border-border p-2">
+        <legend className="px-1 text-[11px] font-semibold text-muted-foreground">
+          Inline image (optional)
+        </legend>
+        <FieldLabel label="Alt text" htmlFor="prop-bl-img-alt">
+          <TextInput
+            id="prop-bl-img-alt"
+            testId="prop-bl-img-alt"
+            value={c.image?.alt ?? ""}
+            maxLength={200}
+            onChange={(v) => updateImage({ alt: v })}
+          />
+        </FieldLabel>
+        <FieldLabel label="Prompt">
+          <TextArea
+            testId="prop-bl-img-prompt"
+            value={c.image?.prompt ?? ""}
+            maxLength={400}
+            rows={2}
+            onChange={(v) => updateImage({ prompt: v })}
+          />
+        </FieldLabel>
+        <button
+          type="button"
+          data-testid="prop-bl-img-regen"
+          disabled={!c.image?.prompt}
+          onClick={() => setRegenOpen(true)}
+          className="mt-1 rounded border border-border px-2 py-1 text-xs hover:bg-muted/40 disabled:opacity-50"
+        >
+          Regenerate image…
+        </button>
+      </fieldset>
+
+      {regenOpen && (
+        <RegenerateImageDialog
+          open={regenOpen}
+          onOpenChange={setRegenOpen}
+          deckId={deckId}
+          slideId={slideId}
+          initialPrompt={c.image?.prompt ?? ""}
+          mode="inline"
+          slot="image"
+        />
+      )}
     </div>
   );
 };

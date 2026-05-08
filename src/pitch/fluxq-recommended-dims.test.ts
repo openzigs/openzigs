@@ -72,9 +72,22 @@ describe("clampToFluxQRecommendedDims", () => {
     });
   });
 
-  it("falls back to FLUXQ_FALLBACK_DIMS when the cache was never populated", () => {
+  it("preserves explicitly-requested dims when the cache was never populated (Issue: pitch image quality 2026-05)", () => {
+    // Behaviour change: previously this helper down-clamped to
+    // FLUXQ_FALLBACK_DIMS even when no sidecar advertised a cap, which
+    // silently turned every requested 1920×1080 into 1024×576. Now an
+    // empty cache is treated as "no opinion" and explicit dims pass
+    // through untouched.
     _resetFluxQDimsCacheForTest();
     expect(clampToFluxQRecommendedDims(1920, 1080)).toEqual({
+      width: 1920,
+      height: 1080,
+    });
+  });
+
+  it("returns FLUXQ_FALLBACK_DIMS when the cache is empty AND no dims supplied", () => {
+    _resetFluxQDimsCacheForTest();
+    expect(clampToFluxQRecommendedDims()).toEqual({
       ...FLUXQ_FALLBACK_DIMS,
     });
   });

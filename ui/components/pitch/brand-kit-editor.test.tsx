@@ -298,4 +298,235 @@ describe("BrandKitEditor", () => {
     fireEvent.click(screen.getByText("Close"));
     expect(onOpenChange).toHaveBeenCalledWith(false);
   });
+
+  // Sub-issue #1047 — default logo placement + slide-number toggle UI.
+  describe("#1047 — default logo placement + slide-number toggle", () => {
+    it("renders both controls", () => {
+      render(<BrandKitEditor open onOpenChange={vi.fn()} kit={null} />, {
+        wrapper,
+      });
+      expect(
+        screen.getByTestId("pitch-bk-default-logo-placement"),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByTestId("pitch-bk-show-slide-numbers"),
+      ).toBeInTheDocument();
+    });
+
+    it("persists defaultLogoPlacement and showSlideNumbers on create", async () => {
+      vi.mocked(fetchJson).mockResolvedValue({ brandKit: { id: "new-1" } });
+      render(<BrandKitEditor open onOpenChange={vi.fn()} kit={null} />, {
+        wrapper,
+      });
+      fireEvent.change(screen.getByTestId("pitch-bk-name"), {
+        target: { value: "Brand A" },
+      });
+      fireEvent.change(
+        screen.getByTestId("pitch-bk-default-logo-placement"),
+        { target: { value: "top-left" } },
+      );
+      fireEvent.click(screen.getByTestId("pitch-bk-show-slide-numbers"));
+      fireEvent.click(screen.getByTestId("pitch-bk-save"));
+      await waitFor(() => expect(vi.mocked(fetchJson)).toHaveBeenCalled());
+      const init = vi.mocked(fetchJson).mock.calls[0][1] as { body: string };
+      const body = JSON.parse(init.body);
+      expect(body.defaultLogoPlacement).toBe("top-left");
+      expect(body.showSlideNumbers).toBe(true);
+    });
+
+    it("prefills the controls from an existing kit", () => {
+      render(
+        <BrandKitEditor
+          open
+          onOpenChange={vi.fn()}
+          kit={{
+            id: "k9",
+            name: "Existing",
+            primaryColor: "#111111",
+            secondaryColor: "#222222",
+            accentColor: "#333333",
+            defaultLogoPlacement: "bottom-left",
+            showSlideNumbers: true,
+            footerText: "(c) ACME",
+            isStarter: false,
+          }}
+        />,
+        { wrapper },
+      );
+      expect(
+        (screen.getByTestId(
+          "pitch-bk-default-logo-placement",
+        ) as HTMLSelectElement).value,
+      ).toBe("bottom-left");
+      expect(
+        (screen.getByTestId(
+          "pitch-bk-show-slide-numbers",
+        ) as HTMLInputElement).checked,
+      ).toBe(true);
+      expect(
+        (screen.getByTestId("pitch-bk-footer") as HTMLInputElement).value,
+      ).toBe("(c) ACME");
+    });
+
+    it("omits defaultLogoPlacement when the user keeps the renderer default", async () => {
+      vi.mocked(fetchJson).mockResolvedValue({ brandKit: { id: "new-1" } });
+      render(<BrandKitEditor open onOpenChange={vi.fn()} kit={null} />, {
+        wrapper,
+      });
+      fireEvent.change(screen.getByTestId("pitch-bk-name"), {
+        target: { value: "Brand B" },
+      });
+      fireEvent.click(screen.getByTestId("pitch-bk-save"));
+      await waitFor(() => expect(vi.mocked(fetchJson)).toHaveBeenCalled());
+      const body = JSON.parse(
+        (vi.mocked(fetchJson).mock.calls[0][1] as { body: string }).body,
+      );
+      expect(body.defaultLogoPlacement).toBeUndefined();
+      expect(body.showSlideNumbers).toBe(false);
+    });
+  });
+
+  // PR #1044 follow-up — discoverable logo upload + preview + remove.
+  describe("logo preview / upload / remove (PR #1044 follow-up)", () => {
+    const baseKit = {
+      id: "k1",
+      name: "x",
+      primaryColor: "#000000",
+      secondaryColor: "#ffffff",
+      accentColor: "#0066ff",
+      isStarter: false as const,
+    };
+
+    it("renders the empty-state placeholder when no logo is uploaded", () => {
+      render(
+        <BrandKitEditor
+          open
+          onOpenChange={vi.fn()}
+          kit={{ ...baseKit, logoUrl: null }}
+        />,
+        { wrapper },
+      );
+      expect(screen.getByTestId("pitch-bk-logo-empty")).toHaveTextContent(
+        /No logo uploaded/i,
+      );
+      expect(screen.queryByTestId("pitch-bk-logo-preview")).toBeNull();
+      expect(screen.getByTestId("pitch-bk-logo-upload-label")).toHaveTextContent(
+        /Upload logo/i,
+      );
+      expect(screen.queryByTestId("pitch-bk-logo-remove")).toBeNull();
+    });
+
+    it("renders an <img> preview when kit.logoUrl is set, with Replace + Remove buttons", () => {
+      render(
+        <BrandKitEditor
+          open
+          onOpenChange={vi.fn()}
+          kit={{
+            ...baseKit,
+            logoUrl: "/api/admin/pitch/brand-kits/k1/logo",
+          }}
+        />,
+        { wrapper },
+      );
+      const img = screen.getByTestId(
+        "pitch-bk-logo-preview",
+      ) as HTMLImageElement;
+      expect(img).toBeInTheDocument();
+      expect(img.getAttribute("src")).toBe(
+        "/api/admin/pitch/brand-kits/k1/logo",
+      );
+      expect(screen.queryByTestId("pitch-bk-logo-empty")).toBeNull();
+      expect(screen.getByTestId("pitch-bk-logo-upload-label")).toHaveTextContent(
+        /Replace logo/i,
+      );
+      expect(screen.getByTestId("pitch-bk-logo-remove")).toBeInTheDocument();
+    });
+
+    it("renders the section in create mode with an enabled upload (queue-then-upload flow)", () => {
+      render(<BrandKitEditor open onOpenChange={vi.fn()} kit={null} />, {
+        wrapper,
+      });
+      expect(screen.getByTestId("pitch-bk-logo-section")).toBeInTheDocument();
+      // Upload is enabled in create mode now \u2014 file is queued locally
+      // and flushed after the kit is saved.
+      expect(
+        (screen.getByTestId("pitch-bk-logo-input") as HTMLInputElement).disabled,
+      ).toBe(false);
+      expect(screen.getByTestId("pitch-bk-logo-upload-label")).toHaveTextContent(
+        /Upload logo/i,
+      );
+    });
+
+    it("queues a logo file in create mode and previews it before save", async () => {
+      // jsdom doesn't implement createObjectURL — stub it.
+      const createObjectURL = vi.fn(() => "blob:mock");
+      const revokeObjectURL = vi.fn();
+      // @ts-expect-error — jsdom URL doesn't expose these by default.
+      URL.createObjectURL = createObjectURL;
+      // @ts-expect-error — same.
+      URL.revokeObjectURL = revokeObjectURL;
+      render(<BrandKitEditor open onOpenChange={vi.fn()} kit={null} />, {
+        wrapper,
+      });
+      const file = new File([new Uint8Array(1)], "logo.png", { type: "image/png" });
+      Object.defineProperty(file, "size", { value: 1024 });
+      fireEvent.change(
+        screen.getByTestId("pitch-bk-logo-input") as HTMLInputElement,
+        { target: { files: [file] } },
+      );
+      await waitFor(() => {
+        expect(screen.getByTestId("pitch-bk-logo-preview")).toHaveAttribute(
+          "src",
+          "blob:mock",
+        );
+      });
+      expect(screen.getByTestId("pitch-bk-logo-upload-label")).toHaveTextContent(
+        /Replace logo/i,
+      );
+      expect(screen.getByTestId("pitch-bk-logo-section")).toHaveTextContent(
+        /Will upload "logo\.png"/,
+      );
+    });
+    it("DELETEs the logo when Remove is clicked and the user confirms", async () => {
+      const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+      vi.mocked(fetchJson).mockResolvedValue({});
+      render(
+        <BrandKitEditor
+          open
+          onOpenChange={vi.fn()}
+          kit={{
+            ...baseKit,
+            logoUrl: "/api/admin/pitch/brand-kits/k1/logo",
+          }}
+        />,
+        { wrapper },
+      );
+      fireEvent.click(screen.getByTestId("pitch-bk-logo-remove"));
+      await waitFor(() =>
+        expect(vi.mocked(fetchJson)).toHaveBeenCalledWith(
+          "/api/admin/pitch/brand-kits/k1/logo",
+          expect.objectContaining({ method: "DELETE" }),
+        ),
+      );
+      confirmSpy.mockRestore();
+    });
+
+    it("does not DELETE when the user cancels the confirm dialog", () => {
+      const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+      render(
+        <BrandKitEditor
+          open
+          onOpenChange={vi.fn()}
+          kit={{
+            ...baseKit,
+            logoUrl: "/api/admin/pitch/brand-kits/k1/logo",
+          }}
+        />,
+        { wrapper },
+      );
+      fireEvent.click(screen.getByTestId("pitch-bk-logo-remove"));
+      expect(vi.mocked(fetchJson)).not.toHaveBeenCalled();
+      confirmSpy.mockRestore();
+    });
+  });
 });

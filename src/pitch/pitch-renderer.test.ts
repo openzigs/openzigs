@@ -198,14 +198,19 @@ describe("renderDeckToHtml", () => {
   });
 
   it("renders the brand kit logo when present", () => {
-    const out = renderDeckToHtml(buildDeck([ALL_TEMPLATES[0]]), KIT, "embedded");
-    expect(out.html).toContain('class="pitch-logo"');
+    // Sub-issue #1051 — logo is now per-slide and hidden on title/qa
+    // by default. Use a bullet_list slide so the kit-default placement
+    // (bottom-right) is honored.
+    const slide = s("bullet_list", { heading: "H", bullets: ["a"] });
+    const out = renderDeckToHtml(buildDeck([slide]), KIT, "embedded");
+    expect(out.html).toMatch(/<img class="pitch-logo pitch-logo-/);
     expect(out.html).toContain('src="https://example.com/logo.png"');
   });
 
   it("omits logo when brand kit has no logoUrl", () => {
-    const out = renderDeckToHtml(buildDeck([ALL_TEMPLATES[0]]), KIT_NO_LOGO, "embedded");
-    expect(out.html).not.toContain('<img class="pitch-logo"');
+    const slide = s("bullet_list", { heading: "H", bullets: ["a"] });
+    const out = renderDeckToHtml(buildDeck([slide]), KIT_NO_LOGO, "embedded");
+    expect(out.html).not.toMatch(/<img class="pitch-logo /);
   });
 
   it("emits footer when present, omits when null", () => {
@@ -381,7 +386,9 @@ describe("renderDeckToHtml — XSS hardening", () => {
 
   it("allows relative-path logo URLs (already-uploaded assets)", () => {
     const localKit: BrandKit = { ...KIT, logoUrl: "/brand-kits/abc.png" };
-    const html = renderDeckToHtml(buildDeck([ALL_TEMPLATES[0]]), localKit, "embedded").html;
+    // Title default-hides the logo (#1051) — use a bullet_list slide.
+    const slide = s("bullet_list", { heading: "H", bullets: ["a"] });
+    const html = renderDeckToHtml(buildDeck([slide]), localKit, "embedded").html;
     expect(html).toContain('src="/brand-kits/abc.png"');
   });
 });
@@ -890,11 +897,10 @@ describe("renderRichBody (#1007)", () => {
     expect(html).not.toContain("<ul>");
   });
 
-  it("renders inline content for single-line input", () => {
+  it("wraps single-line plain prose in <p> so .pitch-has-bg colour overrides target a block element (Issue: two_column content visibility 2026-05)", () => {
     const html = renderRichBody("Just one line.");
     expect(html).not.toContain("<ul>");
-    expect(html).not.toContain("<p>");
-    expect(html).toContain("Just one line.");
+    expect(html).toBe("<p>Just one line.</p>");
   });
 });
 
@@ -999,5 +1005,333 @@ describe("renderDeckToHtml — two_column rich body (#1007)", () => {
     expect(out.html).toContain("<li>Gamma</li>");
     expect(out.html).toContain("Plain prose on the right.");
     expect(out.html).toContain("pitch-twocol-col");
+  });
+});
+
+
+// -- Sub-issue #1051 � per-slide branding overrides --------------------
+
+describe("renderDeckToHtml � per-slide branding (#1051)", () => {
+  it("renders the brand-kit logo in the kit-default placement (bottom-right) for non-title/qa slides", () => {
+    const slide = s("bullet_list", { heading: "H", bullets: ["a"] });
+    const out = renderDeckToHtml(buildDeck([slide]), KIT, "embedded");
+    expect(out.html).toMatch(/<img class="pitch-logo pitch-logo-bottom-right"/);
+  });
+
+  it("hides the logo on title and qa templates by default (Q1 epic decision)", () => {
+    const titleSlide = s("title", { title: "T" });
+    const qaSlide = s("qa", { heading: "Questions?" });
+    const out = renderDeckToHtml(buildDeck([titleSlide, qaSlide]), KIT, "embedded");
+    expect(out.html).not.toMatch(/<img class="pitch-logo /);
+  });
+
+  it("honors a per-slide logoPlacement override on every corner", () => {
+    for (const corner of ["top-left", "top-right", "bottom-left", "bottom-right"] as const) {
+      const slide = SlideSchema.parse({
+        template: "bullet_list",
+        content: { heading: "H", bullets: ["a"] },
+        speaker_notes: "",
+        transition: "slide",
+        fragments: [],
+        branding: { logoPlacement: corner },
+      });
+      const out = renderDeckToHtml(buildDeck([slide]), KIT, "embedded");
+      expect(out.html).toMatch(new RegExp(`<img class="pitch-logo pitch-logo-${corner}"`));
+    }
+  });
+
+  it("placement=none and hideLogo both suppress the logo", () => {
+    const noneSlide = SlideSchema.parse({
+      template: "bullet_list",
+      content: { heading: "H", bullets: ["a"] },
+      speaker_notes: "",
+      transition: "slide",
+      fragments: [],
+      branding: { logoPlacement: "none" },
+    });
+    const hiddenSlide = SlideSchema.parse({
+      template: "bullet_list",
+      content: { heading: "H", bullets: ["a"] },
+      speaker_notes: "",
+      transition: "slide",
+      fragments: [],
+      branding: { hideLogo: true },
+    });
+    const a = renderDeckToHtml(buildDeck([noneSlide]), KIT, "embedded");
+    const b = renderDeckToHtml(buildDeck([hiddenSlide]), KIT, "embedded");
+    expect(a.html).not.toMatch(/<img class="pitch-logo /);
+    expect(b.html).not.toMatch(/<img class="pitch-logo /);
+  });
+
+  it("title slide can opt back into logo via explicit placement", () => {
+    const slide = SlideSchema.parse({
+      template: "title",
+      content: { title: "T" },
+      speaker_notes: "",
+      transition: "slide",
+      fragments: [],
+      branding: { logoPlacement: "top-left" },
+    });
+    const out = renderDeckToHtml(buildDeck([slide]), KIT, "embedded");
+    expect(out.html).toMatch(/<img class="pitch-logo pitch-logo-top-left"/);
+  });
+
+  it("renders per-slide footerOverride (sanitized)", () => {
+    const slide = SlideSchema.parse({
+      template: "bullet_list",
+      content: { heading: "H", bullets: ["a"] },
+      speaker_notes: "",
+      transition: "slide",
+      fragments: [],
+      branding: { footerOverride: "Confidential � Acme <script>alert(1)</script>" },
+    });
+    const out = renderDeckToHtml(buildDeck([slide]), KIT, "embedded");
+    expect(out.html).toContain("pitch-footer--override");
+    expect(out.html).toContain("Confidential");
+    expect(out.html).not.toContain("<script>");
+  });
+
+  it("renders per-slide watermarkOverride only when URL is allowlist-safe", () => {
+    const goodSlide = SlideSchema.parse({
+      template: "bullet_list",
+      content: { heading: "H", bullets: ["a"] },
+      speaker_notes: "",
+      transition: "slide",
+      fragments: [],
+      branding: { watermarkOverride: "/brand-kits/watermark.png" },
+    });
+    const badSlide = SlideSchema.parse({
+      template: "bullet_list",
+      content: { heading: "H", bullets: ["a"] },
+      speaker_notes: "",
+      transition: "slide",
+      fragments: [],
+      branding: { watermarkOverride: "javascript:alert(1)" },
+    });
+    const goodOut = renderDeckToHtml(buildDeck([goodSlide]), KIT, "embedded");
+    const badOut = renderDeckToHtml(buildDeck([badSlide]), KIT, "embedded");
+    expect(goodOut.html).toContain("pitch-watermark--override");
+    expect(badOut.html).not.toContain("pitch-watermark--override");
+  });
+
+  it("brand-kit defaultLogoPlacement is honored as the fallback corner", () => {
+    const customKit: BrandKit = { ...KIT, defaultLogoPlacement: "top-left" };
+    const slide = s("bullet_list", { heading: "H", bullets: ["a"] });
+    const out = renderDeckToHtml(buildDeck([slide]), customKit, "embedded");
+    expect(out.html).toMatch(/<img class="pitch-logo pitch-logo-top-left"/);
+  });
+});
+
+describe("renderDeckToHtml — slide-number indicator (#1047)", () => {
+  it("omits the indicator when showSlideNumbers is not set on the kit", () => {
+    const slide = s("bullet_list", { heading: "H", bullets: ["a"] });
+    const out = renderDeckToHtml(buildDeck([slide]), KIT, "embedded");
+    // CSS for the indicator is always emitted; check no actual rendered tag.
+    expect(out.html).not.toMatch(/<div class="pitch-slide-number /);
+  });
+
+  it("renders the indicator when showSlideNumbers is true", () => {
+    const kit: BrandKit = { ...KIT, showSlideNumbers: true };
+    const slide = s("bullet_list", { heading: "H", bullets: ["a"] });
+    const out = renderDeckToHtml(buildDeck([slide]), kit, "embedded");
+    expect(out.html).toMatch(/pitch-slide-number pitch-slide-number-/);
+    // Counts: position / total
+    expect(out.html).toMatch(/>1 \/ 1</);
+  });
+
+  it("auto-flips diagonally to avoid colliding with the logo corner", () => {
+    const cases: Array<
+      ["top-left" | "top-right" | "bottom-left" | "bottom-right", string]
+    > = [
+      ["top-left", "pitch-slide-number-bottom-right"],
+      ["top-right", "pitch-slide-number-bottom-left"],
+      ["bottom-left", "pitch-slide-number-top-right"],
+      ["bottom-right", "pitch-slide-number-top-left"],
+    ];
+    for (const [logoCorner, expectedNumberClass] of cases) {
+      const kit: BrandKit = {
+        ...KIT,
+        showSlideNumbers: true,
+        defaultLogoPlacement: logoCorner,
+      };
+      const slide = s("bullet_list", { heading: "H", bullets: ["a"] });
+      const out = renderDeckToHtml(buildDeck([slide]), kit, "embedded");
+      expect(out.html).toContain(expectedNumberClass);
+    }
+  });
+
+  it("falls back to bottom-right when the slide hides its logo", () => {
+    const kit: BrandKit = { ...KIT, showSlideNumbers: true };
+    const slide = SlideSchema.parse({
+      template: "bullet_list",
+      content: { heading: "H", bullets: ["a"] },
+      speaker_notes: "",
+      transition: "slide",
+      fragments: [],
+      branding: { logoPlacement: "none" },
+    });
+    const out = renderDeckToHtml(buildDeck([slide]), kit, "embedded");
+    expect(out.html).toContain("pitch-slide-number-bottom-right");
+  });
+});
+
+// === Sub-issue #1046 / #1049 / #1052: New Templates ============================
+describe("New templates from epic #1045", () => {
+  it("renders pricing_table with highlighted tier class", () => {
+    const slide = SlideSchema.parse({
+      template: "pricing_table",
+      content: {
+        heading: "Pricing",
+        tiers: [
+          { name: "Free", price: "$0", features: ["Basic"] },
+          { name: "Pro", price: "$29", features: ["Everything"], highlighted: true },
+        ],
+        footnote: "* tax not included",
+      },
+    });
+    const out = renderDeckToHtml(buildDeck([slide]), KIT, "embedded");
+    expect(out.html).toContain("pitch-pricing-grid");
+    expect(out.html).toContain("pitch-pricing-tier--highlighted");
+    expect(out.html).toContain("$29");
+    expect(out.html).toContain("tax not included");
+  });
+
+  it("renders big_number with trend arrow", () => {
+    const slide = SlideSchema.parse({
+      template: "big_number",
+      content: { value: "42%", label: "Conversion", trend: "up", trend_label: "vs Q3" },
+    });
+    const out = renderDeckToHtml(buildDeck([slide]), KIT, "embedded");
+    expect(out.html).toContain("pitch-bignum-trend--up");
+    expect(out.html).toContain("42%");
+    expect(out.html).toContain("vs Q3");
+  });
+
+  it("escapes XSS in big_number support text", () => {
+    const slide = SlideSchema.parse({
+      template: "big_number",
+      content: { value: "1", label: "L", support: XSS },
+    });
+    const out = renderDeckToHtml(buildDeck([slide]), KIT, "embedded");
+    expect(out.html).not.toMatch(/<script>alert/);
+    expect(out.html).not.toMatch(/onerror=alert/);
+  });
+
+  it("renders team_grid with members and links via safeUrl", () => {
+    const slide = SlideSchema.parse({
+      template: "team_grid",
+      content: {
+        members: [
+          { name: "Alice", role: "CEO", links: [{ label: "site", href: "https://a.com" }] },
+          { name: "Bob", role: "CTO" },
+          { name: "Eve", role: "X", links: [{ label: "x", href: "javascript:alert(1)" }] },
+        ],
+      },
+    });
+    const out = renderDeckToHtml(buildDeck([slide]), KIT, "embedded");
+    expect(out.html).toContain("Alice");
+    expect(out.html).toContain("CTO");
+    // safeUrl strips javascript: scheme
+    expect(out.html).not.toMatch(/href="javascript:/);
+    // Links carry rel hardening
+    expect(out.html).toContain('rel="nofollow noopener noreferrer"');
+  });
+
+  it("renders team_grid placeholder initials when no photo", () => {
+    const slide = SlideSchema.parse({
+      template: "team_grid",
+      content: {
+        members: [
+          { name: "Alice Smith", role: "CEO" },
+          { name: "Bob", role: "CTO" },
+        ],
+      },
+    });
+    const out = renderDeckToHtml(buildDeck([slide]), KIT, "embedded");
+    expect(out.html).toContain("pitch-team-photo--placeholder");
+  });
+
+  it("renders logo_grid with grayscale class", () => {
+    const slide = SlideSchema.parse({
+      template: "logo_grid",
+      content: {
+        grayscale: true,
+        logos: Array(4).fill({ alt: "Acme", imageUrl: "https://example.com/a.png" }),
+      },
+    });
+    const out = renderDeckToHtml(buildDeck([slide]), KIT, "embedded");
+    expect(out.html).toContain("pitch-logo-grid--grayscale");
+    expect(out.html).toContain("alt=\"Acme\"");
+  });
+
+  it("logo_grid drops javascript: imageUrl via safeUrl", () => {
+    const slide = SlideSchema.parse({
+      template: "logo_grid",
+      content: {
+        logos: [
+          { alt: "Bad", imageUrl: "javascript:alert(1)" },
+          { alt: "Good", imageUrl: "https://example.com/b.png" },
+          { alt: "G2", imageUrl: "https://example.com/c.png" },
+          { alt: "G3", imageUrl: "https://example.com/d.png" },
+        ],
+      },
+    });
+    const out = renderDeckToHtml(buildDeck([slide]), KIT, "embedded");
+    expect(out.html).not.toMatch(/src="javascript:/);
+  });
+
+  it("renders roadmap with status icons", () => {
+    const slide = SlideSchema.parse({
+      template: "roadmap",
+      content: {
+        heading: "Plan",
+        columns: ["Q1", "Q2"],
+        tracks: ["Eng", "Design"],
+        items: [
+          { column: 0, track: 0, label: "Ship MVP", status: "done" },
+          { column: 1, track: 1, label: "Polish UI", status: "in_progress" },
+        ],
+      },
+    });
+    const out = renderDeckToHtml(buildDeck([slide]), KIT, "embedded");
+    expect(out.html).toContain("Ship MVP");
+    expect(out.html).toContain("Polish UI");
+    // Status classes appear in matrix cells
+    expect(out.html).toMatch(/pitch-roadmap-item--done|pitch-roadmap-status--done/);
+  });
+
+  it("agenda auto-mode pulls from section_divider slides", () => {
+    const slides = [
+      SlideSchema.parse({ template: "agenda", content: { mode: "auto" } }),
+      SlideSchema.parse({
+        template: "section_divider",
+        content: { section_number: 1, title: "Intro" },
+      }),
+      SlideSchema.parse({
+        template: "section_divider",
+        content: { section_number: 2, title: "Demo" },
+      }),
+    ];
+    const out = renderDeckToHtml(buildDeck(slides), KIT, "embedded");
+    expect(out.html).toContain("Intro");
+    expect(out.html).toContain("Demo");
+  });
+
+  it("agenda auto-mode shows fallback when no sections exist", () => {
+    const slide = SlideSchema.parse({ template: "agenda", content: { mode: "auto" } });
+    const out = renderDeckToHtml(buildDeck([slide]), KIT, "embedded");
+    expect(out.html).toContain("No agenda items available");
+  });
+
+  it("agenda manual-mode renders provided items", () => {
+    const slide = SlideSchema.parse({
+      template: "agenda",
+      content: { mode: "manual", items: ["Welcome", "Q&A"], numbered: true },
+    });
+    const out = renderDeckToHtml(buildDeck([slide]), KIT, "embedded");
+    expect(out.html).toContain("Welcome");
+    expect(out.html).toMatch(/Q&(?:amp;)?A/);
+    // numbered=true → ordered list
+    expect(out.html).toContain("<ol");
   });
 });

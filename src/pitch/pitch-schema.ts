@@ -38,6 +38,23 @@ export const HexColor = z
  * allowed to carry — adding a new `z.string().url()` field will fail
  * that test until the SSRF guard is wired in.
  */
+/**
+ * Logo placement enum (Epic #1045 / sub-issue #1051 + #1047).
+ *
+ * Used both at the brand-kit level (`defaultLogoPlacement`) and per-slide
+ * (`branding.logoPlacement`). `none` hides the logo on the affected
+ * surface; the per-slide field also accepts `inherit` (the default) which
+ * means "fall back to the kit-level default".
+ */
+export const LogoPlacementEnum = z.enum([
+  "top-left",
+  "top-right",
+  "bottom-left",
+  "bottom-right",
+  "none",
+]);
+export type LogoPlacement = z.infer<typeof LogoPlacementEnum>;
+
 export const BrandKitSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1).max(80),
@@ -49,8 +66,44 @@ export const BrandKitSchema = z.object({
   logoUrl: z.string().url().nullable(),
   watermarkUrl: z.string().url().nullable(),
   footerText: z.string().max(120).nullable(),
+  /**
+   * Default corner the logo renders in unless a slide overrides it
+   * (sub-issue #1047). When omitted, the renderer falls back to
+   * `bottom-right`.
+   */
+  defaultLogoPlacement: LogoPlacementEnum.optional(),
+  /**
+   * When `true`, slides render a small "n / total" indicator in the
+   * corner opposite the resolved logo (sub-issue #1047). Defaults to
+   * `false` for backwards compatibility.
+   */
+  showSlideNumbers: z.boolean().optional(),
 });
 export type BrandKit = z.infer<typeof BrandKitSchema>;
+
+/**
+ * Per-slide branding override block (sub-issue #1051).
+ *
+ * Every field is optional; an empty / missing block means the slide
+ * inherits the brand-kit defaults entirely. Strings are sanitized at
+ * render time via `sanitizeRichText`.
+ */
+export const BrandingOverrideSchema = z
+  .object({
+    logoPlacement: LogoPlacementEnum.optional(),
+    /** When true, force-hide the logo on this slide regardless of placement. */
+    hideLogo: z.boolean().optional(),
+    /** Per-slide footer text override (≤120 chars). */
+    footerOverride: z.string().max(120).optional(),
+    /**
+     * Per-slide watermark image URL override. Must reuse the existing
+     * upload pipeline (root-relative path or `http(s)://`); `safeUrl`
+     * blocks anything else at render time.
+     */
+    watermarkOverride: z.string().max(500).optional(),
+  })
+  .strict();
+export type BrandingOverride = z.infer<typeof BrandingOverrideSchema>;
 
 /** Per-block fragment animation. */
 export const FragmentEnum = z.enum([
@@ -104,6 +157,14 @@ const Common = z.object({
    * camelCase `imageStyle` deck option.
    */
   image_style: ImageStyleEnum.optional(),
+  /**
+   * Per-slide branding overrides (Epic #1045 / sub-issue #1051). When
+   * omitted (the default), the slide inherits the deck's brand kit
+   * settings entirely. Field names are camelCase so the UI editor can
+   * round-trip them without translation; the surrounding slide schema
+   * stays snake_case for backwards compat with existing decks.
+   */
+  branding: BrandingOverrideSchema.optional(),
 });
 
 /** Inline image — always carries a generation prompt; `url` is filled later. */
@@ -314,7 +375,160 @@ export const MermaidSlideSchema = Common.extend({
   }),
 });
 
-/** Discriminated union over all 14 slide templates. */
+// ── Sub-issue #1046 — Pricing Table + Big Number ─────────────────────
+
+/** 15. Pricing table — 2..4 tiers, at most one highlighted. */
+export const PricingTableSlideSchema = Common.extend({
+  template: z.literal("pricing_table"),
+  content: z
+    .object({
+      heading: z.string().min(1).max(120),
+      tiers: z
+        .array(
+          z.object({
+            name: z.string().min(1).max(40),
+            price: z.string().min(1).max(40),
+            // Optional period qualifier: "/mo", "/seat/yr", etc.
+            period: z.string().max(20).optional(),
+            // 1..10 short bullet features.
+            features: z.array(z.string().min(1).max(120)).min(1).max(10),
+            cta: z.string().max(40).optional(),
+            highlighted: z.boolean().optional(),
+          }),
+        )
+        .min(2)
+        .max(4),
+      footnote: z.string().max(160).optional(),
+    })
+    .superRefine((c, ctx) => {
+      const highlighted = c.tiers.filter((t) => t.highlighted).length;
+      if (highlighted > 1) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["tiers"],
+          message: "Only one tier may be highlighted",
+        });
+      }
+    }),
+});
+
+/** 16. Big Number — single hero metric with optional support text + trend. */
+export const BigNumberSlideSchema = Common.extend({
+  template: z.literal("big_number"),
+  content: z.object({
+    value: z.string().min(1).max(20),
+    label: z.string().min(1).max(80),
+    support: z.string().max(240).optional(),
+    trend: z.enum(["up", "down", "flat"]).optional(),
+    trend_label: z.string().max(40).optional(),
+  }),
+});
+
+// ── Sub-issue #1049 — Team Grid + Logo Grid ──────────────────────────
+
+/** 17. Team Grid — 2..12 member cards. */
+export const TeamGridSlideSchema = Common.extend({
+  template: z.literal("team_grid"),
+  content: z.object({
+    heading: z.string().max(120).optional(),
+    members: z
+      .array(
+        z.object({
+          name: z.string().min(1).max(60),
+          role: z.string().min(1).max(80),
+          bio: z.string().max(280).optional(),
+          // photoUrl must be either a relative `/uploads/...` path or
+          // an https URL pointing at the local API origin. Validated
+          // server-side at write time too.
+          photoUrl: z.string().max(500).optional(),
+          links: z
+            .array(
+              z.object({
+                label: z.string().min(1).max(40),
+                href: z.string().min(1).max(500),
+              }),
+            )
+            .max(4)
+            .optional(),
+        }),
+      )
+      .min(2)
+      .max(12),
+  }),
+});
+
+/** 18. Logo Grid — 4..24 partner/customer logos. */
+export const LogoGridSlideSchema = Common.extend({
+  template: z.literal("logo_grid"),
+  content: z.object({
+    heading: z.string().max(120).optional(),
+    caption: z.string().max(120).optional(),
+    grayscale: z.boolean().optional(),
+    logos: z
+      .array(
+        z.object({
+          alt: z.string().min(1).max(80),
+          imageUrl: z.string().min(1).max(500),
+          href: z.string().max(500).optional(),
+        }),
+      )
+      .min(4)
+      .max(24),
+  }),
+});
+
+// ── Sub-issue #1052 — Roadmap + Agenda ───────────────────────────────
+
+const RoadmapStatusEnum = z.enum(["planned", "in_progress", "done"]);
+export type RoadmapStatus = z.infer<typeof RoadmapStatusEnum>;
+
+/** 19. Roadmap — 2..6 columns × 1..4 tracks of timeline items. */
+export const RoadmapSlideSchema = Common.extend({
+  template: z.literal("roadmap"),
+  content: z.object({
+    heading: z.string().min(1).max(120),
+    columns: z.array(z.string().min(1).max(40)).min(2).max(6),
+    tracks: z.array(z.string().min(1).max(40)).min(1).max(4),
+    items: z
+      .array(
+        z.object({
+          // Index into `columns` (0-based).
+          column: z.number().int().min(0).max(5),
+          // Index into `tracks` (0-based).
+          track: z.number().int().min(0).max(3),
+          label: z.string().min(1).max(80),
+          status: RoadmapStatusEnum.optional(),
+        }),
+      )
+      .max(60),
+  }),
+});
+
+/** 20. Agenda — auto (derived from section dividers) or manual. */
+export const AgendaSlideSchema = Common.extend({
+  template: z.literal("agenda"),
+  content: z
+    .object({
+      heading: z.string().max(120).optional(),
+      mode: z.enum(["auto", "manual"]).default("auto"),
+      // 1..20 manually-supplied items; required only when mode==="manual".
+      items: z.array(z.string().min(1).max(120)).max(20).optional(),
+      numbered: z.boolean().optional(),
+    })
+    .superRefine((c, ctx) => {
+      if (c.mode === "manual") {
+        if (!c.items || c.items.length < 1) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["items"],
+            message: "Manual agenda must have at least one item",
+          });
+        }
+      }
+    }),
+});
+
+/** Discriminated union over all 20 slide templates. */
 export const SlideSchema = z.discriminatedUnion("template", [
   TitleSlideSchema,
   SectionDividerSlideSchema,
@@ -330,6 +544,12 @@ export const SlideSchema = z.discriminatedUnion("template", [
   QaSlideSchema,
   ChartSlideSchema,
   MermaidSlideSchema,
+  PricingTableSlideSchema,
+  BigNumberSlideSchema,
+  TeamGridSlideSchema,
+  LogoGridSlideSchema,
+  RoadmapSlideSchema,
+  AgendaSlideSchema,
 ]);
 export type Slide = z.infer<typeof SlideSchema>;
 
@@ -366,6 +586,20 @@ export const DeckSchema = z.object({
      * unless a slide carries its own `image_style` override.
      */
     image_style: ImageStyleEnum.optional(),
+    /**
+     * Deck-level FluxQ model selection. `flux-schnell` is the 4-step
+     * distilled model (fast, lower fidelity); `flux-dev` is the higher
+     * quality dev model. Defaults to `flux-schnell` (omitted) for
+     * backwards compatibility with existing decks.
+     */
+    image_model: z.enum(["flux-schnell", "flux-dev"]).optional(),
+    /**
+     * When `false`, the deck's auto-fan-out + bulk generate-all paths
+     * skip deriving a fallback background prompt for slides that have
+     * no explicit `background_image_prompt`. Defaults to `true`
+     * (omitted) so existing decks keep generating backgrounds.
+     */
+    auto_generate_backgrounds: z.boolean().optional(),
   }),
   created_at: z.string(),
   updated_at: z.string(),
@@ -404,6 +638,15 @@ export const SLIDE_TEMPLATES = [
   "qa",
   "chart",
   "mermaid",
+  // Sub-issue #1046
+  "pricing_table",
+  "big_number",
+  // Sub-issue #1049
+  "team_grid",
+  "logo_grid",
+  // Sub-issue #1052
+  "roadmap",
+  "agenda",
 ] as const;
 export type SlideTemplate = (typeof SLIDE_TEMPLATES)[number];
 
@@ -437,6 +680,19 @@ export const DraftDeckOptionsSchema = z
      * every queued FluxQ job.
      */
     imageStyle: ImageStyleEnum.optional(),
+    /**
+     * Deck-level FluxQ model. `flux-schnell` (default) is the 4-step
+     * distilled model — fast, lower fidelity. `flux-dev` is higher
+     * quality at the cost of generation time. Persisted on
+     * `metadata.image_model`.
+     */
+    imageModel: z.enum(["flux-schnell", "flux-dev"]).optional(),
+    /**
+     * When `false`, the auto-fan-out skips deriving a fallback
+     * background prompt for slides without an explicit
+     * `background_image_prompt`. Defaults to `true` for back-compat.
+     */
+    autoGenerateBackgrounds: z.boolean().optional(),
   })
   .strict();
 export type DraftDeckOptions = z.infer<typeof DraftDeckOptionsSchema>;

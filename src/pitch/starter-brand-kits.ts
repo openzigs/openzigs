@@ -29,6 +29,8 @@ export const STARTER_BRAND_KITS: readonly StarterBrandKit[] = [
     watermarkPath: null,
     introTemplateId: null,
     outroTemplateId: null,
+    defaultLogoPlacement: null,
+    showSlideNumbers: null,
   },
   {
     id: "starter-corporate-blue",
@@ -44,6 +46,8 @@ export const STARTER_BRAND_KITS: readonly StarterBrandKit[] = [
     watermarkPath: null,
     introTemplateId: null,
     outroTemplateId: null,
+    defaultLogoPlacement: null,
+    showSlideNumbers: null,
   },
   {
     id: "starter-startup-vibrant",
@@ -59,6 +63,8 @@ export const STARTER_BRAND_KITS: readonly StarterBrandKit[] = [
     watermarkPath: null,
     introTemplateId: null,
     outroTemplateId: null,
+    defaultLogoPlacement: null,
+    showSlideNumbers: null,
   },
   {
     id: "starter-academic",
@@ -74,6 +80,8 @@ export const STARTER_BRAND_KITS: readonly StarterBrandKit[] = [
     watermarkPath: null,
     introTemplateId: null,
     outroTemplateId: null,
+    defaultLogoPlacement: null,
+    showSlideNumbers: null,
   },
   {
     id: "starter-dark-tech",
@@ -89,6 +97,8 @@ export const STARTER_BRAND_KITS: readonly StarterBrandKit[] = [
     watermarkPath: null,
     introTemplateId: null,
     outroTemplateId: null,
+    defaultLogoPlacement: null,
+    showSlideNumbers: null,
   },
   {
     id: "starter-warm-creative",
@@ -104,6 +114,8 @@ export const STARTER_BRAND_KITS: readonly StarterBrandKit[] = [
     watermarkPath: null,
     introTemplateId: null,
     outroTemplateId: null,
+    defaultLogoPlacement: null,
+    showSlideNumbers: null,
   },
   {
     id: "starter-medical-clinical",
@@ -119,6 +131,8 @@ export const STARTER_BRAND_KITS: readonly StarterBrandKit[] = [
     watermarkPath: null,
     introTemplateId: null,
     outroTemplateId: null,
+    defaultLogoPlacement: null,
+    showSlideNumbers: null,
   },
   {
     id: "starter-pitch-deck-classic",
@@ -134,6 +148,8 @@ export const STARTER_BRAND_KITS: readonly StarterBrandKit[] = [
     watermarkPath: null,
     introTemplateId: null,
     outroTemplateId: null,
+    defaultLogoPlacement: null,
+    showSlideNumbers: null,
   },
 ] as const;
 

@@ -24,6 +24,10 @@ import {
 } from "@/components/pitch/brand-kit-picker";
 import { BrandKitEditor } from "@/components/pitch/brand-kit-editor";
 import {
+  ImageModelPicker,
+  type PitchImageModel,
+} from "@/components/pitch/image-model-picker";
+import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -39,6 +43,20 @@ interface DeckSlideRow {
     template: string;
     content: Record<string, unknown>;
     speaker_notes?: string;
+    /**
+     * Sub-issue #1048 AC4 — per-slide branding overrides. Read here so the
+     * editor can count how many slides Apply will clobber and surface that
+     * count in the BrandKitPicker confirm dialog. Optional fields mirror
+     * BrandingOverrideSchema in src/pitch/pitch-schema.ts.
+     */
+    branding?: {
+      logoPlacement?: string;
+      hideLogo?: boolean;
+      footerOverride?: string;
+      hideFooter?: boolean;
+      hideSlideNumber?: boolean;
+      watermarkOverride?: string | null;
+    };
   };
   created_at: string;
   updated_at: string;
@@ -54,6 +72,7 @@ interface DeckPayload {
       source_script: string;
       tone?: string;
       audience?: string;
+      image_model?: "flux-schnell" | "flux-dev";
     };
     created_at: string;
     updated_at: string;
@@ -269,6 +288,56 @@ export default function PitchDeckEditorPage() {
     onError: () => showToast("Could not change brand kit.", "error"),
   });
 
+  // Sub-issue #1048 — apply selected kit to the deck and clear per-slide
+  // overrides. Re-uses the same invalidation pattern so the picker reflects
+  // the change immediately.
+  const applyBrandKitMutation = useMutation({
+    mutationFn: async (brandKitId: string) =>
+      fetchJson(`/api/admin/pitch/decks/${deckId}/apply-brand-kit`, {
+        method: "POST",
+        body: JSON.stringify({ brandKitId }),
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["pitch", "deck", deckId] });
+      queryClient.invalidateQueries({ queryKey: ["pitch", "render", deckId] });
+      showToast("Brand kit applied to deck.", "info");
+    },
+    onError: () => showToast("Could not apply brand kit.", "error"),
+  });
+
+  // Sub-issue #1048 — clone the deck's effective kit into a new custom kit.
+  // Note: backend route was renamed extract-brand-kit → clone-brand-kit
+  // (the operation is a clone, not an extraction). The legacy path is
+  // still served as an alias for any external clients.
+  const cloneBrandKitMutation = useMutation({
+    mutationFn: async (name: string) =>
+      fetchJson(`/api/admin/pitch/decks/${deckId}/clone-brand-kit`, {
+        method: "POST",
+        body: JSON.stringify({ name }),
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["pitch", "brand-kits"] });
+      showToast("Brand kit copied from deck.", "info");
+    },
+    onError: () => showToast("Could not copy brand kit from deck.", "error"),
+  });
+
+  // PR #1044 walkthrough Bug #1 — toolbar-level image quality (FluxQ
+  // model) selector. Patches `metadata.image_model` via the same admin
+  // endpoint the brand-kit picker already uses, so cache invalidation
+  // and audit logging stay consistent.
+  const imageModelChangeMutation = useMutation({
+    mutationFn: async (imageModel: PitchImageModel) =>
+      fetchJson(`/api/admin/pitch/decks/${deckId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ metadata: { image_model: imageModel } }),
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["pitch", "deck", deckId] });
+    },
+    onError: () => showToast("Could not change image quality.", "error"),
+  });
+
   const reorderMutation = useMutation({
     mutationFn: async ({
       slideId,
@@ -388,6 +457,24 @@ export default function PitchDeckEditorPage() {
   const slides = useMemo(
     () => deckQuery.data?.slides ?? [],
     [deckQuery.data?.slides],
+  );
+
+  // Sub-issue #1048 AC4 — count slides that currently carry per-slide
+  // branding overrides so the BrandKitPicker can surface the blast radius
+  // ("Apply 'X' to the deck and clear branding overrides on N slide(s)?")
+  // in its confirm dialog. A slide is "overridden" if its branding bag
+  // has any defined key (any non-default override).
+  const overriddenSlideCount = useMemo(
+    () =>
+      slides.reduce((acc, row) => {
+        const b = row.slide.branding;
+        if (!b) return acc;
+        const hasOverride = Object.values(b).some(
+          (v) => v !== undefined && v !== null,
+        );
+        return acc + (hasOverride ? 1 : 0);
+      }, 0),
+    [slides],
   );
 
   // Track per-slide image generation status (#993). Drives the rail badges
@@ -571,6 +658,22 @@ export default function PitchDeckEditorPage() {
               setBrandKitEditTarget(null);
               setBrandKitDialogOpen(true);
             }}
+            onApplyToDeck={(kit) => applyBrandKitMutation.mutate(kit.id)}
+            overrideCount={overriddenSlideCount}
+            onCopyFromDeck={() => {
+              const name = window.prompt(
+                "Name the new brand kit:",
+                `${deck.title} kit`,
+              );
+              if (name && name.trim()) {
+                cloneBrandKitMutation.mutate(name.trim());
+              }
+            }}
+          />
+          <ImageModelPicker
+            value={deck.metadata.image_model ?? null}
+            onChange={(m) => imageModelChangeMutation.mutate(m)}
+            disabled={imageModelChangeMutation.isPending}
           />
           <GenerateAllImagesButton
             deckId={deckId}

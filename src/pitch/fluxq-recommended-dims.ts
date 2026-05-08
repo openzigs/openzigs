@@ -156,24 +156,51 @@ export async function refreshFluxQGpuAvailable(
 }
 
 /**
+ * Returns `true` if the FluxQ `/health` probe has been run AND advertised
+ * a recommended ceiling. When this is `false` (cache empty) we treat the
+ * sidecar as having no opinion about dimensions and the clamp helper
+ * passes the requested dims through untouched — see
+ * {@link clampToFluxQRecommendedDims}.
+ */
+export function hasFluxQRecommendedDims(): boolean {
+  return cached !== undefined;
+}
+
+/**
  * Clamp the requested width/height down to the FluxQ-advertised
- * recommended ceiling. If either dim is missing, the recommended value
- * is used directly. Never up-scales — a caller asking for 256×256 still
- * gets 256×256.
+ * recommended ceiling.
+ *
+ * Semantics (changed 2026-05 — Issue: pitch image quality):
+ *   - If the sidecar `/health` probe has NOT populated the cache yet,
+ *     any explicitly-requested width/height is returned untouched. This
+ *     prevents the previous bug where 1920×1080 was silently down-clamped
+ *     to the 1024×576 fallback just because no sidecar was available.
+ *     When neither dim is supplied in this state, the legacy
+ *     {@link FLUXQ_FALLBACK_DIMS} are returned as a sensible default.
+ *   - If the cache IS populated, the request is clamped to
+ *     `min(requested, cap)` per axis. Missing dims fall back to the
+ *     advertised ceiling.
+ *
+ * Never up-scales — a caller asking for 256×256 still gets 256×256.
  */
 export function clampToFluxQRecommendedDims(
   width?: number,
   height?: number,
 ): FluxQRecommendedDims {
-  const rec = getCachedFluxQRecommendedDims();
-  const w =
-    typeof width === "number" && Number.isFinite(width) && width > 0
-      ? Math.min(Math.floor(width), rec.width)
-      : rec.width;
-  const h =
-    typeof height === "number" && Number.isFinite(height) && height > 0
-      ? Math.min(Math.floor(height), rec.height)
-      : rec.height;
+  const isFinitePos = (v: unknown): v is number =>
+    typeof v === "number" && Number.isFinite(v) && v > 0;
+
+  if (cached === undefined) {
+    // No advertised ceiling — honour caller dims when supplied; otherwise
+    // emit the conservative fallback.
+    const w = isFinitePos(width) ? Math.floor(width) : FLUXQ_FALLBACK_DIMS.width;
+    const h = isFinitePos(height) ? Math.floor(height) : FLUXQ_FALLBACK_DIMS.height;
+    return { width: w, height: h };
+  }
+
+  const rec = cached;
+  const w = isFinitePos(width) ? Math.min(Math.floor(width), rec.width) : rec.width;
+  const h = isFinitePos(height) ? Math.min(Math.floor(height), rec.height) : rec.height;
   return { width: w, height: h };
 }
 

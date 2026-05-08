@@ -7020,4 +7020,58 @@ All routes share a 1-hour window via the in-router `buildLimiter` factory. Limit
 - `src/api/pitch.integration.test.ts` — full lifecycle (draft → patch → reorder → enqueue → 5 exports → delete), rate-limit defence per family (4 tests), 80-slide cap.
 - `src/api/pitch.test.ts` — 94 router branch-coverage tests including starter brand kit immutability + logo content sniffing.
 
+### Epic #1045 — 20 templates, deck-wide brand kit, per-slide overrides
+
+The pitch subsystem grew from 14 to **20 slide templates** in epic #1045 and gained a richer brand-kit application surface plus per-slide branding overrides.
+
+#### Slide template inventory
+
+| Template | Purpose |
+|---|---|
+| `title` | Title + subtitle hero |
+| `bullet_list` | Heading + bullets |
+| `two_column` | Side-by-side content blocks |
+| `image_full` | Full-bleed image w/ optional caption |
+| `quote` | Pull-quote w/ attribution |
+| `chart` | `kind: bar\|line\|pie` data viz |
+| `comparison` | Two-column compare/contrast |
+| `timeline` | Ordered milestones |
+| `metrics` | Key metric cards |
+| `cta` | Call-to-action panel |
+| `mermaid` | Mermaid diagram |
+| `section_divider` | Chapter break (also feeds `agenda` auto-mode) |
+| `closing` | End-of-deck thank-you / contact |
+| `code` | Syntax-highlighted code block |
+| `pricing_table` *(new)* | Up to 4 tier cards w/ name, price, period, features, CTA, highlighted flag, optional footnote |
+| `big_number` *(new)* | Hero metric w/ supporting text + optional `trend: up\|down\|flat` chip |
+| `team_grid` *(new)* | 2–12 member cards w/ name, role, photo URL, bio (social links preserved on edit, UI surface deferred) |
+| `logo_grid` *(new)* | 4–24 logo cells w/ alt text, image, optional href, deck-wide grayscale toggle |
+| `roadmap` *(new)* | Columns × tracks matrix w/ items pinned by `(column, track)` and `status: planned\|in_progress\|done` |
+| `agenda` *(new)* | `mode: auto\|manual` — `auto` derives items from the deck's `section_divider` slides at render time; `manual` takes 1–20 explicit strings |
+
+Each new template ships an inline property editor under [ui/components/pitch/property-editors/](../ui/components/pitch/property-editors/) registered in [properties-panel.tsx](../ui/components/pitch/properties-panel.tsx). The amber "No editor available" notice remains as a fallback for any future template added to the schema before its editor lands.
+
+#### Brand-kit pipeline (deck-wide + per-slide)
+
+`BrandKitSchema` (in [pitch-schema.ts](../src/pitch/pitch-schema.ts)) now carries two cross-cutting flags consumed by the renderer:
+
+- `defaultLogoPlacement: "none" | "top-left" | "top-right" | "bottom-left" | "bottom-right"` — where the brand logo is stamped on every slide that does not opt out via a per-slide override.
+- `showSlideNumbers: boolean` — toggles the slide-number badge in the renderer footer.
+
+Per-slide overrides ride on a new `branding TEXT` column on `pitch_slides`. The repository serializes the typed `SlideBrandingSchema` object (logo placement override, slide-number suppression, accent color override) to JSON at the persistence boundary so the rest of the codebase keeps working with the hydrated object. Migration is the runtime `ALTER TABLE … ADD COLUMN branding TEXT` pattern used elsewhere in the repo.
+
+#### Brand-kit endpoints
+
+Two endpoints front the brand-kit lifecycle on a deck (both under `/api/admin/pitch/decks/:deckId/`):
+
+| Method | Path | Behavior |
+|---|---|---|
+| `POST` | `apply-brand-kit` | Activates a kit on the deck and **clears every per-slide `branding` override** in a single transaction. Response carries the count of slides whose overrides were cleared so the UI can surface a confirmation. Audit event: `pitch_deck_brand_kit_applied`. |
+| `POST` | `clone-brand-kit` | Deep-copies the deck's currently active brand kit into a new editable kit row (no link back to the source). Audit event: `pitch_deck_brand_kit_cloned`. |
+| `POST` | `extract-brand-kit` *(legacy alias, deprecated 2026-05)* | Same handler as `clone-brand-kit`; retained so existing clients (and the e2e mocks shipped before the rename) keep working. New code should target `clone-brand-kit`. |
+
+#### Agenda auto-derive
+
+When an `agenda` slide is rendered with `content.mode = "auto"`, the renderer walks the deck and extracts the heading of every `section_divider` slide in order, capping at 20 entries to match the manual-mode limit. Switching to `mode: "manual"` activates the editor's items list and persists explicit strings. The schema treats `items` as required-when-manual and ignored-when-auto so a manual-mode slide cannot persist with an empty list.
+
 ### Tracking: [Epic #951](https://github.com/openzigs/openzigs/issues/951)

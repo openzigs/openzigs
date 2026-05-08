@@ -1868,10 +1868,31 @@ The **Pitch** workspace turns a script, brief, or research notes into a designed
 
 #### Workflow at a glance
 
-1. **Draft** — paste a script or upload notes, pick a brand kit, choose target slide count + tone, and (optionally) pick the LLM via the **AI model** picker on the Options step. Defaults to your Copilot account's selected model; override for a faster/cheaper model on both the condense and draft passes. The AI produces a structured deck with up to **80 slides** (`MAX_SLIDES_PER_DECK`) across 14 templates.
+1. **Draft** — paste a script or upload notes, pick a brand kit, choose target slide count + tone, and (optionally) pick the LLM via the **AI model** picker on the Options step. Defaults to your Copilot account's selected model; override for a faster/cheaper model on both the condense and draft passes. The AI produces a structured deck with up to **80 slides** (`MAX_SLIDES_PER_DECK`) across **20 templates** (the original 14 plus the 6 added in epic #1045 — see the new templates list below).
 2. **Edit** — click any slide field to edit it inline; the right rail loads the matching property editor. Drag slides to reorder, regenerate individual slides, or regenerate slide images via Flux.
 3. **Brand kits** — pick a starter kit (Modern Minimal, Corporate Blue, Vibrant Pitch, Editorial, Tech Dark, Warm Neutral) or create your own. Editable: heading + body fonts, accent colors, footer text, logo (≤ 2 MB PNG/JPEG/WebP). Logos are content-sniffed server-side. The editor warns when colors are likely to be low contrast, and the renderer derives readable text colors automatically so existing decks stay legible.
 4. **Export** — five formats, all attachment downloads with `Cache-Control: no-store`:
+
+#### Brand Kits — deck-wide application & cloning
+
+The brand kit panel in the deck editor (right rail) gives you three buttons that wire to the deck's active kit:
+
+- **Default logo placement** — choose where the kit's logo is stamped on every slide (`none`, `top-left`, `top-right`, `bottom-left`, `bottom-right`). Persists on the kit itself, so all decks using it pick up the change on next render.
+- **Show slide numbers** — toggles the slide-number badge in the renderer footer for every deck on this kit.
+- **Per-slide branding overrides** — individual slides can opt out of the deck-wide logo or override the accent color via the slide's `branding` field. The dedicated UI for editing these overrides is **deferred** for a future release; for now, set them via the JSON inspector or via API.
+- **Apply to deck** — activates a different brand kit on the current deck **and clears every existing per-slide `branding` override in one go**. The confirmation dialog tells you exactly how many slide overrides will be wiped before you commit; once applied, the deck re-renders against the new kit on the next preview load.
+- **Copy from deck** — clones the deck's *currently active* brand kit into a new editable kit so you can tweak fonts/colors without disturbing the original. (The legacy "Extract" button is still wired to the same endpoint via a deprecated alias; nothing breaks if you have an older browser tab open.)
+
+#### New slide templates (epic #1045)
+
+Six templates joined the original 14, each with an inline property editor in the right rail (no more JSON-only editing):
+
+- **Pricing table** — 2–4 tier cards (name, price, period, feature bullets, CTA). Tick **highlighted** on one tier to mark it as the recommended plan; mutual exclusion is enforced. Optional footnote at the bottom.
+- **Big number** — a hero metric (the number/value, a short label, and supporting copy). Optional **trend** chip (`up` / `down` / `flat`) with a custom trend label.
+- **Team grid** — 2–12 member cards (name, role, photo URL, short bio). Social links on existing slides are preserved on edit; the UI surface for editing them is deferred.
+- **Logo grid** — 4–24 logo cells (alt text, image URL, optional href). Toggle **grayscale** to render every logo desaturated (useful for "trusted by" walls).
+- **Roadmap** — a columns × tracks matrix. Define column labels (e.g. quarters, capped at 6) and track labels (e.g. workstreams, capped at 4), then add up to 60 items pinned to a `(column, track)` cell with a `planned` / `in_progress` / `done` status. Removing a column or track also removes any items targeting it and shifts the remaining indices down so the matrix stays consistent.
+- **Agenda** — two modes. **Auto-derive** (default) pulls headings from your `Section divider` slides at render time, so the agenda always tracks the deck. Switch to **Manual** to author 1–20 explicit items. Optional **Numbered list** toggle for both modes.
 
 #### Sidecar auto-start (`media.autoStartSidecars`)
 

@@ -51,9 +51,16 @@ vi.mock("../pitch/pitch-image-service.js", () => ({
   enqueueSlideImage: (...a: unknown[]) => enqueueSlideImageMock(...a),
 }));
 
-vi.mock("../pitch/image-fanout.js", () => ({
-  fanOutImageGeneration: (...a: unknown[]) => fanOutImageGenerationMock(...a),
-}));
+vi.mock("../pitch/image-fanout.js", async () => {
+  const actual =
+    await vi.importActual<typeof import("../pitch/image-fanout.js")>(
+      "../pitch/image-fanout.js",
+    );
+  return {
+    ...actual,
+    fanOutImageGeneration: (...a: unknown[]) => fanOutImageGenerationMock(...a),
+  };
+});
 
 const refreshFluxQGpuAvailableMock = vi.fn();
 
@@ -821,6 +828,105 @@ describe("Pitch REST router", () => {
         .send({ prompt: "x", mode: "wrong" });
       expect(res.status).toBe(400);
     });
+
+    // PR #1044 walkthrough Bug #2 — when the studio's RegenerateImageDialog
+    // omits width/height, the route must derive slot-aware defaults
+    // (background → 1920×1080) instead of falling through to the
+    // FluxQ 1024×576 fallback.
+    it("POST .../image without dims uses slot-aware defaults (background → 1920×1080)", async () => {
+      const kitId = createCustomKit(harness);
+      const { deckId, slideId } = createDeck(harness, kitId);
+      enqueueSlideImageMock.mockReturnValue({
+        jobId: "j",
+        assetId: "a",
+        payload: {},
+      });
+      const res = await request(harness.app)
+        .post(`/api/admin/pitch/decks/${deckId}/slides/${slideId}/image`)
+        .send({ prompt: "moody backdrop", mode: "background" });
+      expect(res.status).toBe(202);
+      const args = enqueueSlideImageMock.mock.calls[0][0] as {
+        width: number;
+        height: number;
+        kind: string;
+      };
+      expect(args.kind).toBe("background");
+      expect(args.width).toBe(1920);
+      expect(args.height).toBe(1080);
+    });
+
+    it("POST .../image two_column left_image without dims defaults to 960×1080", async () => {
+      const kitId = createCustomKit(harness);
+      // Build a two_column slide so the slot-aware default applies.
+      const slide = SlideSchema.parse({
+        template: "two_column",
+        content: {
+          heading: "h",
+          left: "l",
+          right: "r",
+        },
+        speaker_notes: "",
+        transition: "slide",
+        fragments: [],
+      });
+      const deck = harness.deps.pitchRepo.insertDeck({
+        id: "deck-tc-bug2",
+        title: "tc",
+        brand_kit_id: kitId,
+        aspect_ratio: "16:9",
+        metadata: { source_script: "", tone: "formal" },
+        slides: [{ id: "slide-tc-bug2", slide }],
+      });
+      const slides = harness.deps.pitchRepo.listSlidesForDeck(deck.id);
+      enqueueSlideImageMock.mockReturnValue({
+        jobId: "j",
+        assetId: "a",
+        payload: {},
+      });
+      const res = await request(harness.app)
+        .post(
+          `/api/admin/pitch/decks/${deck.id}/slides/${slides[0].id}/image`,
+        )
+        .send({
+          prompt: "left side art",
+          mode: "inline",
+          slot: "left_image",
+        });
+      expect(res.status).toBe(202);
+      const args = enqueueSlideImageMock.mock.calls[0][0] as {
+        width: number;
+        height: number;
+        slot: string;
+      };
+      expect(args.slot).toBe("left_image");
+      expect(args.width).toBe(960);
+      expect(args.height).toBe(1080);
+    });
+
+    it("POST .../image with explicit width/height still wins over slot defaults", async () => {
+      const kitId = createCustomKit(harness);
+      const { deckId, slideId } = createDeck(harness, kitId);
+      enqueueSlideImageMock.mockReturnValue({
+        jobId: "j",
+        assetId: "a",
+        payload: {},
+      });
+      const res = await request(harness.app)
+        .post(`/api/admin/pitch/decks/${deckId}/slides/${slideId}/image`)
+        .send({
+          prompt: "explicit",
+          mode: "background",
+          width: 768,
+          height: 768,
+        });
+      expect(res.status).toBe(202);
+      const args = enqueueSlideImageMock.mock.calls[0][0] as {
+        width: number;
+        height: number;
+      };
+      expect(args.width).toBe(768);
+      expect(args.height).toBe(768);
+    });
   });
 
   // ── #995 + #991 — bulk image fan-out ────────────────────────────────
@@ -1166,6 +1272,167 @@ describe("Pitch REST router", () => {
       expect(res.status).toBe(200);
       expect(harness.deps.brandKitRepo.getById(id)).toBeNull();
     });
+
+    // ── Sub-issue #1048 — Apply / Copy brand kit ─────────────────────
+    describe("apply-brand-kit / clone-brand-kit (#1048)", () => {
+      it("POST /decks/:deckId/apply-brand-kit re-points a deck", async () => {
+        const kitA = createCustomKit(harness, "Kit A");
+        const kitB = createCustomKit(harness, "Kit B");
+        const { deckId } = createDeck(harness, kitA);
+        const res = await request(harness.app)
+          .post(`/api/admin/pitch/decks/${deckId}/apply-brand-kit`)
+          .send({ brandKitId: kitB });
+        expect(res.status).toBe(200);
+        expect(res.body.deck.brand_kit_id).toBe(kitB);
+        const reread = harness.deps.pitchRepo.getDeck(deckId);
+        expect(reread?.brand_kit_id).toBe(kitB);
+      });
+
+      it("POST /decks/:deckId/apply-brand-kit returns 404 for unknown deck", async () => {
+        const kitA = createCustomKit(harness, "Kit Only");
+        const res = await request(harness.app)
+          .post(`/api/admin/pitch/decks/no-such-deck/apply-brand-kit`)
+          .send({ brandKitId: kitA });
+        expect(res.status).toBe(404);
+      });
+
+      it("POST /decks/:deckId/apply-brand-kit returns 404 for unknown kit", async () => {
+        const kitA = createCustomKit(harness, "Real Kit");
+        const { deckId } = createDeck(harness, kitA);
+        const res = await request(harness.app)
+          .post(`/api/admin/pitch/decks/${deckId}/apply-brand-kit`)
+          .send({ brandKitId: "nope" });
+        expect(res.status).toBe(404);
+      });
+
+      it("POST /decks/:deckId/apply-brand-kit rejects unknown body fields", async () => {
+        const kitA = createCustomKit(harness, "Strict Kit");
+        const { deckId } = createDeck(harness, kitA);
+        const res = await request(harness.app)
+          .post(`/api/admin/pitch/decks/${deckId}/apply-brand-kit`)
+          .send({ brandKitId: kitA, rogue: 1 });
+        expect(res.status).toBe(400);
+      });
+
+      // ── Sub-issue #1048 (PR #1044 review) — slidesCleared contract ──────
+      // Guards the wipe loop in the apply-brand-kit route. Seeds a deck with
+      // 3 slides (two branded, one not), POSTs the route, then asserts BOTH
+      // the returned `slidesCleared` count AND that each slide's persisted
+      // `branding` field reflects reality: cleared on the two that had
+      // overrides, untouched on the third. Without this assertion a future
+      // regression that no-ops the wipe (e.g. dropping the loop) would pass
+      // tests silently.
+      it("POST /decks/:deckId/apply-brand-kit clears per-slide branding overrides and reports the count", async () => {
+        const kitA = createCustomKit(harness, "Source Apply Kit");
+        const kitB = createCustomKit(harness, "Target Apply Kit");
+        const slideBrandedLogo = buildSampleSlide({
+          branding: { logoPlacement: "top-right" },
+        });
+        const slideBrandedFooter = buildSampleSlide({
+          branding: { footerOverride: "Confidential" },
+        });
+        const slidePlain = buildSampleSlide();
+        const deck = harness.deps.pitchRepo.insertDeck({
+          id: "deck-apply-clear",
+          title: "Apply Clear Test",
+          brand_kit_id: kitA,
+          aspect_ratio: "16:9",
+          metadata: { source_script: "", tone: "formal" },
+          slides: [
+            { id: "slide-branded-logo", slide: slideBrandedLogo },
+            { id: "slide-branded-footer", slide: slideBrandedFooter },
+            { id: "slide-plain", slide: slidePlain },
+          ],
+        });
+
+        // Sanity-check the seed actually persisted branding.
+        const seeded = harness.deps.pitchRepo.listSlidesForDeck(deck.id);
+        const seedById = new Map(seeded.map((s) => [s.id, s]));
+        expect(
+          (seedById.get("slide-branded-logo")?.slide as { branding?: unknown })
+            .branding,
+        ).toBeDefined();
+        expect(
+          (seedById.get("slide-branded-footer")?.slide as { branding?: unknown })
+            .branding,
+        ).toBeDefined();
+        expect(
+          (seedById.get("slide-plain")?.slide as { branding?: unknown })
+            .branding,
+        ).toBeUndefined();
+
+        const res = await request(harness.app)
+          .post(`/api/admin/pitch/decks/${deck.id}/apply-brand-kit`)
+          .send({ brandKitId: kitB });
+
+        expect(res.status).toBe(200);
+        // (a) Response contract: count of branded slides only (2 of 3).
+        expect(res.body.slidesCleared).toBe(2);
+        expect(res.body.deck.brand_kit_id).toBe(kitB);
+
+        // (b) Persistence: re-fetch each slide and assert branding state.
+        const after = harness.deps.pitchRepo.listSlidesForDeck(deck.id);
+        const afterById = new Map(after.map((s) => [s.id, s]));
+        expect(
+          (afterById.get("slide-branded-logo")?.slide as {
+            branding?: unknown;
+          }).branding,
+        ).toBeUndefined();
+        expect(
+          (afterById.get("slide-branded-footer")?.slide as {
+            branding?: unknown;
+          }).branding,
+        ).toBeUndefined();
+        // The third slide had no branding to begin with — it must remain
+        // untouched (no spurious writes / no surprise field appearance).
+        expect(
+          (afterById.get("slide-plain")?.slide as { branding?: unknown })
+            .branding,
+        ).toBeUndefined();
+      });
+
+      it("POST /decks/:deckId/clone-brand-kit clones source kit into a new one", async () => {
+        const kitA = createCustomKit(harness, "Source Kit");
+        const { deckId } = createDeck(harness, kitA);
+        const res = await request(harness.app)
+          .post(`/api/admin/pitch/decks/${deckId}/clone-brand-kit`)
+          .send({ name: "Cloned From Deck" });
+        expect(res.status).toBe(201);
+        expect(res.body.brandKit.name).toBe("Cloned From Deck");
+        expect(res.body.brandKit.primaryColor).toBe("#112233");
+        expect(res.body.brandKit.isStarter).toBe(false);
+      });
+
+      // Backwards-compat: the legacy `extract-brand-kit` path is retained
+      // as a deprecation alias for the renamed route. Once the UI/clients
+      // have all migrated to `clone-brand-kit` this can be removed.
+      it("POST /decks/:deckId/extract-brand-kit (legacy alias) still clones the source kit", async () => {
+        const kitA = createCustomKit(harness, "Legacy Alias Source");
+        const { deckId } = createDeck(harness, kitA);
+        const res = await request(harness.app)
+          .post(`/api/admin/pitch/decks/${deckId}/extract-brand-kit`)
+          .send({ name: "Cloned Via Legacy Path" });
+        expect(res.status).toBe(201);
+        expect(res.body.brandKit.name).toBe("Cloned Via Legacy Path");
+        expect(res.body.brandKit.isStarter).toBe(false);
+      });
+
+      it("POST /decks/:deckId/clone-brand-kit 404s for missing deck", async () => {
+        const res = await request(harness.app)
+          .post(`/api/admin/pitch/decks/missing/clone-brand-kit`)
+          .send({ name: "X" });
+        expect(res.status).toBe(404);
+      });
+
+      it("POST /decks/:deckId/clone-brand-kit 409 on duplicate name", async () => {
+        const kitA = createCustomKit(harness, "Dup Source");
+        const { deckId } = createDeck(harness, kitA);
+        const res = await request(harness.app)
+          .post(`/api/admin/pitch/decks/${deckId}/clone-brand-kit`)
+          .send({ name: "Dup Source" });
+        expect(res.status).toBe(409);
+      });
+    });
   });
 
   describe("logo upload (#966)", () => {
@@ -1251,6 +1518,55 @@ describe("Pitch REST router", () => {
         `/api/admin/pitch/brand-kits/${id}/logo`,
       );
       expect(res.status).toBe(400);
+    });
+
+    // ── DELETE /brand-kits/:id/logo (PR #1044 follow-up) ──────────────
+    it("DELETE /brand-kits/:id/logo clears logoPath after a successful upload", async () => {
+      const id = createCustomKit(harness);
+      const upload = await request(harness.app)
+        .post(`/api/admin/pitch/brand-kits/${id}/logo`)
+        .attach("logo", PNG_BYTES, {
+          filename: "logo.png",
+          contentType: "image/png",
+        });
+      expect(upload.status).toBe(200);
+      expect(harness.deps.brandKitRepo.getById(id)?.logoPath).toBeTruthy();
+
+      const del = await request(harness.app).delete(
+        `/api/admin/pitch/brand-kits/${id}/logo`,
+      );
+      expect(del.status).toBe(200);
+      expect(del.body.brandKit.logoPath).toBeNull();
+      expect(del.body.brandKit.logoUrl).toBeNull();
+      expect(harness.deps.brandKitRepo.getById(id)?.logoPath).toBeNull();
+    });
+
+    it("DELETE /brand-kits/:id/logo returns 404 for an unknown kit", async () => {
+      const res = await request(harness.app).delete(
+        "/api/admin/pitch/brand-kits/no-such/logo",
+      );
+      expect(res.status).toBe(404);
+    });
+
+    it("DELETE /brand-kits/:id/logo returns 403 on a starter kit", async () => {
+      const res = await request(harness.app).delete(
+        "/api/admin/pitch/brand-kits/starter-modern-minimal/logo",
+      );
+      expect(res.status).toBe(403);
+    });
+
+    it("DELETE /brand-kits/:id/logo is idempotent — second call still 200s", async () => {
+      const id = createCustomKit(harness);
+      const first = await request(harness.app).delete(
+        `/api/admin/pitch/brand-kits/${id}/logo`,
+      );
+      expect(first.status).toBe(200);
+      expect(first.body.brandKit.logoPath).toBeNull();
+      const second = await request(harness.app).delete(
+        `/api/admin/pitch/brand-kits/${id}/logo`,
+      );
+      expect(second.status).toBe(200);
+      expect(second.body.brandKit.logoPath).toBeNull();
     });
   });
 

@@ -12,6 +12,10 @@ import {
   _resetPendingPitchJobsForTest,
   _peekPitchJobBindingForTest,
 } from "./pitch-image-service.js";
+import {
+  _setFluxQDimsCacheForTest,
+  _resetFluxQDimsCacheForTest,
+} from "./fluxq-recommended-dims.js";
 import type { Slide } from "./pitch-schema.js";
 import type { CharacterRepository } from "../characters/character-repository.js";
 import type { MediaQueueRepository } from "../queue/media-queue-repository.js";
@@ -55,6 +59,10 @@ async function makeImageFile(name = "src.png"): Promise<string> {
 
 beforeEach(() => {
   _resetPendingPitchJobsForTest();
+  // Reset the FluxQ dims cache so each test starts in the
+  // "no sidecar opinion" state. Tests that exercise the clamp-down
+  // behaviour explicitly populate it via _setFluxQDimsCacheForTest.
+  _resetFluxQDimsCacheForTest();
   tmpDir = mkdtempSync(join(tmpdir(), "pitch-image-test-"));
   baseDir = join(tmpDir, "assets");
   sourceDir = join(tmpDir, "src");
@@ -217,6 +225,12 @@ describe("enqueueSlideImage", () => {
   });
 
   it("clamps explicit width/height down to FluxQ-recommended (post-#1017 dim cap)", () => {
+    // Behaviour change (Issue: pitch image quality 2026-05): clamp now
+    // requires an actively-populated FluxQ ceiling — empty cache means
+    // "no opinion" and explicit dims pass through. Pre-populate the
+    // cache here to assert the clamp-down still works when the sidecar
+    // advertises a smaller cap.
+    _setFluxQDimsCacheForTest({ width: 1024, height: 576 });
     const repo = mockQueueRepo();
     enqueueSlideImage({
       deckId: "deck-1",
@@ -231,12 +245,33 @@ describe("enqueueSlideImage", () => {
     });
     const stub = repo as unknown as { createJob: ReturnType<typeof vi.fn> };
     const input = stub.createJob.mock.calls[0][0] as CreateMediaJobInput;
-    // Cache empty in this test → clamp ceiling = FLUXQ_FALLBACK_DIMS
-    // (1024×576). Both requested dims are LARGER on at least one axis
-    // and therefore get pinned down: 1080→1024, 1920→576.
+    // Cache populated to 1024×576 → both axes clamp down.
     expect(input.payload.width).toBe(1024);
     expect(input.payload.height).toBe(576);
     expect(input.payload.seed).toBe(42);
+    expect(input.model).toBe("flux-dev");
+  });
+
+  it("preserves explicit width/height when the FluxQ cache is empty (Issue: pitch image quality 2026-05)", () => {
+    // The cache is reset between tests via beforeEach, so it's empty
+    // here. With the new clamp semantics, requested 1920×1080 must
+    // pass through — preventing the regression where every pitch
+    // image was silently downsized to 1024×576.
+    const repo = mockQueueRepo();
+    enqueueSlideImage({
+      deckId: "deck-1",
+      slideId: "slide-photo",
+      prompt: "x",
+      kind: "background",
+      width: 1920,
+      height: 1080,
+      mediaQueueRepo: repo,
+      preferredModel: "flux-dev",
+    });
+    const stub = repo as unknown as { createJob: ReturnType<typeof vi.fn> };
+    const input = stub.createJob.mock.calls[0][0] as CreateMediaJobInput;
+    expect(input.payload.width).toBe(1920);
+    expect(input.payload.height).toBe(1080);
     expect(input.model).toBe("flux-dev");
   });
 });

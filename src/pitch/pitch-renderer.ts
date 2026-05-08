@@ -160,8 +160,28 @@ export function renderDeckToHtml(
     }
   }
 
+  // Sub-issue #1051 — per-slide branding chrome (logo + slide-number
+  // indicator + footer/watermark overrides) is rendered INSIDE each
+  // <section> so a slide can hide or relocate the logo independently.
+  // The deck-level `<footer>` / `<.pitch-watermark>` remain as fallbacks
+  // for slides that did not opt out.
+  const totalSlides = deck.slides.length;
   const slidesHtml = slidesToRender
-    .map((slide, index) => renderSlide(slide, bgMapToUse?.get(index)))
+    .map((slide, index) => {
+      // When `slideIndex` filtered the array, preserve the deck position
+      // for the slide-number badge (otherwise filtered single-slide
+      // thumbnails would always read "1 / 1").
+      const deckPosition =
+        opts.slideIndex !== undefined ? opts.slideIndex + 1 : index + 1;
+      return renderSlide(
+        slide,
+        bgMapToUse?.get(index),
+        brandKit,
+        deckPosition,
+        totalSlides,
+        deck,
+      );
+    })
     .join("\n");
   const wrapperStyle = brandKitInlineStyle(brandKit);
   const footer = brandKit.footerText
@@ -172,11 +192,10 @@ export function renderDeckToHtml(
         safeUrl(brandKit.watermarkUrl) ?? "",
       )})"></div>`
     : "";
-  const logoTag = brandKitLogoTag(brandKit);
 
   const reveal = `<div class="reveal" data-deck-id="${attr(deck.id)}" data-aspect="${attr(
     deck.aspect_ratio,
-  )}"><div class="slides">${slidesHtml}</div>${footer}${watermark}${logoTag}</div>`;
+  )}"><div class="slides">${slidesHtml}</div>${footer}${watermark}</div>`;
 
   // Pick a theme: caller-supplied wins for any mode (allowlist [a-z0-9-]).
   // Embedded/present default to `white` for a presentation-grade light
@@ -464,14 +483,89 @@ export function renderRichBody(input: string): string {
   if (lines.length > 1) {
     return lines.map((l) => `<p>${sanitize(l)}</p>`).join("");
   }
-  // Single-line plain prose — sanitize handles inline tags.
-  return sanitize(text);
+  // Single-line plain prose — sanitize handles inline tags. Wrap in
+  // `<p>` so the property-editor rich-text scoping rules (e.g. white text
+  // + drop shadow on `.pitch-has-bg` text-heavy templates) actually
+  // target a block-level element instead of a bare text node — without
+  // the wrapper, the colour overrides slid off the text and it
+  // disappeared on coloured backgrounds (Issue #4: two_column invisible).
+  return `<p>${sanitize(text)}</p>`;
 }
 
-function brandKitLogoTag(kit: BrandKit): string {
+/**
+ * Resolve the corner where a slide's logo should render. Honors:
+ *   1. Per-slide explicit `branding.logoPlacement` (highest priority)
+ *   2. Per-slide `branding.hideLogo = true` → "none"
+ *   3. Default-hidden templates (`title`, `qa`) per Q1 epic decision
+ *   4. Brand-kit `defaultLogoPlacement`
+ *   5. Hard fallback `bottom-right`
+ *
+ * Returns `"none"` when the logo must not render.
+ */
+export function resolveLogoPlacement(
+  slide: Slide,
+  kit: BrandKit,
+): "top-left" | "top-right" | "bottom-left" | "bottom-right" | "none" {
+  const branding = slide.branding;
+  if (branding?.hideLogo) return "none";
+  if (branding?.logoPlacement) return branding.logoPlacement;
+  // Q1: hide on title / qa unless explicitly placed by the slide.
+  if (slide.template === "title" || slide.template === "qa") return "none";
+  return kit.defaultLogoPlacement ?? "bottom-right";
+}
+
+/**
+ * Resolve the corner where the slide-number indicator should render.
+ * Auto-flips to a free corner so it never collides with the logo.
+ * Returns `null` when slide numbers are disabled on the kit.
+ */
+export function resolveSlideNumberPlacement(
+  slide: Slide,
+  kit: BrandKit,
+): "top-left" | "top-right" | "bottom-left" | "bottom-right" | null {
+  if (!kit.showSlideNumbers) return null;
+  const logoCorner = resolveLogoPlacement(slide, kit);
+  if (logoCorner === "none") return "bottom-right";
+  // Diagonal opposite for maximum separation.
+  switch (logoCorner) {
+    case "top-left":
+      return "bottom-right";
+    case "top-right":
+      return "bottom-left";
+    case "bottom-left":
+      return "top-right";
+    case "bottom-right":
+    default:
+      return "top-left";
+  }
+}
+
+function slideLogoTag(slide: Slide, kit: BrandKit): string {
+  const placement = resolveLogoPlacement(slide, kit);
+  if (placement === "none") return "";
   const url = safeUrl(kit.logoUrl);
   if (!url) return "";
-  return `<img class="pitch-logo" src="${attr(url)}" alt="${attr(kit.name)} logo">`;
+  return `<img class="pitch-logo pitch-logo-${placement}" src="${attr(url)}" alt="${attr(kit.name)} logo">`;
+}
+
+function slideNumberTag(slide: Slide, kit: BrandKit, position: number, total: number): string {
+  const placement = resolveSlideNumberPlacement(slide, kit);
+  if (!placement) return "";
+  return `<div class="pitch-slide-number pitch-slide-number-${placement}" aria-hidden="true">${escapeHtml(String(position))} / ${escapeHtml(String(total))}</div>`;
+}
+
+function slideFooterOverrideTag(slide: Slide): string {
+  const text = slide.branding?.footerOverride;
+  if (!text) return "";
+  return `<footer class="pitch-footer pitch-footer--override">${sanitize(text)}</footer>`;
+}
+
+function slideWatermarkOverrideTag(slide: Slide): string {
+  const raw = slide.branding?.watermarkOverride;
+  if (!raw) return "";
+  const url = safeUrl(raw);
+  if (!url) return "";
+  return `<div class="pitch-watermark pitch-watermark--override" aria-hidden="true" style="background-image:url(${attr(url)})"></div>`;
 }
 
 function standaloneStyles(): string {
@@ -826,10 +920,40 @@ html, body { height: 100%; margin: 0; padding: 0; }
 }
 .pitch-deck-wrap .reveal .pitch-logo {
   position: absolute;
-  top: 20px;
-  right: 24px;
   max-height: 28px;
   opacity: 0.9;
+  z-index: 4;
+}
+/* Sub-issue #1051 \u2014 per-slide logo placement (4 corners). */
+.pitch-deck-wrap .reveal .pitch-logo-top-left { top: 20px; left: 24px; }
+.pitch-deck-wrap .reveal .pitch-logo-top-right { top: 20px; right: 24px; }
+.pitch-deck-wrap .reveal .pitch-logo-bottom-left { bottom: 20px; left: 24px; }
+.pitch-deck-wrap .reveal .pitch-logo-bottom-right { bottom: 20px; right: 24px; }
+/* Sub-issue #1047 \u2014 slide-number indicator. */
+.pitch-deck-wrap .reveal .pitch-slide-number {
+  position: absolute;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  color: var(--pitch-muted);
+  z-index: 4;
+  padding: 2px 6px;
+  background: rgba(255,255,255,0.6);
+  border-radius: 4px;
+}
+.pitch-deck-wrap .reveal .pitch-slide-number-top-left { top: 20px; left: 24px; }
+.pitch-deck-wrap .reveal .pitch-slide-number-top-right { top: 20px; right: 24px; }
+.pitch-deck-wrap .reveal .pitch-slide-number-bottom-left { bottom: 20px; left: 24px; }
+.pitch-deck-wrap .reveal .pitch-slide-number-bottom-right { bottom: 20px; right: 24px; }
+.pitch-deck-wrap .reveal .pitch-footer--override {
+  position: absolute;
+  bottom: 16px;
+  left: 72px;
+  right: 72px;
+  text-align: center;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--pitch-muted);
   z-index: 4;
 }
 .pitch-deck-wrap .reveal .pitch-watermark {
@@ -864,18 +988,44 @@ html, body { height: 100%; margin: 0; padding: 0; }
    section children are lifted to z-index:1 so they sit on top. Reveal
    places the actual background-image in a separate .slide-background
    wrapper outside .slides > section, so the scrim does not occlude
-   the image, it dims it. */
+   the image, it dims it.
+
+   IMPORTANT (post-PR-#1044 walkthrough Bug #3): do NOT add
+   'position: relative' to '.slides > section.pitch-has-bg'. Reveal.js
+   sets 'position: absolute' on every '.slides > section' and toggles
+   'display:block' on past/future sections to drive transitions; an
+   override here makes inactive sections stack vertically and pushes
+   the active slide hundreds of pixels offscreen. Reveal already gives
+   the active section its own positioning context (absolute + 3D
+   transforms), which is enough for the absolutely-positioned '::before'
+   scrim to anchor correctly. */
 .pitch-deck-wrap .reveal .slides > section.pitch-has-bg {
   color: var(--pitch-on-image, #ffffff);
-  position: relative;
 }
 .pitch-deck-wrap .reveal .slides > section.pitch-has-bg::before {
   content: "";
   position: absolute;
   inset: 0;
-  background: linear-gradient(180deg, rgba(0,0,0,0.55) 0%, rgba(0,0,0,0.25) 60%, rgba(0,0,0,0.55) 100%);
+  /* Issue (2026-05): replaced the gradient (which had a weak 0.25
+     middle band that let backgrounds bleed through long body copy)
+     with a uniform 0.55 scrim. Stronger, predictable contrast for
+     every text-heavy template. */
+  background: rgba(0,0,0,0.55);
   z-index: 0;
   pointer-events: none;
+}
+/* Issue #4 (revised PR #1044 walkthrough Bug #3): descendants need to
+   live ABOVE the scrim, but the previous rule applied
+   'position: relative' to *every* descendant (including Reveal's own
+   absolutely-positioned wrappers), which collided with Reveal's
+   layout and caused TWO_COLUMN/BULLET_LIST content to render at the
+   wrong offset on slide 2+. 'z-index' alone is enough here because the
+   scrim is a sibling pseudo at 'z-index: 0' — children sit on top of
+   it via document order without needing their own positioned ancestor.
+   We keep 'position: relative' only on direct children so the column
+   flex layout still establishes a stacking context above the scrim. */
+.pitch-deck-wrap .reveal .slides > section.pitch-has-bg * {
+  z-index: 1;
 }
 .pitch-deck-wrap .reveal .slides > section.pitch-has-bg > * {
   position: relative;
@@ -903,18 +1053,185 @@ html, body { height: 100%; margin: 0; padding: 0; }
   border-bottom-color: rgba(255,255,255,0.6);
   text-shadow: 0 1px 6px rgba(0,0,0,0.55);
 }
+/* Issue #4: text-heavy templates that paired a background image with
+   long-form body copy were rendering the body in the theme's default
+   foreground colour, which often matched the background image and
+   vanished. Force white + drop-shadow on EVERY descendant of these
+   templates when a background is active so the content reads cleanly
+   over any image. Cascades through nested wrappers (columns, list
+   items, paragraphs, spans). */
+.pitch-deck-wrap .reveal .slides > section.pitch-has-bg.pitch-tpl-two_column,
+.pitch-deck-wrap .reveal .slides > section.pitch-has-bg.pitch-tpl-two_column *,
+.pitch-deck-wrap .reveal .slides > section.pitch-has-bg.pitch-tpl-bullet_list,
+.pitch-deck-wrap .reveal .slides > section.pitch-has-bg.pitch-tpl-bullet_list *,
+.pitch-deck-wrap .reveal .slides > section.pitch-has-bg.pitch-tpl-image_caption,
+.pitch-deck-wrap .reveal .slides > section.pitch-has-bg.pitch-tpl-image_caption *,
+.pitch-deck-wrap .reveal .slides > section.pitch-has-bg.pitch-tpl-quote,
+.pitch-deck-wrap .reveal .slides > section.pitch-has-bg.pitch-tpl-quote *,
+.pitch-deck-wrap .reveal .slides > section.pitch-has-bg.pitch-tpl-qa,
+.pitch-deck-wrap .reveal .slides > section.pitch-has-bg.pitch-tpl-qa * {
+  color: #ffffff !important;
+  text-shadow: 0 1px 6px rgba(0,0,0,0.7);
+}
+/* Optional translucent dark surface card behind the column content of
+   text-heavy templates with a background image. Pure visual polish —
+   keeps body copy readable when the background image has high-contrast
+   detail (faces, foliage, etc.) instead of relying on text-shadow alone. */
+.pitch-deck-wrap .reveal .slides > section.pitch-has-bg.pitch-tpl-two_column .pitch-twocol-col,
+.pitch-deck-wrap .reveal .slides > section.pitch-has-bg.pitch-tpl-bullet_list ul {
+  background: rgba(0,0,0,0.28);
+  border-radius: 12px;
+  padding: 18px 22px;
+}
+
+/* ── Sub-issue #1046 — Pricing Table + Big Number ───────────────── */
+.pitch-deck-wrap .reveal .pitch-pricing-grid {
+  display: grid;
+  grid-template-columns: repeat(var(--pitch-pricing-cols, 3), minmax(0, 1fr));
+  gap: 16px;
+  margin: 24px auto;
+  max-width: 1100px;
+}
+.pitch-deck-wrap .reveal .pitch-pricing-grid--2 { --pitch-pricing-cols: 2; }
+.pitch-deck-wrap .reveal .pitch-pricing-grid--3 { --pitch-pricing-cols: 3; }
+.pitch-deck-wrap .reveal .pitch-pricing-grid--4 { --pitch-pricing-cols: 4; }
+.pitch-deck-wrap .reveal .pitch-pricing-tier {
+  border: 1px solid rgba(0,0,0,0.15);
+  border-radius: 12px;
+  padding: 18px 16px;
+  background: rgba(255,255,255,0.6);
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+}
+.pitch-deck-wrap .reveal .pitch-pricing-tier--highlighted {
+  border-color: var(--pitch-accent);
+  border-width: 2px;
+  box-shadow: 0 6px 18px rgba(0,0,0,0.12);
+  transform: translateY(-4px);
+}
+.pitch-deck-wrap .reveal .pitch-pricing-name { margin: 0 0 6px; font-size: 1.05em; }
+.pitch-deck-wrap .reveal .pitch-pricing-price { font-size: 1.6em; font-weight: 700; margin-bottom: 10px; }
+.pitch-deck-wrap .reveal .pitch-pricing-period { font-size: 0.5em; opacity: 0.7; margin-left: 4px; }
+.pitch-deck-wrap .reveal .pitch-pricing-features { list-style: none; padding: 0; margin: 0 0 12px; font-size: 0.85em; }
+.pitch-deck-wrap .reveal .pitch-pricing-features li { padding: 4px 0; border-bottom: 1px dashed rgba(0,0,0,0.08); }
+.pitch-deck-wrap .reveal .pitch-pricing-cta { font-weight: 600; margin-top: auto; padding-top: 8px; }
+.pitch-deck-wrap .reveal .pitch-pricing-footnote { font-size: 0.7em; opacity: 0.7; text-align: center; margin-top: 8px; }
+
+.pitch-deck-wrap .reveal .pitch-bignum { text-align: center; padding: 40px 20px; }
+.pitch-deck-wrap .reveal .pitch-bignum-value { font-size: 6em; font-weight: 800; line-height: 1; }
+.pitch-deck-wrap .reveal .pitch-bignum-label { font-size: 1.4em; font-weight: 500; margin-top: 8px; }
+.pitch-deck-wrap .reveal .pitch-bignum-trend { display: inline-flex; gap: 6px; align-items: center; margin-top: 14px; padding: 4px 12px; border-radius: 999px; font-size: 0.7em; }
+.pitch-deck-wrap .reveal .pitch-bignum-trend--up { background: rgba(34,197,94,0.15); color: #15803d; }
+.pitch-deck-wrap .reveal .pitch-bignum-trend--down { background: rgba(239,68,68,0.15); color: #b91c1c; }
+.pitch-deck-wrap .reveal .pitch-bignum-trend--flat { background: rgba(100,116,139,0.15); color: #475569; }
+.pitch-deck-wrap .reveal .pitch-bignum-support { margin-top: 18px; max-width: 720px; margin-left: auto; margin-right: auto; opacity: 0.85; }
+
+/* ── Sub-issue #1049 — Team Grid + Logo Grid ────────────────────── */
+.pitch-deck-wrap .reveal .pitch-team-grid {
+  display: grid;
+  gap: 16px;
+  margin: 16px auto;
+  max-width: 1100px;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+}
+.pitch-deck-wrap .reveal .pitch-team-grid--small { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+.pitch-deck-wrap .reveal .pitch-team-grid--large { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+.pitch-deck-wrap .reveal .pitch-team-card {
+  text-align: center;
+  padding: 12px;
+  border-radius: 12px;
+  background: rgba(255,255,255,0.5);
+}
+.pitch-deck-wrap .reveal .pitch-team-photo {
+  width: 96px;
+  height: 96px;
+  border-radius: 50%;
+  object-fit: cover;
+  margin: 0 auto 10px;
+  display: block;
+}
+.pitch-deck-wrap .reveal .pitch-team-photo--placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--pitch-secondary, #ddd);
+  color: var(--pitch-primary, #333);
+  font-weight: 700;
+}
+.pitch-deck-wrap .reveal .pitch-team-name { margin: 0; font-size: 1em; }
+.pitch-deck-wrap .reveal .pitch-team-role { font-size: 0.75em; opacity: 0.75; margin-bottom: 6px; }
+.pitch-deck-wrap .reveal .pitch-team-bio { font-size: 0.7em; opacity: 0.85; line-height: 1.35; }
+.pitch-deck-wrap .reveal .pitch-team-links { margin-top: 6px; display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
+.pitch-deck-wrap .reveal .pitch-team-link { font-size: 0.7em; color: var(--pitch-accent); }
+
+.pitch-deck-wrap .reveal .pitch-logo-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 18px;
+  margin: 16px auto;
+  max-width: 1100px;
+  align-items: center;
+  justify-items: center;
+}
+.pitch-deck-wrap .reveal .pitch-logo-grid img {
+  max-height: 56px;
+  max-width: 100%;
+  object-fit: contain;
+}
+.pitch-deck-wrap .reveal .pitch-logo-grid--grayscale img {
+  filter: grayscale(100%);
+  opacity: 0.7;
+  transition: filter 200ms, opacity 200ms;
+}
+.pitch-deck-wrap .reveal .pitch-logo-grid--grayscale .pitch-logo-cell:hover img {
+  filter: grayscale(0%);
+  opacity: 1;
+}
+.pitch-deck-wrap .reveal .pitch-logo-grid-caption { text-align: center; font-size: 0.75em; opacity: 0.75; }
+
+/* ── Sub-issue #1052 — Roadmap + Agenda ─────────────────────────── */
+.pitch-deck-wrap .reveal .pitch-roadmap { width: 100%; border-collapse: separate; border-spacing: 6px; }
+.pitch-deck-wrap .reveal .pitch-roadmap th { background: rgba(0,0,0,0.04); padding: 6px 10px; text-align: left; font-weight: 600; }
+.pitch-deck-wrap .reveal .pitch-roadmap td { vertical-align: top; padding: 6px; background: rgba(255,255,255,0.5); border-radius: 8px; }
+.pitch-deck-wrap .reveal .pitch-roadmap-track { background: var(--pitch-primary); color: #fff; border-radius: 8px; }
+.pitch-deck-wrap .reveal .pitch-roadmap-cell { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 4px; }
+.pitch-deck-wrap .reveal .pitch-roadmap-item { padding: 4px 8px; border-radius: 6px; font-size: 0.75em; background: rgba(0,0,0,0.06); }
+.pitch-deck-wrap .reveal .pitch-roadmap-item--planned { opacity: 0.6; }
+.pitch-deck-wrap .reveal .pitch-roadmap-item--in_progress { background: var(--pitch-accent); color: #fff; }
+.pitch-deck-wrap .reveal .pitch-roadmap-item--done { text-decoration: line-through; opacity: 0.6; }
+.pitch-deck-wrap .reveal .pitch-roadmap-item--done::before { content: "✓ "; }
+
+.pitch-deck-wrap .reveal .pitch-agenda { font-size: 1.1em; line-height: 1.7; max-width: 720px; margin: 16px auto; }
+.pitch-deck-wrap .reveal .pitch-agenda li { padding: 4px 0; }
+.pitch-deck-wrap .reveal .pitch-agenda-empty { opacity: 0.6; text-align: center; }
 `.trim();
 }
 
 // ── Per-template renderers ─────────────────────────────────────────────
 
-function renderSlide(slide: Slide, backgroundUrl?: string): string {
+function renderSlide(
+  slide: Slide,
+  backgroundUrl?: string,
+  brandKit?: BrandKit,
+  position?: number,
+  total?: number,
+  deck?: Deck,
+): string {
   const sectionAttrs = sectionAttributes(slide, backgroundUrl);
-  const body = renderTemplateBody(slide);
+  const body = renderTemplateBody(slide, deck);
   const notes = slide.speaker_notes
     ? `<aside class="notes">${sanitize(slide.speaker_notes)}</aside>`
     : "";
-  return `<section ${sectionAttrs}>${body}${notes}</section>`;
+  // Sub-issue #1051: per-slide branding chrome (logo + slide-number +
+  // optional footer/watermark overrides). Only emit when a brand kit
+  // was supplied — keeps unit-test renderers that call `renderSlide`
+  // directly without a kit working as before.
+  const chrome =
+    brandKit && position !== undefined && total !== undefined
+      ? `${slideFooterOverrideTag(slide)}${slideWatermarkOverrideTag(slide)}${slideLogoTag(slide, brandKit)}${slideNumberTag(slide, brandKit, position, total)}`
+      : "";
+  return `<section ${sectionAttrs}>${body}${chrome}${notes}</section>`;
 }
 
 function sectionAttributes(slide: Slide, backgroundUrl?: string): string {
@@ -949,7 +1266,7 @@ function sectionAttributes(slide: Slide, backgroundUrl?: string): string {
   return parts.join(" ");
 }
 
-function renderTemplateBody(slide: Slide): string {
+function renderTemplateBody(slide: Slide, deck?: Deck): string {
   switch (slide.template) {
     case "title":
       return renderTitle(slide);
@@ -979,6 +1296,18 @@ function renderTemplateBody(slide: Slide): string {
       return renderChart(slide);
     case "mermaid":
       return renderMermaid(slide);
+    case "pricing_table":
+      return renderPricingTable(slide);
+    case "big_number":
+      return renderBigNumber(slide);
+    case "team_grid":
+      return renderTeamGrid(slide);
+    case "logo_grid":
+      return renderLogoGrid(slide);
+    case "roadmap":
+      return renderRoadmap(slide);
+    case "agenda":
+      return renderAgenda(slide, deck);
     default: {
       // Exhaustiveness guard — TS will warn if a template is added without a case.
       const _exhaustive: never = slide;
@@ -1114,6 +1443,168 @@ function renderMermaid(s: Extract<Slide, { template: "mermaid" }>): string {
   // Mermaid plugin parses the body — it's text-only too, so escape rather
   // than sanitize (sanitize would mangle the diagram syntax).
   return `${heading ? `<h3 data-pitch-field="heading">${sanitize(heading)}</h3>` : ""}<pre class="mermaid" data-diagram-type="${attr(diagram_type)}" data-pitch-field="source">${escapeHtml(source)}</pre>`;
+}
+
+// ── Sub-issue #1046 — Pricing Table + Big Number ──────────────────────
+
+function renderPricingTable(
+  s: Extract<Slide, { template: "pricing_table" }>,
+): string {
+  const { heading, tiers, footnote } = s.content;
+  const cols = tiers
+    .map((t, i) => {
+      const features = t.features
+        .map(
+          (f, fi) =>
+            `<li data-pitch-field="tiers.${i}.features.${fi}">${sanitize(f)}</li>`,
+        )
+        .join("");
+      const cls = t.highlighted
+        ? "pitch-pricing-tier pitch-pricing-tier--highlighted"
+        : "pitch-pricing-tier";
+      const cta = t.cta
+        ? `<div class="pitch-pricing-cta pitch-accent" data-pitch-field="tiers.${i}.cta">${sanitize(t.cta)}</div>`
+        : "";
+      const period = t.period
+        ? `<span class="pitch-pricing-period" data-pitch-field="tiers.${i}.period">${sanitize(t.period)}</span>`
+        : "";
+      return `<div class="${cls}" data-pitch-field="tiers.${i}"><h3 class="pitch-pricing-name" data-pitch-field="tiers.${i}.name">${sanitize(t.name)}</h3><div class="pitch-pricing-price" data-pitch-field="tiers.${i}.price">${sanitize(t.price)}${period}</div><ul class="pitch-pricing-features">${features}</ul>${cta}</div>`;
+    })
+    .join("");
+  const note = footnote
+    ? `<p class="pitch-pricing-footnote" data-pitch-field="footnote">${sanitize(footnote)}</p>`
+    : "";
+  return `<h2 data-pitch-field="heading">${sanitize(heading)}</h2><div class="pitch-pricing-grid pitch-pricing-grid--${tiers.length}">${cols}</div>${note}`;
+}
+
+function renderBigNumber(
+  s: Extract<Slide, { template: "big_number" }>,
+): string {
+  const { value, label, support, trend, trend_label } = s.content;
+  const trendClass = trend ? ` pitch-bignum-trend--${trend}` : "";
+  const trendArrow =
+    trend === "up" ? "▲" : trend === "down" ? "▼" : trend === "flat" ? "▬" : "";
+  const trendBlock = trend
+    ? `<div class="pitch-bignum-trend${trendClass}" data-pitch-field="trend"><span class="pitch-bignum-trend-arrow" aria-hidden="true">${trendArrow}</span>${trend_label ? `<span class="pitch-bignum-trend-label">${sanitize(trend_label)}</span>` : ""}</div>`
+    : "";
+  const supportBlock = support
+    ? `<p class="pitch-bignum-support" data-pitch-field="support">${sanitize(support)}</p>`
+    : "";
+  return `<div class="pitch-bignum"><div class="pitch-bignum-value pitch-accent" data-pitch-field="value">${sanitize(value)}</div><div class="pitch-bignum-label" data-pitch-field="label">${sanitize(label)}</div>${trendBlock}${supportBlock}</div>`;
+}
+
+// ── Sub-issue #1049 — Team Grid + Logo Grid ───────────────────────────
+
+function renderTeamGrid(
+  s: Extract<Slide, { template: "team_grid" }>,
+): string {
+  const { heading, members } = s.content;
+  const cards = members
+    .map((m, i) => {
+      const photoUrl = m.photoUrl ? safeUrl(m.photoUrl) : null;
+      const photo = photoUrl
+        ? `<img class="pitch-team-photo" src="${attr(photoUrl)}" alt="${attr(m.name)}" loading="lazy">`
+        : `<div class="pitch-team-photo pitch-team-photo--placeholder" aria-hidden="true">${escapeHtml(m.name.slice(0, 2).toUpperCase())}</div>`;
+      const bio = m.bio
+        ? `<p class="pitch-team-bio" data-pitch-field="members.${i}.bio">${sanitize(m.bio)}</p>`
+        : "";
+      const links = (m.links ?? [])
+        .map((l, li) => {
+          const u = safeUrl(l.href);
+          if (!u) return "";
+          return `<a class="pitch-team-link" href="${attr(u)}" rel="nofollow noopener noreferrer" target="_blank" data-pitch-field="members.${i}.links.${li}">${sanitize(l.label)}</a>`;
+        })
+        .join("");
+      return `<div class="pitch-team-card" data-pitch-field="members.${i}">${photo}<h4 class="pitch-team-name" data-pitch-field="members.${i}.name">${sanitize(m.name)}</h4><div class="pitch-team-role" data-pitch-field="members.${i}.role">${sanitize(m.role)}</div>${bio}${links ? `<div class="pitch-team-links">${links}</div>` : ""}</div>`;
+    })
+    .join("");
+  return `${heading ? `<h2 data-pitch-field="heading">${sanitize(heading)}</h2>` : ""}<div class="pitch-team-grid pitch-team-grid--${members.length <= 4 ? "small" : members.length <= 8 ? "medium" : "large"}">${cards}</div>`;
+}
+
+function renderLogoGrid(
+  s: Extract<Slide, { template: "logo_grid" }>,
+): string {
+  const { heading, caption, grayscale, logos } = s.content;
+  const cells = logos
+    .map((l, i) => {
+      const u = safeUrl(l.imageUrl);
+      if (!u) return "";
+      const img = `<img src="${attr(u)}" alt="${attr(l.alt)}" loading="lazy">`;
+      const href = l.href ? safeUrl(l.href) : null;
+      const inner = href
+        ? `<a href="${attr(href)}" rel="nofollow noopener noreferrer" target="_blank">${img}</a>`
+        : img;
+      return `<div class="pitch-logo-cell" data-pitch-field="logos.${i}">${inner}</div>`;
+    })
+    .join("");
+  const cls = grayscale
+    ? "pitch-logo-grid pitch-logo-grid--grayscale"
+    : "pitch-logo-grid";
+  return `${heading ? `<h2 data-pitch-field="heading">${sanitize(heading)}</h2>` : ""}<div class="${cls}">${cells}</div>${caption ? `<p class="pitch-logo-grid-caption" data-pitch-field="caption">${sanitize(caption)}</p>` : ""}`;
+}
+
+// ── Sub-issue #1052 — Roadmap + Agenda ────────────────────────────────
+
+function renderRoadmap(
+  s: Extract<Slide, { template: "roadmap" }>,
+): string {
+  const { heading, columns, tracks, items } = s.content;
+  // Build a tracks × columns matrix of label arrays.
+  const matrix: Array<Array<Array<{ label: string; status?: string; idx: number }>>> =
+    tracks.map(() => columns.map(() => []));
+  items.forEach((it, idx) => {
+    const t = Math.min(Math.max(it.track, 0), tracks.length - 1);
+    const c = Math.min(Math.max(it.column, 0), columns.length - 1);
+    matrix[t][c].push({ label: it.label, status: it.status, idx });
+  });
+  const headerRow = `<tr><th></th>${columns.map((c) => `<th>${sanitize(c)}</th>`).join("")}</tr>`;
+  const bodyRows = tracks
+    .map((trackName, ti) => {
+      const cells = matrix[ti]
+        .map((cell) => {
+          const inner = cell
+            .map((it) => {
+              const cls = it.status
+                ? `pitch-roadmap-item pitch-roadmap-item--${it.status}`
+                : "pitch-roadmap-item";
+              return `<li class="${cls}" data-pitch-field="items.${it.idx}">${sanitize(it.label)}</li>`;
+            })
+            .join("");
+          return `<td><ul class="pitch-roadmap-cell">${inner}</ul></td>`;
+        })
+        .join("");
+      return `<tr><th class="pitch-roadmap-track">${sanitize(trackName)}</th>${cells}</tr>`;
+    })
+    .join("");
+  return `<h2 data-pitch-field="heading">${sanitize(heading)}</h2><table class="pitch-roadmap"><thead>${headerRow}</thead><tbody>${bodyRows}</tbody></table>`;
+}
+
+function renderAgenda(
+  s: Extract<Slide, { template: "agenda" }>,
+  deck?: Deck,
+): string {
+  const { heading, mode, items, numbered } = s.content;
+  let resolved: string[] = [];
+  if (mode === "manual") {
+    resolved = items ?? [];
+  } else if (deck) {
+    // Auto: derive from section_divider slides in deck order.
+    resolved = deck.slides
+      .filter((sl): sl is Extract<Slide, { template: "section_divider" }> =>
+        sl.template === "section_divider",
+      )
+      .map((sl) => sl.content.title);
+  }
+  const tag = numbered ? "ol" : "ul";
+  const list = resolved.length
+    ? `<${tag} class="pitch-agenda">${resolved
+        .map(
+          (it, i) =>
+            `<li data-pitch-field="items.${i}">${sanitize(it)}</li>`,
+        )
+        .join("")}</${tag}>`
+    : `<p class="pitch-agenda-empty">No agenda items available.</p>`;
+  return `<h2 data-pitch-field="heading">${sanitize(heading ?? "Agenda")}</h2>${list}`;
 }
 
 function imageTag(img: SlideImage | undefined): string {

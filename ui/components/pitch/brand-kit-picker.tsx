@@ -20,6 +20,24 @@ export interface BrandKitListEntry {
   accentColor: string;
   fontHeading?: string | null;
   fontBody?: string | null;
+  /** Footer text the editor pre-fills for round-trip (Sub-issue #1047). */
+  footerText?: string | null;
+  /** Default logo corner (Sub-issue #1047). */
+  defaultLogoPlacement?:
+    | "top-left"
+    | "top-right"
+    | "bottom-left"
+    | "bottom-right"
+    | "none"
+    | null;
+  /** Deck-wide slide-number toggle (Sub-issue #1047). */
+  showSlideNumbers?: boolean | null;
+  /**
+   * HTTP-servable URL of the kit's logo (`/api/admin/pitch/brand-kits/:id/logo`)
+   * or `null` when no logo has been uploaded. Surfaced by the brand-kit
+   * editor preview row (PR #1044 follow-up).
+   */
+  logoUrl?: string | null;
   isStarter?: boolean;
 }
 
@@ -32,6 +50,18 @@ export interface BrandKitPickerProps {
   onSelect: (id: string) => void;
   onEdit: (kit: BrandKitListEntry) => void;
   onCreate: () => void;
+  /** Sub-issue #1048 — Apply currently-selected kit to the open deck. */
+  onApplyToDeck?: (kit: BrandKitListEntry) => void;
+  /** Sub-issue #1048 — Copy the open deck's effective kit into a new kit. */
+  onCopyFromDeck?: () => void;
+  /**
+   * Sub-issue #1048 AC4 — number of slides in the open deck that currently
+   * have per-slide branding overrides (logoPlacement, footerOverride, etc.)
+   * which Apply will clear. Surfaced in the confirm dialog so the user
+   * sees the blast radius before clobbering. Defaults to 0 — when 0 the
+   * "and clear..." clause is dropped from the prompt entirely.
+   */
+  overrideCount?: number;
 }
 
 export const BrandKitPicker = ({
@@ -39,6 +69,9 @@ export const BrandKitPicker = ({
   onSelect,
   onEdit,
   onCreate,
+  onApplyToDeck,
+  onCopyFromDeck,
+  overrideCount = 0,
 }: BrandKitPickerProps) => {
   const kitsQuery = useQuery({
     queryKey: ["pitch", "brand-kits"],
@@ -109,6 +142,44 @@ export const BrandKitPicker = ({
       >
         + New
       </button>
+      {onApplyToDeck && (
+        <button
+          type="button"
+          data-testid="pitch-brand-kit-apply-to-deck"
+          disabled={!selected}
+          onClick={() => {
+            if (!selected) return;
+            const overrideClause =
+              overrideCount > 0
+                ? ` and clear branding overrides on ${overrideCount} slide${
+                    overrideCount === 1 ? "" : "s"
+                  }`
+                : "";
+            if (
+              window.confirm(
+                `Apply "${selected.name}" to the deck${overrideClause}?`,
+              )
+            ) {
+              onApplyToDeck(selected);
+            }
+          }}
+          className="rounded border border-border px-2 py-1 text-xs hover:bg-muted/40 disabled:opacity-50"
+          title="Apply this kit to the deck"
+        >
+          Apply
+        </button>
+      )}
+      {onCopyFromDeck && (
+        <button
+          type="button"
+          data-testid="pitch-brand-kit-copy-from-deck"
+          onClick={onCopyFromDeck}
+          className="rounded border border-border px-2 py-1 text-xs hover:bg-muted/40"
+          title="Copy the deck's current kit into a new custom kit"
+        >
+          Copy from deck
+        </button>
+      )}
     </div>
   );
 };
