@@ -21,6 +21,20 @@ import { Activity, Ban, Loader2, RotateCcw } from "lucide-react";
 import { fetchJson } from "@/lib/api";
 import { showToast } from "@/components/toast";
 import { useSocket } from "@/lib/socket-context";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 
 export type DispatcherWorkloadType = "llm" | "image" | "video";
 export type DispatcherLaneState = "idle" | "busy" | "error";
@@ -74,6 +88,8 @@ export const GpuDispatcherCard = ({ initial }: GpuDispatcherCardProps) => {
   const [snap, setSnap] = useState<DispatcherLaneSnapshot>(initial);
   // Re-render every second so the elapsed-time label ticks while a job runs.
   const [, setTick] = useState(0);
+  // Bug #1064-PN-B: replace native window.confirm with shadcn Dialog.
+  const [cancelDialogOpen, setCancelDialogOpen] = useState(false);
   const queryClient = useQueryClient();
   const { socket } = useSocket();
 
@@ -136,15 +152,7 @@ export const GpuDispatcherCard = ({ initial }: GpuDispatcherCardProps) => {
   });
 
   const handleCancel = () => {
-    if (
-      typeof window !== "undefined" &&
-      !window.confirm(
-        `Cancel the running ${snap.currentJob?.workloadType ?? "job"} on GPU ${snap.index}?`,
-      )
-    ) {
-      return;
-    }
-    cancelMutation.mutate();
+    setCancelDialogOpen(true);
   };
 
   return (
@@ -179,13 +187,25 @@ export const GpuDispatcherCard = ({ initial }: GpuDispatcherCardProps) => {
       )}
 
       {snap.mutexBlockedBy && (
-        <p
-          className="text-xs text-amber-600 dark:text-amber-400"
-          title={mutexLabel(snap.mutexBlockedBy)}
-          data-testid={`gpu-dispatcher-mutex-${snap.index}`}
-        >
-          {mutexLabel(snap.mutexBlockedBy)}
-        </p>
+        <TooltipProvider delayDuration={200}>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <p
+                className="text-xs text-amber-600 dark:text-amber-400 cursor-help underline decoration-dotted underline-offset-2"
+                data-testid={`gpu-dispatcher-mutex-${snap.index}`}
+              >
+                {mutexLabel(snap.mutexBlockedBy)}
+              </p>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p className="max-w-xs text-xs">
+                Image generation and LLM inference share GPU {snap.index} —
+                only one can run at a time. The waiting workload will start
+                automatically once the active job completes.
+              </p>
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
       )}
 
       {snap.state === "error" && snap.lastError && (
@@ -236,6 +256,40 @@ export const GpuDispatcherCard = ({ initial }: GpuDispatcherCardProps) => {
           )}
         </div>
       </div>
+
+      <Dialog open={cancelDialogOpen} onOpenChange={setCancelDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Cancel job on GPU {snap.index}?</DialogTitle>
+            <DialogDescription>
+              The running{" "}
+              <strong>{snap.currentJob?.workloadType ?? "job"}</strong> job
+              will be terminated. Any in-flight output will be discarded and
+              the queue will advance to the next pending job.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <button
+              type="button"
+              onClick={() => setCancelDialogOpen(false)}
+              className="rounded border border-border bg-card px-3 py-1.5 text-sm font-medium hover:bg-muted"
+            >
+              Keep running
+            </button>
+            <button
+              type="button"
+              data-testid={`gpu-dispatcher-cancel-confirm-${snap.index}`}
+              onClick={() => {
+                setCancelDialogOpen(false);
+                cancelMutation.mutate();
+              }}
+              className="rounded bg-red-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-red-700"
+            >
+              Cancel job
+            </button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

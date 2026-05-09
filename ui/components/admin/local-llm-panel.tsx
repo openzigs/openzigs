@@ -5,6 +5,21 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { fetchJson } from "@/lib/api";
 import { showToast } from "@/components/toast";
 import { Loader2, RefreshCw, ShieldAlert, Zap } from "lucide-react";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 /**
  * Admin panel for local LLM provider (epic #1053 / issue #1057).
@@ -20,6 +35,19 @@ import { Loader2, RefreshCw, ShieldAlert, Zap } from "lucide-react";
  */
 
 type ProviderType = "local-copilot";
+type ProviderPreset = "ollama" | "vllm" | "custom";
+
+const PROVIDER_PRESETS: { value: ProviderPreset; label: string; defaultEndpoint: string }[] = [
+  { value: "ollama", label: "Ollama (local)", defaultEndpoint: "http://127.0.0.1:11434/v1" },
+  { value: "vllm", label: "vLLM (local)", defaultEndpoint: "http://127.0.0.1:8000/v1" },
+  { value: "custom", label: "Custom OpenAI-compatible", defaultEndpoint: "" },
+];
+
+function detectPreset(endpoint: string): ProviderPreset {
+  if (endpoint.includes("11434")) return "ollama";
+  if (endpoint.includes("8000")) return "vllm";
+  return "custom";
+}
 
 interface DetectedEndpoint {
   endpoint: string;
@@ -89,6 +117,15 @@ export function LocalLlmPanel() {
   const [apiKey, setApiKey] = useState("");
   const [revealedKey, setRevealedKey] = useState<string | null>(null);
   const [perSessionPrivacy, setPerSessionPrivacy] = useState(false);
+  const [preset, setPreset] = useState<ProviderPreset>("ollama");
+  // Bug #1064-PN-B: shadcn Dialog state replaces native window.confirm calls.
+  const [confirmDialog, setConfirmDialog] = useState<{
+    title: string;
+    description: string;
+    confirmLabel: string;
+    destructive?: boolean;
+    onConfirm: () => void;
+  } | null>(null);
 
   // Hydrate per-session privacy from localStorage on mount.
   useEffect(() => {
@@ -106,7 +143,10 @@ export function LocalLlmPanel() {
   const statusQuery = useQuery({
     queryKey: ["local-llm", "status"],
     queryFn: () => fetchJson<StatusResponse>("/api/admin/local-llm/status"),
-    refetchInterval: 5000,
+    // Bug #1064-PN-A: drop poll cadence from 5s→30s to keep the admin tab
+    // from hammering the API (~12 req/min instead of ~15 req/min). Sentinel
+    // pushes status changes via Socket.IO between polls anyway.
+    refetchInterval: 30_000,
   });
 
   // Hydrate form from status whenever provider changes server-side.
@@ -114,6 +154,7 @@ export function LocalLlmPanel() {
     if (statusQuery.data?.provider) {
       setEndpoint(statusQuery.data.provider.endpoint);
       setModel(statusQuery.data.provider.model);
+      setPreset(detectPreset(statusQuery.data.provider.endpoint));
     }
   }, [statusQuery.data?.provider]);
 
@@ -131,7 +172,10 @@ export function LocalLlmPanel() {
       }
       setEndpoint(hit.endpoint);
       if (hit.recommendedModel) setModel(hit.recommendedModel);
-      showToast(`Detected at ${hit.endpoint}`, "success");
+      setPreset(detectPreset(hit.endpoint));
+      // Bug #1064-#7: explicit success toast naming the provider/endpoint.
+      const providerName = data.ollama ? "Ollama" : "vLLM";
+      showToast(`Connection OK — found ${providerName} at ${hit.endpoint}`, "success");
     },
     onError: (err) => showToast(extractError(err), "error"),
   });
@@ -210,6 +254,17 @@ export function LocalLlmPanel() {
   const routerThreshold = (routerQuery.data?.cloudThresholdTokens ??
     4096) as RouterThreshold;
 
+  // Bug #1064-PN-C: track the slider's value locally so the input isn't
+  // visually re-controlled (and refocused-from-elsewhere) on every React
+  // Query refetch. We sync from server when the query data changes and
+  // we're not in the middle of a pending update.
+  const [draftThreshold, setDraftThreshold] = useState<RouterThreshold>(
+    routerThreshold,
+  );
+  useEffect(() => {
+    setDraftThreshold(routerThreshold);
+  }, [routerThreshold]);
+
   const updateRouter = useMutation({
     mutationFn: (next: { enabled: boolean; cloudThresholdTokens: RouterThreshold }) =>
       fetchJson("/api/admin/local-llm/router", {
@@ -264,6 +319,38 @@ export function LocalLlmPanel() {
 
       <section className="space-y-3">
         <h3 className="text-sm font-semibold text-gray-700">Provider</h3>
+        {/* Bug #1064-#6c: provider preset dropdown so users don't have to
+            remember the canonical Ollama/vLLM ports. Selecting a preset
+            pre-fills the endpoint; "Custom" leaves the inputs untouched. */}
+        <label className="flex flex-col gap-1 text-sm md:max-w-xs">
+          <span className="font-medium text-gray-700">Provider type</span>
+          <Select
+            value={preset}
+            onValueChange={(value) => {
+              const next = value as ProviderPreset;
+              setPreset(next);
+              const opt = PROVIDER_PRESETS.find((p) => p.value === next);
+              if (opt && opt.defaultEndpoint && (!endpoint || endpoint !== opt.defaultEndpoint)) {
+                setEndpoint(opt.defaultEndpoint);
+              }
+            }}
+          >
+            <SelectTrigger
+              aria-label="Provider preset"
+              data-testid="provider-preset"
+              className="w-full"
+            >
+              <SelectValue placeholder="Select provider" />
+            </SelectTrigger>
+            <SelectContent>
+              {PROVIDER_PRESETS.map((p) => (
+                <SelectItem key={p.value} value={p.value}>
+                  {p.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </label>
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
           <label className="flex flex-col gap-1 text-sm">
             <span className="font-medium text-gray-700">Endpoint</span>
@@ -322,11 +409,15 @@ export function LocalLlmPanel() {
           {statusQuery.data?.provider && (
             <button
               type="button"
-              onClick={() => {
-                if (window.confirm("Clear the active local-copilot provider?")) {
-                  clearProvider.mutate();
-                }
-              }}
+              onClick={() =>
+                setConfirmDialog({
+                  title: "Clear local provider?",
+                  description: "The active local-copilot provider will be cleared. New chats will route to cloud providers (subject to privacy mode).",
+                  confirmLabel: "Clear provider",
+                  destructive: true,
+                  onConfirm: () => clearProvider.mutate(),
+                })
+              }
               disabled={clearProvider.isPending}
               className="inline-flex items-center gap-2 rounded border border-red-300 bg-white px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-50 disabled:opacity-50"
             >
@@ -359,10 +450,17 @@ export function LocalLlmPanel() {
             checked={globalLockdown}
             onChange={(e) => {
               const next = e.target.checked;
-              const msg = next
-                ? "Enable GLOBAL privacy lockdown? All sessions will refuse remote fallback even if the local endpoint fails."
-                : "Disable global privacy lockdown? Sessions will be allowed to fall back to remote providers when the local endpoint fails.";
-              if (window.confirm(msg)) toggleGlobalLockdown.mutate(next);
+              setConfirmDialog({
+                title: next
+                  ? "Enable global privacy lockdown?"
+                  : "Disable global privacy lockdown?",
+                description: next
+                  ? "All sessions will refuse remote fallback even if the local endpoint fails. This applies server-wide and persists across restarts."
+                  : "Sessions will be allowed to fall back to remote providers when the local endpoint fails.",
+                confirmLabel: next ? "Enable lockdown" : "Disable lockdown",
+                destructive: !next,
+                onConfirm: () => toggleGlobalLockdown.mutate(next),
+              });
             }}
             disabled={toggleGlobalLockdown.isPending}
             aria-label="Global privacy lockdown"
@@ -416,15 +514,15 @@ export function LocalLlmPanel() {
         )}
         <button
           type="button"
-          onClick={() => {
-            if (
-              window.confirm(
-                "Rotate the vLLM API key? Any clients using the old key will need to be updated.",
-              )
-            ) {
-              rotateKey.mutate();
-            }
-          }}
+          onClick={() =>
+            setConfirmDialog({
+              title: "Rotate vLLM API key?",
+              description: "A new key will be generated. Any clients using the old key will need to be updated. The new key will be revealed once.",
+              confirmLabel: "Rotate key",
+              destructive: true,
+              onConfirm: () => rotateKey.mutate(),
+            })
+          }
           disabled={rotateKey.isPending}
           className="inline-flex items-center gap-2 rounded border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium hover:bg-gray-50 disabled:opacity-50"
         >
@@ -467,7 +565,7 @@ export function LocalLlmPanel() {
             className="block text-xs font-medium text-blue-900"
           >
             Cloud threshold (tokens):{" "}
-            <span data-testid="smart-router-threshold-value">{routerThreshold}</span>
+            <span data-testid="smart-router-threshold-value">{draftThreshold}</span>
           </label>
           <input
             id="smart-router-threshold"
@@ -475,10 +573,11 @@ export function LocalLlmPanel() {
             min={0}
             max={ROUTER_THRESHOLD_STOPS.length - 1}
             step={1}
-            value={ROUTER_THRESHOLD_STOPS.indexOf(routerThreshold)}
-            disabled={!routerEnabled || updateRouter.isPending}
+            value={ROUTER_THRESHOLD_STOPS.indexOf(draftThreshold)}
+            disabled={!routerEnabled}
             onChange={(e) => {
               const next = ROUTER_THRESHOLD_STOPS[Number(e.target.value)];
+              setDraftThreshold(next);
               updateRouter.mutate({
                 enabled: routerEnabled,
                 cloudThresholdTokens: next,
@@ -495,6 +594,45 @@ export function LocalLlmPanel() {
           </div>
         </div>
       </section>
+
+      <Dialog
+        open={confirmDialog != null}
+        onOpenChange={(open) => {
+          if (!open) setConfirmDialog(null);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{confirmDialog?.title}</DialogTitle>
+            <DialogDescription>{confirmDialog?.description}</DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <button
+              type="button"
+              onClick={() => setConfirmDialog(null)}
+              className="rounded border border-border bg-card px-3 py-1.5 text-sm font-medium hover:bg-muted"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              data-testid="confirm-dialog-confirm"
+              onClick={() => {
+                const action = confirmDialog?.onConfirm;
+                setConfirmDialog(null);
+                action?.();
+              }}
+              className={`rounded px-3 py-1.5 text-sm font-medium text-white ${
+                confirmDialog?.destructive
+                  ? "bg-red-600 hover:bg-red-700"
+                  : "bg-blue-600 hover:bg-blue-700"
+              }`}
+            >
+              {confirmDialog?.confirmLabel ?? "Confirm"}
+            </button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
