@@ -136,12 +136,14 @@ describe("GpuDispatcherCard", () => {
     expect(screen.getByTestId("gpu-dispatcher-retry-1")).toBeInTheDocument();
   });
 
-  it("calls cancel endpoint after window.confirm", async () => {
-    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+  it("calls cancel endpoint after confirm dialog", async () => {
     mockFetchJson.mockResolvedValue({ cancelled: true });
 
     render(<GpuDispatcherCard initial={busyLane} />, { wrapper });
     fireEvent.click(screen.getByTestId("gpu-dispatcher-cancel-1"));
+    fireEvent.click(
+      await screen.findByTestId("gpu-dispatcher-cancel-confirm-1"),
+    );
 
     await waitFor(() => {
       expect(mockFetchJson).toHaveBeenCalledWith(
@@ -149,15 +151,13 @@ describe("GpuDispatcherCard", () => {
         { method: "POST" },
       );
     });
-    confirmSpy.mockRestore();
   });
 
-  it("does NOT call cancel endpoint when user dismisses confirm dialog", () => {
-    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+  it("does NOT call cancel endpoint when user dismisses confirm dialog", async () => {
     render(<GpuDispatcherCard initial={busyLane} />, { wrapper });
     fireEvent.click(screen.getByTestId("gpu-dispatcher-cancel-1"));
+    fireEvent.click(await screen.findByRole("button", { name: /keep running/i }));
     expect(mockFetchJson).not.toHaveBeenCalled();
-    confirmSpy.mockRestore();
   });
 
   it("calls clear-error endpoint when Retry is clicked", async () => {

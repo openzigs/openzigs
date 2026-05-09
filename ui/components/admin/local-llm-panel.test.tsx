@@ -133,7 +133,7 @@ describe("LocalLlmPanel", () => {
       expect(screen.getByLabelText("Model name")).toHaveValue("llama3.1:8b");
     });
     expect(showToastMock).toHaveBeenCalledWith(
-      expect.stringContaining("Detected at"),
+      expect.stringContaining("Connection OK"),
       "success",
     );
   });
@@ -186,6 +186,7 @@ describe("LocalLlmPanel", () => {
   it("DELETEs provider on clear (after confirm)", async () => {
     renderPanel();
     fireEvent.click(screen.getByRole("button", { name: /clear provider/i }));
+    fireEvent.click(await screen.findByTestId("confirm-dialog-confirm"));
     await waitFor(() => {
       expect(fetchJsonMock).toHaveBeenCalledWith(
         "/api/admin/local-llm/provider",
@@ -194,10 +195,10 @@ describe("LocalLlmPanel", () => {
     });
   });
 
-  it("does not clear provider when user cancels confirm", () => {
-    vi.spyOn(window, "confirm").mockReturnValue(false);
+  it("does not clear provider when user cancels confirm", async () => {
     renderPanel();
     fireEvent.click(screen.getByRole("button", { name: /clear provider/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /cancel/i }));
     expect(fetchJsonMock).not.toHaveBeenCalledWith(
       "/api/admin/local-llm/provider",
       expect.objectContaining({ method: "DELETE" }),
@@ -229,6 +230,7 @@ describe("LocalLlmPanel", () => {
   it("POSTs global lockdown toggle", async () => {
     renderPanel();
     fireEvent.click(screen.getByLabelText("Global privacy lockdown"));
+    fireEvent.click(await screen.findByTestId("confirm-dialog-confirm"));
     await waitFor(() => {
       expect(fetchJsonMock).toHaveBeenCalledWith(
         "/api/admin/local-llm/privacy/global",
@@ -258,6 +260,7 @@ describe("LocalLlmPanel", () => {
     });
     renderPanel();
     fireEvent.click(screen.getByRole("button", { name: /rotate key/i }));
+    fireEvent.click(await screen.findByTestId("confirm-dialog-confirm"));
     await waitFor(() => {
       expect(screen.getByText("ROTATED_KEY_PLAINTEXT_xxx")).toBeInTheDocument();
     });

@@ -102,16 +102,16 @@ describe("ReasoningEffortSelector", () => {
 });
 
 describe("ProviderBadge", () => {
-  it("renders nothing for null provider", () => {
-    const { container } = render(<ProviderBadge provider={null} />);
-    expect(container.innerHTML).toBe("");
+  it("renders fallback GitHub Copilot label for null provider", () => {
+    render(<ProviderBadge provider={null} />);
+    expect(screen.getByText("GitHub Copilot")).toBeInTheDocument();
   });
 
-  it("renders nothing for copilot provider", () => {
-    const { container } = render(
+  it("renders the copilot label for copilot provider", () => {
+    render(
       <ProviderBadge provider={{ type: "copilot", label: "GitHub Copilot" }} />
     );
-    expect(container.innerHTML).toBe("");
+    expect(screen.getByText("GitHub Copilot")).toBeInTheDocument();
   });
 
   it("renders badge for non-copilot providers", () => {
