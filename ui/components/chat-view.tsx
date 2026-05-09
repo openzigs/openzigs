@@ -32,7 +32,7 @@ import { UserInputPrompt } from "@/components/user-input-prompt";
 import { WorkflowPreviewCard } from "@/components/workflow-preview-card";
 import { SessionContextBar } from "@/components/session-context-bar";
 import { ContextFuelGauge } from "@/components/chat/context-fuel-gauge";
-import { VoiceControls } from "@/components/voice";
+import { CostWidget } from "@/components/chat/cost-widget";import { VoiceControls } from "@/components/voice";
 import { useTokenUsage } from "@/lib/hooks/use-token-usage";
 import { SubagentLivePanel } from "@/components/subagent-live-panel";
 import { AgentSelector } from "@/components/chat/agent-selector";
@@ -649,6 +649,7 @@ export const ChatView = () => {
             fillRatio={fillRatio}
             compacting={tokenCompacting}
           />
+          {chatId && <CostWidget sessionId={chatId} />}
           <VoiceControls
             onQueryCaptured={handleVoiceQuery}
             speakText={speakText}

@@ -14,6 +14,8 @@ import { TaskEnginePanel } from "@/components/admin/task-engine-panel";
 import { SessionsPanel } from "@/components/admin/sessions-panel";
 import { ModelConfigPanel } from "@/components/admin/model-config-panel";
 import { LocalLlmPanel } from "@/components/admin/local-llm-panel";
+import { SystemRequirementsCard } from "@/components/admin/system-requirements-card";
+import { CostSummaryCard } from "@/components/admin/cost-summary-card";
 import { AgentsPanel } from "@/components/admin/agents-panel";
 import { McpEditorPanel } from "@/components/admin/mcp-editor-panel";
 import { SentinelPanel } from "@/components/admin/sentinel-panel";
@@ -120,6 +122,14 @@ export default function AdminPage() {
 
         <SectionCard title="Local LLM Provider">
           <LocalLlmPanel />
+        </SectionCard>
+
+        <SectionCard title="System Requirements">
+          <SystemRequirementsCard />
+        </SectionCard>
+
+        <SectionCard title="Cost Summary">
+          <CostSummaryCard />
         </SectionCard>
 
         <SectionCard title="Task Engine" defaultOpen={false}>

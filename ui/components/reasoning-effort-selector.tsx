@@ -102,19 +102,35 @@ export const ReasoningEffortSelector = ({
 /* ── Provider Badge ── */
 
 export const ProviderBadge = ({ provider }: { provider: ProviderInfo | null }) => {
-  if (!provider || provider.type === "copilot") return null;
+  // Bug #1064-PN-D: always show the provider so users can see at a glance
+  // whether the active chat is hitting Copilot, a local model, or a third
+  // party — even when they haven't configured anything custom yet.
+  const resolved: ProviderInfo =
+    provider ?? { type: "copilot", label: "GitHub Copilot" };
+  const isLocal = resolved.type === "local-copilot";
+  const isCopilot = resolved.type === "copilot";
 
   return (
     <TooltipProvider delayDuration={200}>
       <Tooltip>
         <TooltipTrigger asChild>
-          <span className="inline-flex items-center gap-1 rounded-full border border-border bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
+          <span
+            className={
+              "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium " +
+              (isLocal
+                ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+                : isCopilot
+                  ? "border-border bg-muted text-muted-foreground"
+                  : "border-blue-500/40 bg-blue-500/10 text-blue-700 dark:text-blue-300")
+            }
+            data-testid="chat-provider-badge"
+          >
             <Cloud className="h-3 w-3" />
-            {provider.label}
+            {resolved.label}
           </span>
         </TooltipTrigger>
         <TooltipContent side="bottom">
-          <p>Using {provider.label} as model provider</p>
+          <p>Using {resolved.label} as model provider</p>
         </TooltipContent>
       </Tooltip>
     </TooltipProvider>
