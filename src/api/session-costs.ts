@@ -21,6 +21,21 @@ export function createSessionCostsRouter(
   const router: Router = Router();
   const { costMeter } = deps;
 
+  // Bug #1064-#6b: cross-session totals for the admin "Cost Summary" card.
+  // MUST be registered before the `/sessions/:id/cost` route below so Express
+  // doesn't match `cost-summary` as a session id.
+  router.get("/sessions/cost-summary", (_req: Request, res: Response) => {
+    try {
+      const summary = costMeter.summary();
+      res.json({ summary });
+    } catch (err) {
+      res.status(500).json({
+        error: "Failed to read cost summary",
+        message: err instanceof Error ? err.message : String(err),
+      });
+    }
+  });
+
   router.get(
     "/sessions/:id/cost",
     (req: Request<{ id: string }>, res: Response) => {

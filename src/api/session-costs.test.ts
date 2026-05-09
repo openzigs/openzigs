@@ -66,4 +66,42 @@ describe("session-costs router", () => {
     const res = await request(app).get(`/api/admin/sessions/${longId}/cost`);
     expect(res.status).toBe(400);
   });
+
+  it("GET /sessions/cost-summary returns cross-session totals", async () => {
+    const { app, meter } = newApp();
+    meter.record({
+      sessionId: "s1",
+      modelId: "gpt-4.1",
+      providerKind: "cloud",
+      inputTokens: 1_000_000,
+      outputTokens: 0,
+      callId: "c1",
+    });
+    meter.record({
+      sessionId: "s2",
+      modelId: "gemma4:26b",
+      cloudEquivalentModelId: "gpt-4.1",
+      providerKind: "local-copilot",
+      inputTokens: 1_000_000,
+      outputTokens: 0,
+      callId: "c2",
+    });
+    const res = await request(app).get("/api/admin/sessions/cost-summary");
+    expect(res.status).toBe(200);
+    expect(res.body.summary.callCount).toBe(2);
+    expect(res.body.summary.sessionCount).toBe(2);
+    expect(res.body.summary.totalActualCost).toBe(2);
+    expect(res.body.summary.totalWouldHaveCost).toBe(4);
+    expect(res.body.summary.savedByLocal).toBe(2);
+  });
+
+  it("GET /sessions/cost-summary returns zeroed totals for empty meter", async () => {
+    const { app } = newApp();
+    const res = await request(app).get("/api/admin/sessions/cost-summary");
+    expect(res.status).toBe(200);
+    expect(res.body.summary.callCount).toBe(0);
+    expect(res.body.summary.sessionCount).toBe(0);
+    expect(res.body.summary.savedByLocal).toBe(0);
+    expect(res.body.summary.lastCallAt).toBeNull();
+  });
 });

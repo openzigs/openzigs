@@ -283,4 +283,64 @@ export class CostMeter {
       .all(sessionId);
     return rows as CallCostRow[];
   }
+
+  /**
+   * Cross-session totals for the admin dashboard (Bug #1064-#6b).
+   * Returns aggregated cost figures across every recorded session so the
+   * admin "Cost Summary" card has something to render even when no chat is
+   * active. Numbers come straight from `session_costs` so they include any
+   * historic session, including ones whose chats have been deleted.
+   */
+  summary(): {
+    callCount: number;
+    sessionCount: number;
+    totalInputTokens: number;
+    totalOutputTokens: number;
+    totalCachedTokens: number;
+    totalActualCost: number;
+    totalWouldHaveCost: number;
+    savedByLocal: number;
+    lastCallAt: string | null;
+    pricingSource: string;
+    pricingVersion: string;
+    pricingFetchedAt: string;
+  } {
+    const row = this.db
+      .prepare(
+        `SELECT
+           COUNT(*)                              AS callCount,
+           COUNT(DISTINCT session_id)            AS sessionCount,
+           COALESCE(SUM(input_tokens), 0)        AS totalInputTokens,
+           COALESCE(SUM(output_tokens), 0)       AS totalOutputTokens,
+           COALESCE(SUM(cached_tokens), 0)       AS totalCachedTokens,
+           COALESCE(SUM(actual_cost), 0)         AS totalActualCost,
+           COALESCE(SUM(would_have_cost), 0)     AS totalWouldHaveCost,
+           MAX(occurred_at)                      AS lastCallAt
+         FROM session_costs`,
+      )
+      .get() as {
+      callCount: number;
+      sessionCount: number;
+      totalInputTokens: number;
+      totalOutputTokens: number;
+      totalCachedTokens: number;
+      totalActualCost: number;
+      totalWouldHaveCost: number;
+      lastCallAt: string | null;
+    };
+    return {
+      callCount: row.callCount,
+      sessionCount: row.sessionCount,
+      totalInputTokens: row.totalInputTokens,
+      totalOutputTokens: row.totalOutputTokens,
+      totalCachedTokens: row.totalCachedTokens,
+      totalActualCost: row.totalActualCost,
+      totalWouldHaveCost: row.totalWouldHaveCost,
+      savedByLocal: Math.max(0, row.totalWouldHaveCost - row.totalActualCost),
+      lastCallAt: row.lastCallAt,
+      pricingSource: this.pricing.source,
+      pricingVersion: this.pricing.version,
+      pricingFetchedAt: this.pricing.fetchedAt,
+    };
+  }
 }
