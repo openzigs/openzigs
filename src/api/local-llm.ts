@@ -7,8 +7,10 @@
  *
  * Endpoints:
  *   GET  /autodetect           — probe Ollama + vLLM, return discovered endpoints (#1058).
+ *   POST /autodetect           — same as GET; the offline setup wizard uses POST.
  *   GET  /status               — current provider, health badge state, privacy mode (#1057).
- *   POST /provider             — set the active local-copilot provider (#1057).
+ *   GET  /provider             — current provider in the wizard-friendly `{baseUrl,modelId}` shape (#1064 fix).
+ *   POST /provider             — set the active local-copilot provider (#1057). Accepts either {endpoint,model} or {baseUrl,modelId}.
  *   DELETE /provider           — clear the active local-copilot provider.
  *   POST /privacy/global       — set the global lockdown switch (#1057).
  *   POST /vllm-key/rotate      — regenerate the persisted vLLM API key (#1058 decision).
@@ -154,7 +156,30 @@ export async function ensureVllmApiKey(
   return { apiKey, created: true };
 }
 
-const setProviderBodySchema = localCopilotProviderSchema;
+/**
+ * Body schema for `POST /provider`.
+ *
+ * The admin panel sends `{ endpoint, model }` (matches the persisted shape).
+ * The offline setup wizard at `/setup/offline` sends `{ baseUrl, modelId }`
+ * (Bug #1064-#9). We accept both and normalise to the canonical persisted
+ * shape so callers don't need to coordinate.
+ */
+const setProviderBodySchema = z.preprocess((raw) => {
+  if (!raw || typeof raw !== "object") return raw;
+  const obj = raw as Record<string, unknown>;
+  const next: Record<string, unknown> = { ...obj };
+  if (next.endpoint == null && typeof obj.baseUrl === "string") {
+    // Local-copilot provider expects a /v1 suffix; the wizard sends bare host.
+    const base = obj.baseUrl as string;
+    next.endpoint = base.endsWith("/v1") ? base : `${base.replace(/\/$/, "")}/v1`;
+    delete next.baseUrl;
+  }
+  if (next.model == null && typeof obj.modelId === "string") {
+    next.model = obj.modelId;
+    delete next.modelId;
+  }
+  return next;
+}, localCopilotProviderSchema);
 
 const privacyBodySchema = z.object({
   globalLockdown: z.boolean(),
@@ -181,7 +206,7 @@ export function createLocalLlmRouter(deps: LocalLlmDeps = {}): Router {
   const configPath = deps.configPath ?? defaultConfigPath();
   const audit = deps.auditLogger;
 
-  router.get("/autodetect", async (_req: Request, res: Response) => {
+  const autodetectHandler = async (_req: Request, res: Response) => {
     try {
       const { localLlm } = await readLocalLlmBlock(configPath);
       if (localLlm.autodetect === false) {
@@ -203,13 +228,51 @@ export function createLocalLlmRouter(deps: LocalLlmDeps = {}): Router {
           },
         });
       }
-      res.json(result);
+      // Wizard-friendly aliases: surface `reachable` + `baseUrl` alongside the
+      // canonical `{endpoint, models, recommendedModel}` shape so both the
+      // admin panel and the offline setup wizard can consume the same body.
+      const augment = (
+        d: { endpoint: string; models?: string[]; recommendedModel: string | null } | null,
+      ) =>
+        d
+          ? {
+              ...d,
+              reachable: true,
+              baseUrl: d.endpoint.replace(/\/v1\/?$/, ""),
+            }
+          : { reachable: false };
+      res.json({
+        ...result,
+        ollama: result.ollama ? augment(result.ollama) : { reachable: false },
+        vllm: result.vllm ? augment(result.vllm) : { reachable: false },
+      });
     } catch (err) {
       logger.warn("local-llm autodetect failed", {
         error: err instanceof Error ? err.message : String(err),
       });
       res.status(500).json({ error: "autodetect_failed" });
     }
+  };
+
+  router.get("/autodetect", autodetectHandler);
+  // Bug #1064-#2: the offline setup wizard fetches via POST.
+  router.post("/autodetect", autodetectHandler);
+
+  // Bug #1064-#3: wizard expects a dedicated GET /provider endpoint that
+  // returns the provider in `{ baseUrl, modelId }` shape. Keeps `/status`
+  // untouched for the admin panel.
+  router.get("/provider", async (_req: Request, res: Response) => {
+    const { localLlm } = await readLocalLlmBlock(configPath);
+    const provider = localLlm.provider ?? null;
+    res.json({
+      provider: provider
+        ? {
+            type: provider.type,
+            baseUrl: provider.endpoint.replace(/\/v1\/?$/, ""),
+            modelId: provider.model,
+          }
+        : null,
+    });
   });
 
   router.get("/status", async (_req: Request, res: Response) => {

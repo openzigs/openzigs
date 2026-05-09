@@ -199,6 +199,89 @@ describe("local-llm admin router", () => {
         });
       expect(r.status).toBe(400);
     });
+
+    // Bug #1064-#9: the offline setup wizard sends `{baseUrl, modelId}` rather
+    // than `{endpoint, model}`. The router must accept both shapes.
+    it("accepts wizard-shaped {baseUrl, modelId} body", async () => {
+      const app = buildApp();
+      const r = await request(app)
+        .post("/api/admin/local-llm/provider")
+        .send({
+          type: "local-copilot",
+          baseUrl: "http://127.0.0.1:11434",
+          modelId: "gemma4:26b",
+        });
+      expect(r.status).toBe(200);
+      const onDisk = JSON.parse(await fs.readFile(tmpConfigPath, "utf-8"));
+      // baseUrl gets a /v1 suffix appended when persisted.
+      expect(onDisk.localLlm.provider.endpoint).toBe(
+        "http://127.0.0.1:11434/v1",
+      );
+      expect(onDisk.localLlm.provider.model).toBe("gemma4:26b");
+    });
+  });
+
+  // Bug #1064-#2: wizard fetches autodetect via POST.
+  describe("POST /autodetect", () => {
+    it("returns the same shape as GET and triggers an audit log", async () => {
+      const fetchImpl = vi.fn(async (url) => {
+        if (String(url).includes("11434")) {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({ data: [{ id: "gemma4:26b" }] }),
+          } as unknown as Response;
+        }
+        throw new Error("refused");
+      });
+      const app = buildApp({ fetchImpl: fetchImpl as unknown as typeof fetch });
+      const r = await request(app)
+        .post("/api/admin/local-llm/autodetect")
+        .send({});
+      expect(r.status).toBe(200);
+      expect(r.body.ollama?.endpoint).toBe("http://127.0.0.1:11434/v1");
+      // Wizard-friendly aliases.
+      expect(r.body.ollama?.reachable).toBe(true);
+      expect(r.body.ollama?.baseUrl).toBe("http://127.0.0.1:11434");
+      expect(r.body.vllm?.reachable).toBe(false);
+      expect(auditLogs.some((l) => l.event === "provider.autodetected")).toBe(
+        true,
+      );
+    });
+  });
+
+  // Bug #1064-#3: wizard probes GET /provider on mount.
+  describe("GET /provider", () => {
+    it("returns provider:null when nothing is configured", async () => {
+      const app = buildApp();
+      const r = await request(app).get("/api/admin/local-llm/provider");
+      expect(r.status).toBe(200);
+      expect(r.body.provider).toBeNull();
+    });
+
+    it("returns provider in {baseUrl, modelId} shape", async () => {
+      await fs.writeFile(
+        tmpConfigPath,
+        JSON.stringify({
+          localLlm: {
+            provider: {
+              type: "local-copilot",
+              endpoint: "http://127.0.0.1:11434/v1",
+              model: "gemma4:26b",
+            },
+          },
+        }),
+        "utf-8",
+      );
+      const app = buildApp();
+      const r = await request(app).get("/api/admin/local-llm/provider");
+      expect(r.status).toBe(200);
+      expect(r.body.provider).toEqual({
+        type: "local-copilot",
+        baseUrl: "http://127.0.0.1:11434",
+        modelId: "gemma4:26b",
+      });
+    });
   });
 
   describe("DELETE /provider", () => {
