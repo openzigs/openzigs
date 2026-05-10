@@ -11,6 +11,29 @@ import {
 import { logger } from "../logging/logger.js";
 import { PROJECT_ROOT } from "../project-root.js";
 import type { Role } from "../auth/auth.js";
+import {
+  localLlmSchema,
+  localLlmHealthSchema,
+  type LocalLlmConfig,
+  type LocalLlmHealthConfig,
+} from "./local-llm-schema.js";
+
+export {
+  localLlmSchema,
+  localCopilotProviderSchema,
+  localLlmHealthSchema,
+  privacyModeSchema,
+  smartRouterSchema,
+  costMeterSchema,
+} from "./local-llm-schema.js";
+export type {
+  LocalLlmConfig,
+  LocalLlmHealthConfig,
+  LocalCopilotProviderConfig,
+  PrivacyModeConfig,
+  SmartRouterConfig,
+  CostMeterConfig,
+} from "./local-llm-schema.js";
 
 export type RateLimitConfig = {
   windowMs: number;
@@ -206,6 +229,8 @@ export type SentinelAppConfig = {
   timezone?: string;
   noOverlap?: boolean;
   maxRandomDelayMs?: number;
+  /** Epic #1053 / sub-issue #1055 — local LLM endpoint health monitor. */
+  localLlmHealth?: LocalLlmHealthConfig;
 };
 
 export type KnowledgeAppConfig = {
@@ -362,6 +387,19 @@ export type AppConfig = {
   musicGen?: MusicGenAppConfig;
   lipSync?: LipSyncAppConfig;
   media?: MediaAppConfig;
+  /** GPU dispatcher (Issue #1056) — pinning + mutex policy. */
+  gpu?: {
+    poolingMode?: string;
+    dispatcher?: {
+      pinning?: {
+        llm?: number[];
+        image?: number[];
+        video?: number[];
+      };
+      mutualExclusion?: boolean;
+      allowFallback?: boolean;
+    };
+  };
   socialBrain?: SocialBrainAppConfig;
   sentinel?: SentinelAppConfig;
   knowledge?: KnowledgeAppConfig;
@@ -372,6 +410,8 @@ export type AppConfig = {
   workbench?: {
     directories?: string[];
   };
+  /** Local LLM provider configuration (epic #1053). */
+  localLlm?: LocalLlmConfig;
 };
 
 const rateLimitSchema = z.object({
@@ -652,6 +692,31 @@ const appConfigSchema = z.object({
         .optional(),
     })
     .optional(),
+  /**
+   * GPU dispatcher (Issue #1056). Optional; when omitted, the dispatcher
+   * uses defaults: pin LLM workloads to GPU 0 and image/video to the last
+   * GPU on multi-GPU hosts; everything on GPU 0 on single-GPU hosts;
+   * mutual exclusion enabled. A `pinning.<workload>` of `[]` disables
+   * pinning for that workload (every GPU becomes a candidate).
+   */
+  gpu: z
+    .object({
+      poolingMode: z.string().optional(),
+      dispatcher: z
+        .object({
+          pinning: z
+            .object({
+              llm: z.array(z.number().int().min(0)).optional(),
+              image: z.array(z.number().int().min(0)).optional(),
+              video: z.array(z.number().int().min(0)).optional(),
+            })
+            .optional(),
+          mutualExclusion: z.boolean().optional().default(true),
+          allowFallback: z.boolean().optional().default(false),
+        })
+        .optional(),
+    })
+    .optional(),
   socialBrain: z
     .object({
       enabled: z.boolean().optional(),
@@ -713,6 +778,8 @@ const appConfigSchema = z.object({
       timezone: z.string().optional(),
       noOverlap: z.boolean().optional(),
       maxRandomDelayMs: z.number().optional(),
+      // Epic #1053 / sub-issue #1055 — local LLM endpoint health monitor.
+      localLlmHealth: localLlmHealthSchema,
     })
     .optional(),
   knowledge: z
@@ -791,6 +858,8 @@ const appConfigSchema = z.object({
         .default(60_000),
     })
     .optional(),
+  // Epic #1053 — local LLM as primary provider.
+  localLlm: localLlmSchema,
 });
 
 export type LoadConfigOptions = {

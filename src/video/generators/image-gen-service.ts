@@ -11,6 +11,7 @@ import path from "node:path";
 import os from "node:os";
 import { Agent } from "undici";
 import { logger } from "../../logging/logger.js";
+import { withGpuLane } from "../../gpu/gpu-dispatcher.js";
 
 // Optional dependency — loaded dynamically at runtime to avoid hard compile-time requirement.
 // Bypass TS static module resolution by constructing the specifier at runtime.
@@ -388,6 +389,21 @@ export class ImageGenService {
   // ── Local Provider (Python Sidecar) ─────────────────────────
 
   private async generateLocal(
+    prompt: string,
+    width: number,
+    height: number,
+    options: ImageGenOptions,
+  ): Promise<ImageGenResult> {
+    // Route through the GPU dispatcher (Issue #1056) so this image job
+    // serializes correctly against any in-flight LLM workload on the same
+    // physical GPU. When no dispatcher is registered (tests, single-GPU
+    // headless runs), `withGpuLane` falls through to inline execution.
+    return withGpuLane("image", async () => {
+      return this.generateLocalImpl(prompt, width, height, options);
+    });
+  }
+
+  private async generateLocalImpl(
     prompt: string,
     width: number,
     height: number,

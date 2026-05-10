@@ -457,6 +457,87 @@ Internet → Cloudflare Edge → cloudflared sidecar → http://agent:3000 (Dock
 
 ---
 
+## GPU Dispatcher
+
+OpenZigs runs LLM inference (vLLM / Ollama) and diffusion workloads (Flux / SDXL / LTX video) on the same physical GPUs. Without coordination, two heavy workloads can race for VRAM and either OOM or starve each other.
+
+### Why data-parallel, not tensor-parallel
+
+The original plan was to **tensor-split** image/video diffusion across both GPUs to halve render time. Empirically this fell over:
+
+- Diffusion U-Nets do not split cleanly across devices — most layers are sequential and the cross-attention blocks force frequent all-reduce traffic.
+- We are on **PCIe Gen4**, not NVLink. Measured TP scaling for FLUX on 2× consumer GPUs over PCIe was **1.4–1.5×**, vs. the NVLink-required ~1.84× threshold to even justify the extra software complexity.
+- Worse, every TP run also blocked the LLM, because both shards needed VRAM headroom on **both** GPUs.
+
+We replaced TP with a **data-parallel per-GPU dispatcher**. Each physical GPU gets its own FIFO lane, and the dispatcher owns the policy of *which workload goes to which GPU*. On a dual-GPU host the default is:
+
+| Workload | Pinned to |
+|----------|-----------|
+| `llm`    | GPU 0     |
+| `image`  | GPU 1     |
+| `video`  | GPU 1     |
+
+— which lets a vLLM session and a video render run **truly in parallel** instead of fighting over the same device.
+
+### Mutual exclusion
+
+Even when workloads land on different GPUs, **LLM ↔ image/video** is a mutex. This is intentional: vLLM holds nontrivial CPU/host RAM for KV cache management, and a long video render that pegs the host PCIe bus will visibly stall LLM token streaming. Image and video can co-locate on the same GPU (no mutex between them), because both go through the same diffusion sidecar process which serializes internally.
+
+The mutex is enforced **across GPUs**, not just within a single lane: a `busy` lane on GPU 0 with workload `llm` will mark GPU 1's `idle` lane as `mutexBlockedBy: "llm"` until the LLM job completes. The admin UI surfaces this as an amber tooltip on the dependent lane so operators can see at a glance why a render did not start immediately.
+
+### Architecture
+
+```
+                                ┌────────────────────────────┐
+                                │  GpuDispatcher (in-proc)   │
+                                │                            │
+ImageGenService ──withGpuLane──▶│ ┌──────────┐  ┌──────────┐ │
+VideoGenService ──withGpuLane──▶│ │ GPU 0    │  │ GPU 1    │ │
+LLM provider   ──withGpuLane──▶│ │  FIFO    │  │  FIFO    │ │
+                                │ │  state   │  │  state   │ │
+                                │ └──────────┘  └──────────┘ │
+                                │      │             │       │
+                                │      ▼             ▼       │
+                                │   Audit log + Socket.IO    │
+                                └────────────────────────────┘
+                                              │
+                            /api/system/gpu  ◄─┴─► Admin GPU panel (live)
+                            /api/admin/gpu/dispatcher (cancel / clear-error)
+```
+
+- `withGpuLane(workloadType, run, opts?)` is a tiny module-singleton helper. When no dispatcher is registered (tests, headless single-GPU runs, the old code path) it runs `run()` inline with `gpuIndex=0` — fully backward-compatible.
+- Cancellation is via `AbortSignal`. A cancelled job returns the lane to `idle`. An uncaught exception poisons the lane to `error` and requires `clearError()` (the admin UI's **Retry** button) before new jobs will dispatch — this is deliberate, since CUDA-OOM almost always requires a sidecar restart anyway.
+- `GpuCoordinator` (issue #917) still owns the persistent SQLite-backed cross-restart claim used by vLLM ↔ FLUX. The dispatcher layers on top of it as an in-process queue. The two are complementary: coordinator survives restarts, dispatcher provides per-job `await` semantics + UI visibility.
+
+### Configuration
+
+```jsonc
+{
+  "gpu": {
+    "dispatcher": {
+      "pinning": {
+        "llm":   [0],     // optional — default: [0]
+        "image": [1],     // optional — default: [gpuCount-1]
+        "video": [1]      // optional — default: [gpuCount-1]
+      },
+      "mutualExclusion": true,   // default true; set false to allow LLM + render in parallel
+      "allowFallback": false      // default false; if true, jobs may dispatch to off-pin GPUs when pin is busy
+    }
+  }
+}
+```
+
+A `pinning.<workload>` of `[]` removes pinning entirely for that workload — every GPU becomes a candidate (subject to mutex). Pinning is never enforced on no-GPU hosts; everything runs on the synthetic lane `-1`.
+
+### Observability
+
+- **`/api/system/gpu`** includes `dispatcher.gpus[]` — full lane state including `currentJob`, `queueDepth`, `mutexBlockedBy`.
+- **`/api/admin/gpu/dispatcher`** — admin-auth: `GET /` (snapshot), `POST /:gpuIndex/cancel` (returns `200 {cancelled:true}` or `404 {cancelled:false}`), `POST /:gpuIndex/clear-error` (`200` or `409`).
+- **Socket.IO** broadcasts `gpu:dispatcher:state` (full snapshot on every transition), `gpu:dispatcher:job-started`, `gpu:dispatcher:job-completed`, `gpu:dispatcher:job-failed`.
+- **AuditLogger** records every queue/dispatch/cancel/mutex event with workload type, job id, and duration.
+
+---
+
 ## Python AI Sidecars
 
 OpenZigs ships with a suite of optional **local Python FastAPI services** that run as separate processes on the host machine (not inside Docker). All sidecars are optimised for **Apple Silicon (MLX / Metal)** and communicate with the agent over localhost HTTP.
@@ -610,6 +691,57 @@ Additionally, the Docker sidecar auto-provisioning step in `server.ts` is skippe
 | Browser automation | ✅ | ✅ | ✅ | ✅ |
 
 > **Note:** Native sidecars (image-gen, audio, music, music-studio, worker) require Apple Silicon. On other platforms, these features are unavailable but the core agent remains fully functional.
+
+---
+
+## Local LLM as Primary Provider (Epic #1053)
+
+OpenZigs supports running fully offline against a local OpenAI-compatible endpoint (Ollama or vLLM) as a first-class peer of cloud Copilot. Phase 3 ships the polish layer that makes the local-first stack usable by non-engineers.
+
+### Hardware Detection (Issue #1063)
+
+**`src/system/platform-detector.ts`** — `detectPlatformProfile()` probes:
+
+- OS / arch (`darwin|win32|linux` × `arm64|x64`)
+- Chip name (Apple `sysctl machdep.cpu.brand_string`, otherwise `os.cpus()[0].model`)
+- Total memory + Apple unified memory budget
+- GPU kind: `apple-silicon` (Apple Silicon), `nvidia` (`nvidia-smi` succeeds), `cpu` otherwise
+- Recommended Ollama backend: `ollama-mlx` for Apple Silicon (set `OLLAMA_USE_MLX=1`), `ollama-cuda` for NVIDIA, `ollama-cpu` everything else
+
+`recommendGemma4Variant(profile, { largestGpuVramBytes })` picks the right Gemma 4 variant for the host (`gemma4:31b` for ≥ 64 GB unified memory or ≥ 24 GB VRAM, `gemma4:18b` for the 32–48 GB tier, `gemma4:9b` for tighter Mac configs and CPU-only Linux/Windows). All shellouts are dependency-injected so the Mac code paths are unit-tested on the Windows dev rig.
+
+The result is exposed at `GET /api/system/platform` and rendered by `<SystemRequirementsCard>` on the admin page.
+
+### Smart Router (Issue #1062)
+
+**`src/copilot/smart-router.ts`** — pure `routeRequest(input): RoutingDecision`. Decides per request whether to hit local or cloud:
+
+| Condition | Decision | `reason` |
+|---|---|---|
+| `privacyMode != "off"` and local provider configured | **local** | `privacy_mode_local` |
+| `privacyMode != "off"` and **no** local provider | **throws `RouterPrivacyError`** | `ROUTER_PRIVACY_NO_LOCAL_PROVIDER` |
+| `enabled: false` | **cloud** | `router_disabled` |
+| no local provider configured | **cloud** | `no_local_provider` |
+| `estimatedTokens <= cloudThresholdTokens` (default 4096) | **local** | `below_threshold_local` |
+| `estimatedTokens > cloudThresholdTokens` | **cloud** | `above_threshold_cloud` |
+
+Privacy mode is a **hard kill switch** — under privacy mode the router never silently falls back to cloud; it raises a typed error so the wrapper can surface a 412/409 to the caller. Threshold tuning lives in `localLlm.smartRouter.cloudThresholdTokens` (default `4096`, range `0..1_000_000`).
+
+### Per-Session Cost Meter (Issue #1059)
+
+**`src/costs/cost-meter.ts`** — writes to SQLite table `session_costs` (`PRIMARY KEY (session_id, call_id)` for retry idempotency). Each row stores both the **actual** cost (`0` for `local-copilot` calls) and the **would-have** cost priced against the call's `cloudEquivalentModelId`. `aggregate(sessionId)` returns `{ totalActualCost, totalWouldHaveCost, savedByLocal = max(0, would − actual) }` for the chat-UI cost widget.
+
+Pricing comes from a three-tier loader (`src/costs/copilot-pricing.ts`):
+
+1. Live fetch from `https://docs.github.com/api/copilot-pricing.json` (5 s timeout)
+2. On-disk cache at `~/.openzigs/cache/copilot-pricing.json` (`0o600`)
+3. Bundled fallback (`BUNDLED_VERSION = "2026-06-01"`, includes gpt-4.1, gpt-5, claude-sonnet-4.5, claude-opus-4.5, gemini-2.5-pro)
+
+Each row is stamped with `pricingVersion` and `pricingSource` (`"live" | "cached" | "bundled"`) so finance can reconcile spend later. `GET /api/admin/sessions/:id/cost` exposes the aggregate + per-call rows.
+
+### Offline Setup Wizard (Issue #1061)
+
+`/setup/offline` — five steps: detect host → recommend Gemma 4 variant → show OS-specific install commands (winget / brew / curl) → test local endpoints via `/api/admin/local-llm/autodetect` → switch active provider via `POST /api/admin/local-llm/provider`. Idempotent: when a `local-copilot` provider is already active the wizard shows a "you're already running offline" banner with a Re-run button.
 
 ---
 
@@ -4294,6 +4426,7 @@ Sentinel is an autonomous background daemon that continuously monitors the healt
 | `src/sentinel/digest-generator.ts` | Aggregates task review + prompt audit into `DigestRecord` with per-prompt `PromptRecommendation[]`. Persists to JSONL with configurable retention. Generates human-readable `status.md`. |
 | `src/sentinel/sre-alerter.ts` | Multi-channel alert dispatch (`admin` via Socket.IO, external channels via `ChannelManager`). Per-type deduplication with configurable cooldowns. Only critical alerts route to external channels. |
 | `src/sentinel/rag-health-check.ts` | Probes LanceDB accessibility, ingestion service state, and queue depth. Emits alerts for unreachable DB, downed ingestion, and excessive queue depth. Gracefully degrades when knowledge service is not configured. |
+| `src/sentinel/local-endpoint-health.ts` | **(epic #1053 / #1055)** EventEmitter-based health monitor for the local LLM endpoint (Ollama / vLLM). Probes `${endpoint}/models` every 30 s with a 2 s `AbortSignal.timeout`. State machine: `healthy` → `failed-over` after **3 failures inside a 60 s sliding window**, `failed-over` → `healthy` after **5 consecutive successes**. Exposes `assertAvailable()` which throws a typed `Error` (`.code = "LOCAL_ENDPOINT_UNAVAILABLE_PRIVACY_MODE"` when global lockdown is engaged — never silently falls back to remote — or `"LOCAL_ENDPOINT_UNAVAILABLE"` for plain failover). State persists atomically (write-temp → `fs.rename`) under `~/.openzigs/sentinel/local-endpoint-health.json`. Audit categories: `sentinel.failover`, `sentinel.failback`, `sentinel.privacy_mode_block`. Emits Socket.IO events `sentinel:local-endpoint-failover` / `…-failback`. Lazy-bootstrapped from `server.ts` only when a `local-copilot` provider is configured on disk. |
 | `src/sentinel/sentinel-state.ts` | Zod schemas, file-based state persistence (`~/.openzigs/sentinel/`), digest JSONL history, `status.md` read/write, digest pruning. |
 
 ### Scheduling

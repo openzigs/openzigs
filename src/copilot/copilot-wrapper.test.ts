@@ -1095,6 +1095,48 @@ describe("copilot wrapper", () => {
     expect(cfg.provider).toEqual(provider);
   });
 
+  it("maps local-copilot provider to openai shape with apiKey and trims trailing slash", async () => {
+    const client = new FakeCopilotClient();
+    const wrapper = new CopilotWrapperService({
+      client,
+      provider: {
+        type: "local-copilot",
+        endpoint: "http://127.0.0.1:11434/v1/",
+        model: "gemma4:26b",
+        apiKey: "local-key",
+      },
+    });
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    for await (const _chunk of wrapper.chat("test", { conversationId: "local-copilot-map" })) { /* drain */ }
+    const cfg = client.lastSessionConfig as Record<string, unknown>;
+    expect(cfg.provider).toEqual({
+      type: "openai",
+      baseUrl: "http://127.0.0.1:11434/v1",
+      apiKey: "local-key",
+      wireApi: "completions",
+    });
+  });
+
+  it("setProvider(local-copilot) sets COPILOT_OFFLINE=true and clears it on reset", async () => {
+    const client = new FakeCopilotClient();
+    const wrapper = new CopilotWrapperService({ client });
+    const previous = process.env.COPILOT_OFFLINE;
+    delete process.env.COPILOT_OFFLINE;
+    try {
+      wrapper.setProvider({
+        type: "local-copilot",
+        endpoint: "http://127.0.0.1:8000/v1",
+        model: "google/gemma-4-26b-it",
+      });
+      expect(process.env.COPILOT_OFFLINE).toBe("true");
+      wrapper.setProvider(undefined);
+      expect(process.env.COPILOT_OFFLINE).toBeUndefined();
+    } finally {
+      if (previous === undefined) delete process.env.COPILOT_OFFLINE;
+      else process.env.COPILOT_OFFLINE = previous;
+    }
+  });
+
   it("forwards subagent.* SDK events as subagent: EventEmitter events", async () => {
     const client = new FakeCopilotClient();
     const wrapper = new CopilotWrapperService({ client });

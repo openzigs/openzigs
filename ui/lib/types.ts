@@ -281,7 +281,7 @@ export type ChatAttachment = {
 export type ReasoningEffort = "low" | "medium" | "high" | "xhigh";
 
 export type ProviderInfo = {
-  type: "copilot" | "azure" | "openai" | "anthropic" | "ollama" | "custom";
+  type: "copilot" | "azure" | "openai" | "anthropic" | "ollama" | "custom" | "local-copilot";
   label: string;
 };
 

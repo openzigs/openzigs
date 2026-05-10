@@ -468,6 +468,40 @@ Remove-Item -Recurse -Force .openzigs
 
 ---
 
+## Running Fully Offline (Local LLM)
+
+OpenZigs can run end-to-end against a local OpenAI-compatible endpoint (Ollama or vLLM). The fastest path is the **offline setup wizard** at <http://localhost:3001/setup/offline>:
+
+1. **Detect** — the wizard probes your hardware (OS, chip, memory, GPU) and recommends a Gemma 4 variant sized to your host.
+2. **Recommend** — see the variant + minimum memory required.
+3. **Install** — copy the OS-specific commands shown:
+   - **Windows:** `winget install Ollama.Ollama` then `ollama pull <model>`
+   - **macOS (Apple Silicon):** `brew install ollama`, then `OLLAMA_USE_MLX=1 ollama serve`, then `ollama pull <model>` — the MLX backend uses Apple's Metal Performance Shaders for ~2× throughput on M-series chips.
+   - **Linux:** `curl -fsSL https://ollama.com/install.sh | sh` then `ollama pull <model>`
+4. **Test** — click "Probe local endpoints" to confirm Ollama (port 11434) or vLLM (port 8000) is reachable.
+5. **Switch** — flip the active provider to local. From here every request that fits under the smart-router threshold (default 4096 input tokens) runs locally.
+
+### Privacy Mode
+
+Privacy mode is a hard kill switch. When enabled per-session (toggle in chat) or globally (admin panel), every request must go to the local provider. If no local provider is configured, the request **fails** rather than silently falling back to cloud — by design.
+
+### Cost Meter
+
+Every model call records both its actual cost and what the equivalent cloud model would have cost. The chat UI shows a running `spent X · cloud-equiv Y · saved Z by going local` strip. The full per-call breakdown is at `GET /api/admin/sessions/:id/cost`.
+
+### Smart Router Tuning
+
+`localLlm.smartRouter.cloudThresholdTokens` (default `4096`) controls the cutoff. Common tunings:
+
+| Threshold | Behavior |
+|---|---|
+| `256` | Send almost everything to cloud; only the tiniest prompts go local. |
+| `4096` | **Default.** Most chat goes local; long-context tasks (full-file reviews, large diffs) go cloud. |
+| `131072` | Send essentially everything local. Best when your local model can handle long context. |
+| set `enabled: false` | Disable the router entirely — always cloud (unless privacy mode is on). |
+
+---
+
 ## First-Time Authentication
 
 On first launch, the agent must authenticate with GitHub Copilot:
@@ -607,6 +641,7 @@ The admin page at `/admin` consolidates all configuration:
 ![Model Configuration — reasoning effort and BYOK provider settings](images/admin-model-config.png)
 
 - **Model Configuration** — Set the default reasoning effort (Low / Medium / High / xHigh) for reasoning models. Enable **BYOK (Bring Your Own Key)** to configure a custom provider (OpenAI, Azure, Anthropic, Ollama, or Custom) with base URL, API key (masked by default), and optional Azure API version. Test the connection before saving, or clear the provider to revert to GitHub Copilot. Set a **Background Task Default Model** to automatically assign a cost-effective model to all non-interactive (cron, webhook, agent-spawned) tasks that don't specify their own model.
+- **Local LLM Provider** — Run OpenZigs fully offline against a local OpenAI-compatible endpoint (Ollama on `127.0.0.1:11434/v1` or vLLM on `127.0.0.1:8000/v1`). Click **Test Connection** to autodetect a running endpoint and pre-fill the form, then **Save provider** to switch the SDK over. A live **health badge** (green / amber / red) polled every 5 s tells you whether the endpoint is reachable; on failure the Sentinel monitor trips a **failover** after 3 failures inside a 60 s window and clears it after 5 consecutive successes. Two privacy switches harden the deployment: a **per-session privacy toggle** (browser-local) and a **global lockdown** (server-enforced, persisted) that *hard-blocks* any remote-provider fallback even if the local endpoint is down — never silent degradation. The vLLM API key is auto-generated as a 32-byte base64url secret on first boot (file mode `0o600`); you can **rotate** it from the panel, which reveals the new plaintext value once for copying and only the masked preview thereafter.
 - **Task Engine** — Adjust the maximum concurrent background agents (1–10) at runtime, view live queue stats (running, queued, concurrency limit). Configure the **tool limit per request** (1–128) to control how many tools are sent to the LLM in each call — see [Tool Limit Configuration](#tool-limit-configuration) below.
 ![Custom Agents — agent cards with tool badges and infer indicators](images/admin-custom-agents.png)
 

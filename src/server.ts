@@ -60,7 +60,21 @@ import { createTasksRouter } from "./api/tasks.js";
 import { createSeoRouter } from "./api/seo.js";
 import { createFilesRouter } from "./api/files.js";
 import { createVllmAdminRouter } from "./api/admin/vllm.js";
+import {
+  createLocalLlmRouter,
+  ensureVllmApiKey,
+} from "./api/local-llm.js";
+import { LocalEndpointHealthMonitor } from "./sentinel/local-endpoint-health.js";
 import { GpuCoordinator } from "./gpu/gpu-coordinator.js";
+import {
+  GpuDispatcher,
+  setActiveGpuDispatcher,
+} from "./gpu/gpu-dispatcher.js";
+import { createGpuDispatcherAdminRouter } from "./api/admin/gpu-dispatcher.js";
+import { createSessionCostsRouter } from "./api/session-costs.js";
+import { CostMeter } from "./costs/cost-meter.js";
+import { fetchPricingTable } from "./costs/copilot-pricing.js";
+import { getGpuProfile } from "./system/gpu-profile.js";
 import { autoRegisterIfDetected } from "./llm/vllm-detect.js";
 import { launchChrome, killChrome } from "./browser/chrome-launcher.js";
 import {
@@ -305,6 +319,30 @@ const gpuCoordinator = new GpuCoordinator({
   db,
   warn: (msg, details) => logger.warn(msg, details ?? {}),
 });
+
+// ── GPU dispatcher (Issue #1056) ──────────────────────────────────────────
+// Per-GPU job queue with mutual exclusion. Detects GPU count up-front and
+// surfaces lane state via /api/system/gpu + /api/admin/gpu/dispatcher and
+// over Socket.IO (`gpu:dispatcher:state`).
+const _bootGpuProfile = await getGpuProfile().catch(() => null);
+const _gpuCount = _bootGpuProfile?.gpus?.length ?? 0;
+const _gpuDispatcherCfg = config.gpu?.dispatcher;
+const gpuDispatcher = new GpuDispatcher({
+  gpuCount: _gpuCount,
+  pinning: _gpuDispatcherCfg?.pinning,
+  mutualExclusion: _gpuDispatcherCfg?.mutualExclusion ?? true,
+  defaultAllowFallback: _gpuDispatcherCfg?.allowFallback ?? false,
+  audit: (event, details) => {
+    void auditLogger.log({
+      level: event.endsWith("_failed") || event.includes("error") ? "warn" : "info",
+      category: "system",
+      event,
+      details,
+    });
+  },
+});
+setActiveGpuDispatcher(gpuDispatcher);
+
 const promptManager = new PromptManager({ db });
 const personalityManager = new PersonalityManager({ db });
 const brandVoiceRepo = new BrandVoiceRepository(db);
@@ -1229,7 +1267,10 @@ app.use("/api/models", authMiddleware, modelsRouter);
 app.use(
   "/api/system",
   authMiddleware,
-  createSystemRouter({ coordinator: gpuCoordinator }),
+  createSystemRouter({
+    coordinator: gpuCoordinator,
+    dispatcher: gpuDispatcher,
+  }),
 );
 
 // Setup API routes — no auth required (needed before auth is configured)
@@ -1262,11 +1303,190 @@ const adminRouter = createAdminRouter({
   socialBrain,
   videoPresetsRepo,
 });
+
+// Bug #1064-#6a: the cost-summary route must be mounted BEFORE the main
+// adminRouter. adminRouter declares `/sessions/:id` which would otherwise
+// swallow `cost-summary` as a session id and return
+// `{"error":"Session not found: cost-summary"}` (404). Keeping this mount
+// ahead of adminRouter preserves the public `/api/admin/sessions/cost-summary`
+// URL the UI depends on. The wrapper hookup + bootstrap happens later, where
+// the rest of the local-llm wiring lives.
+const costMeter = new CostMeter({ db, auditLogger });
+app.use(
+  "/api/admin",
+  authMiddleware,
+  createSessionCostsRouter({ costMeter }),
+);
 app.use("/api/admin", authMiddleware, adminRouter);
 
 // vLLM admin routes (Epic #888 / Issue #922) — kept out of admin.ts.
 const vllmAdminRouter = createVllmAdminRouter({ coordinator: gpuCoordinator });
 app.use("/api/admin/gpu/vllm", authMiddleware, vllmAdminRouter);
+
+// GPU dispatcher admin routes (Epic #1053 / Issue #1056, #1060) — cancel
+// in-flight jobs + clear poisoned lanes from the admin UI.
+app.use(
+  "/api/admin/gpu/dispatcher",
+  authMiddleware,
+  createGpuDispatcherAdminRouter({
+    dispatcher: gpuDispatcher,
+    auditLogger,
+  }),
+);
+
+// Local LLM admin routes (Epic #1053 / Issues #1057, #1058) — kept out of admin.ts.
+const localLlmConfigPath =
+  process.env.OPENZIGS_CONFIG_PATH ??
+  path.join(os.homedir(), ".openzigs", "config.json");
+// First-launch: idempotently generate a vLLM API key with 0o600 perms.
+ensureVllmApiKey(localLlmConfigPath).catch((err) => {
+  logger.warn("Failed to ensure vLLM API key on startup", {
+    error: err instanceof Error ? err.message : String(err),
+  });
+});
+
+// Local-endpoint health monitor (#1055) — only spun up when a local-copilot
+// provider is configured. We instantiate lazily in the router by checking
+// config on each /status read; a long-running poller is started here only if
+// the user already has a provider on disk so /status is meaningful from t=0.
+let localEndpointHealthMonitor: LocalEndpointHealthMonitor | undefined;
+try {
+  const cfgRaw = await fs.readFile(localLlmConfigPath, "utf-8").catch(() => "{}");
+  const cfgParsed = JSON.parse(cfgRaw) as {
+    localLlm?: {
+      provider?: { endpoint?: string; apiKey?: string } | null;
+      privacyMode?: { globalLockdown?: boolean };
+    };
+    sentinel?: { localLlmHealth?: { enabled?: boolean; intervalMs?: number; failoverThreshold?: number; failoverWindowMs?: number; failbackSuccesses?: number; probeTimeoutMs?: number } };
+  };
+  const provider = cfgParsed.localLlm?.provider;
+  const healthCfg = cfgParsed.sentinel?.localLlmHealth ?? {};
+  if (provider?.endpoint && healthCfg.enabled !== false) {
+    localEndpointHealthMonitor = new LocalEndpointHealthMonitor({
+      endpoint: provider.endpoint,
+      apiKey: provider.apiKey,
+      intervalMs: healthCfg.intervalMs,
+      failoverThreshold: healthCfg.failoverThreshold,
+      failoverWindowMs: healthCfg.failoverWindowMs,
+      failbackSuccesses: healthCfg.failbackSuccesses,
+      probeTimeoutMs: healthCfg.probeTimeoutMs,
+      auditLogger,
+      isPrivacyLocked: () => Boolean(cfgParsed.localLlm?.privacyMode?.globalLockdown),
+    });
+    localEndpointHealthMonitor.start();
+    localEndpointHealthMonitor.on("failover", (info) => {
+      io.emit("sentinel:local-endpoint-failover", info);
+    });
+    localEndpointHealthMonitor.on("failback", (info) => {
+      io.emit("sentinel:local-endpoint-failback", info);
+    });
+  }
+} catch (err) {
+  logger.warn("Failed to bootstrap LocalEndpointHealthMonitor", {
+    error: err instanceof Error ? err.message : String(err),
+  });
+}
+
+const localLlmRouter = createLocalLlmRouter({
+  configPath: localLlmConfigPath,
+  auditLogger,
+  healthMonitor: localEndpointHealthMonitor,
+  // Phase 3.5: keep the wrapper's smart-router runtime config in sync with
+  // POST /api/admin/local-llm/router so admin toggle/threshold changes apply
+  // without a server restart.
+  onSmartRouterChanged: (cfg) => {
+    copilot.setSmartRouterConfig(cfg);
+  },
+});
+app.use("/api/admin/local-llm", authMiddleware, localLlmRouter);
+
+// Per-session cost meter (Epic #1053 / Issue #1059) — tracks model spend +
+// "would have cost" against the GitHub Copilot pricing table. The meter
+// fetches the live pricing table at startup with a hardcoded fallback for
+// air-gapped installs. The instance is created earlier so the
+// /sessions/cost-summary route can be mounted before adminRouter; here we
+// just wire it into the copilot wrapper.
+// Phase 3.5: hand the meter + audit logger to the wrapper so every call's
+// router decision and cost row is recorded automatically.
+copilot.setCostMeter(costMeter);
+copilot.setAuditLogger(auditLogger);
+// Bootstrap dual-provider state from disk so smart-router routing kicks in
+// immediately if the user has a local provider configured + a cloud provider
+// in copilot config.
+try {
+  const cfgRaw = await fs.readFile(localLlmConfigPath, "utf-8").catch(() => "{}");
+  const cfgParsed = JSON.parse(cfgRaw) as {
+    localLlm?: {
+      provider?: {
+        type?: string;
+        endpoint?: string;
+        model?: string;
+        apiKey?: string;
+        timeoutMs?: number;
+      } | null;
+      privacyMode?: { globalLockdown?: boolean };
+      smartRouter?: { enabled?: boolean; cloudThresholdTokens?: number };
+    };
+  };
+  const localProvider = cfgParsed.localLlm?.provider;
+  if (localProvider?.endpoint && localProvider.model) {
+    copilot.setLocalProvider({
+      type: "local-copilot",
+      endpoint: localProvider.endpoint,
+      model: localProvider.model,
+      apiKey: localProvider.apiKey,
+      timeoutMs: localProvider.timeoutMs,
+    });
+  }
+  // The configured `provider` field on the wrapper acts as the cloud counterpart.
+  // (config.copilot.provider's type union excludes local-copilot at the schema layer.)
+  if (config.copilot?.provider) {
+    copilot.setCloudProvider(config.copilot.provider);
+  }
+  if (cfgParsed.localLlm?.privacyMode?.globalLockdown) {
+    copilot.setPrivacyMode("global");
+  }
+  const sr = cfgParsed.localLlm?.smartRouter;
+  if (sr) {
+    copilot.setSmartRouterConfig({
+      enabled: sr.enabled ?? true,
+      cloudThresholdTokens: sr.cloudThresholdTokens ?? 4096,
+    });
+  }
+} catch (err) {
+  logger.warn("Smart router bootstrap from local-llm config failed", {
+    error: err instanceof Error ? err.message : String(err),
+  });
+}
+// Best-effort live pricing fetch on startup; failure is silent and the meter
+// keeps the bundled fallback. Re-fetched periodically by the meter is left
+// for a follow-up — startup-only is enough for v1.
+void (async () => {
+  try {
+    const cfgRaw = await fs
+      .readFile(localLlmConfigPath, "utf-8")
+      .catch(() => "{}");
+    const cfgParsed = JSON.parse(cfgRaw) as {
+      localLlm?: { costMeter?: { enabled?: boolean; fetchLivePricing?: boolean; pricingUrl?: string } };
+    };
+    const costCfg = cfgParsed.localLlm?.costMeter ?? {};
+    if (costCfg.enabled === false || costCfg.fetchLivePricing === false) return;
+    const table = await fetchPricingTable({ url: costCfg.pricingUrl });
+    costMeter.setPricing(table);
+    logger.info("Copilot pricing table loaded", {
+      source: table.source,
+      version: table.version,
+      fetchedAt: table.fetchedAt,
+    });
+  } catch (err) {
+    logger.warn("Cost meter pricing init failed; using bundled fallback", {
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+})();
+// Note: createSessionCostsRouter is mounted earlier (before adminRouter) to
+// avoid the `/sessions/:id` route in adminRouter swallowing `cost-summary`.
+// See Bug #1064-#6a above.
 
 // Knowledge Base API routes
 const knowledgeRouter = createKnowledgeRouter({ knowledgeService });
@@ -2538,6 +2758,22 @@ setDirectorIO(io);
 setPitchIO(io);
 // Bind Socket.IO to Admin router for skill update events
 setAdminIO(io);
+
+// GPU dispatcher live updates — relay every state transition to admin clients
+// so the GPU panel can render real-time queue depth + current job + mutex
+// status without polling. Listeners are added once at boot.
+gpuDispatcher.on("gpu:state-changed", (snapshot) => {
+  io.emit("gpu:dispatcher:state", snapshot);
+});
+gpuDispatcher.on("job:started", (payload) => {
+  io.emit("gpu:dispatcher:job-started", payload);
+});
+gpuDispatcher.on("job:completed", (payload) => {
+  io.emit("gpu:dispatcher:job-completed", payload);
+});
+gpuDispatcher.on("job:failed", (payload) => {
+  io.emit("gpu:dispatcher:job-failed", payload);
+});
 // Bind Socket.IO to Character router for training progress events
 setCharacterIO(io);
 // Wire ChannelManager into Character router for opt-in Telegram training notifications (Issue #415)

@@ -125,4 +125,71 @@ describe("system router", () => {
       expect(res.body.conflicts[0]).toMatch(/sadtalker/);
     });
   });
+
+  // Issue #1063 (Epic #1053): platform endpoint for the System Requirements
+  // card and offline setup wizard.
+  describe("GET /platform", () => {
+    const macProfile = {
+      os: "macos" as const,
+      arch: "arm64" as const,
+      chip: "Apple M4 Max",
+      totalMemoryBytes: 64 * 1024 * 1024 * 1024,
+      unifiedMemoryBytes: 64 * 1024 * 1024 * 1024,
+      gpuKind: "apple-silicon" as const,
+      recommendedBackend: "ollama-mlx" as const,
+      detectedAt: "2026-05-08T00:00:00.000Z",
+    };
+
+    it("returns the detected platform + recommended Gemma 4 variant", async () => {
+      const app = express();
+      app.use(
+        "/api/system",
+        createSystemRouter({
+          loadProfile: async () => fakeProfile,
+          loadPlatform: () => macProfile,
+        }),
+      );
+      const res = await request(app).get("/api/system/platform");
+      expect(res.status).toBe(200);
+      expect(res.body.platform.os).toBe("macos");
+      expect(res.body.platform.gpuKind).toBe("apple-silicon");
+      expect(res.body.recommended.modelId).toBe("gemma4:31b");
+      expect(res.body.unifiedMemoryGb).toBe(64);
+      // largestGpuVramGb comes from fakeProfile.largest_gpu_gb=12 → 12 GB
+      expect(res.body.largestGpuVramGb).toBeCloseTo(12, 1);
+    });
+
+    it("survives GPU detection failure and still returns recommendation", async () => {
+      const app = express();
+      app.use(
+        "/api/system",
+        createSystemRouter({
+          loadProfile: async () => {
+            throw new Error("nvidia-smi missing");
+          },
+          loadPlatform: () => macProfile,
+        }),
+      );
+      const res = await request(app).get("/api/system/platform");
+      expect(res.status).toBe(200);
+      expect(res.body.recommended.modelId).toBe("gemma4:31b");
+      expect(res.body.largestGpuVramGb).toBeNull();
+    });
+
+    it("returns 500 if the platform detector throws", async () => {
+      const app = express();
+      app.use(
+        "/api/system",
+        createSystemRouter({
+          loadProfile: async () => fakeProfile,
+          loadPlatform: () => {
+            throw new Error("kapow");
+          },
+        }),
+      );
+      const res = await request(app).get("/api/system/platform");
+      expect(res.status).toBe(500);
+      expect(res.body.error).toMatch(/platform/i);
+    });
+  });
 });
