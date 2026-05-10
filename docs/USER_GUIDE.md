@@ -478,7 +478,7 @@ OpenZigs can run end-to-end against a local OpenAI-compatible endpoint (Ollama o
    - **Windows:** `winget install Ollama.Ollama` then `ollama pull <model>`
    - **macOS (Apple Silicon):** `brew install ollama`, then `OLLAMA_USE_MLX=1 ollama serve`, then `ollama pull <model>` — the MLX backend uses Apple's Metal Performance Shaders for ~2× throughput on M-series chips.
    - **Linux:** `curl -fsSL https://ollama.com/install.sh | sh` then `ollama pull <model>`
-4. **Test** — click "Probe local endpoints" to confirm Ollama (port 11434) or vLLM (port 8000) is reachable.
+4. **Test** — click "Probe local endpoints" to confirm Ollama (port 11434) is reachable. On macOS the wizard hides vLLM (it's not supported on Apple Silicon) and surfaces an explicit "vLLM is not supported on Apple Silicon — use Ollama + MLX instead." note in place of a misleading "not reachable" error. Validated on M4 Pro / 24 GB unified memory: probe round-trip ~6 ms; `qwen2.5:3b` generation ≈ 84 tok/s, prompt eval ≈ 95 tok/s via the default Metal path.
 5. **Switch** — flip the active provider to local. From here every request that fits under the smart-router threshold (default 4096 input tokens) runs locally.
 
 ### Privacy Mode
