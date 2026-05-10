@@ -346,4 +346,78 @@ describe("LocalLlmPanel", () => {
       });
     });
   });
+
+  /**
+   * Bug #1064-#7 / #10 regression guard.
+   *
+   * Symptom: clicking "Test connection" while `statusQuery.data` is still
+   * undefined (no provider configured / first paint) triggered
+   *   `TypeError: Cannot read properties of undefined (reading 'length')`
+   * inside the `dirty` useMemo, crashing the panel into the Next.js error
+   * overlay and unmounting it.
+   *
+   * Fix: defensively null-coalesce `endpoint`/`model`/`apiKey` in the
+   * memo so a stray undefined from any upstream payload can never crash
+   * the render.
+   */
+  describe("bug #1064-#7: undefined statusQuery.data must not crash on Test connection", () => {
+    const renderPanelWithoutSeed = () => {
+      const qc = new QueryClient({
+        defaultOptions: { queries: { retry: false } },
+      });
+      // Intentionally do NOT seed the local-llm/status query — so
+      // `statusQuery.data` is undefined on first render, exactly like a
+      // fresh admin tab where no provider has been configured yet.
+      const Wrapper = ({ children }: { children: ReactNode }) => (
+        <QueryClientProvider client={qc}>{children}</QueryClientProvider>
+      );
+      Wrapper.displayName = "LocalLlmPanelNoSeedWrapper";
+      return render(<LocalLlmPanel />, { wrapper: Wrapper });
+    };
+
+    it("renders without crashing when statusQuery.data is undefined", () => {
+      // Make autodetect resolve to nothing so we can exercise the click
+      // path without flake.
+      fetchJsonMock.mockImplementation((url: string) => {
+        if (url === "/api/admin/local-llm/autodetect")
+          return Promise.resolve({ ollama: null, vllm: null });
+        // Leave /status pending forever (never resolves) so data stays undefined.
+        if (url === "/api/admin/local-llm/status") return new Promise(() => {});
+        if (url === "/api/admin/local-llm/router") return new Promise(() => {});
+        return Promise.resolve({});
+      });
+      // Should not throw during render.
+      expect(() => renderPanelWithoutSeed()).not.toThrow();
+      // The Test-connection button is reachable and not crashed away.
+      expect(
+        screen.getByRole("button", { name: /test connection/i }),
+      ).toBeInTheDocument();
+    });
+
+    it("clicking Test connection while status is undefined does not crash and shows feedback", async () => {
+      fetchJsonMock.mockImplementation((url: string) => {
+        if (url === "/api/admin/local-llm/autodetect")
+          return Promise.resolve({ ollama: null, vllm: null });
+        if (url === "/api/admin/local-llm/status") return new Promise(() => {});
+        if (url === "/api/admin/local-llm/router") return new Promise(() => {});
+        return Promise.resolve({});
+      });
+      renderPanelWithoutSeed();
+      const btn = screen.getByRole("button", { name: /test connection/i });
+      // The actual regression: the click used to throw inside the dirty
+      // useMemo when endpoint/model became undefined during the resulting
+      // re-render. We assert click + post-click render are both crash-free.
+      expect(() => fireEvent.click(btn)).not.toThrow();
+      await waitFor(() => {
+        expect(showToastMock).toHaveBeenCalledWith(
+          expect.stringContaining("No local LLM detected"),
+          "info",
+        );
+      });
+      // Panel is still mounted (would have unmounted on crash).
+      expect(
+        screen.getByRole("button", { name: /test connection/i }),
+      ).toBeInTheDocument();
+    });
+  });
 });

@@ -291,9 +291,21 @@ export function LocalLlmPanel() {
   const keyPresent = !!statusQuery.data?.vllmKey.present;
 
   const dirty = useMemo(() => {
+    // Bug #1064-#7: defensive null-coalesce. `endpoint`/`model` are
+    // initialized to "" via useState, but a stray setState with an undefined
+    // value (e.g., a malformed autodetect or status response) used to crash
+    // the panel here with `Cannot read properties of undefined (reading
+    // 'length')`. Coalescing keeps the form dirty-check resilient regardless
+    // of upstream payload shape.
+    const safeEndpoint = endpoint ?? "";
+    const safeModel = model ?? "";
     const cur = statusQuery.data?.provider;
-    if (!cur) return endpoint.length > 0 && model.length > 0;
-    return cur.endpoint !== endpoint || cur.model !== model || apiKey.length > 0;
+    if (!cur) return safeEndpoint.length > 0 && safeModel.length > 0;
+    return (
+      cur.endpoint !== safeEndpoint ||
+      cur.model !== safeModel ||
+      (apiKey ?? "").length > 0
+    );
   }, [statusQuery.data?.provider, endpoint, model, apiKey]);
 
   return (
