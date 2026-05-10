@@ -18,10 +18,22 @@ import { useState, useEffect, useMemo, useCallback } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { fetchJson } from "@/lib/api";
-import { CheckCircle2, AlertCircle, ChevronRight, ChevronLeft, Loader2 } from "lucide-react";
+import {
+  CheckCircle2,
+  AlertCircle,
+  ChevronRight,
+  ChevronLeft,
+  Loader2,
+} from "lucide-react";
 
 type OfflineStep = "detect" | "recommend" | "install" | "test" | "switch";
-const STEPS: OfflineStep[] = ["detect", "recommend", "install", "test", "switch"];
+const STEPS: OfflineStep[] = [
+  "detect",
+  "recommend",
+  "install",
+  "test",
+  "switch",
+];
 
 type InstallOs = "windows" | "macos" | "linux";
 const INSTALL_OS_OPTIONS: InstallOs[] = ["windows", "macos", "linux"];
@@ -53,14 +65,25 @@ interface PlatformResponse {
 
 interface AutodetectResponse {
   ollama?: { reachable: boolean; baseUrl?: string; models?: string[] };
-  vllm?: { reachable: boolean; baseUrl?: string; models?: string[] };
+  vllm?: {
+    reachable: boolean;
+    baseUrl?: string;
+    models?: string[];
+    /** Set when the host platform cannot run vLLM (issue #1075). */
+    unsupported?: boolean;
+    /** Human-readable reason; surfaced verbatim in the wizard. */
+    reason?: string;
+  };
 }
 
 interface ProviderResponse {
   provider: { type: string; baseUrl?: string; modelId?: string } | null;
 }
 
-const INSTALL_CMDS: Record<InstallOs | "unknown", { label: string; cmd: string }[]> = {
+const INSTALL_CMDS: Record<
+  InstallOs | "unknown",
+  { label: string; cmd: string }[]
+> = {
   windows: [
     { label: "Install Ollama (winget)", cmd: "winget install Ollama.Ollama" },
     { label: "Pull recommended model", cmd: "ollama pull {{model}}" },
@@ -71,7 +94,10 @@ const INSTALL_CMDS: Record<InstallOs | "unknown", { label: string; cmd: string }
     { label: "Pull recommended model", cmd: "ollama pull {{model}}" },
   ],
   linux: [
-    { label: "Install Ollama", cmd: "curl -fsSL https://ollama.com/install.sh | sh" },
+    {
+      label: "Install Ollama",
+      cmd: "curl -fsSL https://ollama.com/install.sh | sh",
+    },
     { label: "Pull recommended model", cmd: "ollama pull {{model}}" },
   ],
   unknown: [{ label: "Visit ollama.com", cmd: "https://ollama.com/download" }],
@@ -86,7 +112,9 @@ function sanitiseError(err: unknown, fallback: string): string {
   const raw = err instanceof Error ? err.message : String(err ?? "");
   // `fetchJson` formats network errors as `${url} failed with ${status}: ${detail}`.
   // Detail is the most useful piece for the user, so try to recover it.
-  const detail = raw.includes("failed with") ? raw.split(":").slice(1).join(":").trim() : raw;
+  const detail = raw.includes("failed with")
+    ? raw.split(":").slice(1).join(":").trim()
+    : raw;
   if (!detail) return fallback;
   // Refuse anything that looks like HTML or is unreasonably long.
   if (detail.length > 200 || detail.includes("<") || detail.includes("</")) {
@@ -100,7 +128,9 @@ export default function OfflineSetupPage() {
   const [step, setStep] = useState<OfflineStep>("detect");
   const [platform, setPlatform] = useState<PlatformResponse | null>(null);
   const [autodetect, setAutodetect] = useState<AutodetectResponse | null>(null);
-  const [provider, setProvider] = useState<ProviderResponse["provider"] | null>(null);
+  const [provider, setProvider] = useState<ProviderResponse["provider"] | null>(
+    null,
+  );
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
@@ -201,14 +231,19 @@ export default function OfflineSetupPage() {
     const list = INSTALL_CMDS[activeOs] ?? INSTALL_CMDS.unknown;
     return list.map((c) => ({
       ...c,
-      cmd: c.cmd.replace("{{model}}", platform?.recommended.modelId ?? "gemma4:9b"),
+      cmd: c.cmd.replace(
+        "{{model}}",
+        platform?.recommended.modelId ?? "gemma4:9b",
+      ),
     }));
   }, [activeOs, platform]);
 
   return (
     <div className="mx-auto max-w-3xl p-6">
       <header className="mb-6">
-        <h1 className="text-2xl font-bold text-foreground">Offline setup wizard</h1>
+        <h1 className="text-2xl font-bold text-foreground">
+          Offline setup wizard
+        </h1>
         <p className="text-sm text-muted-foreground">
           Get openzigs running fully on your own hardware — no cloud calls.
         </p>
@@ -217,11 +252,12 @@ export default function OfflineSetupPage() {
       {alreadyOffline && !done && (
         <div className="mb-6 rounded-lg border border-emerald-500/40 bg-emerald-500/10 p-4 text-emerald-700 dark:text-emerald-200">
           <div className="flex items-center gap-2 font-semibold">
-            <CheckCircle2 className="h-5 w-5" /> You&apos;re already running offline
+            <CheckCircle2 className="h-5 w-5" /> You&apos;re already running
+            offline
           </div>
           <p className="mt-1 text-sm">
-            Active provider: <code>{provider?.modelId ?? "(model unset)"}</code> @{" "}
-            <code>{provider?.baseUrl ?? "(local)"}</code>
+            Active provider: <code>{provider?.modelId ?? "(model unset)"}</code>{" "}
+            @ <code>{provider?.baseUrl ?? "(local)"}</code>
           </p>
           <button
             onClick={() => {
@@ -266,19 +302,32 @@ export default function OfflineSetupPage() {
       <section className="rounded-lg border border-border bg-card text-card-foreground p-6 shadow-sm">
         {step === "detect" && (
           <div>
-            <h2 className="mb-2 text-lg font-semibold">1. Detect your hardware</h2>
+            <h2 className="mb-2 text-lg font-semibold">
+              1. Detect your hardware
+            </h2>
             {loading ? (
               <Loader2 className="h-5 w-5 animate-spin" />
             ) : platform ? (
               <ul className="space-y-1 text-sm text-card-foreground/80">
-                <li>OS: {platform.platform.os} ({platform.platform.arch})</li>
+                <li>
+                  OS: {platform.platform.os} ({platform.platform.arch})
+                </li>
                 <li>Chip: {platform.platform.chip ?? "(unknown)"}</li>
                 <li>Memory: {platform.memoryGb} GB</li>
-                <li>GPU: {platform.platform.gpuKind}{platform.largestGpuVramGb ? ` (${platform.largestGpuVramGb} GB VRAM)` : ""}</li>
-                <li>Recommended backend: {platform.platform.recommendedBackend}</li>
+                <li>
+                  GPU: {platform.platform.gpuKind}
+                  {platform.largestGpuVramGb
+                    ? ` (${platform.largestGpuVramGb} GB VRAM)`
+                    : ""}
+                </li>
+                <li>
+                  Recommended backend: {platform.platform.recommendedBackend}
+                </li>
               </ul>
             ) : (
-              <p className="text-sm text-muted-foreground">No platform info yet.</p>
+              <p className="text-sm text-muted-foreground">
+                No platform info yet.
+              </p>
             )}
           </div>
         )}
@@ -292,7 +341,11 @@ export default function OfflineSetupPage() {
             </p>
             <p className="mt-2 text-sm">{platform.recommended.rationale}</p>
             <p className="mt-2 text-xs text-muted-foreground">
-              Minimum memory: {Math.round(platform.recommended.minMemoryBytes / 1024 / 1024 / 1024)} GB
+              Minimum memory:{" "}
+              {Math.round(
+                platform.recommended.minMemoryBytes / 1024 / 1024 / 1024,
+              )}{" "}
+              GB
             </p>
           </div>
         )}
@@ -356,10 +409,18 @@ export default function OfflineSetupPage() {
             {autodetect && (
               <ul className="mt-3 space-y-1 text-sm">
                 <li>
-                  Ollama: {autodetect.ollama?.reachable ? "✅ reachable" : "❌ not reachable"}
+                  Ollama:{" "}
+                  {autodetect.ollama?.reachable
+                    ? "✅ reachable"
+                    : "❌ not reachable"}
                 </li>
                 <li>
-                  vLLM: {autodetect.vllm?.reachable ? "✅ reachable" : "❌ not reachable"}
+                  vLLM:{" "}
+                  {autodetect.vllm?.unsupported
+                    ? `⛔ ${autodetect.vllm.reason ?? "not supported on this platform"}`
+                    : autodetect.vllm?.reachable
+                      ? "✅ reachable"
+                      : "❌ not reachable"}
                 </li>
               </ul>
             )}
@@ -368,11 +429,16 @@ export default function OfflineSetupPage() {
 
         {step === "switch" && (
           <div>
-            <h2 className="mb-2 text-lg font-semibold">5. Switch to local provider</h2>
+            <h2 className="mb-2 text-lg font-semibold">
+              5. Switch to local provider
+            </h2>
             {done ? (
               <div className="rounded border border-emerald-500/40 bg-emerald-500/10 p-3 text-sm text-emerald-700 dark:text-emerald-200">
                 Switched to local provider. Visit the{" "}
-                <Link href="/admin" className="underline">admin panel</Link> to verify.
+                <Link href="/admin" className="underline">
+                  admin panel
+                </Link>{" "}
+                to verify.
                 <div className="mt-2">
                   <button
                     type="button"
@@ -405,7 +471,9 @@ export default function OfflineSetupPage() {
           <ChevronLeft className="h-4 w-4" /> Back
         </button>
         <button
-          onClick={() => setStep(STEPS[Math.min(STEPS.length - 1, idx + 1)] as OfflineStep)}
+          onClick={() =>
+            setStep(STEPS[Math.min(STEPS.length - 1, idx + 1)] as OfflineStep)
+          }
           disabled={idx === STEPS.length - 1}
           className="flex items-center gap-1 rounded bg-muted px-3 py-1 text-sm text-foreground hover:bg-muted/80 disabled:opacity-30"
         >
