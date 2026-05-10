@@ -37,7 +37,9 @@ export function SystemRequirementsCard() {
   useEffect(() => {
     fetchJson<PlatformResponse>("/api/system/platform")
       .then(setData)
-      .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)));
+      .catch((e: unknown) =>
+        setError(e instanceof Error ? e.message : String(e)),
+      );
   }, []);
 
   if (error) {
@@ -55,8 +57,11 @@ export function SystemRequirementsCard() {
     );
   }
 
-  const minGb = Math.round(data.recommended.minMemoryBytes / 1024 / 1024 / 1024);
+  const minGb = Math.round(
+    data.recommended.minMemoryBytes / 1024 / 1024 / 1024,
+  );
   const enoughMemory = data.memoryGb >= minGb;
+  const isAppleSilicon = data.platform.gpuKind === "apple-silicon";
 
   return (
     <div className="rounded-lg border border-border bg-card text-card-foreground p-4">
@@ -71,32 +76,41 @@ export function SystemRequirementsCard() {
       </div>
       <dl className="grid grid-cols-2 gap-y-2 text-xs text-muted-foreground">
         <dt>OS</dt>
-        <dd className="text-foreground">{data.platform.os} ({data.platform.arch})</dd>
+        <dd className="text-foreground">
+          {data.platform.os} ({data.platform.arch})
+        </dd>
         <dt>Chip</dt>
         <dd className="text-foreground">{data.platform.chip ?? "—"}</dd>
-        <dt>Memory</dt>
+        <dt>{isAppleSilicon ? "Unified Memory" : "Memory"}</dt>
         <dd className="text-foreground">{data.memoryGb} GB</dd>
         <dt>GPU</dt>
         <dd className="text-foreground">
-          {data.platform.gpuKind}
-          {data.largestGpuVramGb ? ` (${data.largestGpuVramGb} GB VRAM)` : ""}
+          {isAppleSilicon
+            ? "Apple Silicon GPU (Metal)"
+            : `${data.platform.gpuKind}${data.largestGpuVramGb ? ` (${data.largestGpuVramGb} GB VRAM)` : ""}`}
         </dd>
         <dt>Backend</dt>
         <dd className="text-foreground">{data.platform.recommendedBackend}</dd>
         <dt>Recommended</dt>
-        <dd className="font-mono text-emerald-600 dark:text-emerald-400">{data.recommended.modelId}</dd>
+        <dd className="font-mono text-emerald-600 dark:text-emerald-400">
+          {data.recommended.modelId}
+        </dd>
         <dt>Quantisation</dt>
         <dd className="text-foreground">{data.recommended.quantisation}</dd>
         <dt>Min memory</dt>
         <dd
           className={
-            enoughMemory ? "text-foreground" : "text-amber-600 dark:text-amber-400"
+            enoughMemory
+              ? "text-foreground"
+              : "text-amber-600 dark:text-amber-400"
           }
         >
           {minGb} GB {!enoughMemory && "⚠ underprovisioned"}
         </dd>
       </dl>
-      <p className="mt-3 text-xs text-muted-foreground">{data.recommended.rationale}</p>
+      <p className="mt-3 text-xs text-muted-foreground">
+        {data.recommended.rationale}
+      </p>
     </div>
   );
 }

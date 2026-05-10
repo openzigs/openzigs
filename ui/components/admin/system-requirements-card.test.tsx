@@ -36,9 +36,36 @@ describe("SystemRequirementsCard", () => {
     await waitFor(() => {
       expect(screen.getByText("gemma4:31b")).toBeInTheDocument();
     });
-    expect(screen.getByText(/apple-silicon/)).toBeInTheDocument();
+    expect(screen.getByText(/Apple Silicon GPU \(Metal\)/)).toBeInTheDocument();
+    expect(screen.queryByText(/VRAM/)).not.toBeInTheDocument();
+    expect(screen.getByText("Unified Memory")).toBeInTheDocument();
+    expect(screen.queryByText(/^Memory$/)).not.toBeInTheDocument();
     expect(screen.getByText("ollama-mlx")).toBeInTheDocument();
     expect(screen.getAllByText(/64 GB/).length).toBeGreaterThan(0);
+  });
+
+  it("uses 'Memory' label and renders VRAM on non-Mac hosts", async () => {
+    const linuxSample = {
+      ...sample,
+      platform: {
+        os: "linux",
+        arch: "x64",
+        chip: null,
+        gpuKind: "nvidia",
+        recommendedBackend: "ollama",
+      },
+      largestGpuVramGb: 24,
+    };
+    fetchJsonMock.mockResolvedValueOnce(linuxSample);
+    render(<SystemRequirementsCard />);
+    await waitFor(() => {
+      expect(screen.getByText(/^Memory$/)).toBeInTheDocument();
+    });
+    expect(screen.queryByText("Unified Memory")).not.toBeInTheDocument();
+    expect(screen.getByText(/24 GB VRAM/)).toBeInTheDocument();
+    expect(
+      screen.queryByText(/Apple Silicon GPU \(Metal\)/),
+    ).not.toBeInTheDocument();
   });
 
   it("warns when memory is below recommended", async () => {
