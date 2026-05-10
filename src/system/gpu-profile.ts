@@ -5,10 +5,16 @@
  * a cached profile used by the sidecar pinning policy and the /api/system/gpu
  * endpoint. Falls back gracefully when nvidia-smi is missing (CPU-only host or
  * macOS / non-NVIDIA box).
+ *
+ * Issue #1071: on `darwin` the spawn is skipped entirely — there is no
+ * `nvidia-smi` on Mac and we don't want to pay the spawn cost (or risk
+ * shadowing a stray PATH binary). The profile reports a single Apple Silicon
+ * Metal device with `unified: true` so the admin GPU panel can render a Mac
+ * row without inheriting NVIDIA-shaped fields.
  */
 import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
-import { homedir } from "node:os";
+import { homedir, totalmem } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
@@ -49,6 +55,18 @@ export interface GpuProfile {
   pooling_mode?: string;
   /** Default device-pin map: sidecar id → CUDA device index. */
   pinning: Record<string, number>;
+  /**
+   * Apple Silicon block (issue #1071). Populated only on `darwin/arm64`.
+   * `unified: true` flags that the device shares its memory pool with the
+   * CPU — there is no separate VRAM ceiling. NVIDIA-only fields
+   * (`gpus[]`, `total_vram_gb`, `pinning`) collapse to their empty/0
+   * defaults on Mac so consumers don't accidentally render CUDA labels.
+   */
+  apple_silicon?: {
+    name: string;
+    unified: true;
+    unified_memory_gb: number;
+  };
   detected_at: string;
 }
 
@@ -103,6 +121,12 @@ export interface DetectGpuProfileOptions {
   exec?: (cmd: string, args: string[]) => Promise<{ stdout: string }>;
   /** Optional WSL distro to query (Windows hosts where CUDA is in WSL2). */
   wslDistro?: string;
+  /** Override `process.platform` (default `process.platform`). Used so the
+   *  Apple Silicon branch can be exercised on the Windows test rig. */
+  platform?: NodeJS.Platform;
+  /** Override `os.totalmem()` (default `os.totalmem()`). Apple Silicon
+   *  reports the unified memory pool here. */
+  totalMemoryBytes?: number;
 }
 
 /**
@@ -113,6 +137,31 @@ export interface DetectGpuProfileOptions {
 export async function detectGpuProfile(
   opts: DetectGpuProfileOptions = {},
 ): Promise<GpuProfile> {
+  const platform = opts.platform ?? process.platform;
+
+  // Apple Silicon: skip nvidia-smi entirely. Surface the unified-memory Metal
+  // device so the admin GPU panel can render a Mac row.
+  if (platform === "darwin") {
+    const totalBytes = opts.totalMemoryBytes ?? totalmem();
+    const unifiedGb = Math.round(totalBytes / 1024 / 1024 / 1024);
+    return {
+      detected: false,
+      gpus: [],
+      total_vram_gb: 0,
+      largest_gpu_gb: 0,
+      recommended_tier: "low",
+      pooling_supported: false,
+      same_arch: false,
+      pinning: defaultPinning(0),
+      apple_silicon: {
+        name: "Apple Silicon GPU (Metal)",
+        unified: true,
+        unified_memory_gb: unifiedGb,
+      },
+      detected_at: new Date().toISOString(),
+    };
+  }
+
   const exec =
     opts.exec ??
     (async (cmd: string, args: string[]) => {

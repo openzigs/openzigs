@@ -103,7 +103,8 @@ export function createSystemRouter(deps: SystemRouterDeps = {}): Router {
           platform.unifiedMemoryBytes != null
             ? bytesToGb(platform.unifiedMemoryBytes)
             : null,
-        largestGpuVramGb: largestGpuVramBytes != null ? bytesToGb(largestGpuVramBytes) : null,
+        largestGpuVramGb:
+          largestGpuVramBytes != null ? bytesToGb(largestGpuVramBytes) : null,
       });
     } catch (err) {
       res.status(500).json({

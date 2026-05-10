@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import {
   detectGpuProfile,
   tierForVram,
@@ -47,6 +47,7 @@ describe("defaultPinning", () => {
 describe("detectGpuProfile", () => {
   it("parses dual RTX 3060 nvidia-smi output", async () => {
     const profile = await detectGpuProfile({
+      platform: "linux",
       exec: async () => ({
         stdout:
           "0, NVIDIA GeForce RTX 3060, 12288, 11762\n1, NVIDIA GeForce RTX 3060, 12288, 12100\n",
@@ -67,6 +68,7 @@ describe("detectGpuProfile", () => {
 
   it("flags mixed-arch hosts as not pool-supported", async () => {
     const profile = await detectGpuProfile({
+      platform: "linux",
       exec: async () => ({
         stdout:
           "0, NVIDIA GeForce RTX 3060, 12288, 11700\n1, NVIDIA GeForce RTX 4090, 24576, 24000\n",
@@ -82,6 +84,7 @@ describe("detectGpuProfile", () => {
 
   it("returns detected:false when nvidia-smi is missing", async () => {
     const profile = await detectGpuProfile({
+      platform: "linux",
       exec: async () => {
         throw new Error("ENOENT: nvidia-smi not found");
       },
@@ -93,6 +96,7 @@ describe("detectGpuProfile", () => {
 
   it("recommends ultra for a single 24GB card", async () => {
     const profile = await detectGpuProfile({
+      platform: "linux",
       exec: async () => ({
         stdout: "0, NVIDIA GeForce RTX 4090, 24576, 23000\n",
       }),
@@ -108,11 +112,34 @@ describe("detectGpuProfile", () => {
 
   it("ignores malformed rows", async () => {
     const profile = await detectGpuProfile({
+      platform: "linux",
       exec: async () => ({
         stdout: "0, RTX 3060, 12288, 11762\nbroken row\n",
       }),
     });
     expect(profile.gpus).toHaveLength(1);
+  });
+
+  it("on darwin, skips nvidia-smi entirely and reports an Apple Silicon Metal device", async () => {
+    const exec = vi.fn(async () => {
+      throw new Error("nvidia-smi must not be invoked on darwin");
+    });
+    const GB = 1024 * 1024 * 1024;
+    const profile = await detectGpuProfile({
+      platform: "darwin",
+      totalMemoryBytes: 24 * GB,
+      exec,
+    });
+    expect(exec).not.toHaveBeenCalled();
+    expect(profile.detected).toBe(false);
+    expect(profile.gpus).toEqual([]);
+    expect(profile.apple_silicon).toEqual({
+      name: "Apple Silicon GPU (Metal)",
+      unified: true,
+      unified_memory_gb: 24,
+    });
+    expect(profile.total_vram_gb).toBe(0);
+    expect(profile.pooling_supported).toBe(false);
   });
 });
 
@@ -123,8 +150,8 @@ describe("getGpuProfile cache", () => {
       calls++;
       return { stdout: "0, RTX 3060, 12288, 11762\n" };
     };
-    await getGpuProfile({ exec });
-    await getGpuProfile({ exec });
+    await getGpuProfile({ platform: "linux", exec });
+    await getGpuProfile({ platform: "linux", exec });
     expect(calls).toBe(1);
   });
 });
