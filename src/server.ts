@@ -1303,6 +1303,20 @@ const adminRouter = createAdminRouter({
   socialBrain,
   videoPresetsRepo,
 });
+
+// Bug #1064-#6a: the cost-summary route must be mounted BEFORE the main
+// adminRouter. adminRouter declares `/sessions/:id` which would otherwise
+// swallow `cost-summary` as a session id and return
+// `{"error":"Session not found: cost-summary"}` (404). Keeping this mount
+// ahead of adminRouter preserves the public `/api/admin/sessions/cost-summary`
+// URL the UI depends on. The wrapper hookup + bootstrap happens later, where
+// the rest of the local-llm wiring lives.
+const costMeter = new CostMeter({ db, auditLogger });
+app.use(
+  "/api/admin",
+  authMiddleware,
+  createSessionCostsRouter({ costMeter }),
+);
 app.use("/api/admin", authMiddleware, adminRouter);
 
 // vLLM admin routes (Epic #888 / Issue #922) — kept out of admin.ts.
@@ -1389,8 +1403,9 @@ app.use("/api/admin/local-llm", authMiddleware, localLlmRouter);
 // Per-session cost meter (Epic #1053 / Issue #1059) — tracks model spend +
 // "would have cost" against the GitHub Copilot pricing table. The meter
 // fetches the live pricing table at startup with a hardcoded fallback for
-// air-gapped installs.
-const costMeter = new CostMeter({ db, auditLogger });
+// air-gapped installs. The instance is created earlier so the
+// /sessions/cost-summary route can be mounted before adminRouter; here we
+// just wire it into the copilot wrapper.
 // Phase 3.5: hand the meter + audit logger to the wrapper so every call's
 // router decision and cost row is recorded automatically.
 copilot.setCostMeter(costMeter);
@@ -1469,11 +1484,9 @@ void (async () => {
     });
   }
 })();
-app.use(
-  "/api/admin",
-  authMiddleware,
-  createSessionCostsRouter({ costMeter }),
-);
+// Note: createSessionCostsRouter is mounted earlier (before adminRouter) to
+// avoid the `/sessions/:id` route in adminRouter swallowing `cost-summary`.
+// See Bug #1064-#6a above.
 
 // Knowledge Base API routes
 const knowledgeRouter = createKnowledgeRouter({ knowledgeService });
