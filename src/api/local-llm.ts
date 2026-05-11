@@ -37,6 +37,7 @@ import {
   autodetectEndpoints,
   type AutodetectResult,
 } from "../copilot/providers/autodetect.js";
+import { resolveOllamaTarget } from "../copilot/providers/ollama-resolver.js";
 import { logger } from "../logging/logger.js";
 import type { AuditLogger } from "../logging/audit-logger.js";
 
@@ -130,6 +131,16 @@ async function readLocalLlmBlock(
         cloudThresholdTokens: 4096,
       },
       costMeter: block.costMeter ?? { enabled: true, fetchLivePricing: true },
+      // #1077-B: ollama node block (local 11434 default; LAN-reachable in
+      // network mode). The autodetect handler below threads `localUrl` /
+      // `networkNodeUrl` into the probe so users with a remote Ollama
+      // node still get autodetected models in the wizard + admin UI.
+      ollama: block.ollama ?? {
+        mode: "local",
+        localUrl: "http://127.0.0.1:11434",
+        networkNodeUrl: "",
+        networkNodeToken: "",
+      },
     },
   };
 }
@@ -222,7 +233,12 @@ export function createLocalLlmRouter(deps: LocalLlmDeps = {}): Router {
         res.json({ ...empty, skipped: true });
         return;
       }
-      const result = await autodetectEndpoints({ fetchImpl: deps.fetchImpl });
+      const result = await autodetectEndpoints({
+        fetchImpl: deps.fetchImpl,
+        // #1077-B: respect the configured remote-Ollama target so the
+        // wizard "Test connection" button discovers models on a LAN node.
+        ollamaBaseUrl: resolveOllamaTarget(localLlm.ollama).baseUrl,
+      });
       if (audit) {
         await audit.log({
           level: "info",
@@ -300,6 +316,7 @@ export function createLocalLlmRouter(deps: LocalLlmDeps = {}): Router {
   router.get("/status", async (_req: Request, res: Response) => {
     const { localLlm } = await readLocalLlmBlock(configPath);
     const provider = localLlm.provider ?? null;
+    const ollamaTarget = resolveOllamaTarget(localLlm.ollama);
     res.json({
       provider: provider
         ? {
@@ -321,6 +338,10 @@ export function createLocalLlmRouter(deps: LocalLlmDeps = {}): Router {
       vllmKey: {
         masked: maskKey(localLlm.vllmApiKey),
         present: !!localLlm.vllmApiKey,
+      },
+      ollama: {
+        mode: ollamaTarget.mode,
+        resolvedUrl: ollamaTarget.baseUrl,
       },
     });
   });

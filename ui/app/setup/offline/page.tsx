@@ -393,6 +393,30 @@ export default function OfflineSetupPage() {
                 </li>
               ))}
             </ul>
+            {activeOs === "macos" && (
+              <div
+                className="mt-4 rounded border border-blue-500/30 bg-blue-500/5 p-3 text-xs text-blue-700 dark:text-blue-300"
+                role="note"
+                data-testid="wizard-remote-ollama-tip"
+              >
+                <p className="font-medium">
+                  Have a second Mac? Run Ollama there instead
+                </p>
+                <p className="mt-1">
+                  A peer Mac with 36 GB+ unified memory can host{" "}
+                  <code>gemma4:31b</code> at INT4 and keep this Mac free. After
+                  install, go to{" "}
+                  <Link href="/admin" className="underline">
+                    Admin → Ollama Node
+                  </Link>{" "}
+                  to point openzigs at the LAN peer. See{" "}
+                  <a href="/docs/REMOTE_OLLAMA_SETUP.md" className="underline">
+                    docs/REMOTE_OLLAMA_SETUP.md
+                  </a>
+                  .
+                </p>
+              </div>
+            )}
           </div>
         )}
 

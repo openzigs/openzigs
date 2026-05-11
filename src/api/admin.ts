@@ -7042,7 +7042,9 @@ export const createAdminRouter = ({
     const userConfig = await readUserConfig(defaultConfigPath());
     const vg = (userConfig.videoGen ?? {}) as Record<string, unknown>;
     const url =
-      vg.mode === "network" && typeof vg.networkNodeUrl === "string" && vg.networkNodeUrl
+      vg.mode === "network" &&
+      typeof vg.networkNodeUrl === "string" &&
+      vg.networkNodeUrl
         ? vg.networkNodeUrl
         : (process.env.M2_PRO_WORKER_URL ?? "http://localhost:5007");
     const token =
@@ -7071,6 +7073,200 @@ export const createAdminRouter = ({
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return res.status(502).json({ error: message });
+    }
+  });
+
+  // ── Remote Ollama Node Configuration (#1077-B) ──
+  // Mirrors the FluxQ /image-gen/config + /image-gen/health pattern. The
+  // block lives nested under `localLlm.ollama` (not a top-level key) so the
+  // shape is `{mode, localUrl, networkNodeUrl, networkNodeToken}`.
+  router.get("/local-llm/ollama/config", async (_req, res) => {
+    try {
+      const userConfig = await readUserConfig(defaultConfigPath());
+      const localLlm = (userConfig.localLlm ?? {}) as Record<string, unknown>;
+      const ollama = (localLlm.ollama ?? {}) as Record<string, unknown>;
+      return res.json({
+        mode: ollama.mode ?? "local",
+        localUrl: ollama.localUrl ?? "http://127.0.0.1:11434",
+        networkNodeUrl: ollama.networkNodeUrl ?? "",
+        networkNodeToken: ollama.networkNodeToken ? "••••••••" : "",
+        hasToken: !!ollama.networkNodeToken,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return res.status(500).json({ error: message });
+    }
+  });
+
+  router.put("/local-llm/ollama/config", async (req, res) => {
+    const body = req.body as Record<string, unknown>;
+    const mode = body.mode as string | undefined;
+    const localUrl = body.localUrl as string | undefined;
+    const networkNodeUrl = body.networkNodeUrl as string | undefined;
+    const networkNodeToken = body.networkNodeToken as string | undefined;
+
+    if (mode !== undefined && mode !== "local" && mode !== "network") {
+      return res
+        .status(400)
+        .json({ error: "mode must be 'local' or 'network'" });
+    }
+    if (localUrl !== undefined && typeof localUrl !== "string") {
+      return res.status(400).json({ error: "localUrl must be a string" });
+    }
+    if (networkNodeUrl !== undefined && typeof networkNodeUrl !== "string") {
+      return res.status(400).json({ error: "networkNodeUrl must be a string" });
+    }
+    if (networkNodeUrl && !/^https?:\/\/.+/.test(networkNodeUrl)) {
+      return res
+        .status(400)
+        .json({ error: "networkNodeUrl must be a valid HTTP(S) URL" });
+    }
+    // SSRF guard — blocks loopback + cloud metadata; permits RFC1918 LAN.
+    if (
+      networkNodeUrl &&
+      mode === "network" &&
+      !isAllowedNetworkNodeUrl(networkNodeUrl)
+    ) {
+      return res
+        .status(400)
+        .json({ error: "URL points to a blocked internal/loopback host" });
+    }
+
+    try {
+      const configPath = defaultConfigPath();
+      const userConfig = await readUserConfig(configPath);
+      const existingLocalLlm = (userConfig.localLlm ?? {}) as Record<
+        string,
+        unknown
+      >;
+      const existing = (existingLocalLlm.ollama ?? {}) as Record<
+        string,
+        unknown
+      >;
+      const updated: Record<string, unknown> = { ...existing };
+      if (mode !== undefined) updated.mode = mode;
+      if (localUrl !== undefined) updated.localUrl = localUrl;
+      if (networkNodeUrl !== undefined) updated.networkNodeUrl = networkNodeUrl;
+      if (networkNodeToken !== undefined)
+        updated.networkNodeToken = networkNodeToken;
+      userConfig.localLlm = { ...existingLocalLlm, ollama: updated };
+      await writeUserConfig(configPath, userConfig);
+
+      logger.info(`[Admin] Ollama node config updated: mode=${updated.mode}`);
+      return res.json({
+        ok: true,
+        mode: updated.mode,
+        localUrl: updated.localUrl,
+        networkNodeUrl: updated.networkNodeUrl,
+        hasToken: !!updated.networkNodeToken,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return res.status(500).json({ error: message });
+    }
+  });
+
+  // POST /local-llm/ollama/test-connection — probe the configured (or
+  // explicit body-supplied) Ollama node. Returns `{ok, version?, models?,
+  // modelCount?, error?}`. Used by the admin Ollama Node panel "Test
+  // Connection" button. Body params override saved config so users can
+  // validate before saving.
+  router.post("/local-llm/ollama/test-connection", async (req, res) => {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const mode = body.mode as string | undefined;
+    const localUrl = body.localUrl as string | undefined;
+    const networkNodeUrl = body.networkNodeUrl as string | undefined;
+    const networkNodeToken = body.networkNodeToken as string | undefined;
+
+    let targetUrl: string;
+    let targetToken: string | undefined;
+    try {
+      if (mode === "network") {
+        const url = (networkNodeUrl ?? "").trim();
+        if (!url || !/^https?:\/\/.+/.test(url)) {
+          return res
+            .status(400)
+            .json({ error: "networkNodeUrl must be a valid HTTP(S) URL" });
+        }
+        if (!isAllowedNetworkNodeUrl(url)) {
+          return res
+            .status(400)
+            .json({ error: "URL points to a blocked internal/loopback host" });
+        }
+        targetUrl = url.replace(/\/$/, "");
+        targetToken = networkNodeToken;
+      } else if (mode === "local") {
+        targetUrl = (
+          (localUrl ?? "").trim() || "http://127.0.0.1:11434"
+        ).replace(/\/$/, "");
+      } else {
+        // No mode override → use saved config.
+        const userConfig = await readUserConfig(defaultConfigPath());
+        const localLlm = (userConfig.localLlm ?? {}) as Record<string, unknown>;
+        const ollama = (localLlm.ollama ?? {}) as Record<string, unknown>;
+        const savedMode = (ollama.mode as string) ?? "local";
+        if (savedMode === "network") {
+          targetUrl = ((ollama.networkNodeUrl as string) || "").replace(
+            /\/$/,
+            "",
+          );
+          if (!targetUrl) {
+            return res.json({
+              ok: false,
+              error: "No network node URL configured",
+            });
+          }
+          targetToken = ollama.networkNodeToken as string | undefined;
+        } else {
+          targetUrl = (
+            (ollama.localUrl as string) || "http://127.0.0.1:11434"
+          ).replace(/\/$/, "");
+        }
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return res.status(500).json({ error: message });
+    }
+
+    const headers: Record<string, string> = {};
+    if (targetToken) headers["Authorization"] = `Bearer ${targetToken}`;
+
+    try {
+      // Hit /api/version + /api/tags (Ollama's native API, not OpenAI shim).
+      // Both are cheap GETs that return JSON. 5s timeout matches FluxQ.
+      const [versionRes, tagsRes] = await Promise.all([
+        fetch(`${targetUrl}/api/version`, {
+          headers,
+          signal: AbortSignal.timeout(5000),
+        }),
+        fetch(`${targetUrl}/api/tags`, {
+          headers,
+          signal: AbortSignal.timeout(5000),
+        }),
+      ]);
+      if (!versionRes.ok) {
+        return res.json({
+          ok: false,
+          status: versionRes.status,
+          error: `HTTP ${versionRes.status} from /api/version`,
+        });
+      }
+      const versionData = (await versionRes.json()) as { version?: string };
+      const tagsData = tagsRes.ok
+        ? ((await tagsRes.json()) as {
+            models?: Array<{ name: string }>;
+          })
+        : { models: [] };
+      const models = (tagsData.models ?? []).map((m) => m.name);
+      return res.json({
+        ok: true,
+        version: versionData.version ?? "unknown",
+        models,
+        modelCount: models.length,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return res.json({ ok: false, error: message });
     }
   });
 
