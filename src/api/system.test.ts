@@ -27,7 +27,10 @@ const fakeProfile: GpuProfile = {
 describe("system router", () => {
   it("GET /gpu returns the profile", async () => {
     const app = express();
-    app.use("/api/system", createSystemRouter({ loadProfile: async () => fakeProfile }));
+    app.use(
+      "/api/system",
+      createSystemRouter({ loadProfile: async () => fakeProfile }),
+    );
     const res = await request(app).get("/api/system/gpu");
     expect(res.status).toBe(200);
     expect(res.body.detected).toBe(true);
@@ -190,6 +193,50 @@ describe("system router", () => {
       const res = await request(app).get("/api/system/platform");
       expect(res.status).toBe(500);
       expect(res.body.error).toMatch(/platform/i);
+    });
+
+    // Admin parity bug #1077-A: Apple Silicon hosts must report vLLM as
+    // unsupported so the admin Local LLM Provider combobox + Local vLLM
+    // panel can render the same "⛔" affordance the wizard already shows.
+    it("reports vllmSupported=false with reason on Apple Silicon", async () => {
+      const app = express();
+      app.use(
+        "/api/system",
+        createSystemRouter({
+          loadProfile: async () => fakeProfile,
+          loadPlatform: () => macProfile,
+        }),
+      );
+      const res = await request(app).get("/api/system/platform");
+      expect(res.status).toBe(200);
+      expect(res.body.vllmSupported).toBe(false);
+      expect(res.body.vllmUnsupportedReason).toMatch(/Apple Silicon/);
+      expect(res.body.vllmUnsupportedReason).toMatch(/Ollama \+ MLX/);
+    });
+
+    it("reports vllmSupported=true with null reason on NVIDIA hosts", async () => {
+      const linuxNvidiaProfile = {
+        os: "linux" as const,
+        arch: "x64" as const,
+        chip: "x86_64 CPU",
+        totalMemoryBytes: 64 * 1024 * 1024 * 1024,
+        unifiedMemoryBytes: null,
+        gpuKind: "nvidia" as const,
+        recommendedBackend: "ollama-cuda" as const,
+        detectedAt: "2026-05-08T00:00:00.000Z",
+      };
+      const app = express();
+      app.use(
+        "/api/system",
+        createSystemRouter({
+          loadProfile: async () => fakeProfile,
+          loadPlatform: () => linuxNvidiaProfile,
+        }),
+      );
+      const res = await request(app).get("/api/system/platform");
+      expect(res.status).toBe(200);
+      expect(res.body.vllmSupported).toBe(true);
+      expect(res.body.vllmUnsupportedReason).toBeNull();
     });
   });
 });

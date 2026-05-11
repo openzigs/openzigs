@@ -37,11 +37,33 @@ import {
 type ProviderType = "local-copilot";
 type ProviderPreset = "ollama" | "vllm" | "custom";
 
-const PROVIDER_PRESETS: { value: ProviderPreset; label: string; defaultEndpoint: string }[] = [
-  { value: "ollama", label: "Ollama (local)", defaultEndpoint: "http://127.0.0.1:11434/v1" },
-  { value: "vllm", label: "vLLM (local)", defaultEndpoint: "http://127.0.0.1:8000/v1" },
+const PROVIDER_PRESETS: {
+  value: ProviderPreset;
+  label: string;
+  defaultEndpoint: string;
+}[] = [
+  {
+    value: "ollama",
+    label: "Ollama (local)",
+    defaultEndpoint: "http://127.0.0.1:11434/v1",
+  },
+  {
+    value: "vllm",
+    label: "vLLM (local)",
+    defaultEndpoint: "http://127.0.0.1:8000/v1",
+  },
   { value: "custom", label: "Custom OpenAI-compatible", defaultEndpoint: "" },
 ];
+
+/**
+ * Subset of the `/api/system/platform` response we consume for the admin
+ * parity bug-fix (#1077). The wizard already labels vLLM as unsupported
+ * on Apple Silicon — the admin combobox + dedicated vLLM panel must too.
+ */
+interface PlatformResponse {
+  vllmSupported?: boolean;
+  vllmUnsupportedReason?: string | null;
+}
 
 function detectPreset(endpoint: string): ProviderPreset {
   if (endpoint.includes("11434")) return "ollama";
@@ -92,10 +114,22 @@ type RouterThreshold = (typeof ROUTER_THRESHOLD_STOPS)[number];
 const PRIVACY_LS_KEY = "openzigs:privacy-mode";
 
 const HEALTH_BADGE = {
-  healthy: { label: "Healthy", className: "bg-green-100 text-green-800 border-green-300" },
-  degraded: { label: "Degraded", className: "bg-amber-100 text-amber-900 border-amber-300" },
-  "failed-over": { label: "Failed over", className: "bg-red-100 text-red-800 border-red-300" },
-  disabled: { label: "Disabled", className: "bg-gray-100 text-gray-700 border-gray-300" },
+  healthy: {
+    label: "Healthy",
+    className: "bg-green-100 text-green-800 border-green-300",
+  },
+  degraded: {
+    label: "Degraded",
+    className: "bg-amber-100 text-amber-900 border-amber-300",
+  },
+  "failed-over": {
+    label: "Failed over",
+    className: "bg-red-100 text-red-800 border-red-300",
+  },
+  disabled: {
+    label: "Disabled",
+    className: "bg-gray-100 text-gray-700 border-gray-300",
+  },
 } as const;
 
 const extractError = (err: unknown): string => {
@@ -130,7 +164,9 @@ export function LocalLlmPanel() {
   // Hydrate per-session privacy from localStorage on mount.
   useEffect(() => {
     if (typeof window === "undefined") return;
-    setPerSessionPrivacy(window.localStorage.getItem(PRIVACY_LS_KEY) === "true");
+    setPerSessionPrivacy(
+      window.localStorage.getItem(PRIVACY_LS_KEY) === "true",
+    );
   }, []);
 
   const togglePerSessionPrivacy = (next: boolean) => {
@@ -149,6 +185,17 @@ export function LocalLlmPanel() {
     refetchInterval: 30_000,
   });
 
+  // Bug #1077-A1: gate the vLLM preset on host capability so Mac users
+  // can't silently pick a backend that won't run. Cheap, cached, no poll.
+  const platformQuery = useQuery({
+    queryKey: ["system", "platform"],
+    queryFn: () => fetchJson<PlatformResponse>("/api/system/platform"),
+    staleTime: 5 * 60_000,
+  });
+  const vllmSupported = platformQuery.data?.vllmSupported !== false;
+  const vllmUnsupportedReason =
+    platformQuery.data?.vllmUnsupportedReason ?? null;
+
   // Hydrate form from status whenever provider changes server-side.
   useEffect(() => {
     if (statusQuery.data?.provider) {
@@ -159,7 +206,8 @@ export function LocalLlmPanel() {
   }, [statusQuery.data?.provider]);
 
   const testConnection = useMutation({
-    mutationFn: () => fetchJson<AutodetectResponse>("/api/admin/local-llm/autodetect"),
+    mutationFn: () =>
+      fetchJson<AutodetectResponse>("/api/admin/local-llm/autodetect"),
     onSuccess: (data) => {
       if (data.skipped) {
         showToast("Autodetect disabled in config", "info");
@@ -175,7 +223,10 @@ export function LocalLlmPanel() {
       setPreset(detectPreset(hit.endpoint));
       // Bug #1064-#7: explicit success toast naming the provider/endpoint.
       const providerName = data.ollama ? "Ollama" : "vLLM";
-      showToast(`Connection OK — found ${providerName} at ${hit.endpoint}`, "success");
+      showToast(
+        `Connection OK — found ${providerName} at ${hit.endpoint}`,
+        "success",
+      );
     },
     onError: (err) => showToast(extractError(err), "error"),
   });
@@ -221,7 +272,9 @@ export function LocalLlmPanel() {
       }),
     onSuccess: (_data, variables) => {
       showToast(
-        variables ? "Global privacy lockdown ENABLED" : "Global lockdown disabled",
+        variables
+          ? "Global privacy lockdown ENABLED"
+          : "Global lockdown disabled",
         variables ? "info" : "success",
       );
       void queryClient.invalidateQueries({ queryKey: ["local-llm"] });
@@ -237,7 +290,10 @@ export function LocalLlmPanel() {
       ),
     onSuccess: (data) => {
       setRevealedKey(data.apiKey);
-      showToast("vLLM API key rotated. Copy now — you won't see it again.", "info");
+      showToast(
+        "vLLM API key rotated. Copy now — you won't see it again.",
+        "info",
+      );
       void queryClient.invalidateQueries({ queryKey: ["local-llm"] });
     },
     onError: (err) => showToast(extractError(err), "error"),
@@ -258,15 +314,17 @@ export function LocalLlmPanel() {
   // visually re-controlled (and refocused-from-elsewhere) on every React
   // Query refetch. We sync from server when the query data changes and
   // we're not in the middle of a pending update.
-  const [draftThreshold, setDraftThreshold] = useState<RouterThreshold>(
-    routerThreshold,
-  );
+  const [draftThreshold, setDraftThreshold] =
+    useState<RouterThreshold>(routerThreshold);
   useEffect(() => {
     setDraftThreshold(routerThreshold);
   }, [routerThreshold]);
 
   const updateRouter = useMutation({
-    mutationFn: (next: { enabled: boolean; cloudThresholdTokens: RouterThreshold }) =>
+    mutationFn: (next: {
+      enabled: boolean;
+      cloudThresholdTokens: RouterThreshold;
+    }) =>
       fetchJson("/api/admin/local-llm/router", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -317,8 +375,9 @@ export function LocalLlmPanel() {
             Local LLM Provider
           </h2>
           <p className="mt-1 text-sm text-gray-600">
-            Run Copilot CLI fully offline against a local OpenAI-compatible endpoint
-            (Ollama or vLLM). Privacy mode hard-blocks any remote fallback.
+            Run Copilot CLI fully offline against a local OpenAI-compatible
+            endpoint (Ollama or vLLM). Privacy mode hard-blocks any remote
+            fallback.
           </p>
         </div>
         <span
@@ -342,7 +401,11 @@ export function LocalLlmPanel() {
               const next = value as ProviderPreset;
               setPreset(next);
               const opt = PROVIDER_PRESETS.find((p) => p.value === next);
-              if (opt && opt.defaultEndpoint && (!endpoint || endpoint !== opt.defaultEndpoint)) {
+              if (
+                opt &&
+                opt.defaultEndpoint &&
+                (!endpoint || endpoint !== opt.defaultEndpoint)
+              ) {
                 setEndpoint(opt.defaultEndpoint);
               }
             }}
@@ -355,14 +418,41 @@ export function LocalLlmPanel() {
               <SelectValue placeholder="Select provider" />
             </SelectTrigger>
             <SelectContent>
-              {PROVIDER_PRESETS.map((p) => (
-                <SelectItem key={p.value} value={p.value}>
-                  {p.label}
-                </SelectItem>
-              ))}
+              {PROVIDER_PRESETS.map((p) => {
+                // Bug #1077-A1: vLLM has no Apple Silicon build. Disable
+                // the option AND prefix its label with the wizard's "⛔"
+                // affordance so users on Mac can't pick a backend that
+                // won't run, but can still see WHY it's unavailable.
+                const isVllmDisabled = p.value === "vllm" && !vllmSupported;
+                const label = isVllmDisabled
+                  ? `⛔ ${p.label} — ${vllmUnsupportedReason ?? "not supported on this platform"}`
+                  : p.label;
+                return (
+                  <SelectItem
+                    key={p.value}
+                    value={p.value}
+                    disabled={isVllmDisabled}
+                    aria-disabled={isVllmDisabled || undefined}
+                    data-testid={`provider-preset-${p.value}`}
+                  >
+                    {label}
+                  </SelectItem>
+                );
+              })}
             </SelectContent>
           </Select>
         </label>
+        {!vllmSupported && (
+          <p
+            className="text-xs text-amber-700 dark:text-amber-400"
+            data-testid="vllm-unsupported-notice"
+            role="note"
+          >
+            ⛔{" "}
+            {vllmUnsupportedReason ??
+              "vLLM is not supported on this platform — use Ollama instead."}
+          </p>
+        )}
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
           <label className="flex flex-col gap-1 text-sm">
             <span className="font-medium text-gray-700">Endpoint</span>
@@ -387,12 +477,18 @@ export function LocalLlmPanel() {
             />
           </label>
           <label className="flex flex-col gap-1 text-sm md:col-span-2">
-            <span className="font-medium text-gray-700">API Key (optional)</span>
+            <span className="font-medium text-gray-700">
+              API Key (optional)
+            </span>
             <input
               type="password"
               value={apiKey}
               onChange={(e) => setApiKey(e.target.value)}
-              placeholder={statusQuery.data?.provider?.hasApiKey ? "•••• stored ••••" : "Leave blank for none"}
+              placeholder={
+                statusQuery.data?.provider?.hasApiKey
+                  ? "•••• stored ••••"
+                  : "Leave blank for none"
+              }
               className="rounded border border-gray-300 px-3 py-2 font-mono text-xs"
               aria-label="API key"
               autoComplete="off"
@@ -406,7 +502,11 @@ export function LocalLlmPanel() {
             disabled={testConnection.isPending}
             className="inline-flex items-center gap-2 rounded border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium hover:bg-gray-50 disabled:opacity-50"
           >
-            {testConnection.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+            {testConnection.isPending ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <RefreshCw className="h-4 w-4" />
+            )}
             Test connection
           </button>
           <button
@@ -415,7 +515,9 @@ export function LocalLlmPanel() {
             disabled={!dirty || saveProvider.isPending || !endpoint || !model}
             className="inline-flex items-center gap-2 rounded bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
           >
-            {saveProvider.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
+            {saveProvider.isPending && (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            )}
             Save provider
           </button>
           {statusQuery.data?.provider && (
@@ -424,7 +526,8 @@ export function LocalLlmPanel() {
               onClick={() =>
                 setConfirmDialog({
                   title: "Clear local provider?",
-                  description: "The active local-copilot provider will be cleared. New chats will route to cloud providers (subject to privacy mode).",
+                  description:
+                    "The active local-copilot provider will be cleared. New chats will route to cloud providers (subject to privacy mode).",
                   confirmLabel: "Clear provider",
                   destructive: true,
                   onConfirm: () => clearProvider.mutate(),
@@ -452,8 +555,8 @@ export function LocalLlmPanel() {
             aria-label="Per-session privacy mode"
           />
           <span>
-            <strong>Per-session</strong>: hard-block remote provider fallback for new
-            chats from this browser only.
+            <strong>Per-session</strong>: hard-block remote provider fallback
+            for new chats from this browser only.
           </span>
         </label>
         <label className="flex items-center gap-3 text-sm">
@@ -478,7 +581,8 @@ export function LocalLlmPanel() {
             aria-label="Global privacy lockdown"
           />
           <span>
-            <strong>Global lockdown</strong>: server-enforced; persisted across restarts.
+            <strong>Global lockdown</strong>: server-enforced; persisted across
+            restarts.
           </span>
         </label>
       </section>
@@ -517,7 +621,10 @@ export function LocalLlmPanel() {
           <p className="text-sm text-gray-600">
             {keyPresent ? (
               <>
-                Stored key: <code className="rounded bg-gray-100 px-1 py-0.5 text-xs">{masked}</code>
+                Stored key:{" "}
+                <code className="rounded bg-gray-100 px-1 py-0.5 text-xs">
+                  {masked}
+                </code>
               </>
             ) : (
               "No key stored yet."
@@ -529,7 +636,8 @@ export function LocalLlmPanel() {
           onClick={() =>
             setConfirmDialog({
               title: "Rotate vLLM API key?",
-              description: "A new key will be generated. Any clients using the old key will need to be updated. The new key will be revealed once.",
+              description:
+                "A new key will be generated. Any clients using the old key will need to be updated. The new key will be revealed once.",
               confirmLabel: "Rotate key",
               destructive: true,
               onConfirm: () => rotateKey.mutate(),
@@ -577,7 +685,9 @@ export function LocalLlmPanel() {
             className="block text-xs font-medium text-blue-900"
           >
             Cloud threshold (tokens):{" "}
-            <span data-testid="smart-router-threshold-value">{draftThreshold}</span>
+            <span data-testid="smart-router-threshold-value">
+              {draftThreshold}
+            </span>
           </label>
           <input
             id="smart-router-threshold"

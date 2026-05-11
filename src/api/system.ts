@@ -18,6 +18,7 @@ import {
   type PlatformProfile,
   type RecommendedModel,
 } from "../system/platform-detector.js";
+import { VLLM_UNSUPPORTED_DARWIN_REASON } from "../copilot/providers/autodetect.js";
 import {
   summariseClaims,
   type GpuCoordinator,
@@ -95,6 +96,12 @@ export function createSystemRouter(deps: SystemRouterDeps = {}): Router {
       const recommended: RecommendedModel = recommendGemma4Variant(platform, {
         largestGpuVramBytes,
       });
+      // vLLM has no Apple Silicon build (#1075). Surface the flag to the
+      // admin UI so the Local LLM Provider combobox + the dedicated vLLM
+      // panel can render the same "⛔ unsupported" affordance the wizard
+      // shows. Single source of truth — derived from gpuKind, never from
+      // a separate probe.
+      const vllmSupported = platform.gpuKind !== "apple-silicon";
       res.json({
         platform,
         recommended,
@@ -105,6 +112,10 @@ export function createSystemRouter(deps: SystemRouterDeps = {}): Router {
             : null,
         largestGpuVramGb:
           largestGpuVramBytes != null ? bytesToGb(largestGpuVramBytes) : null,
+        vllmSupported,
+        vllmUnsupportedReason: vllmSupported
+          ? null
+          : VLLM_UNSUPPORTED_DARWIN_REASON,
       });
     } catch (err) {
       res.status(500).json({
