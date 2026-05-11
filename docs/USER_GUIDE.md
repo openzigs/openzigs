@@ -481,6 +481,8 @@ OpenZigs can run end-to-end against a local OpenAI-compatible endpoint (Ollama o
 4. **Test** — click "Probe local endpoints" to confirm Ollama (port 11434) is reachable. On macOS the wizard hides vLLM (it's not supported on Apple Silicon) and surfaces an explicit "vLLM is not supported on Apple Silicon — use Ollama + MLX instead." note in place of a misleading "not reachable" error. Validated on M4 Pro / 24 GB unified memory: probe round-trip ~6 ms; `qwen2.5:3b` generation ≈ 84 tok/s, prompt eval ≈ 95 tok/s via the default Metal path.
 5. **Switch** — flip the active provider to local. From here every request that fits under the smart-router threshold (default 4096 input tokens) runs locally.
 
+> **Tip — second-Mac offload.** If your primary Mac has < 36 GB unified memory but you want to run `gemma4:31b` (INT4), install Ollama on a peer Mac on your LAN and point OpenZigs at it via **Admin → Ollama Node**. Full walkthrough: [REMOTE_OLLAMA_SETUP.md](REMOTE_OLLAMA_SETUP.md).
+
 ### Privacy Mode
 
 Privacy mode is a hard kill switch. When enabled per-session (toggle in chat) or globally (admin panel), every request must go to the local provider. If no local provider is configured, the request **fails** rather than silently falling back to cloud — by design.

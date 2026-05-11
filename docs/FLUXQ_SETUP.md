@@ -225,3 +225,7 @@ Available models: `flux-schnell` (4-step, fast) and `flux-dev` (25-step, higher 
   internet.** The sidecar is designed for trusted LAN use only.
 - Token comparison uses `hmac.compare_digest` to prevent timing attacks.
 - The token is stored with `0600` permissions in `~/.openzigs/config.json`.
+
+## See also
+
+- [REMOTE_OLLAMA_SETUP.md](REMOTE_OLLAMA_SETUP.md) — the same "second-Mac on the LAN" pattern for local-LLM inference (Ollama / Gemma 4).
