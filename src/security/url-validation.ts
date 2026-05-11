@@ -22,11 +22,17 @@ export function isAllowedWebhookUrl(urlString: string): boolean {
   const hostname = parsed.hostname.toLowerCase();
 
   // Block localhost
-  if (hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]") return false;
+  if (
+    hostname === "localhost" ||
+    hostname === "127.0.0.1" ||
+    hostname === "[::1]"
+  )
+    return false;
   // Block 0.0.0.0
   if (hostname === "0.0.0.0") return false;
   // Block AWS/GCP/Azure metadata endpoints
-  if (hostname === "169.254.169.254" || hostname === "metadata.google.internal") return false;
+  if (hostname === "169.254.169.254" || hostname === "metadata.google.internal")
+    return false;
   // Block link-local
   if (hostname.startsWith("169.254.")) return false;
   // Block private IPv4 ranges
@@ -34,7 +40,11 @@ export function isAllowedWebhookUrl(urlString: string): boolean {
   if (hostname.startsWith("192.168.")) return false;
   if (/^172\.(1[6-9]|2\d|3[01])\./.test(hostname)) return false;
   // Block IPv6 link-local
-  if (hostname.startsWith("[fe80:") || hostname.startsWith("[fc") || hostname.startsWith("[fd"))
+  if (
+    hostname.startsWith("[fe80:") ||
+    hostname.startsWith("[fc") ||
+    hostname.startsWith("[fd")
+  )
     return false;
 
   return true;
@@ -59,15 +69,25 @@ export function isAllowedNetworkNodeUrl(urlString: string): boolean {
   const hostname = parsed.hostname.toLowerCase();
 
   // Block loopback and unspecified
-  if (hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]") return false;
+  if (
+    hostname === "localhost" ||
+    hostname === "127.0.0.1" ||
+    hostname === "[::1]"
+  )
+    return false;
   if (hostname === "0.0.0.0") return false;
 
   // Block cloud metadata endpoints
-  if (hostname === "169.254.169.254" || hostname === "metadata.google.internal") return false;
+  if (hostname === "169.254.169.254" || hostname === "metadata.google.internal")
+    return false;
   if (hostname.startsWith("169.254.")) return false;
 
   // Block IPv6 link-local/unique-local
-  if (hostname.startsWith("[fe80:") || hostname.startsWith("[fc") || hostname.startsWith("[fd"))
+  if (
+    hostname.startsWith("[fe80:") ||
+    hostname.startsWith("[fc") ||
+    hostname.startsWith("[fd")
+  )
     return false;
 
   // Private LAN IPs (10.x, 192.168.x, 172.16-31.x) are allowed — these are legitimate worker nodes.

@@ -14,14 +14,14 @@
  *   - `local`   → `localUrl`
  *   - `network` → `networkNodeUrl` + optional `Authorization: Bearer …`
  *
- * SSRF: the resolver itself does NOT validate URLs — callers that wire the
- * URL into outbound fetches against untrusted input must run it through
- * `isAllowedNetworkNodeUrl` (see `src/security/url-validation.ts`). For
- * `local` mode the URL is loopback-by-default which the SSRF guard
- * intentionally rejects, so the guard is only applied in `network` mode.
+ * SSRF: prefer `resolveAndAssertOllamaTarget` for any code path that wires
+ * the resolved URL into an outbound `fetch`. The plain `resolveOllamaTarget`
+ * does NOT validate URLs and is reserved for read-only inspection (status
+ * panels, logging) where no network call is made against the result.
  */
 
 import type { OllamaNodeConfig } from "../../config/local-llm-schema.js";
+import { isAllowedNetworkNodeUrl } from "../../security/url-validation.js";
 
 export interface ResolvedOllamaTarget {
   /** Base URL without `/v1` suffix (e.g. `http://10.0.0.42:11434`). */
@@ -81,4 +81,98 @@ export function resolveOllamaTarget(
     mode: "local",
     headers: {},
   };
+}
+
+/**
+ * SSRF reasons surfaced by `resolveAndAssertOllamaTarget`.
+ */
+export type OllamaTargetRejectionReason =
+  | "invalid_url"
+  | "blocked_host"
+  | "missing_url"
+  | "local_url_not_loopback";
+
+/**
+ * Typed error thrown when the resolved Ollama target fails the SSRF guard.
+ * Callers (HTTP handlers) should map this to a 400/422 with `error: msg`.
+ */
+export class OllamaTargetError extends Error {
+  readonly reason: OllamaTargetRejectionReason;
+  constructor(reason: OllamaTargetRejectionReason, message: string) {
+    super(message);
+    this.name = "OllamaTargetError";
+    this.reason = reason;
+  }
+}
+
+/**
+ * Resolve the target AND assert the SSRF guard. Use this everywhere the
+ * resolved URL is passed to an outbound `fetch` — the three known sinks
+ * are `PUT /local-llm/ollama/config` (post-merge), `POST /local-llm/ollama/
+ * test-connection`, and the wizard `autodetectHandler`.
+ *
+ * - `network` mode: rejects loopback, link-local (incl. cloud metadata),
+ *   IPv6 link-local/ULA. Permits RFC1918 LAN + public hostnames.
+ * - `local` mode: rejects anything that isn't `127.0.0.1` / `localhost`
+ *   / `[::1]` / `0.0.0.0` so a misconfigured `localUrl` can't be used to
+ *   reach a LAN host through the "local" code path.
+ */
+export function resolveAndAssertOllamaTarget(
+  config: Partial<OllamaNodeConfig> | null | undefined,
+  env: NodeJS.ProcessEnv = process.env,
+): ResolvedOllamaTarget {
+  const target = resolveOllamaTarget(config, env);
+  let parsed: URL;
+  try {
+    parsed = new URL(target.baseUrl);
+  } catch {
+    throw new OllamaTargetError(
+      "invalid_url",
+      `Resolved Ollama URL is not a valid URL: ${target.baseUrl}`,
+    );
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new OllamaTargetError(
+      "invalid_url",
+      `Resolved Ollama URL must be http(s): ${target.baseUrl}`,
+    );
+  }
+  if (target.mode === "network") {
+    // `resolveOllamaTarget` falls back to the local default when network mode
+    // is selected with a blank URL — for the assert variant that's a config
+    // error, not an SSRF allow.
+    const networkUrl = (
+      env.OLLAMA_NETWORK_URL?.trim() ||
+      config?.networkNodeUrl?.trim() ||
+      ""
+    ).trim();
+    if (!networkUrl) {
+      throw new OllamaTargetError(
+        "missing_url",
+        "Network mode is selected but no networkNodeUrl is configured",
+      );
+    }
+    if (!isAllowedNetworkNodeUrl(target.baseUrl)) {
+      throw new OllamaTargetError(
+        "blocked_host",
+        "URL points to a blocked internal/loopback host",
+      );
+    }
+  } else {
+    const host = parsed.hostname.toLowerCase();
+    const allowedLocal = new Set([
+      "localhost",
+      "127.0.0.1",
+      "0.0.0.0",
+      "::1",
+      "[::1]",
+    ]);
+    if (!allowedLocal.has(host)) {
+      throw new OllamaTargetError(
+        "local_url_not_loopback",
+        `Local-mode Ollama URL must point at loopback (got ${host})`,
+      );
+    }
+  }
+  return target;
 }

@@ -38,6 +38,10 @@ import {
   type AutodetectResult,
 } from "../copilot/providers/autodetect.js";
 import { resolveOllamaTarget } from "../copilot/providers/ollama-resolver.js";
+import {
+  resolveAndAssertOllamaTarget,
+  OllamaTargetError,
+} from "../copilot/providers/ollama-resolver.js";
 import { logger } from "../logging/logger.js";
 import type { AuditLogger } from "../logging/audit-logger.js";
 
@@ -233,11 +237,28 @@ export function createLocalLlmRouter(deps: LocalLlmDeps = {}): Router {
         res.json({ ...empty, skipped: true });
         return;
       }
+      // SSRF guard — refuse to probe a blocked Ollama target. Surfaces a
+      // 400 instead of silently falling back to loopback so the operator
+      // sees the misconfiguration.
+      let assertedBaseUrl: string;
+      try {
+        assertedBaseUrl = resolveAndAssertOllamaTarget(localLlm.ollama).baseUrl;
+      } catch (err) {
+        if (err instanceof OllamaTargetError) {
+          logger.warn(
+            "local-llm autodetect: refusing to probe blocked Ollama target",
+            { reason: err.reason, message: err.message },
+          );
+          res.status(400).json({ error: err.message });
+          return;
+        }
+        throw err;
+      }
       const result = await autodetectEndpoints({
         fetchImpl: deps.fetchImpl,
         // #1077-B: respect the configured remote-Ollama target so the
         // wizard "Test connection" button discovers models on a LAN node.
-        ollamaBaseUrl: resolveOllamaTarget(localLlm.ollama).baseUrl,
+        ollamaBaseUrl: assertedBaseUrl,
       });
       if (audit) {
         await audit.log({

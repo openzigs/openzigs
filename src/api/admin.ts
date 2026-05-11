@@ -52,6 +52,11 @@ import {
 import { AVAILABLE_VOICES } from "../voice/types.js";
 import { loadSkillMetadata } from "../skills/skill-loader.js";
 import { isAllowedNetworkNodeUrl } from "../security/url-validation.js";
+import {
+  resolveAndAssertOllamaTarget,
+  OllamaTargetError,
+} from "../copilot/providers/ollama-resolver.js";
+import type { OllamaNodeConfig } from "../config/local-llm-schema.js";
 import { capAndTrimTrailingSlashes } from "../security/url-trim.js";
 import type { PipelineTemplateManager } from "../productivity/pipeline-template-manager.js";
 import type { Server as SocketIOServer } from "socket.io";
@@ -7121,16 +7126,6 @@ export const createAdminRouter = ({
         .status(400)
         .json({ error: "networkNodeUrl must be a valid HTTP(S) URL" });
     }
-    // SSRF guard — blocks loopback + cloud metadata; permits RFC1918 LAN.
-    if (
-      networkNodeUrl &&
-      mode === "network" &&
-      !isAllowedNetworkNodeUrl(networkNodeUrl)
-    ) {
-      return res
-        .status(400)
-        .json({ error: "URL points to a blocked internal/loopback host" });
-    }
 
     try {
       const configPath = defaultConfigPath();
@@ -7149,6 +7144,21 @@ export const createAdminRouter = ({
       if (networkNodeUrl !== undefined) updated.networkNodeUrl = networkNodeUrl;
       if (networkNodeToken !== undefined)
         updated.networkNodeToken = networkNodeToken;
+
+      // SSRF guard — validate the merged post-write state, not just the
+      // request body. A two-PUT sequence (URL first, then mode flip) would
+      // otherwise bypass a body-only check. Run the assertion against the
+      // would-be-saved config so any combination that ends in `network` mode
+      // with a blocked host is rejected before it hits disk.
+      try {
+        resolveAndAssertOllamaTarget(updated as Partial<OllamaNodeConfig>, {});
+      } catch (err) {
+        if (err instanceof OllamaTargetError) {
+          return res.status(400).json({ error: err.message });
+        }
+        throw err;
+      }
+
       userConfig.localLlm = { ...existingLocalLlm, ollama: updated };
       await writeUserConfig(configPath, userConfig);
 
@@ -7178,8 +7188,7 @@ export const createAdminRouter = ({
     const networkNodeUrl = body.networkNodeUrl as string | undefined;
     const networkNodeToken = body.networkNodeToken as string | undefined;
 
-    let targetUrl: string;
-    let targetToken: string | undefined;
+    let candidate: Partial<OllamaNodeConfig>;
     try {
       if (mode === "network") {
         const url = (networkNodeUrl ?? "").trim();
@@ -7188,48 +7197,52 @@ export const createAdminRouter = ({
             .status(400)
             .json({ error: "networkNodeUrl must be a valid HTTP(S) URL" });
         }
-        if (!isAllowedNetworkNodeUrl(url)) {
-          return res
-            .status(400)
-            .json({ error: "URL points to a blocked internal/loopback host" });
-        }
-        targetUrl = url.replace(/\/$/, "");
-        targetToken = networkNodeToken;
+        candidate = {
+          mode: "network",
+          networkNodeUrl: url,
+          networkNodeToken: networkNodeToken ?? undefined,
+        };
       } else if (mode === "local") {
-        targetUrl = (
-          (localUrl ?? "").trim() || "http://127.0.0.1:11434"
-        ).replace(/\/$/, "");
+        candidate = {
+          mode: "local",
+          localUrl: ((localUrl ?? "").trim() ||
+            "http://127.0.0.1:11434") as string,
+        };
       } else {
         // No mode override → use saved config.
         const userConfig = await readUserConfig(defaultConfigPath());
         const localLlm = (userConfig.localLlm ?? {}) as Record<string, unknown>;
         const ollama = (localLlm.ollama ?? {}) as Record<string, unknown>;
-        const savedMode = (ollama.mode as string) ?? "local";
-        if (savedMode === "network") {
-          targetUrl = ((ollama.networkNodeUrl as string) || "").replace(
-            /\/$/,
-            "",
-          );
-          if (!targetUrl) {
-            return res.json({
-              ok: false,
-              error: "No network node URL configured",
-            });
-          }
-          targetToken = ollama.networkNodeToken as string | undefined;
-        } else {
-          targetUrl = (
-            (ollama.localUrl as string) || "http://127.0.0.1:11434"
-          ).replace(/\/$/, "");
-        }
+        const savedMode = ((ollama.mode as string) ?? "local") as
+          | "local"
+          | "network";
+        candidate = {
+          mode: savedMode,
+          localUrl:
+            (ollama.localUrl as string | undefined) ?? "http://127.0.0.1:11434",
+          networkNodeUrl: ollama.networkNodeUrl as string | undefined,
+          networkNodeToken: ollama.networkNodeToken as string | undefined,
+        };
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return res.status(500).json({ error: message });
     }
 
-    const headers: Record<string, string> = {};
-    if (targetToken) headers["Authorization"] = `Bearer ${targetToken}`;
+    // Centralised SSRF assertion — applies to all three branches incl. the
+    // saved-config probe path that previously read `networkNodeUrl` straight
+    // off disk and fetched it without validation.
+    let resolved;
+    try {
+      resolved = resolveAndAssertOllamaTarget(candidate, {});
+    } catch (err) {
+      if (err instanceof OllamaTargetError) {
+        return res.status(400).json({ error: err.message });
+      }
+      throw err;
+    }
+    const targetUrl = resolved.baseUrl.replace(/\/$/, "");
+    const headers: Record<string, string> = { ...resolved.headers };
 
     try {
       // Hit /api/version + /api/tags (Ollama's native API, not OpenAI shim).

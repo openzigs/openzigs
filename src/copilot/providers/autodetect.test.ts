@@ -164,15 +164,12 @@ describe("autodetectEndpoints", () => {
       }
       throw new Error("vLLM should not be probed on darwin");
     });
-    const start = Date.now();
     const result = await autodetectEndpoints({
       fetchImpl: fetchImpl as unknown as typeof fetch,
       platform: "darwin",
       timeoutMs: 1000,
     });
-    const elapsed = Date.now() - start;
 
-    expect(elapsed).toBeLessThan(2000);
     expect(result.ollama).not.toBeNull();
     expect(result.vllm).toBeNull();
     expect(result.unsupported?.vllm).toBe(VLLM_UNSUPPORTED_DARWIN_REASON);

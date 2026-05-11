@@ -3976,3 +3976,77 @@ describe("firecrawl status endpoint", () => {
     expect(res.body).toEqual({ enabled: true });
   });
 });
+
+// ── SSRF guard on remote-Ollama sinks (PR #1077 review follow-up) ────────────
+describe("Admin /local-llm/ollama SSRF guards", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("PUT /local-llm/ollama/config rejects two-PUT bypass: URL set, then mode flipped to network with a cloud-metadata host", async () => {
+    const fsMock = (await import("node:fs/promises")).default as unknown as {
+      readFile: ReturnType<typeof vi.fn>;
+      writeFile: ReturnType<typeof vi.fn>;
+    };
+    let onDisk: Record<string, unknown> = {};
+    fsMock.readFile.mockImplementation(async () => JSON.stringify(onDisk));
+    fsMock.writeFile.mockImplementation(async (_p: string, body: string) => {
+      onDisk = JSON.parse(body) as Record<string, unknown>;
+    });
+
+    const { app } = buildApp();
+
+    // First PUT — only the URL changes. Saved mode stays "local" (or unset),
+    // so even though the URL is the AWS metadata endpoint, the merged state
+    // is still local-mode and is permitted to land on disk.
+    const r1 = await request(app)
+      .put("/admin/local-llm/ollama/config")
+      .send({ networkNodeUrl: "http://169.254.169.254" });
+    expect(r1.status).toBe(200);
+
+    // Second PUT — flips the mode to "network" without re-sending the URL.
+    // The merged-state check MUST catch the now-active SSRF target.
+    const r2 = await request(app)
+      .put("/admin/local-llm/ollama/config")
+      .send({ mode: "network" });
+    expect(r2.status).toBe(400);
+    expect(String(r2.body.error)).toMatch(/blocked|internal|loopback/i);
+
+    // Sanity: disk state was not mutated to mode=network.
+    expect(
+      (onDisk as { localLlm?: { ollama?: { mode?: string } } }).localLlm?.ollama
+        ?.mode,
+    ).not.toBe("network");
+  });
+
+  it("POST /local-llm/ollama/test-connection (no body) refuses to fetch a saved cloud-metadata URL", async () => {
+    const fsMock = (await import("node:fs/promises")).default as unknown as {
+      readFile: ReturnType<typeof vi.fn>;
+    };
+    fsMock.readFile.mockResolvedValue(
+      JSON.stringify({
+        localLlm: {
+          ollama: {
+            mode: "network",
+            networkNodeUrl: "http://169.254.169.254",
+          },
+        },
+      }),
+    );
+
+    // Spy on global fetch — it must NOT be called when SSRF guard fires.
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response("nope", { status: 200 }));
+
+    const { app } = buildApp();
+    const r = await request(app)
+      .post("/admin/local-llm/ollama/test-connection")
+      .send({});
+    expect(r.status).toBe(400);
+    expect(String(r.body.error)).toMatch(/blocked|internal|loopback/i);
+    expect(fetchSpy).not.toHaveBeenCalled();
+
+    fetchSpy.mockRestore();
+  });
+});
