@@ -9,16 +9,19 @@ export const SectionCard = ({
   children,
   className,
   defaultOpen = true,
+  id,
 }: {
   title: ReactNode;
   children: ReactNode;
   className?: string;
   defaultOpen?: boolean;
+  id?: string;
 }) => {
   const [open, setOpen] = useState(defaultOpen);
 
   return (
     <section
+      id={id}
       className={cn(
         "rounded-2xl border border-border bg-card shadow-sm",
         className,
