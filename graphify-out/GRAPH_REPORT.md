@@ -1,4 +1,4 @@
-# Graph Report - /home/runner/work/openzigs/openzigs  (2026-05-11)
+# Graph Report - /home/runner/work/openzigs/openzigs  (2026-05-13)
 
 ## Corpus Check
 - detect() skipped in CI to avoid OOM
