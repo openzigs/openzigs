@@ -4,7 +4,7 @@
 - detect() skipped in CI to avoid OOM
 
 ## Summary
-- 7060 nodes · 10465 edges · 156 communities detected
+- 7062 nodes · 10468 edges · 159 communities detected
 - Extraction: 93% EXTRACTED · 7% INFERRED · 0% AMBIGUOUS · INFERRED: 763 edges (avg confidence: 0.78)
 - Token cost: 0 input · 0 output
 
@@ -55,7 +55,7 @@
 - [[_COMMUNITY_Community 43|Community 43]]
 - [[_COMMUNITY_Community 44|Community 44]]
 - [[_COMMUNITY_Community 45|Community 45]]
-- [[_COMMUNITY_Community 46|Community 46]]
+- [[_COMMUNITY_Community 47|Community 47]]
 - [[_COMMUNITY_Community 48|Community 48]]
 - [[_COMMUNITY_Community 49|Community 49]]
 - [[_COMMUNITY_Community 50|Community 50]]
@@ -104,9 +104,9 @@
 - [[_COMMUNITY_Community 93|Community 93]]
 - [[_COMMUNITY_Community 94|Community 94]]
 - [[_COMMUNITY_Community 95|Community 95]]
+- [[_COMMUNITY_Community 96|Community 96]]
 - [[_COMMUNITY_Community 97|Community 97]]
 - [[_COMMUNITY_Community 99|Community 99]]
-- [[_COMMUNITY_Community 100|Community 100]]
 - [[_COMMUNITY_Community 101|Community 101]]
 - [[_COMMUNITY_Community 102|Community 102]]
 - [[_COMMUNITY_Community 103|Community 103]]
@@ -123,48 +123,51 @@
 - [[_COMMUNITY_Community 114|Community 114]]
 - [[_COMMUNITY_Community 115|Community 115]]
 - [[_COMMUNITY_Community 116|Community 116]]
+- [[_COMMUNITY_Community 117|Community 117]]
 - [[_COMMUNITY_Community 118|Community 118]]
-- [[_COMMUNITY_Community 119|Community 119]]
-- [[_COMMUNITY_Community 122|Community 122]]
-- [[_COMMUNITY_Community 123|Community 123]]
+- [[_COMMUNITY_Community 120|Community 120]]
+- [[_COMMUNITY_Community 121|Community 121]]
 - [[_COMMUNITY_Community 124|Community 124]]
 - [[_COMMUNITY_Community 125|Community 125]]
 - [[_COMMUNITY_Community 126|Community 126]]
 - [[_COMMUNITY_Community 127|Community 127]]
+- [[_COMMUNITY_Community 128|Community 128]]
+- [[_COMMUNITY_Community 129|Community 129]]
 - [[_COMMUNITY_Community 130|Community 130]]
-- [[_COMMUNITY_Community 131|Community 131]]
-- [[_COMMUNITY_Community 132|Community 132]]
 - [[_COMMUNITY_Community 133|Community 133]]
+- [[_COMMUNITY_Community 134|Community 134]]
 - [[_COMMUNITY_Community 135|Community 135]]
 - [[_COMMUNITY_Community 136|Community 136]]
-- [[_COMMUNITY_Community 137|Community 137]]
 - [[_COMMUNITY_Community 138|Community 138]]
+- [[_COMMUNITY_Community 139|Community 139]]
 - [[_COMMUNITY_Community 140|Community 140]]
-- [[_COMMUNITY_Community 146|Community 146]]
-- [[_COMMUNITY_Community 147|Community 147]]
-- [[_COMMUNITY_Community 148|Community 148]]
+- [[_COMMUNITY_Community 141|Community 141]]
+- [[_COMMUNITY_Community 143|Community 143]]
 - [[_COMMUNITY_Community 149|Community 149]]
 - [[_COMMUNITY_Community 150|Community 150]]
 - [[_COMMUNITY_Community 151|Community 151]]
+- [[_COMMUNITY_Community 152|Community 152]]
+- [[_COMMUNITY_Community 153|Community 153]]
 - [[_COMMUNITY_Community 154|Community 154]]
-- [[_COMMUNITY_Community 167|Community 167]]
-- [[_COMMUNITY_Community 168|Community 168]]
-- [[_COMMUNITY_Community 169|Community 169]]
+- [[_COMMUNITY_Community 157|Community 157]]
+- [[_COMMUNITY_Community 158|Community 158]]
 - [[_COMMUNITY_Community 171|Community 171]]
-- [[_COMMUNITY_Community 179|Community 179]]
-- [[_COMMUNITY_Community 180|Community 180]]
+- [[_COMMUNITY_Community 172|Community 172]]
+- [[_COMMUNITY_Community 173|Community 173]]
+- [[_COMMUNITY_Community 175|Community 175]]
 - [[_COMMUNITY_Community 183|Community 183]]
 - [[_COMMUNITY_Community 184|Community 184]]
-- [[_COMMUNITY_Community 186|Community 186]]
-- [[_COMMUNITY_Community 192|Community 192]]
-- [[_COMMUNITY_Community 213|Community 213]]
-- [[_COMMUNITY_Community 215|Community 215]]
-- [[_COMMUNITY_Community 219|Community 219]]
-- [[_COMMUNITY_Community 220|Community 220]]
+- [[_COMMUNITY_Community 187|Community 187]]
+- [[_COMMUNITY_Community 189|Community 189]]
+- [[_COMMUNITY_Community 195|Community 195]]
+- [[_COMMUNITY_Community 216|Community 216]]
+- [[_COMMUNITY_Community 218|Community 218]]
 - [[_COMMUNITY_Community 222|Community 222]]
-- [[_COMMUNITY_Community 226|Community 226]]
-- [[_COMMUNITY_Community 228|Community 228]]
+- [[_COMMUNITY_Community 223|Community 223]]
+- [[_COMMUNITY_Community 225|Community 225]]
 - [[_COMMUNITY_Community 229|Community 229]]
+- [[_COMMUNITY_Community 231|Community 231]]
+- [[_COMMUNITY_Community 232|Community 232]]
 
 ## God Nodes (most connected - your core abstractions)
 1. `registerMcpTools()` - 79 edges
@@ -183,126 +186,126 @@
   sidecars/audio/server.py → ui/components/seo/meta-generator-panel.tsx
 - `runSetup()` --calls--> `toggleTool()`  [INFERRED]
   src/cli/setup.ts → ui/components/pipeline/tool-multi-select.tsx
-- `checkFfmpeg()` --calls--> `execFileAsync()`  [INFERRED]
-  src/mcp/tools/audio-normalization-tools.ts → src/api/files.ts
-- `generateThumbnail()` --calls--> `execFileAsync()`  [INFERRED]
-  src/presenter/thumbnail-generator.ts → src/api/files.ts
-- `registerMcpTools()` --calls--> `createPinterestSeoTools()`  [INFERRED]
-  src/mcp/server.ts → src/mcp/tools/pinterest-seo-tools.ts
+- `ingest()` --calls--> `onProgress()`  [INFERRED]
+  src/video/ingestion/index.ts → ui/components/music-studio/PipelineStatus.tsx
+- `analyzeKeyframes()` --calls--> `onProgress()`  [INFERRED]
+  src/video/ingestion/keyframe-analyzer.ts → ui/components/music-studio/PipelineStatus.tsx
+- `createApp()` --calls--> `createAdminRouter()`  [INFERRED]
+  src/api/admin-capabilities.test.ts → src/api/admin.ts
 
 ## Communities
 
 ### Community 0 - "Community 0"
 Cohesion: 0.0
-Nodes (120): createCreativeRouter(), resolveImagePath(), createMockCopilotWrapper(), createTestApp(), createTestAppWithCharacters(), validatePath(), injectCharacterLora(), createKnowledgeRouter() (+112 more)
+Nodes (118): FakeTester, createDirectorRouter(), buildApp(), createMockCopilot(), buildApp(), createMockCopilot(), createMockToolRegistry(), buildSystemPrompt() (+110 more)
 
 ### Community 1 - "Community 1"
 Cohesion: 0.0
-Nodes (125): createAirtableReadTools(), createAirtableWriteTools(), createTemplatesRouter(), setup(), getFirecrawlClient(), isBlockedUrl(), createMcpServer(), registerMcpTools() (+117 more)
+Nodes (138): createAirtableReadTools(), createAirtableWriteTools(), createAppWithHandler(), createSeoRouter(), createApp(), createTemplatesRouter(), setup(), getFirecrawlClient() (+130 more)
 
 ### Community 2 - "Community 2"
 Cohesion: 0.0
-Nodes (65): ChannelManager, DiscordChannel, splitDiscordMessage(), MockClient, convertMarkdown(), WebChannel, convertProse(), convertProseText() (+57 more)
+Nodes (259): BaseModel, Dataset, AsyncGenerateRequest, AsyncImg2ImgRequest, AsyncKontextRequest, _bg_generate(), _bg_img2img(), _bg_kontext() (+251 more)
 
 ### Community 3 - "Community 3"
 Cohesion: 0.0
-Nodes (262): BaseModel, Dataset, AsyncGenerateRequest, AsyncImg2ImgRequest, AsyncKontextRequest, _bg_generate(), _bg_img2img(), _bg_kontext() (+254 more)
+Nodes (142): appendTokenToAssetUrl(), appendTokenToPitchAssetUrls(), createPitchRouter(), buildHarness(), makeDraftedDeck(), makeSlide(), parseBody(), repoToPitchBrandKit() (+134 more)
 
 ### Community 4 - "Community 4"
 Cohesion: 0.0
-Nodes (101): handleAnalyze(), handleFileUpload(), uploadSampleFiles(), handleSaveKeys(), handleSaveAllowedDirs(), handleSave(), handleDisconnect(), handleOAuthConnect() (+93 more)
+Nodes (115): extractBlog(), extractImages(), extractMeta(), extractSurroundingText(), extractTagContent(), extractTitle(), htmlToText(), isPrivateIp() (+107 more)
 
 ### Community 5 - "Community 5"
 Cohesion: 0.0
-Nodes (93): extractBlog(), extractImages(), extractMeta(), extractSurroundingText(), extractTagContent(), extractTitle(), htmlToText(), isPrivateIp() (+85 more)
+Nodes (99): handleAnalyze(), handleFileUpload(), uploadSampleFiles(), handleSaveKeys(), handleSaveAllowedDirs(), handleSave(), handleDisconnect(), handleOAuthConnect() (+91 more)
 
 ### Community 6 - "Community 6"
 Cohesion: 0.0
-Nodes (49): createApp(), FakeCopilot, createApp(), FakeCopilot, createAdminRouter(), defaultConfigPath(), defaultEnvPath(), exchangeLinkedInCode() (+41 more)
+Nodes (38): gotoGenerate(), gotoScriptStep(), applySimpleLayout(), detectCycle(), graphToStages(), nodeToStage(), stagesToGraph(), stageToNodeData() (+30 more)
 
 ### Community 7 - "Community 7"
 Cohesion: 0.0
-Nodes (101): createAppWithHandler(), createSeoRouter(), createApp(), AuditHistoryRepository, aggregateKeywords(), discoverCompetitorsFromAudit(), braveSearch(), discoverCompetitors() (+93 more)
+Nodes (61): createCharacterRouter(), getCharactersDir(), getImageGenSidecarUrl(), getImageGenToken(), getPhotosDir(), pollTrainingStatus(), resumeStaleTrainingPolls(), startRemoteTraining() (+53 more)
 
 ### Community 8 - "Community 8"
 Cohesion: 0.0
-Nodes (100): callLLMWithRetry(), condenseScript(), splitIntoChunks(), buildMarkdown(), escapeMdCell(), exportDeckToMarkdown(), renderSlideMd(), buildNotesHtml() (+92 more)
+Nodes (30): chunkSection(), chunkText(), getOverlap(), splitBySections(), splitSentences(), charNgrams(), extractEmbeddingData(), generateEmbedding() (+22 more)
 
 ### Community 9 - "Community 9"
 Cohesion: 0.0
-Nodes (75): onEnd(), AsyncQueue, CopilotWrapperService, _callback_auth_headers(), capabilities(), _clamp_resolution(), clear_vram(), _concat_clips() (+67 more)
+Nodes (64): buildApp(), createLocalLlmRouter(), defaultConfigPath(), ensureVllmApiKey(), generateVllmApiKey(), persistLocalLlmBlock(), readJson(), readLocalLlmBlock() (+56 more)
 
 ### Community 10 - "Community 10"
 Cohesion: 0.0
-Nodes (111): _cache_f5tts_clips(), _concatenate_wav_bytes(), _convert_to_24khz_mono_wav(), TTSRequest, _estimate_max_duration(), F5TTSClip, F5TTSRequest, health() (+103 more)
+Nodes (71): AuditHistoryRepository, aggregateKeywords(), discoverCompetitorsFromAudit(), braveSearch(), discoverCompetitors(), filterResult(), serperSearch(), analyzeContent() (+63 more)
 
 ### Community 11 - "Community 11"
 Cohesion: 0.0
-Nodes (57): buildApp(), createLocalLlmRouter(), defaultConfigPath(), ensureVllmApiKey(), generateVllmApiKey(), persistLocalLlmBlock(), readJson(), readLocalLlmBlock() (+49 more)
+Nodes (111): _cache_f5tts_clips(), _concatenate_wav_bytes(), _convert_to_24khz_mono_wav(), TTSRequest, _estimate_max_duration(), F5TTSClip, F5TTSRequest, health() (+103 more)
 
 ### Community 12 - "Community 12"
 Cohesion: 0.0
-Nodes (23): chunkSection(), chunkText(), getOverlap(), splitBySections(), splitSentences(), charNgrams(), extractEmbeddingData(), generateEmbedding() (+15 more)
+Nodes (21): createApp(), FakeCopilot, createAdminRouter(), createApp(), FakeCopilot, createApp(), FakeCopilot, buildApp() (+13 more)
 
 ### Community 13 - "Community 13"
 Cohesion: 0.0
-Nodes (32): createCharacterRouter(), getCharactersDir(), getImageGenSidecarUrl(), getImageGenToken(), getPhotosDir(), pollTrainingStatus(), resumeStaleTrainingPolls(), startRemoteTraining() (+24 more)
+Nodes (43): createApp(), FakeCopilot, fileExists(), setupAuthGate(), checkRole(), createAuthMiddleware(), FailedAuthLimiter, startMiniServer() (+35 more)
 
 ### Community 14 - "Community 14"
 Cohesion: 0.0
-Nodes (50): AirtableClient, RateLimiter, drain(), FakeCopilotClient, FakeSession, estimateInputTokens(), routeRequest(), RouterPrivacyError (+42 more)
+Nodes (23): formatElapsed(), createVideoPipelineTools(), extractFrameFromVideo(), AudioCleaner, mergeOverlappingRegions(), BRollPipeline, getCaptionTemplateIds(), ClipExtractor (+15 more)
 
 ### Community 15 - "Community 15"
 Cohesion: 0.0
-Nodes (29): MediaQueueRepository, toJob(), buildXfadeCommand(), decomposeMultiSegmentJob(), extractLastFrame(), extractLastFrameLocal(), formatSegmentProgress(), getSegmentTracker() (+21 more)
+Nodes (96): Shared filesystem-safety helpers for the image-gen sidecar.  Sub-issue #907: Ext, Safely join ``base_dir`` with an untrusted ``user_path`` component.      Resolve, Validate a user-supplied file path for basic safety.      Rejects null bytes and, safe_join(), sanitize_path(), base_dir(), Path-traversal regression tests for the image-gen sidecar's safe_join.  Sub-issu, A symlink planted *inside* base that points outside must be rejected.      This (+88 more)
 
 ### Community 16 - "Community 16"
 Cohesion: 0.0
-Nodes (96): Shared filesystem-safety helpers for the image-gen sidecar.  Sub-issue #907: Ext, Safely join ``base_dir`` with an untrusted ``user_path`` component.      Resolve, Validate a user-supplied file path for basic safety.      Rejects null bytes and, safe_join(), sanitize_path(), base_dir(), Path-traversal regression tests for the image-gen sidecar's safe_join.  Sub-issu, A symlink planted *inside* base that points outside must be rejected.      This (+88 more)
+Nodes (11): AirtableClient, RateLimiter, onEnd(), AsyncQueue, CopilotWrapperService, drain(), FakeCopilotClient, FakeSession (+3 more)
 
 ### Community 17 - "Community 17"
 Cohesion: 0.0
-Nodes (32): interpolateTemplate(), PromptManager, toPrompt(), getNestedValue(), PlaceholderResolutionError, setNestedValue(), TemplateService, TemplateValidationError (+24 more)
+Nodes (24): createGpuDispatcherAdminRouter(), buildApp(), createSystemRouter(), buildApp(), PostTemplateRepository, rowToTemplate(), GpuCoordinator, defaultDispatcherPinning() (+16 more)
 
 ### Community 18 - "Community 18"
 Cohesion: 0.0
-Nodes (17): DigestGenerator, PromptAuditor, makeDeps(), makeMockCopilot(), makeMockSessionManager(), RAGHealthCheck, SentinelService, appendDigestRecord() (+9 more)
+Nodes (31): defaultConfigPath(), defaultEnvPath(), exchangeLinkedInCode(), exchangePinterestCode(), exchangeTikTokCode(), exchangeYouTubeCode(), readUserConfig(), refreshLinkedInToken() (+23 more)
 
 ### Community 19 - "Community 19"
 Cohesion: 0.0
-Nodes (27): createPitchRouter(), buildHarness(), makeDraftedDeck(), makeSlide(), buildExportHarness(), buildHarness(), buildMockedHarness(), buildSampleSlide() (+19 more)
+Nodes (45): BaseHTTPRequestHandler, check_auth(), cleanup_old_results(), _ensure_model_loaded(), generate_music(), main(), MusicGenHandler, ACE-Step 1.5 Music Generation Sidecar Issue #337: Local AI music generation via (+37 more)
 
 ### Community 20 - "Community 20"
 Cohesion: 0.0
-Nodes (28): createGpuDispatcherAdminRouter(), buildApp(), defaultDispatcherPinning(), getActiveGpuDispatcher(), GpuDispatcher, isMutexConflict(), flush(), tick() (+20 more)
+Nodes (72): _callback_auth_headers(), capabilities(), _clamp_resolution(), clear_vram(), _concat_clips(), _delegate_to_ltx2_sidecar(), _encode_video(), _ensure_torch() (+64 more)
 
 ### Community 21 - "Community 21"
 Cohesion: 0.0
-Nodes (38): fileExists(), setupAuthGate(), checkRole(), createAuthMiddleware(), FailedAuthLimiter, startMiniServer(), startMountedServer(), startQueueMountedServer() (+30 more)
+Nodes (38): convertToMarkdown(), execFileAsync(), ConverterRegistry, createDefaultRegistry(), shutdownConverters(), createDocxConverter(), createImageOcrConverter(), createMediaConverter() (+30 more)
 
 ### Community 22 - "Community 22"
 Cohesion: 0.0
-Nodes (36): convertToMarkdown(), execFileAsync(), ConverterRegistry, createDefaultRegistry(), shutdownConverters(), createDocxConverter(), createImageOcrConverter(), createMediaConverter() (+28 more)
+Nodes (24): buildXfadeCommand(), decomposeMultiSegmentJob(), extractLastFrame(), extractLastFrameLocal(), formatSegmentProgress(), getSegmentTracker(), handleSegmentCompletion(), isSegmentJob() (+16 more)
 
 ### Community 23 - "Community 23"
 Cohesion: 0.0
-Nodes (17): createSystemRouter(), buildApp(), PostTemplateRepository, rowToTemplate(), GpuCoordinator, autodetectEndpoints(), probeEndpoint(), defaultPinning() (+9 more)
+Nodes (63): _callback_auth_headers(), capabilities(), check_memory_budget(), _clamp_resolution(), clear_vram(), _encode_with_videotoolbox(), extract_last_frame(), generate() (+55 more)
 
 ### Community 24 - "Community 24"
 Cohesion: 0.0
-Nodes (58): _callback_auth_headers(), check_memory_budget(), _clamp_resolution(), clear_vram(), _encode_with_videotoolbox(), extract_last_frame(), generate(), generate_video_ltx2() (+50 more)
+Nodes (13): DiscordChannel, splitDiscordMessage(), MockClient, convertMarkdown(), convertProse(), convertProseText(), escapeMarkdownV2(), splitCodeBlocks() (+5 more)
 
 ### Community 25 - "Community 25"
 Cohesion: 0.0
-Nodes (23): createDirectorRouter(), buildApp(), createMockCopilot(), buildApp(), createMockCopilot(), createMockToolRegistry(), createVideoTools(), createMockCopilot() (+15 more)
+Nodes (6): BackendManager, IpcBridge, TrayManager, AutoUpdateManager, setupUpdater(), WindowManager
 
 ### Community 26 - "Community 26"
 Cohesion: 0.0
-Nodes (6): BackendManager, IpcBridge, TrayManager, AutoUpdateManager, setupUpdater(), WindowManager
+Nodes (7): createOutboxRouter(), createAppWithCopilot(), OutboxPoller, OutboxRepository, toItem(), createOutboxTools(), setup()
 
 ### Community 27 - "Community 27"
 Cohesion: 0.0
-Nodes (4): TaskEngine, TaskEventStreamer, TaskRepository, toTask()
+Nodes (4): onCompactionComplete(), onCompactionStart(), onProviderInfo(), FakeCopilot
 
 ### Community 28 - "Community 28"
 Cohesion: 0.0
@@ -318,143 +321,143 @@ Nodes (5): createModelsRouter(), defaultUserConfigPath(), FakeCopilot, startApp(
 
 ### Community 31 - "Community 31"
 Cohesion: 0.0
-Nodes (5): createOutboxRouter(), createAppWithCopilot(), OutboxPoller, OutboxRepository, toItem()
+Nodes (27): AnalyticsAggregator, AnalyticsCache, audio_to_midi(), _build_rhythmic_midi(), _download_gm_soundfont(), get_soundfont_path(), _is_percussive_source(), main() (+19 more)
 
 ### Community 32 - "Community 32"
 Cohesion: 0.0
-Nodes (27): AnalyticsAggregator, AnalyticsCache, audio_to_midi(), _build_rhythmic_midi(), _download_gm_soundfont(), get_soundfont_path(), _is_percussive_source(), main() (+19 more)
+Nodes (6): webhookAuth(), WebhookManager, clock(), WebhookRepository, createWebhookRouter(), buildApp()
 
 ### Community 33 - "Community 33"
 Cohesion: 0.0
-Nodes (6): webhookAuth(), WebhookManager, clock(), WebhookRepository, createWebhookRouter(), buildApp()
+Nodes (43): api(), api_raw(), assert_contains(), assert_eq(), assert_gte(), assert_status(), bold(), cleanup() (+35 more)
 
 ### Community 34 - "Community 34"
 Cohesion: 0.0
-Nodes (43): api(), api_raw(), assert_contains(), assert_eq(), assert_gte(), assert_status(), bold(), cleanup() (+35 more)
+Nodes (1): SocialRepository
 
 ### Community 35 - "Community 35"
 Cohesion: 0.0
-Nodes (1): SocialRepository
+Nodes (10): LocalMcpServerManager, onJobComplete(), onJobFailed(), onProgress(), onError(), onResponse(), onStreamEnd(), FollowerWelcomeService (+2 more)
 
 ### Community 36 - "Community 36"
 Cohesion: 0.0
-Nodes (14): GpuDispatcherCard(), PitchDeckEditorPage(), useAskAi(), useSubagentEvents(), useTokenUsage(), useWorkflowExecution(), useCrawlProgress(), useRoomSync() (+6 more)
+Nodes (36): cleanup_old_jobs(), generate(), gpu_info_endpoint(), _idle_timer(), LipSyncRequest, _load_pipeline(), _post_job_cleanup(), _post_to_callback() (+28 more)
 
 ### Community 37 - "Community 37"
 Cohesion: 0.0
-Nodes (32): cleanup_old_jobs(), generate(), _idle_timer(), LipSyncRequest, _load_pipeline(), _post_job_cleanup(), _post_to_callback(), process_lipsync_job() (+24 more)
+Nodes (6): defaultUserConfigPath(), getUserSelectedModel(), QuizGenerator, TeacherAgent, TranscriptClassifier, SocialBrain
 
 ### Community 38 - "Community 38"
 Cohesion: 0.0
-Nodes (32): _ensure_torch(), generate(), GenerateRequest, _get_selected_device(), _get_selected_device_reason(), gpu_info(), _idle_unload_watchdog(), _lifespan() (+24 more)
+Nodes (14): GpuDispatcherCard(), PitchDeckEditorPage(), useAskAi(), useSubagentEvents(), useTokenUsage(), useWorkflowExecution(), useCrawlProgress(), useRoomSync() (+6 more)
 
 ### Community 39 - "Community 39"
 Cohesion: 0.0
-Nodes (19): analyzeSinglePin(), calculatePinScore(), createPinterestSeoTools(), discoverPinsFromBoard(), enrichKeywordMetrics(), ensureReportsDir(), extractAnnotationsFromHtml(), extractBoardUrlFromPinHtml() (+11 more)
+Nodes (32): cleanup_old_jobs(), generate(), _idle_timer(), LipSyncRequest, _load_pipeline(), _post_job_cleanup(), _post_to_callback(), process_lipsync_job() (+24 more)
 
 ### Community 40 - "Community 40"
 Cohesion: 0.0
-Nodes (6): formatApprovalContext(), ApprovalQueue, errorString(), percentile(), VllmBackpressureError, VllmClient
+Nodes (32): _ensure_torch(), generate(), GenerateRequest, _get_selected_device(), _get_selected_device_reason(), gpu_info(), _idle_unload_watchdog(), _lifespan() (+24 more)
 
 ### Community 41 - "Community 41"
 Cohesion: 0.0
-Nodes (7): createMemoryRouter(), buildApp(), createMockMemoryManager(), formatMemoryFile(), MemoryManager, parseMemoryFile(), slugify()
+Nodes (19): analyzeSinglePin(), calculatePinScore(), createPinterestSeoTools(), discoverPinsFromBoard(), enrichKeywordMetrics(), ensureReportsDir(), extractAnnotationsFromHtml(), extractBoardUrlFromPinHtml() (+11 more)
 
 ### Community 42 - "Community 42"
 Cohesion: 0.0
-Nodes (7): TemplateRepository, toTemplate(), interpolateTemplate(), TemplateService, makeDb(), makeRepo(), TemplateNotFoundError
+Nodes (7): createMemoryRouter(), buildApp(), createMockMemoryManager(), formatMemoryFile(), MemoryManager, parseMemoryFile(), slugify()
 
 ### Community 43 - "Community 43"
 Cohesion: 0.0
-Nodes (3): FirecrawlWebhookHandler, normalizeUrl(), validateWebhookSignature()
+Nodes (2): AnalyzeWorker, TrimWorker
 
 ### Community 44 - "Community 44"
 Cohesion: 0.0
-Nodes (24): cleanup_old_jobs(), generate_async(), gpu_info_endpoint(), _idle_timer(), _load_models(), _post_job_cleanup(), _post_to_callback(), _process_job() (+16 more)
+Nodes (3): FirecrawlWebhookHandler, normalizeUrl(), validateWebhookSignature()
 
 ### Community 45 - "Community 45"
 Cohesion: 0.0
-Nodes (2): onProviderInfo(), FakeCopilot
-
-### Community 46 - "Community 46"
-Cohesion: 0.0
 Nodes (14): clean_env(), client(), Unit tests for Music Studio sidecar — server.py endpoints. Focuses on voice refe, Should return 400 when voice reference doesn't exist., Should return 409 when worker is already busy., GET /models should list voice references., Set up clean temp directories for each test., Create a FastAPI test client. (+6 more)
 
-### Community 48 - "Community 48"
+### Community 47 - "Community 47"
 Cohesion: 0.0
 Nodes (24): collect_sidecar_health(), GpuSample, _http_get(), _http_post(), JobResult, main(), poll_nvidia_smi(), Exercises IMAGE_GEN_POOLING_MODE=manual-flux.      Submits one FLUX-schnell base (+16 more)
 
-### Community 49 - "Community 49"
+### Community 48 - "Community 48"
 Cohesion: 0.0
 Nodes (2): DomainRateLimiter, FirecrawlClient
 
-### Community 50 - "Community 50"
-Cohesion: 0.0
-Nodes (4): DockerSidecarManager, resolveDockerSocketPath(), createMockContainer(), createMockDocker()
-
-### Community 51 - "Community 51"
-Cohesion: 0.0
-Nodes (18): BaseHTTPRequestHandler, check_auth(), cleanup_old_results(), _ensure_model_loaded(), generate_music(), main(), MusicGenHandler, ACE-Step 1.5 Music Generation Sidecar Issue #337: Local AI music generation via (+10 more)
-
-### Community 52 - "Community 52"
+### Community 49 - "Community 49"
 Cohesion: 0.0
 Nodes (18): apply_seedvc(), ensure_seed_vc_installed(), main(), Seed-VC Voice Conversion — apply_seedvc.py Issue #403: Zero-shot voice conversio, Ensure Seed-VC repo is cloned and return its path., Apply Seed-VC zero-shot voice conversion.      Args:         input_path: Path to, Unit tests for apply_seedvc.py — Seed-VC voice conversion wrapper., Should raise RuntimeError when seed-vc subprocess fails. (+10 more)
 
-### Community 53 - "Community 53"
+### Community 50 - "Community 50"
 Cohesion: 0.0
 Nodes (23): dummy_image(), OOM-recovery + VRAM-fragmentation tests for the FluxQ sidecar (issue #1022).  Pi, Sentinel — we don't care about the actual PIL.Image type., Happy path — ``_generate_image`` succeeds first time., First call OOMs, ``empty_cache()`` runs, second call succeeds.      Asserts:, Two OOMs trigger unload+reload; third call succeeds., All three attempts OOM → re-raise so the caller can fail the job., A ValueError must propagate immediately — no retry, no unload. (+15 more)
 
-### Community 54 - "Community 54"
+### Community 51 - "Community 51"
 Cohesion: 0.0
 Nodes (14): platform(), ensureChromeRunning(), findChromeBinary(), getAutomationProfileDir(), isDebugPortReachable(), killChrome(), killZombieChromes(), launchChrome() (+6 more)
 
-### Community 55 - "Community 55"
+### Community 52 - "Community 52"
 Cohesion: 0.0
-Nodes (2): executePostAction(), TaskWorker
+Nodes (11): aggregateCwvStats(), evictIfNeeded(), extractLighthouseOptimizations(), fetchCoreWebVitals(), fetchCoreWebVitalsBatch(), fetchCoreWebVitalsDual(), getCachedResult(), rateMetric() (+3 more)
 
-### Community 56 - "Community 56"
+### Community 53 - "Community 53"
 Cohesion: 0.0
-Nodes (3): defaultAuditDir(), Scheduler, toJob()
+Nodes (6): MessageRouter, countRules(), extractDescriptionFromBody(), loadSkillMetadata(), parseFrontmatter(), toDisplayName()
 
-### Community 57 - "Community 57"
-Cohesion: 0.0
-Nodes (8): computeCropDimensions(), cubicEaseInOut(), generateCropFilter(), interpolateAtTime(), interpolateCropTrajectory(), lerp(), parseAspectRatio(), ReframeWorker
-
-### Community 58 - "Community 58"
+### Community 54 - "Community 54"
 Cohesion: 0.0
 Nodes (19): _install_torch(), _make_torch_stub(), WS2-A (#927) regression tests for dual-GPU LTX sharding logic.  These tests exer, Manual mode bypasses LTX_POOLING_MIN_VRAM_GB., Build a torch stub whose `cuda` namespace mirrors the requested topology.      `, Import server_cuda fresh and inject a torch stub.      Each test gets a fresh im, server_module(), test_ltxv2_22b_falls_back_on_unknown_topology() (+11 more)
 
-### Community 59 - "Community 59"
+### Community 55 - "Community 55"
+Cohesion: 0.0
+Nodes (4): CommentRuleEngine, escapeRegex(), interpolateTemplate(), HandoffManager
+
+### Community 56 - "Community 56"
 Cohesion: 0.0
 Nodes (3): FacebookAdapter, GenericPollAdapter, SocialIngestionService
 
-### Community 60 - "Community 60"
+### Community 57 - "Community 57"
 Cohesion: 0.0
 Nodes (1): WebChatChannel
 
-### Community 61 - "Community 61"
-Cohesion: 0.0
-Nodes (4): SubagentEventRelay, createFakeIO(), FakePeer, MockCall
-
-### Community 62 - "Community 62"
+### Community 58 - "Community 58"
 Cohesion: 0.0
 Nodes (7): assetUrl(), fileDownloadUrl(), fileUrl(), handleDownload(), handleOpenInStudio(), if(), showToast()
 
-### Community 63 - "Community 63"
+### Community 59 - "Community 59"
+Cohesion: 0.0
+Nodes (4): SubagentEventRelay, createFakeIO(), FakePeer, MockCall
+
+### Community 60 - "Community 60"
 Cohesion: 0.0
 Nodes (3): FakeCopilotClient, FakeSession, handler()
 
-### Community 64 - "Community 64"
+### Community 61 - "Community 61"
+Cohesion: 0.0
+Nodes (2): saveState(), ToolRegistry
+
+### Community 62 - "Community 62"
 Cohesion: 0.0
 Nodes (16): apply_rvc(), main(), RVC Voice Conversion — apply_rvc.py Issue #386: Apply Retrieval-based Voice Conv, Apply RVC v2 voice conversion to an input audio file.      Returns the path to t, _basic_pitch_shift(), _extract_f0(), load_model(), _median_filter() (+8 more)
 
-### Community 65 - "Community 65"
+### Community 63 - "Community 63"
+Cohesion: 0.0
+Nodes (4): errorString(), percentile(), VllmBackpressureError, VllmClient
+
+### Community 64 - "Community 64"
 Cohesion: 0.0
 Nodes (2): PinterestAnalyticsPage(), usePinterestStatus()
 
-### Community 66 - "Community 66"
+### Community 65 - "Community 65"
 Cohesion: 0.0
 Nodes (1): CrawlDashboardPage
+
+### Community 66 - "Community 66"
+Cohesion: 0.0
+Nodes (2): formatApprovalContext(), ApprovalQueue
 
 ### Community 67 - "Community 67"
 Cohesion: 0.0
@@ -466,23 +469,23 @@ Nodes (1): BrandVoiceService
 
 ### Community 69 - "Community 69"
 Cohesion: 0.0
-Nodes (2): BrandTemplateRepository, rowToSaved()
+Nodes (1): PresentationRepository
 
 ### Community 70 - "Community 70"
 Cohesion: 0.0
-Nodes (1): RoomManager
+Nodes (2): BrandTemplateRepository, rowToSaved()
 
 ### Community 71 - "Community 71"
 Cohesion: 0.0
-Nodes (6): authHeaders(), deleteJobByName(), deletePromptByName(), deleteSkillByName(), navigateTo(), waitForHydration()
+Nodes (1): RoomManager
 
 ### Community 72 - "Community 72"
 Cohesion: 0.0
-Nodes (1): AudioCleaner
+Nodes (6): authHeaders(), deleteJobByName(), deletePromptByName(), deleteSkillByName(), navigateTo(), waitForHydration()
 
 ### Community 73 - "Community 73"
 Cohesion: 0.0
-Nodes (1): ClipExtractor
+Nodes (2): RenderOrchestrator, resolvePath()
 
 ### Community 74 - "Community 74"
 Cohesion: 0.0
@@ -502,15 +505,15 @@ Nodes (11): _install_fake_torch(), _isolate_env(), Mocked device-selection tests
 
 ### Community 78 - "Community 78"
 Cohesion: 0.0
-Nodes (1): BrandVoiceRepository
+Nodes (2): interpolateTemplate(), TemplateService
 
 ### Community 79 - "Community 79"
 Cohesion: 0.0
-Nodes (2): toPreset(), VideoPresetsRepository
+Nodes (1): BrandVoiceRepository
 
 ### Community 80 - "Community 80"
 Cohesion: 0.0
-Nodes (1): AnalyzeWorker
+Nodes (2): toPreset(), VideoPresetsRepository
 
 ### Community 81 - "Community 81"
 Cohesion: 0.0
@@ -526,432 +529,452 @@ Nodes (9): Install-OpenZigs(), Install-Prerequisites(), New-DataDirectories(), S
 
 ### Community 84 - "Community 84"
 Cohesion: 0.0
-Nodes (1): AdminVllmPage
+Nodes (2): TemplateRepository, toTemplate()
 
 ### Community 85 - "Community 85"
 Cohesion: 0.0
-Nodes (1): GalleryStudioPage
+Nodes (1): AdminVllmPage
 
 ### Community 86 - "Community 86"
 Cohesion: 0.0
-Nodes (3): GpuDispatcherPanelPage, installGpuMocks(), singleGpuProfile()
+Nodes (1): GalleryStudioPage
 
 ### Community 87 - "Community 87"
 Cohesion: 0.0
-Nodes (1): WorkflowsPage
+Nodes (3): GpuDispatcherPanelPage, installGpuMocks(), singleGpuProfile()
 
 ### Community 88 - "Community 88"
 Cohesion: 0.0
-Nodes (9): create_pin(), main(), pinterest_api(), Call local OpenZigs tracker API., Create a single pin on Pinterest., Add the real pin to the local tracker and take an initial snapshot., Call Pinterest API v5., register_in_tracker() (+1 more)
+Nodes (1): WorkflowsPage
 
 ### Community 89 - "Community 89"
 Cohesion: 0.0
-Nodes (6): createAudioRouter(), extractErrorMessage(), formatSidecarErrorMessage(), parseJsonIfPossible(), buildApp(), createTestDb()
+Nodes (9): create_pin(), main(), pinterest_api(), Call local OpenZigs tracker API., Create a single pin on Pinterest., Add the real pin to the local tracker and take an initial snapshot., Call Pinterest API v5., register_in_tracker() (+1 more)
 
 ### Community 90 - "Community 90"
 Cohesion: 0.0
-Nodes (1): CharacterRepository
+Nodes (6): createAudioRouter(), extractErrorMessage(), formatSidecarErrorMessage(), parseJsonIfPossible(), buildApp(), createTestDb()
 
 ### Community 91 - "Community 91"
 Cohesion: 0.0
-Nodes (2): PexelsDownloader, resolvePath()
+Nodes (1): SREAlerter
 
 ### Community 92 - "Community 92"
 Cohesion: 0.0
-Nodes (1): InpaintingPage
+Nodes (1): TaskReviewer
 
 ### Community 93 - "Community 93"
 Cohesion: 0.0
-Nodes (1): IntegrationsPage
+Nodes (2): PexelsDownloader, resolvePath()
 
 ### Community 94 - "Community 94"
 Cohesion: 0.0
-Nodes (1): WorkbenchPage
+Nodes (1): InpaintingPage
 
 ### Community 95 - "Community 95"
 Cohesion: 0.0
-Nodes (4): mockBrandKits(), mockDeckLibrary(), mockEditor(), mockEmptyDeckLibrary()
+Nodes (1): IntegrationsPage
+
+### Community 96 - "Community 96"
+Cohesion: 0.0
+Nodes (1): WorkbenchPage
 
 ### Community 97 - "Community 97"
 Cohesion: 0.0
-Nodes (7): detectWakeWord(), extractQueryAfterWakeWord(), findFuzzyWakeWordPairIndex(), isLikelyZigsToken(), levenshtein(), levenshteinSimilarity(), normalizeWakeToken()
+Nodes (4): mockBrandKits(), mockDeckLibrary(), mockEditor(), mockEmptyDeckLibrary()
 
 ### Community 99 - "Community 99"
 Cohesion: 0.0
-Nodes (6): Get-SvcHealth(), Restart-Svc(), Show-Status(), Stop-Svc(), Sync-Svc(), wsl()
-
-### Community 100 - "Community 100"
-Cohesion: 0.0
-Nodes (1): HandoffManager
+Nodes (7): detectWakeWord(), extractQueryAfterWakeWord(), findFuzzyWakeWordPairIndex(), isLikelyZigsToken(), levenshtein(), levenshteinSimilarity(), normalizeWakeToken()
 
 ### Community 101 - "Community 101"
 Cohesion: 0.0
-Nodes (1): CompetitorRepository
+Nodes (6): Get-SvcHealth(), Restart-Svc(), Show-Status(), Stop-Svc(), Sync-Svc(), wsl()
 
 ### Community 102 - "Community 102"
 Cohesion: 0.0
-Nodes (3): extractLinkText(), if(), isMediaUrl()
+Nodes (1): CompetitorRepository
 
 ### Community 103 - "Community 103"
 Cohesion: 0.0
-Nodes (8): addColumn(), addRow(), removeColumn(), removeRow(), update(), updateCell(), updateColumn(), updateRow()
+Nodes (1): StoryboardEngine
 
 ### Community 104 - "Community 104"
 Cohesion: 0.0
-Nodes (1): TimelineEditorPage
+Nodes (3): extractLinkText(), if(), isMediaUrl()
 
 ### Community 105 - "Community 105"
 Cohesion: 0.0
-Nodes (7): finalize(), main(), _normalize_lufs(), Auto-Mastering — matchering-based EQ balancing + LUFS normalization.  Issue #393, Auto-master a mixed track using matchering (if reference available).      Perfor, CLI entry point for auto-mastering., Normalize audio to a target LUFS level using ITU-R BS.1770 measurement.      Par
+Nodes (8): addColumn(), addRow(), removeColumn(), removeRow(), update(), updateCell(), updateColumn(), updateRow()
 
 ### Community 106 - "Community 106"
 Cohesion: 0.0
-Nodes (4): assertAllowedPath(), overlayAssets(), positionToXY(), runFfmpeg()
+Nodes (1): TimelineEditorPage
 
 ### Community 107 - "Community 107"
 Cohesion: 0.0
-Nodes (1): TrimWorker
+Nodes (7): finalize(), main(), _normalize_lufs(), Auto-Mastering — matchering-based EQ balancing + LUFS normalization.  Issue #393, Auto-master a mixed track using matchering (if reference available).      Perfor, CLI entry point for auto-mastering., Normalize audio to a target LUFS level using ITU-R BS.1770 measurement.      Par
 
 ### Community 108 - "Community 108"
 Cohesion: 0.0
-Nodes (4): addAgent(), removeAgent(), updateAgent(), updateStage()
+Nodes (4): assertAllowedPath(), overlayAssets(), positionToXY(), runFfmpeg()
 
 ### Community 109 - "Community 109"
 Cohesion: 0.0
-Nodes (7): buildCron(), getNextRuns(), handleDayToggle(), handleFrequencyChange(), handleMonthDayChange(), handleTimeChange(), matchField()
+Nodes (4): addAgent(), removeAgent(), updateAgent(), updateStage()
 
 ### Community 110 - "Community 110"
 Cohesion: 0.0
-Nodes (4): defaultRouter(), installLocalLlmMocks(), LocalLlmPanelPage, stoppedStatus()
+Nodes (7): buildCron(), getNextRuns(), handleDayToggle(), handleFrequencyChange(), handleMonthDayChange(), handleTimeChange(), matchField()
 
 ### Community 111 - "Community 111"
 Cohesion: 0.0
-Nodes (1): SeoDashboardPage
+Nodes (4): defaultRouter(), installLocalLlmMocks(), LocalLlmPanelPage, stoppedStatus()
 
 ### Community 112 - "Community 112"
 Cohesion: 0.0
-Nodes (3): installSetupMocks(), linuxNvidia4090Platform(), SetupWizardPage
+Nodes (1): SeoDashboardPage
 
 ### Community 113 - "Community 113"
 Cohesion: 0.0
-Nodes (2): Test-PortInUse(), Wait-ForPort()
+Nodes (3): installSetupMocks(), linuxNvidia4090Platform(), SetupWizardPage
 
 ### Community 114 - "Community 114"
 Cohesion: 0.0
-Nodes (1): FollowUpScheduler
+Nodes (2): Test-PortInUse(), Wait-ForPort()
 
 ### Community 115 - "Community 115"
 Cohesion: 0.0
-Nodes (1): VideoGenService
+Nodes (1): FollowUpScheduler
 
 ### Community 116 - "Community 116"
 Cohesion: 0.0
-Nodes (4): deriveLabel(), formatTimestamp(), generateChapters(), getSceneDurationMs()
+Nodes (1): PriceSnapshotRepository
+
+### Community 117 - "Community 117"
+Cohesion: 0.0
+Nodes (1): PromptAuditor
 
 ### Community 118 - "Community 118"
 Cohesion: 0.0
+Nodes (4): deriveLabel(), formatTimestamp(), generateChapters(), getSceneDurationMs()
+
+### Community 120 - "Community 120"
+Cohesion: 0.0
 Nodes (1): formatCount()
 
-### Community 119 - "Community 119"
+### Community 121 - "Community 121"
 Cohesion: 0.0
 Nodes (5): handleDone(), handleError(), handleNoteSaved(), handleStart(), handleToken()
 
-### Community 122 - "Community 122"
+### Community 124 - "Community 124"
 Cohesion: 0.0
 Nodes (5): addBullet(), move(), removeBullet(), setBullets(), updateBullet()
 
-### Community 123 - "Community 123"
+### Community 125 - "Community 125"
 Cohesion: 0.0
 Nodes (1): BrandTemplatePage
 
-### Community 124 - "Community 124"
+### Community 126 - "Community 126"
 Cohesion: 0.0
 Nodes (1): BRollPanelPage
 
-### Community 125 - "Community 125"
+### Community 127 - "Community 127"
 Cohesion: 0.0
 Nodes (1): PitchWizardPage
 
-### Community 126 - "Community 126"
+### Community 128 - "Community 128"
 Cohesion: 0.0
 Nodes (1): Smoke tests for sadtalker sidecar endpoints.  Issue #919 (Epic #883 cleanup) — c
 
-### Community 127 - "Community 127"
+### Community 129 - "Community 129"
 Cohesion: 0.0
-Nodes (2): getMusicVolume(), isNarrationActiveAtFrame()
+Nodes (1): PersonalityManager
 
 ### Community 130 - "Community 130"
 Cohesion: 0.0
-Nodes (1): MockMediaRecorder
-
-### Community 131 - "Community 131"
-Cohesion: 0.0
-Nodes (1): MockResizeObserver
-
-### Community 132 - "Community 132"
-Cohesion: 0.0
-Nodes (5): addMember(), blankMember(), removeMember(), update(), updateMember()
+Nodes (2): getMusicVolume(), isNarrationActiveAtFrame()
 
 ### Community 133 - "Community 133"
 Cohesion: 0.0
-Nodes (5): addEvent(), move(), removeEvent(), setEvents(), update()
+Nodes (1): MockMediaRecorder
+
+### Community 134 - "Community 134"
+Cohesion: 0.0
+Nodes (1): MockResizeObserver
 
 ### Community 135 - "Community 135"
 Cohesion: 0.0
-Nodes (1): AdminPage
+Nodes (5): addMember(), blankMember(), removeMember(), update(), updateMember()
 
 ### Community 136 - "Community 136"
 Cohesion: 0.0
-Nodes (1): AnalyticsDashboardPage
-
-### Community 137 - "Community 137"
-Cohesion: 0.0
-Nodes (1): PitchLibraryPage
+Nodes (5): addEvent(), move(), removeEvent(), setEvents(), update()
 
 ### Community 138 - "Community 138"
 Cohesion: 0.0
-Nodes (4): FakeAudioContext, FakeMediaRecorder, makeFakeStream(), makeRemote()
+Nodes (1): AdminPage
+
+### Community 139 - "Community 139"
+Cohesion: 0.0
+Nodes (1): AnalyticsDashboardPage
 
 ### Community 140 - "Community 140"
 Cohesion: 0.0
+Nodes (1): PitchLibraryPage
+
+### Community 141 - "Community 141"
+Cohesion: 0.0
+Nodes (4): FakeAudioContext, FakeMediaRecorder, makeFakeStream(), makeRemote()
+
+### Community 143 - "Community 143"
+Cohesion: 0.0
 Nodes (4): load_api_key(), main(), parse_args(), Standalone launcher for the vLLM dual-GPU sidecar (TP=2).  Issue #916 (Epic #888
-
-### Community 146 - "Community 146"
-Cohesion: 0.0
-Nodes (2): contrastRatio(), relativeLuminance()
-
-### Community 147 - "Community 147"
-Cohesion: 0.0
-Nodes (4): addItem(), removeItem(), update(), updateItem()
-
-### Community 148 - "Community 148"
-Cohesion: 0.0
-Nodes (4): addKpi(), removeKpi(), setKpis(), updateKpi()
 
 ### Community 149 - "Community 149"
 Cohesion: 0.0
-Nodes (1): AudioCleanerPage
+Nodes (2): contrastRatio(), relativeLuminance()
 
 ### Community 150 - "Community 150"
 Cohesion: 0.0
-Nodes (1): FramingPanelPage
+Nodes (4): addItem(), removeItem(), update(), updateItem()
 
 ### Community 151 - "Community 151"
 Cohesion: 0.0
-Nodes (1): NLEExportPage
+Nodes (4): addKpi(), removeKpi(), setKpis(), updateKpi()
+
+### Community 152 - "Community 152"
+Cohesion: 0.0
+Nodes (1): AudioCleanerPage
+
+### Community 153 - "Community 153"
+Cohesion: 0.0
+Nodes (1): FramingPanelPage
 
 ### Community 154 - "Community 154"
 Cohesion: 0.0
+Nodes (1): NLEExportPage
+
+### Community 157 - "Community 157"
+Cohesion: 0.0
 Nodes (2): getDefaultTransition(), mapTransition()
 
-### Community 167 - "Community 167"
-Cohesion: 0.0
-Nodes (2): InlineModelPicker(), useModelsQuery()
-
-### Community 168 - "Community 168"
-Cohesion: 0.0
-Nodes (3): handleSeriesChange(), tryParseSeries(), update()
-
-### Community 169 - "Community 169"
-Cohesion: 0.0
-Nodes (3): update(), updateLeftImage(), updateRightImage()
-
-### Community 171 - "Community 171"
-Cohesion: 0.0
-Nodes (2): generateRecapPdf(), handleDownloadPdf()
-
-### Community 179 - "Community 179"
-Cohesion: 0.0
-Nodes (1): PresenterDetailPage
-
-### Community 180 - "Community 180"
-Cohesion: 0.0
-Nodes (2): createInitialPresenterState(), presenterReducer()
-
-### Community 183 - "Community 183"
+### Community 158 - "Community 158"
 Cohesion: 0.0
 Nodes (2): AdminPage(), usePlatform()
 
+### Community 171 - "Community 171"
+Cohesion: 0.0
+Nodes (2): InlineModelPicker(), useModelsQuery()
+
+### Community 172 - "Community 172"
+Cohesion: 0.0
+Nodes (3): handleSeriesChange(), tryParseSeries(), update()
+
+### Community 173 - "Community 173"
+Cohesion: 0.0
+Nodes (3): update(), updateLeftImage(), updateRightImage()
+
+### Community 175 - "Community 175"
+Cohesion: 0.0
+Nodes (2): generateRecapPdf(), handleDownloadPdf()
+
+### Community 183 - "Community 183"
+Cohesion: 0.0
+Nodes (1): PresenterDetailPage
+
 ### Community 184 - "Community 184"
+Cohesion: 0.0
+Nodes (2): createInitialPresenterState(), presenterReducer()
+
+### Community 187 - "Community 187"
 Cohesion: 0.0
 Nodes (2): log(), main()
 
-### Community 186 - "Community 186"
+### Community 189 - "Community 189"
 Cohesion: 0.0
 Nodes (2): getPositionStyle(), TextOverlayItem()
 
-### Community 192 - "Community 192"
+### Community 195 - "Community 195"
 Cohesion: 0.0
 Nodes (2): handleSave(), parseList()
 
-### Community 213 - "Community 213"
+### Community 216 - "Community 216"
 Cohesion: 0.0
 Nodes (2): makeFakeStream(), makeRemotePeer()
 
-### Community 215 - "Community 215"
+### Community 218 - "Community 218"
 Cohesion: 0.0
 Nodes (2): addEvent(), panelReducer()
 
-### Community 219 - "Community 219"
+### Community 222 - "Community 222"
 Cohesion: 0.0
 Nodes (1): BrandKitEditorDialog
 
-### Community 220 - "Community 220"
+### Community 223 - "Community 223"
 Cohesion: 0.0
 Nodes (1): BrandKitPicker
 
-### Community 222 - "Community 222"
+### Community 225 - "Community 225"
 Cohesion: 0.0
 Nodes (2): mockEmptySeoApis(), mockSeoApis()
 
-### Community 226 - "Community 226"
+### Community 229 - "Community 229"
 Cohesion: 0.0
 Nodes (2): middleware(), verifyGuestToken()
 
-### Community 228 - "Community 228"
+### Community 231 - "Community 231"
 Cohesion: 0.0
 Nodes (1): Verify _get_max_frames_for_model returns sane values for both single-GPU and poo
 
-### Community 229 - "Community 229"
+### Community 232 - "Community 232"
 Cohesion: 0.0
 Nodes (1): Direct test of F5-TTS inference to debug tensor mismatch.
 
 ## Knowledge Gaps
-- **417 isolated node(s):** `Verify _get_max_frames_for_model returns sane values for both single-GPU and poo`, `Call Pinterest API v5.`, `Call local OpenZigs tracker API.`, `Create a single pin on Pinterest.`, `Add the real pin to the local tracker and take an initial snapshot.` (+412 more)
+- **418 isolated node(s):** `Verify _get_max_frames_for_model returns sane values for both single-GPU and poo`, `Call Pinterest API v5.`, `Call local OpenZigs tracker API.`, `Create a single pin on Pinterest.`, `Add the real pin to the local tracker and take an initial snapshot.` (+413 more)
   These have ≤1 connection - possible missing edges or undocumented components.
-- **Thin community `Community 35`** (43 nodes): `SocialRepository`, `.addTag()`, `.approveReply()`, `.cachePostContext()`, `.constructor()`, `.createFollowUpStep()`, `.createRule()`, `.deleteFollowUpStep()`, `.deleteRule()`, `.editAndApproveReply()`, `.exportContactsCsv()`, `.getAnalytics()`, `.getAutomationLog()`, `.getContact()`, `.getContactByPlatformUser()`, `.getFollowUpSteps()`, `.getLeads()`, `.getMessages()`, `.getPendingApprovalCount()`, `.getPendingFollowUps()`, `.getPostContext()`, `.getRecentActivity()`, `.getRule()`, `.getStats()`, `.getUserTriggerCount()`, `.hasCommentBeenProcessed()`, `.incrementRuleTriggerCount()`, `.insertAutomationLog()`, `.insertManualReply()`, `.insertMessage()`, `.listContacts()`, `.listPendingApprovals()`, `.listRules()`, `.markFollowUpError()`, `.markFollowUpSent()`, `.migrate()`, `.rejectReply()`, `.removeTag()`, `.scheduleFollowUp()`, `.updateContact()`, `.updateContactLead()`, `.updateRule()`, `.upsertContact()`
+- **Thin community `Community 34`** (43 nodes): `SocialRepository`, `.addTag()`, `.approveReply()`, `.cachePostContext()`, `.constructor()`, `.createFollowUpStep()`, `.createRule()`, `.deleteFollowUpStep()`, `.deleteRule()`, `.editAndApproveReply()`, `.exportContactsCsv()`, `.getAnalytics()`, `.getAutomationLog()`, `.getContact()`, `.getContactByPlatformUser()`, `.getFollowUpSteps()`, `.getLeads()`, `.getMessages()`, `.getPendingApprovalCount()`, `.getPendingFollowUps()`, `.getPostContext()`, `.getRecentActivity()`, `.getRule()`, `.getStats()`, `.getUserTriggerCount()`, `.hasCommentBeenProcessed()`, `.incrementRuleTriggerCount()`, `.insertAutomationLog()`, `.insertManualReply()`, `.insertMessage()`, `.listContacts()`, `.listPendingApprovals()`, `.listRules()`, `.markFollowUpError()`, `.markFollowUpSent()`, `.migrate()`, `.rejectReply()`, `.removeTag()`, `.scheduleFollowUp()`, `.updateContact()`, `.updateContactLead()`, `.updateRule()`, `.upsertContact()`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 45`** (32 nodes): `onProviderInfo()`, `FakeCopilot`, `.authenticate()`, `.chat()`, `.clearAllSessions()`, `.clearSessionUsage()`, `.constructor()`, `.deleteSdkSession()`, `.destroySession()`, `.getCustomAgents()`, `.getMaxToolsPerRequest()`, `.getNativeMcpServers()`, `.getProvider()`, `.getReasoningEffort()`, `.getSdkSessionMessages()`, `.getSessionAnalytics()`, `.getSessionUsage()`, `.getWorkingDirectory()`, `.hasSession()`, `.isAuthenticated()`, `.listModels()`, `.listSdkSessions()`, `.modelSupportsReasoning()`, `.onToolCall()`, `.resetSessionAnalytics()`, `.setCustomAgents()`, `.setMaxToolsPerRequest()`, `.setNativeMcpServers()`, `.setProvider()`, `.setReasoningEffort()`, `.setWorkingDirectory()`, `.waitForAuth()`
+- **Thin community `Community 43`** (34 nodes): `createStudioRouter()`, `detectSceneChanges()`, `findYtDlpOutput()`, `getVideoDuration()`, `createMockAnalyzeWorker()`, `createMockMediaQueueRepo()`, `createMockTrimWorker()`, `studio.test.ts`, `studio.ts`, `analyze-worker.test.ts`, `analyze-worker.ts`, `trim-worker.test.ts`, `trim-worker.ts`, `AnalyzeWorker`, `.analyzeFrameBatch()`, `.constructor()`, `.extractFrames()`, `.getJob()`, `.mergeCuts()`, `.parseLLMResponse()`, `.processNext()`, `.runAnalysis()`, `.submit()`, `.transcribeAudio()`, `.waitForCompletion()`, `createMockProcess()`, `TrimWorker`, `.constructor()`, `.executeFfmpeg()`, `.getJob()`, `.listJobs()`, `.processNext()`, `.submit()`, `.waitForCompletion()`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 49`** (30 nodes): `DomainRateLimiter`, `.clear()`, `.constructor()`, `.evictIfNeeded()`, `.size()`, `.waitForDomain()`, `FirecrawlClient`, `.batchScrape()`, `.clearIdleTimer()`, `.clearRateLimiter()`, `.constructor()`, `.crawl()`, `.ensureRunning()`, `.getConfig()`, `.getDomain()`, `.isAvailable()`, `.isAvailableQuick()`, `.map()`, `.parseBatchResult()`, `.pollBatchJob()`, `.pollCrawlJob()`, `.request()`, `.resetIdleTimer()`, `.scrape()`, `.search()`, `._setRunning()`, `.setWebhookHandler()`, `.shutdown()`, `.startSidecar()`, `.validateUrl()`
+- **Thin community `Community 48`** (30 nodes): `DomainRateLimiter`, `.clear()`, `.constructor()`, `.evictIfNeeded()`, `.size()`, `.waitForDomain()`, `FirecrawlClient`, `.batchScrape()`, `.clearIdleTimer()`, `.clearRateLimiter()`, `.constructor()`, `.crawl()`, `.ensureRunning()`, `.getConfig()`, `.getDomain()`, `.isAvailable()`, `.isAvailableQuick()`, `.map()`, `.parseBatchResult()`, `.pollBatchJob()`, `.pollCrawlJob()`, `.request()`, `.resetIdleTimer()`, `.scrape()`, `.search()`, `._setRunning()`, `.setWebhookHandler()`, `.shutdown()`, `.startSidecar()`, `.validateUrl()`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 55`** (25 nodes): `executePostAction()`, `TaskWorker`, `.activeCount()`, `.buildPipelineResult()`, `.buildPrompt()`, `.buildSkillSystemMessage()`, `.buildStagePrompt()`, `.concurrencyLimit()`, `.constructor()`, `.executeNode()`, `.executeNodeResult()`, `.executeParallelGroup()`, `.executePipeline()`, `.executePromptStage()`, `.executeTask()`, `.isCopilotUnavailableError()`, `.persistTokenUsage()`, `.poll()`, `.resolveAvailableTools()`, `.resolveCustomAgents()`, `.setEventStreamer()`, `.setMaxConcurrent()`, `.setValidModels()`, `.start()`, `.stop()`
+- **Thin community `Community 57`** (21 nodes): `WebChatChannel`, `.broadcastApprovalRequest()`, `.clearSessionHistory()`, `.connect()`, `.constructor()`, `.disconnect()`, `.getSocketByChatId()`, `.handleConnection()`, `.isConnected()`, `.onApprovalResponse()`, `.onClear()`, `.onMessage()`, `.restoreSession()`, `.sendApprovalRequest()`, `.sendError()`, `.sendMessage()`, `.sendSessionHistory()`, `.sendStreamChunk()`, `.sendStreamEnd()`, `.sendToolProgress()`, `.sendUserInputRequest()`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 60`** (21 nodes): `WebChatChannel`, `.broadcastApprovalRequest()`, `.clearSessionHistory()`, `.connect()`, `.constructor()`, `.disconnect()`, `.getSocketByChatId()`, `.handleConnection()`, `.isConnected()`, `.onApprovalResponse()`, `.onClear()`, `.onMessage()`, `.restoreSession()`, `.sendApprovalRequest()`, `.sendError()`, `.sendMessage()`, `.sendSessionHistory()`, `.sendStreamChunk()`, `.sendStreamEnd()`, `.sendToolProgress()`, `.sendUserInputRequest()`
+- **Thin community `Community 61`** (19 nodes): `saveState()`, `ToolRegistry`, `.constructor()`, `.getAllTools()`, `.getEffectiveRiskLevel()`, `.getRiskLevel()`, `.getToolDefinition()`, `.getToolInfo()`, `.getToolsBySource()`, `.isEnabled()`, `.listAllTools()`, `.listEnabledTools()`, `.persistState()`, `.registerTool()`, `.requiresApproval()`, `.requiresGlobalApproval()`, `.setEnabled()`, `.setGlobalApprovalOverride()`, `.setRiskOverride()`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 65`** (18 nodes): `delta()`, `fmtPct()`, `formatDate()`, `handleCreatePin()`, `handleCreatePinStandalone()`, `handlePinCreated()`, `mult()`, `pctColor()`, `PinterestAnalyticsPage()`, `typeIcon()`, `useContentIdeas()`, `usePinSnapshots()`, `usePinSummary()`, `usePinterestReport()`, `usePinterestReports()`, `usePinterestStatus()`, `useTrackedPins()`, `page.tsx`
+- **Thin community `Community 64`** (18 nodes): `delta()`, `fmtPct()`, `formatDate()`, `handleCreatePin()`, `handleCreatePinStandalone()`, `handlePinCreated()`, `mult()`, `pctColor()`, `PinterestAnalyticsPage()`, `typeIcon()`, `useContentIdeas()`, `usePinSnapshots()`, `usePinSummary()`, `usePinterestReport()`, `usePinterestReports()`, `usePinterestStatus()`, `useTrackedPins()`, `page.tsx`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 66`** (18 nodes): `CrawlDashboardPage`, `.closeDialog()`, `.constructor()`, `.fillMaxDepth()`, `.fillMaxPages()`, `.fillUrl()`, `.goto()`, `.openDialog()`, `.selectDataset()`, `.selectExtract()`, `.selectIngest()`, `.selectLeads()`, `.selectMonitor()`, `.selectPrices()`, `.selectSiteAudit()`, `.submit()`, `.toggleHistory()`, `crawl-dashboard.page.ts`
+- **Thin community `Community 65`** (18 nodes): `CrawlDashboardPage`, `.closeDialog()`, `.constructor()`, `.fillMaxDepth()`, `.fillMaxPages()`, `.fillUrl()`, `.goto()`, `.openDialog()`, `.selectDataset()`, `.selectExtract()`, `.selectIngest()`, `.selectLeads()`, `.selectMonitor()`, `.selectPrices()`, `.selectSiteAudit()`, `.submit()`, `.toggleHistory()`, `crawl-dashboard.page.ts`
+  Too small to be a meaningful cluster - may be noise or needs more connections extracted.
+- **Thin community `Community 66`** (17 nodes): `asString()`, `formatApprovalContext()`, `truncate()`, `ApprovalQueue`, `.cleanupApproval()`, `.constructor()`, `.expireApproval()`, `.finalizeDecision()`, `.get()`, `.handleDecision()`, `.list()`, `.requestApproval()`, `.scheduleCleanup()`, `approval-formatters.test.ts`, `approval-formatters.ts`, `approval-queue.test.ts`, `approval-queue.ts`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
 - **Thin community `Community 67`** (17 nodes): `PinterestTrackerRepository`, `.addContentIdea()`, `.addSnapshot()`, `.constructor()`, `.deleteContentIdea()`, `.deleteTrackedPin()`, `.getLatestSnapshot()`, `.getPinPerformanceSummary()`, `.getSnapshots()`, `.getTrackedPin()`, `.listContentIdeas()`, `.listTrackedPins()`, `.migrate()`, `.trackPin()`, `.updateIdeaStatus()`, `.updateLastChecked()`, `.updatePinStatus()`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
 - **Thin community `Community 68`** (16 nodes): `BrandVoiceService`, `.analyzeAndSave()`, `.analyzeWritingStyle()`, `.buildPromptBlock()`, `.constructor()`, `.deactivateAll()`, `.delete()`, `.getActive()`, `.getActiveVoicePromptBlock()`, `.getAll()`, `.getById()`, `.getVoicePromptBlockById()`, `.parseRulebook()`, `.reanalyze()`, `.setActive()`, `.update()`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 69`** (16 nodes): `createBrandTemplateRouter()`, `brand-templates.ts`, `brand-templates.test.ts`, `brand-templates.ts`, `BrandTemplateRepository`, `.constructor()`, `.create()`, `.delete()`, `.getById()`, `.listAutoApply()`, `.listByBrandKit()`, `.migrate()`, `.update()`, `getBuiltInTemplate()`, `getBuiltInTemplatesByType()`, `rowToSaved()`
+- **Thin community `Community 69`** (16 nodes): `PresentationRepository`, `.constructor()`, `.delete()`, `.deleteNotes()`, `.deleteQuizzes()`, `.findById()`, `.getNotes()`, `.getQuizzes()`, `.getUserChapters()`, `.insert()`, `.insertNote()`, `.insertQuiz()`, `.listAll()`, `.migrate()`, `.replaceUserChapters()`, `.update()`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 70`** (15 nodes): `RoomManager`, `.createOrJoin()`, `.getMemberCount()`, `.getPeerIds()`, `.getRoom()`, `.getRoomForSocket()`, `.isHost()`, `.isMember()`, `.isMemberOf()`, `.leave()`, `.setFsmState()`, `.setPeerId()`, `.updatePlayback()`, `room-manager.test.ts`, `room-manager.ts`
+- **Thin community `Community 70`** (16 nodes): `createBrandTemplateRouter()`, `brand-templates.ts`, `brand-templates.test.ts`, `brand-templates.ts`, `BrandTemplateRepository`, `.constructor()`, `.create()`, `.delete()`, `.getById()`, `.listAutoApply()`, `.listByBrandKit()`, `.migrate()`, `.update()`, `getBuiltInTemplate()`, `getBuiltInTemplatesByType()`, `rowToSaved()`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 72`** (14 nodes): `AudioCleaner`, `.constructor()`, `.detectFillers()`, `.detectSilence()`, `.enhanceAudio()`, `.extractAudio()`, `.getJob()`, `.listJobs()`, `.processNext()`, `.removeRegions()`, `.remuxVideo()`, `.runCleaning()`, `.submit()`, `.waitForCompletion()`
+- **Thin community `Community 71`** (15 nodes): `RoomManager`, `.createOrJoin()`, `.getMemberCount()`, `.getPeerIds()`, `.getRoom()`, `.getRoomForSocket()`, `.isHost()`, `.isMember()`, `.isMemberOf()`, `.leave()`, `.setFsmState()`, `.setPeerId()`, `.updatePlayback()`, `room-manager.test.ts`, `room-manager.ts`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 73`** (14 nodes): `ClipExtractor`, `.analyzeFrames()`, `.constructor()`, `.detectSceneChanges()`, `.extractFrames()`, `.getJob()`, `.getVideoDuration()`, `.listJobs()`, `.processNext()`, `.runExtraction()`, `.scoreAndExtractClips()`, `.submit()`, `.transcribeAudio()`, `.waitForCompletion()`
+- **Thin community `Community 73`** (14 nodes): `RenderOrchestrator`, `.abort()`, `.cleanupWorker()`, `.constructor()`, `.getJob()`, `.handleWorkerError()`, `.handleWorkerMessage()`, `.listJobs()`, `.processQueue()`, `.shutdown()`, `.startWorker()`, `.submit()`, `.waitForCompletion()`, `resolvePath()`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
 - **Thin community `Community 74`** (13 nodes): `cloudflare-tunnel.test.ts`, `cloudflare-tunnel.ts`, `CloudflareTunnel`, `.buildArgs()`, `.clearTimeouts()`, `.constructor()`, `.getPublicUrl()`, `.resetConnectPromise()`, `.scheduleReconnect()`, `.start()`, `.startProcess()`, `.stop()`, `FakeProcess`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
 - **Thin community `Community 75`** (13 nodes): `ClipExtractorPage`, `.constructor()`, `.extract()`, `.getClipCard()`, `.getFoundClipsText()`, `.getHookBadge()`, `.getViralityScore()`, `.selectStyle()`, `.setClipCount()`, `.setMaxDuration()`, `.setMinDuration()`, `.setPrompt()`, `clip-extractor.page.ts`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 78`** (12 nodes): `BrandVoiceRepository`, `.constructor()`, `.create()`, `.deactivateAll()`, `.delete()`, `.getActive()`, `.getAll()`, `.getById()`, `.migrate()`, `.setActive()`, `.toModel()`, `.update()`
+- **Thin community `Community 78`** (12 nodes): `interpolateTemplate()`, `TemplateService`, `.constructor()`, `.create()`, `.delete()`, `.execute()`, `.executeSessionMode()`, `.getById()`, `.list()`, `.seedBuiltIns()`, `.setCopilot()`, `.update()`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 79`** (12 nodes): `clock()`, `toPreset()`, `VideoPresetsRepository`, `.constructor()`, `.createPreset()`, `.deletePreset()`, `.getPreset()`, `.listPresets()`, `.migrate()`, `.updatePreset()`, `video-presets.test.ts`, `video-presets.ts`
+- **Thin community `Community 79`** (12 nodes): `BrandVoiceRepository`, `.constructor()`, `.create()`, `.deactivateAll()`, `.delete()`, `.getActive()`, `.getAll()`, `.getById()`, `.migrate()`, `.setActive()`, `.toModel()`, `.update()`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 80`** (12 nodes): `AnalyzeWorker`, `.analyzeFrameBatch()`, `.constructor()`, `.extractFrames()`, `.getJob()`, `.mergeCuts()`, `.parseLLMResponse()`, `.processNext()`, `.runAnalysis()`, `.submit()`, `.transcribeAudio()`, `.waitForCompletion()`
+- **Thin community `Community 80`** (12 nodes): `clock()`, `toPreset()`, `VideoPresetsRepository`, `.constructor()`, `.createPreset()`, `.deletePreset()`, `.getPreset()`, `.listPresets()`, `.migrate()`, `.updatePreset()`, `video-presets.test.ts`, `video-presets.ts`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
 - **Thin community `Community 81`** (12 nodes): `PitchEditorPage`, `.constructor()`, `.goto()`, `.imageStatusBadgeFor()`, `.openExportMenu()`, `.regenerateTextFor()`, `.retryImageButtonForSlide()`, `.revealFrame()`, `.rowFor()`, `.selectSlide()`, `.thumbnailFor()`, `pitch-editor.page.ts`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
 - **Thin community `Community 82`** (12 nodes): `SocialAnalyticsPage`, `.clearFilters()`, `.constructor()`, `.exportCsv()`, `.getSummaryCardValues()`, `.getTableHeaders()`, `.goto()`, `.selectPlatform()`, `.setSinceDate()`, `.setUntilDate()`, `.switchToAnalyticsTab()`, `social-analytics.page.ts`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 84`** (11 nodes): `AdminVllmPage`, `.constructor()`, `.expand()`, `.goto()`, `.mockStart()`, `.mockStatus()`, `.mockStatusUnreachable()`, `.mockStop()`, `runningStatus()`, `stoppedStatus()`, `admin-vllm.page.ts`
+- **Thin community `Community 84`** (11 nodes): `TemplateRepository`, `.constructor()`, `.count()`, `.delete()`, `.getById()`, `.getByName()`, `.insert()`, `.list()`, `.migrate()`, `.update()`, `toTemplate()`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 85`** (11 nodes): `GalleryStudioPage`, `.constructor()`, `.fillSpeechText()`, `.fillVideoPrompt()`, `.goto()`, `.openStudio()`, `.selectModelVersion()`, `.selectTalkingHeadMode()`, `.selectVoice()`, `.submit()`, `gallery-studio.page.ts`
+- **Thin community `Community 85`** (11 nodes): `AdminVllmPage`, `.constructor()`, `.expand()`, `.goto()`, `.mockStart()`, `.mockStatus()`, `.mockStatusUnreachable()`, `.mockStop()`, `runningStatus()`, `stoppedStatus()`, `admin-vllm.page.ts`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 87`** (11 nodes): `WorkflowsPage`, `.constructor()`, `.getCanvasEdges()`, `.getCanvasNodes()`, `.getFitViewButton()`, `.getNodeByText()`, `.getWorkflowNameInput()`, `.getZoomInButton()`, `.getZoomOutButton()`, `.goto()`, `workflows.page.ts`
+- **Thin community `Community 86`** (11 nodes): `GalleryStudioPage`, `.constructor()`, `.fillSpeechText()`, `.fillVideoPrompt()`, `.goto()`, `.openStudio()`, `.selectModelVersion()`, `.selectTalkingHeadMode()`, `.selectVoice()`, `.submit()`, `gallery-studio.page.ts`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 90`** (10 nodes): `CharacterRepository`, `.constructor()`, `.create()`, `.delete()`, `.getAll()`, `.getById()`, `.getByStatus()`, `.migrate()`, `.toModel()`, `.update()`
+- **Thin community `Community 88`** (11 nodes): `WorkflowsPage`, `.constructor()`, `.getCanvasEdges()`, `.getCanvasNodes()`, `.getFitViewButton()`, `.getNodeByText()`, `.getWorkflowNameInput()`, `.getZoomInButton()`, `.getZoomOutButton()`, `.goto()`, `workflows.page.ts`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 91`** (10 nodes): `PexelsDownloader`, `.constructor()`, `.download()`, `.isConfigured()`, `.mapPhotoToAsset()`, `.mapVideoToAsset()`, `.search()`, `.searchPhotos()`, `.searchVideos()`, `resolvePath()`
+- **Thin community `Community 91`** (10 nodes): `SREAlerter`, `.clearCooldowns()`, `.constructor()`, `.fireAlerts()`, `.formatAlertMessage()`, `.isInCooldown()`, `.setCooldown()`, `.setIO()`, `.setNotifyChannels()`, `.updateCooldowns()`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 92`** (10 nodes): `InpaintingPage`, `.constructor()`, `.goto()`, `.selectCharacter()`, `.selectCharacterByLabel()`, `.selectModel()`, `.setPrompt()`, `.submit()`, `.uploadSampleImage()`, `inpainting.page.ts`
+- **Thin community `Community 92`** (10 nodes): `TaskReviewer`, `.constructor()`, `.countConsecutiveFailures()`, `.findOrphanedTasks()`, `.findSlowTasks()`, `.getOrphanThresholdMs()`, `.getSlowTaskThresholdMs()`, `.groupRepeatedErrors()`, `.review()`, `.updateConfig()`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 93`** (10 nodes): `IntegrationsPage`, `.constructor()`, `.expandSection()`, `.goto()`, `.mockSaveSuccess()`, `.mockStatusConfigured()`, `.mockStatusNotConfigured()`, `.mockTestFailure()`, `.mockTestSuccess()`, `integrations.page.ts`
+- **Thin community `Community 93`** (10 nodes): `PexelsDownloader`, `.constructor()`, `.download()`, `.isConfigured()`, `.mapPhotoToAsset()`, `.mapVideoToAsset()`, `.search()`, `.searchPhotos()`, `.searchVideos()`, `resolvePath()`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 94`** (10 nodes): `WorkbenchPage`, `.closeSeoDialog()`, `.constructor()`, `.fillTargetKeyword()`, `.fillTargetUrl()`, `.goto()`, `.openSeoDialog()`, `.selectSearchProvider()`, `.submitAnalysis()`, `workbench.page.ts`
+- **Thin community `Community 94`** (10 nodes): `InpaintingPage`, `.constructor()`, `.goto()`, `.selectCharacter()`, `.selectCharacterByLabel()`, `.selectModel()`, `.setPrompt()`, `.submit()`, `.uploadSampleImage()`, `inpainting.page.ts`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 100`** (9 nodes): `HandoffManager`, `.closeHandoff()`, `.constructor()`, `.escalate()`, `.forwardToThread()`, `.getContactByThread()`, `.handleAdminReply()`, `.rebuildThreadMap()`, `.registerChannel()`
+- **Thin community `Community 95`** (10 nodes): `IntegrationsPage`, `.constructor()`, `.expandSection()`, `.goto()`, `.mockSaveSuccess()`, `.mockStatusConfigured()`, `.mockStatusNotConfigured()`, `.mockTestFailure()`, `.mockTestSuccess()`, `integrations.page.ts`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 101`** (9 nodes): `CompetitorRepository`, `.addCompetitor()`, `.constructor()`, `.ensureTables()`, `.getDb()`, `.getLatestSnapshots()`, `.listCompetitors()`, `.removeCompetitor()`, `.saveSnapshot()`
+- **Thin community `Community 96`** (10 nodes): `WorkbenchPage`, `.closeSeoDialog()`, `.constructor()`, `.fillTargetKeyword()`, `.fillTargetUrl()`, `.goto()`, `.openSeoDialog()`, `.selectSearchProvider()`, `.submitAnalysis()`, `workbench.page.ts`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 104`** (9 nodes): `TimelineEditorPage`, `.constructor()`, `.redo()`, `.splitAtPlayhead()`, `.toggleSnap()`, `.undo()`, `.zoomIn()`, `.zoomOut()`, `timeline-editor.page.ts`
+- **Thin community `Community 102`** (9 nodes): `CompetitorRepository`, `.addCompetitor()`, `.constructor()`, `.ensureTables()`, `.getDb()`, `.getLatestSnapshots()`, `.listCompetitors()`, `.removeCompetitor()`, `.saveSnapshot()`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 107`** (8 nodes): `TrimWorker`, `.constructor()`, `.executeFfmpeg()`, `.getJob()`, `.listJobs()`, `.processNext()`, `.submit()`, `.waitForCompletion()`
+- **Thin community `Community 103`** (9 nodes): `StoryboardEngine`, `.buildHeroReelPrompt()`, `.buildStoryboard()`, `.buildSystemPrompt()`, `.buildUserPrompt()`, `.constructor()`, `.generate()`, `.generateHeroReel()`, `.parseResponse()`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 111`** (8 nodes): `SeoDashboardPage`, `.constructor()`, `.goto()`, `.healthScoreRing()`, `.selectMode()`, `.switchToInnerTab()`, `.switchToTab()`, `seo-dashboard.page.ts`
+- **Thin community `Community 106`** (9 nodes): `TimelineEditorPage`, `.constructor()`, `.redo()`, `.splitAtPlayhead()`, `.toggleSnap()`, `.undo()`, `.zoomIn()`, `.zoomOut()`, `timeline-editor.page.ts`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 113`** (7 nodes): `run-e2e.ps1`, `Test-PortInUse()`, `Wait-ForPort()`, `Write-Err()`, `Write-Info()`, `Write-Ok()`, `Write-Warn()`
+- **Thin community `Community 112`** (8 nodes): `SeoDashboardPage`, `.constructor()`, `.goto()`, `.healthScoreRing()`, `.selectMode()`, `.switchToInnerTab()`, `.switchToTab()`, `seo-dashboard.page.ts`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 114`** (7 nodes): `FollowUpScheduler`, `.constructor()`, `.processPending()`, `.scheduleForRule()`, `.setSendDm()`, `.start()`, `.stop()`
+- **Thin community `Community 114`** (7 nodes): `run-e2e.ps1`, `Test-PortInUse()`, `Wait-ForPort()`, `Write-Err()`, `Write-Info()`, `Write-Ok()`, `Write-Warn()`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 115`** (7 nodes): `VideoGenService`, `.constructor()`, `.getJobStatus()`, `.submitImageToVideo()`, `.submitTextToVideo()`, `.toResult()`, `.waitForJob()`
+- **Thin community `Community 115`** (7 nodes): `FollowUpScheduler`, `.constructor()`, `.processPending()`, `.scheduleForRule()`, `.setSendDm()`, `.start()`, `.stop()`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 118`** (7 nodes): `formatCount()`, `formatDate()`, `handleSort()`, `KpiCard()`, `refetchAll()`, `page.tsx`, `page.tsx`
+- **Thin community `Community 116`** (7 nodes): `PriceSnapshotRepository`, `.constructor()`, `.ensureTables()`, `.getDb()`, `.getLatestSnapshots()`, `.listMonitoredUrls()`, `.saveSnapshot()`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 123`** (7 nodes): `BrandTemplatePage`, `.addTemplate()`, `.constructor()`, `.getTemplateCard()`, `.selectTemplate()`, `.setCustomTitle()`, `brand-template.page.ts`
+- **Thin community `Community 117`** (7 nodes): `PromptAuditor`, `.analyzePrompt()`, `.audit()`, `.constructor()`, `.parseAuditResponse()`, `.sampleRecentPrompts()`, `.setModel()`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 124`** (7 nodes): `BRollPanelPage`, `.analyze()`, `.constructor()`, `.getSuggestionCard()`, `.selectDensity()`, `.toggleSuggestion()`, `broll-panel.page.ts`
+- **Thin community `Community 120`** (7 nodes): `formatCount()`, `formatDate()`, `handleSort()`, `KpiCard()`, `refetchAll()`, `page.tsx`, `page.tsx`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 125`** (7 nodes): `PitchWizardPage`, `.constructor()`, `.fillScript()`, `.goto()`, `.pickBrandKit()`, `.pickImageStyle()`, `pitch-wizard.page.ts`
+- **Thin community `Community 125`** (7 nodes): `BrandTemplatePage`, `.addTemplate()`, `.constructor()`, `.getTemplateCard()`, `.selectTemplate()`, `.setCustomTitle()`, `brand-template.page.ts`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 126`** (6 nodes): `client()`, `Smoke tests for sadtalker sidecar endpoints.  Issue #919 (Epic #883 cleanup) — c`, `test_gpu_info_returns_503_when_cuda_unavailable()`, `test_gpu_info_returns_503_when_torch_missing()`, `test_gpu_info_returns_payload_when_cuda_available()`, `test_endpoints.py`
+- **Thin community `Community 126`** (7 nodes): `BRollPanelPage`, `.analyze()`, `.constructor()`, `.getSuggestionCard()`, `.selectDensity()`, `.toggleSuggestion()`, `broll-panel.page.ts`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 127`** (6 nodes): `findTransitionBetween()`, `getMusicVolume()`, `isNarrationActiveAtFrame()`, `partitionTimeline()`, `renderSegment()`, `template-composition.tsx`
+- **Thin community `Community 127`** (7 nodes): `PitchWizardPage`, `.constructor()`, `.fillScript()`, `.goto()`, `.pickBrandKit()`, `.pickImageStyle()`, `pitch-wizard.page.ts`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 130`** (6 nodes): `MockMediaRecorder`, `.pause()`, `.resume()`, `.start()`, `.stop()`, `screen-recorder.test.tsx`
+- **Thin community `Community 128`** (6 nodes): `client()`, `Smoke tests for sadtalker sidecar endpoints.  Issue #919 (Epic #883 cleanup) — c`, `test_gpu_info_returns_503_when_cuda_unavailable()`, `test_gpu_info_returns_503_when_torch_missing()`, `test_gpu_info_returns_payload_when_cuda_available()`, `test_endpoints.py`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 131`** (6 nodes): `MockResizeObserver`, `.constructor()`, `.disconnect()`, `.observe()`, `.unobserve()`, `timeline-editor.test.tsx`
+- **Thin community `Community 129`** (6 nodes): `PersonalityManager`, `.constructor()`, `.ensureTable()`, `.getConfig()`, `.reset()`, `.update()`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 135`** (6 nodes): `AdminPage`, `.constructor()`, `.fetchPlatformApi()`, `.getPlatformBadges()`, `.goto()`, `admin.page.ts`
+- **Thin community `Community 130`** (6 nodes): `findTransitionBetween()`, `getMusicVolume()`, `isNarrationActiveAtFrame()`, `partitionTimeline()`, `renderSegment()`, `template-composition.tsx`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 136`** (6 nodes): `AnalyticsDashboardPage`, `.constructor()`, `.goto()`, `.refresh()`, `.selectPeriod()`, `analytics-dashboard.page.ts`
+- **Thin community `Community 133`** (6 nodes): `MockMediaRecorder`, `.pause()`, `.resume()`, `.start()`, `.stop()`, `screen-recorder.test.tsx`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 137`** (6 nodes): `PitchLibraryPage`, `.constructor()`, `.deckTitle()`, `.errorDetail()`, `.goto()`, `pitch-library.page.ts`
+- **Thin community `Community 134`** (6 nodes): `MockResizeObserver`, `.constructor()`, `.disconnect()`, `.observe()`, `.unobserve()`, `timeline-editor.test.tsx`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 146`** (5 nodes): `async()`, `blankForm()`, `contrastRatio()`, `relativeLuminance()`, `brand-kit-editor.tsx`
+- **Thin community `Community 138`** (6 nodes): `AdminPage`, `.constructor()`, `.fetchPlatformApi()`, `.getPlatformBadges()`, `.goto()`, `admin.page.ts`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 149`** (5 nodes): `AudioCleanerPage`, `.clean()`, `.constructor()`, `.selectAggressiveness()`, `audio-cleaner.page.ts`
+- **Thin community `Community 139`** (6 nodes): `AnalyticsDashboardPage`, `.constructor()`, `.goto()`, `.refresh()`, `.selectPeriod()`, `analytics-dashboard.page.ts`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 150`** (5 nodes): `FramingPanelPage`, `.constructor()`, `.expectPanelVisible()`, `.gotoStudio()`, `framing-panel.page.ts`
+- **Thin community `Community 140`** (6 nodes): `PitchLibraryPage`, `.constructor()`, `.deckTitle()`, `.errorDetail()`, `.goto()`, `pitch-library.page.ts`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 151`** (5 nodes): `NLEExportPage`, `.constructor()`, `.doExport()`, `.selectFormat()`, `nle-export.page.ts`
+- **Thin community `Community 149`** (5 nodes): `async()`, `blankForm()`, `contrastRatio()`, `relativeLuminance()`, `brand-kit-editor.tsx`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 154`** (4 nodes): `transition-mapper.test.ts`, `transition-mapper.ts`, `getDefaultTransition()`, `mapTransition()`
+- **Thin community `Community 152`** (5 nodes): `AudioCleanerPage`, `.clean()`, `.constructor()`, `.selectAggressiveness()`, `audio-cleaner.page.ts`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 167`** (4 nodes): `InlineModelPicker()`, `ModelPickerSelect()`, `useModelsQuery()`, `model-picker-select.tsx`
+- **Thin community `Community 153`** (5 nodes): `FramingPanelPage`, `.constructor()`, `.expectPanelVisible()`, `.gotoStudio()`, `framing-panel.page.ts`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 171`** (4 nodes): `generateRecapPdf()`, `handleDownloadPdf()`, `pdf-generator.ts`, `recap-screen.tsx`
+- **Thin community `Community 154`** (5 nodes): `NLEExportPage`, `.constructor()`, `.doExport()`, `.selectFormat()`, `nle-export.page.ts`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 179`** (4 nodes): `PresenterDetailPage`, `.constructor()`, `.gotoWithMocks()`, `presenter-detail.page.ts`
+- **Thin community `Community 157`** (4 nodes): `transition-mapper.test.ts`, `transition-mapper.ts`, `getDefaultTransition()`, `mapTransition()`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 180`** (4 nodes): `createInitialPresenterState()`, `presenterReducer()`, `usePresenterState()`, `use-presenter-state.ts`
+- **Thin community `Community 158`** (4 nodes): `AdminPage()`, `usePlatform()`, `page.tsx`, `use-platform.ts`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 183`** (4 nodes): `AdminPage()`, `usePlatform()`, `page.tsx`, `use-platform.ts`
+- **Thin community `Community 171`** (4 nodes): `InlineModelPicker()`, `ModelPickerSelect()`, `useModelsQuery()`, `model-picker-select.tsx`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 184`** (3 nodes): `log()`, `main()`, `graphify-ast-build.py`
+- **Thin community `Community 175`** (4 nodes): `generateRecapPdf()`, `handleDownloadPdf()`, `pdf-generator.ts`, `recap-screen.tsx`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 186`** (3 nodes): `getPositionStyle()`, `TextOverlayItem()`, `text-overlay-layer.tsx`
+- **Thin community `Community 183`** (4 nodes): `PresenterDetailPage`, `.constructor()`, `.gotoWithMocks()`, `presenter-detail.page.ts`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 192`** (3 nodes): `handleSave()`, `parseList()`, `channels-panel.tsx`
+- **Thin community `Community 184`** (4 nodes): `createInitialPresenterState()`, `presenterReducer()`, `usePresenterState()`, `use-presenter-state.ts`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 213`** (3 nodes): `makeFakeStream()`, `makeRemotePeer()`, `video-grid.test.tsx`
+- **Thin community `Community 187`** (3 nodes): `log()`, `main()`, `graphify-ast-build.py`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 215`** (3 nodes): `addEvent()`, `panelReducer()`, `subagent-live-panel.tsx`
+- **Thin community `Community 189`** (3 nodes): `getPositionStyle()`, `TextOverlayItem()`, `text-overlay-layer.tsx`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 219`** (3 nodes): `BrandKitEditorDialog`, `.constructor()`, `brand-kit-editor.page.ts`
+- **Thin community `Community 195`** (3 nodes): `handleSave()`, `parseList()`, `channels-panel.tsx`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 220`** (3 nodes): `BrandKitPicker`, `.constructor()`, `brand-kit-picker.page.ts`
+- **Thin community `Community 216`** (3 nodes): `makeFakeStream()`, `makeRemotePeer()`, `video-grid.test.tsx`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 222`** (3 nodes): `mockEmptySeoApis()`, `mockSeoApis()`, `seo-dashboard.spec.ts`
+- **Thin community `Community 218`** (3 nodes): `addEvent()`, `panelReducer()`, `subagent-live-panel.tsx`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 226`** (3 nodes): `middleware()`, `middleware.ts`, `verifyGuestToken()`
+- **Thin community `Community 222`** (3 nodes): `BrandKitEditorDialog`, `.constructor()`, `brand-kit-editor.page.ts`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 228`** (2 nodes): `_test_caps.py`, `Verify _get_max_frames_for_model returns sane values for both single-GPU and poo`
+- **Thin community `Community 223`** (3 nodes): `BrandKitPicker`, `.constructor()`, `brand-kit-picker.page.ts`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 229`** (2 nodes): `test-f5tts-direct.py`, `Direct test of F5-TTS inference to debug tensor mismatch.`
+- **Thin community `Community 225`** (3 nodes): `mockEmptySeoApis()`, `mockSeoApis()`, `seo-dashboard.spec.ts`
+  Too small to be a meaningful cluster - may be noise or needs more connections extracted.
+- **Thin community `Community 229`** (3 nodes): `middleware()`, `middleware.ts`, `verifyGuestToken()`
+  Too small to be a meaningful cluster - may be noise or needs more connections extracted.
+- **Thin community `Community 231`** (2 nodes): `_test_caps.py`, `Verify _get_max_frames_for_model returns sane values for both single-GPU and poo`
+  Too small to be a meaningful cluster - may be noise or needs more connections extracted.
+- **Thin community `Community 232`** (2 nodes): `test-f5tts-direct.py`, `Direct test of F5-TTS inference to debug tensor mismatch.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
