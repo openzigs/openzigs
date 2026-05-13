@@ -764,6 +764,48 @@ async def memory_info():
     }
 
 
+@app.get("/capabilities")
+async def capabilities():
+    """Apple Silicon (MLX) capability report. Mirrors the CUDA worker's shape
+    so the admin Models page (`/admin/models`) renders the same UI. Unified
+    memory replaces per-GPU VRAM; CUDA-shaped fields collapse to neutral
+    defaults so consumers don't render NVIDIA labels on a Mac."""
+    info = get_system_memory_info()
+    unified_total_gb = round(info.get("used_gb", 0) + info.get("available_gb", 0), 1)
+    return {
+        "cuda_available": False,
+        "device_count": 1,
+        "pooled_vram_gb": unified_total_gb,
+        "per_device": [
+            {
+                "index": 0,
+                "name": "Apple Silicon GPU (Metal / MLX)",
+                "total_gb": int(unified_total_gb),
+                "free_gb": int(info.get("available_gb", 0)),
+            }
+        ],
+        "pooling": {
+            "mode": "unified",
+            "active": True,
+            "transformer_device": "mlx",
+            "encoder_device": "mlx",
+            "vae_device": "mlx",
+            "min_vram_gb": int(MEMORY_LIMIT_GB),
+        },
+        "max_frames": {
+            "ltx-2-distilled-q4": 121,
+            "ltx-2.3-distilled-q4": 121,
+        },
+        "audio_modes": ["off", "native"],
+        "env": {
+            "LTX_MEMORY_LIMIT_GB": MEMORY_LIMIT_GB,
+            "DEFAULT_MODEL_REPO": DEFAULT_MODEL_REPO,
+            "WORKER": "m2-pro",
+            "BACKEND": "mlx",
+        },
+    }
+
+
 @app.get("/models")
 async def list_models():
     """List available LTX model catalog with memory requirements."""
