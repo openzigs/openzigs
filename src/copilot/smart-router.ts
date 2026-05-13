@@ -76,7 +76,9 @@ export const estimateInputTokens = (prompt: string): number => {
  */
 export class RouterPrivacyError extends Error {
   readonly code = "ROUTER_PRIVACY_NO_LOCAL_PROVIDER" as const;
-  constructor(message = "Privacy mode is on but no local LLM provider is configured.") {
+  constructor(
+    message = "Privacy mode is on but no local LLM provider is configured.",
+  ) {
     super(message);
     this.name = "RouterPrivacyError";
   }
@@ -87,7 +89,8 @@ export class RouterPrivacyError extends Error {
  * to call from anywhere. Wire up audit logging at the call site.
  */
 export const routeRequest = (input: SmartRouterInput): RoutingDecision => {
-  const threshold = input.cloudThresholdTokens ?? DEFAULT_CLOUD_THRESHOLD_TOKENS;
+  const threshold =
+    input.cloudThresholdTokens ?? DEFAULT_CLOUD_THRESHOLD_TOKENS;
   const tokens =
     typeof input.inputTokens === "number" && Number.isFinite(input.inputTokens)
       ? Math.max(0, Math.floor(input.inputTokens))

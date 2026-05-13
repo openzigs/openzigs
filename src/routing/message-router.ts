@@ -1,18 +1,35 @@
 import type { ChannelManager } from "../channels/channel-manager.js";
 import type { IncomingMessage, MessageContent } from "../channels/types.js";
 import type { CopilotWrapper } from "../copilot/copilot-wrapper.js";
-import type { SystemMessageConfig, UserInputHandler, SdkAttachment, ReasoningEffort } from "../copilot/copilot-wrapper.js";
+import type {
+  SystemMessageConfig,
+  UserInputHandler,
+  SdkAttachment,
+  ReasoningEffort,
+} from "../copilot/copilot-wrapper.js";
 import type { AccessControlConfig } from "../config/index.js";
 import type { SessionManager } from "../sessions/session-manager.js";
 import type { SecretVaultService } from "../vault/index.js";
 import type { PersonalityManager } from "../personality/personality-manager.js";
 import type { BrandVoiceService } from "../personality/brand-voice-service.js";
 import type { TaskEngine } from "../tasks/task-engine.js";
-import { ALWAYS_ON_TOOLS, INTERACTIVE_CHAT_AUTO_APPROVE_TOOLS } from "../mcp/constants.js";
+import {
+  ALWAYS_ON_TOOLS,
+  INTERACTIVE_CHAT_AUTO_APPROVE_TOOLS,
+} from "../mcp/constants.js";
 import { loadSkillMetadata } from "../skills/skill-loader.js";
-import { setActiveChatContext, clearActiveChatContext } from "../mcp/tools/agent-tools.js";
-import { setActiveOrchestrateContext, clearActiveOrchestrateContext } from "../mcp/tools/orchestrate-agents.js";
-import { setActiveWizardContext, clearActiveWizardContext } from "../mcp/tools/wizard-tools.js";
+import {
+  setActiveChatContext,
+  clearActiveChatContext,
+} from "../mcp/tools/agent-tools.js";
+import {
+  setActiveOrchestrateContext,
+  clearActiveOrchestrateContext,
+} from "../mcp/tools/orchestrate-agents.js";
+import {
+  setActiveWizardContext,
+  clearActiveWizardContext,
+} from "../mcp/tools/wizard-tools.js";
 
 export type RouteOptions = {
   /** Callback invoked for each streaming chunk. */
@@ -53,7 +70,7 @@ export type MessageRouterOptions = {
 const defaultAccessControl: AccessControlConfig = {
   mode: "open",
   allowedUsers: [],
-  blockedUsers: []
+  blockedUsers: [],
 };
 
 export { ALWAYS_ON_TOOLS };
@@ -159,7 +176,7 @@ export class MessageRouter {
             model: options?.model,
             notifyOnComplete: false, // Chat messages are delivered inline
           },
-          { mode: "immediate" }
+          { mode: "immediate" },
         );
         taskId = task.id;
       } catch {
@@ -176,7 +193,10 @@ export class MessageRouter {
 
     // Inject autonomous execution guardrail + skill persona for skill-prefixed messages
     let skillResolution: { tools: string[]; skillBody?: string } | undefined;
-    if (message.content.includes("[Using ") && message.content.includes(" skill]")) {
+    if (
+      message.content.includes("[Using ") &&
+      message.content.includes(" skill]")
+    ) {
       skillResolution = await this.resolveSkillTools(message.content);
       const autonomousGuardrail =
         "AUTONOMOUS EXECUTION MODE — CRITICAL RULES:\n" +
@@ -190,7 +210,10 @@ export class MessageRouter {
         ? skillResolution.skillBody + "\n\n" + autonomousGuardrail
         : autonomousGuardrail;
       if (systemMessage) {
-        systemMessage = { ...systemMessage, content: systemMessage.content + "\n\n" + skillInjection };
+        systemMessage = {
+          ...systemMessage,
+          content: systemMessage.content + "\n\n" + skillInjection,
+        };
       } else {
         systemMessage = { mode: "append", content: skillInjection };
       }
@@ -201,14 +224,16 @@ export class MessageRouter {
       // Set chat context so spawn-agent and orchestrate-agents can propagate originating session/channel info
       setActiveChatContext({
         sessionId,
-        channelType: message.channelType as import("../channels/types.js").ChannelType,
+        channelType:
+          message.channelType as import("../channels/types.js").ChannelType,
         chatId: message.chatId,
         parentTaskId: taskId,
         model: options?.model,
       });
       setActiveOrchestrateContext({
         sessionId,
-        channelType: message.channelType as import("../channels/types.js").ChannelType,
+        channelType:
+          message.channelType as import("../channels/types.js").ChannelType,
         chatId: message.chatId,
         parentTaskId: taskId,
         model: options?.model,
@@ -231,14 +256,21 @@ export class MessageRouter {
       // Also detect #tool-name prefix (tool auto-complete from UI) and resolve
       // the owning skill's tools so the tool makes it past the budget cap.
       if (!resolvedAllowedTools) {
-        resolvedAllowedTools = await this.resolveToolPrefixSkill(message.content);
+        resolvedAllowedTools = await this.resolveToolPrefixSkill(
+          message.content,
+        );
       }
       const availableTools = this.resolveAvailableTools(resolvedAllowedTools);
 
       // Build auto-approve list: start with the standard interactive chat list,
       // then merge the skill's tools so skill tool calls don't block on approval.
       const autoApproveTools = resolvedAllowedTools
-        ? [...new Set([...INTERACTIVE_CHAT_AUTO_APPROVE_TOOLS, ...resolvedAllowedTools])]
+        ? [
+            ...new Set([
+              ...INTERACTIVE_CHAT_AUTO_APPROVE_TOOLS,
+              ...resolvedAllowedTools,
+            ]),
+          ]
         : [...INTERACTIVE_CHAT_AUTO_APPROVE_TOOLS];
 
       // Interactive chat sessions auto-approve high-risk tools.
@@ -291,13 +323,13 @@ export class MessageRouter {
     await this.sessionManager.appendEvent(sessionId, {
       timestamp: message.timestamp,
       type: "user",
-      content: message.content
+      content: message.content,
     });
 
     await this.sessionManager.appendEvent(sessionId, {
       timestamp: now,
       type: "assistant",
-      content: response
+      content: response,
     });
 
     // When streaming via onChunk, the channel handler manages delivery;
@@ -331,7 +363,9 @@ export class MessageRouter {
    * Message format: "[Using <Display Name> skill] <prompt>"
    * Returns the skill's allowedTools or undefined if the skill can't be resolved.
    */
-  private async resolveSkillTools(content: string): Promise<{ tools: string[]; skillBody?: string } | undefined> {
+  private async resolveSkillTools(
+    content: string,
+  ): Promise<{ tools: string[]; skillBody?: string } | undefined> {
     const match = content.match(/\[Using ([^\]]+?) skill\]/);
     if (!match) return undefined;
 
@@ -372,7 +406,9 @@ export class MessageRouter {
    * the UI auto-complete (#tool-name), the tool is included in the session even
    * if it would normally be dropped by the tool budget cap.
    */
-  private async resolveToolPrefixSkill(content: string): Promise<string[] | undefined> {
+  private async resolveToolPrefixSkill(
+    content: string,
+  ): Promise<string[] | undefined> {
     const match = content.match(/^#([a-z0-9-]+)\b/i);
     if (!match) return undefined;
 
@@ -393,7 +429,9 @@ export class MessageRouter {
     return [toolName];
   }
 
-  private async getOrCreateSessionId(message: IncomingMessage): Promise<string> {
+  private async getOrCreateSessionId(
+    message: IncomingMessage,
+  ): Promise<string> {
     const key = this.keyFor(message.channelType, message.userId);
     const existing = this.userSessions.get(key);
     if (existing) {
@@ -402,7 +440,7 @@ export class MessageRouter {
 
     const sessions = await this.sessionManager.listSessions({
       channel: message.channelType,
-      userId: message.userId
+      userId: message.userId,
     });
 
     // Find the first active (non-ended) session
@@ -414,7 +452,9 @@ export class MessageRouter {
       // to silently return a blank answer, making the LLM fall back to plain-text
       // choice prompts instead of the interactive UserInputPrompt widget.
       if (message.chatId && active.metadata?.chatId !== message.chatId) {
-        void this.sessionManager.patchMetadata(active.id, { chatId: message.chatId }).catch(() => {});
+        void this.sessionManager
+          .patchMetadata(active.id, { chatId: message.chatId })
+          .catch(() => {});
       }
       return active.id;
     }
@@ -425,8 +465,8 @@ export class MessageRouter {
       metadata: {
         channelId: message.channelId,
         chatId: message.chatId,
-        username: message.username
-      }
+        username: message.username,
+      },
     });
 
     this.userSessions.set(key, session.id);
@@ -445,7 +485,11 @@ export class MessageRouter {
 
     const parts = [
       ...(personality?.enabled
-        ? [personality.systemInstruction, personality.prePrompt, personality.postPrompt]
+        ? [
+            personality.systemInstruction,
+            personality.prePrompt,
+            personality.postPrompt,
+          ]
         : []),
       brandVoiceBlock,
       vaultContext,

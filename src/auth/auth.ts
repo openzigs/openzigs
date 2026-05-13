@@ -67,8 +67,7 @@ class FailedAuthLimiter {
  * than `req.path` (which Express strips inside sub-routers). See the
  * extractToken() comment below and issue #1012.
  */
-const ASSET_FILE_PATH_RE =
-  /^\/api\/queue\/assets\/(?:[^/]+\/file|file\/.+)$/;
+const ASSET_FILE_PATH_RE = /^\/api\/queue\/assets\/(?:[^/]+\/file|file\/.+)$/;
 
 /**
  * Pitch-generated slide assets served into rendered deck iframes.
