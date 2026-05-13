@@ -318,10 +318,14 @@ def run_async_job(
                 return
 
             data = json.dumps(result).encode("utf-8")
+            # Issue #1089 — sign callback with HMAC + timestamp.
+            import sys as _sys
+            _shared = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "_shared")
+            if _shared not in _sys.path:
+                _sys.path.insert(0, _shared)
+            from signed_callback import signed_headers as _sh  # type: ignore[import-not-found]
             _cb_secret = os.getenv("CALLBACK_SECRET") or None
-            headers = {"Content-Type": "application/json"}
-            if _cb_secret:
-                headers["Authorization"] = f"Bearer {_cb_secret}"
+            headers = _sh(_cb_secret, data, "music-gen", legacy_bearer=True)
             req = Request(
                 callback_url,
                 data=data,

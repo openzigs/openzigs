@@ -2635,8 +2635,23 @@ const queueCallbackRouter = createQueueCallbackRouter({
   repo: mediaQueueRepo,
   knowledgeService,
   workerSecret: config.auth.workerSecret,
+  allowLegacyBearer: config.auth.allowLegacyBearer ?? true,
+  callbackRateLimit: config.auth.callbackRateLimit ?? {
+    perMinute: 60,
+    burst: 10,
+  },
 });
-app.use("/api/queue", express.json({ limit: "50mb" }), queueCallbackRouter);
+// Issue #1089: capture raw body for HMAC signature verification.
+app.use(
+  "/api/queue",
+  express.json({
+    limit: "50mb",
+    verify: (req, _res, buf) => {
+      (req as unknown as { rawBody?: Buffer }).rawBody = Buffer.from(buf);
+    },
+  }),
+  queueCallbackRouter,
+);
 
 // Character repo needed early — queue router uses it for auto-LoRA injection
 const characterRepo = new CharacterRepository(db);

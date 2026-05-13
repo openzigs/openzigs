@@ -52,6 +52,14 @@ from PIL import Image
 # When CALLBACK_SECRET is set, outgoing callback POSTs include
 # Authorization: Bearer <secret> so the openzigs server can verify them.
 _callback_secret: Optional[str] = os.getenv("CALLBACK_SECRET") or None
+
+# Issue #1089 — HMAC signing helper.
+import sys as _sys
+_SHARED_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "_shared")
+if _SHARED_DIR not in _sys.path:
+    _sys.path.insert(0, _SHARED_DIR)
+from signed_callback import signed_headers as _signed_headers  # type: ignore[import-not-found]
+NODE_TYPE = "image-gen"
 from pydantic import BaseModel, Field, field_validator
 
 # ── Persistent Training Directory ──────────────────────────────
@@ -333,9 +341,7 @@ def _post_callback(job_id: str, callback_url: Optional[str], payload: dict) -> N
     body = json.dumps(payload).encode("utf-8")
     max_retries = 3
     for attempt in range(1, max_retries + 1):
-        headers = {"Content-Type": "application/json"}
-        if _callback_secret:
-            headers["Authorization"] = f"Bearer {_callback_secret}"
+        headers = _signed_headers(_callback_secret, body, NODE_TYPE, legacy_bearer=True)
         req = urllib.request.Request(
             callback_url,
             data=body,

@@ -84,12 +84,22 @@ _secret_token: Optional[str] = os.getenv("LTX_SECRET_TOKEN") or None
 # Authorization: Bearer <secret> so the openzigs server can verify them.
 _callback_secret: Optional[str] = os.getenv("CALLBACK_SECRET") or None
 
+# Issue #1089 — HMAC + timestamp signing on callbacks. Import shared helper.
+# Path is two levels up from sidecars/worker/server.py: sidecars/_shared/.
+import sys as _sys
+_SHARED_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "_shared")
+if _SHARED_DIR not in _sys.path:
+    _sys.path.insert(0, _SHARED_DIR)
+from signed_callback import prepare_signed_post  # type: ignore[import-not-found]
+
+NODE_TYPE = "video-gen"
+
 
 def _callback_auth_headers() -> dict[str, str]:
-    """Build Authorization header for outgoing callback POSTs."""
+    """Legacy bearer-only header builder. Kept for non-payload callsites."""
     if _callback_secret:
-        return {"Authorization": f"Bearer {_callback_secret}"}
-    return {}
+        return {"Authorization": f"Bearer {_callback_secret}", "X-OpenZigs-Node-Type": NODE_TYPE}
+    return {"X-OpenZigs-Node-Type": NODE_TYPE}
 
 
 def verify_token(authorization: Optional[str] = Header(None)) -> None:
@@ -562,13 +572,15 @@ async def _report_progress(
         return
     _last_progress_time = now
     try:
+        progress_payload = {
+            "job_id": job_id,
+            "stage": stage,
+            "progress": progress,
+            "message": message,
+        }
+        prog_body, prog_headers = prepare_signed_post(progress_payload, _callback_secret, NODE_TYPE, legacy_bearer=True)
         async with httpx.AsyncClient(timeout=5.0) as client:
-            await client.post(progress_url, json={
-                "job_id": job_id,
-                "stage": stage,
-                "progress": progress,
-                "message": message,
-            })
+            await client.post(progress_url, content=prog_body, headers=prog_headers)
     except Exception as e:
         logger.debug(f"Progress report failed (non-fatal): {e}")
 
@@ -628,8 +640,9 @@ async def run_generation_job(request: GenerateRequest):
         }
 
         validated_url = validate_callback_url(request.callback_url)
+        body, headers = prepare_signed_post(payload, _callback_secret, NODE_TYPE, legacy_bearer=True)
         async with httpx.AsyncClient(timeout=60.0) as client:
-            resp = await client.post(validated_url, json=payload, headers=_callback_auth_headers())
+            resp = await client.post(validated_url, content=body, headers=headers)
             logger.info(f"Webhook callback: {resp.status_code}")
 
         # Store result for polling fallback regardless of callback success
@@ -651,8 +664,9 @@ async def run_generation_job(request: GenerateRequest):
         _store_result(request.job_id, error_payload)
         try:
             validated_url = validate_callback_url(request.callback_url)
+            err_body, err_headers = prepare_signed_post(error_payload, _callback_secret, NODE_TYPE, legacy_bearer=True)
             async with httpx.AsyncClient(timeout=30.0) as client:
-                await client.post(validated_url, json=error_payload, headers=_callback_auth_headers())
+                await client.post(validated_url, content=err_body, headers=err_headers)
         except Exception as webhook_err:
             logger.error(f"Failed to send error webhook: {webhook_err}")
 

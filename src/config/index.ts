@@ -47,6 +47,13 @@ export type AuthConfig = {
   rateLimit: RateLimitConfig;
   /** Optional shared secret for queue worker callbacks. When set, /api/queue callback endpoints require this as a Bearer token. */
   workerSecret?: string;
+  /** Issue #1089 — accept legacy Bearer auth in addition to HMAC. */
+  allowLegacyBearer?: boolean;
+  /** Issue #1087 — per-node-type rate limit on callback endpoints. */
+  callbackRateLimit?: {
+    perMinute: number;
+    burst: number;
+  };
 };
 
 export type AccessControlMode = "allowlist" | "blocklist" | "open" | "closed";
@@ -421,6 +428,22 @@ const authSchema = z.object({
   role: z.enum(["viewer", "operator", "admin"]).optional(),
   rateLimit: rateLimitSchema,
   workerSecret: z.string().optional(),
+  /**
+   * Issue #1089 — when true, queue callback endpoints accept legacy
+   * `Authorization: Bearer <workerSecret>` instead of HMAC. Default true
+   * for one release; set to false after every sidecar is upgraded.
+   */
+  allowLegacyBearer: z.boolean().optional().default(true),
+  /**
+   * Issue #1087 — per-node-type token bucket on callback endpoints.
+   */
+  callbackRateLimit: z
+    .object({
+      perMinute: z.number().int().min(1).max(10000).optional().default(60),
+      burst: z.number().int().min(1).max(1000).optional().default(10),
+    })
+    .optional()
+    .default({ perMinute: 60, burst: 10 }),
 });
 
 const accessControlSchema = z.object({

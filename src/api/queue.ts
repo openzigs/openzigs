@@ -11,6 +11,16 @@ import path from "node:path";
 import os from "node:os";
 import { logger } from "../logging/logger.js";
 import { getDatabase } from "../productivity/database.js";
+import {
+  verifyHmacCallback,
+  HMAC_HEADER_SIGNATURE,
+  HMAC_HEADER_TIMESTAMP,
+} from "./hmac.js";
+import {
+  createTokenBucketLimiter,
+  bucketKeyFromRequest,
+  type RateLimiter,
+} from "./rate-limit.js";
 import type { QueueMaster } from "../queue/queue-master.js";
 import type { MediaQueueRepository } from "../queue/media-queue-repository.js";
 import type {
@@ -96,6 +106,24 @@ export interface QueueRouterOptions {
   knowledgeService?: KnowledgeIngestionService;
   /** Optional shared secret for worker callback authentication. */
   workerSecret?: string;
+  /** Issue #1089 — accept legacy Bearer auth in addition to HMAC. Default true. */
+  allowLegacyBearer?: boolean;
+  /** Issue #1087 — per-node-type token-bucket rate limit. */
+  callbackRateLimit?: { perMinute: number; burst: number };
+}
+
+// Throttle the legacy-bearer deprecation warning so we don't spam logs.
+const LEGACY_WARN_INTERVAL_MS = 60 * 60 * 1000;
+const lastLegacyWarn = new Map<string, number>();
+function warnLegacyBearerOnce(key: string, ip: string): void {
+  const now = Date.now();
+  const prev = lastLegacyWarn.get(key) ?? 0;
+  if (now - prev > LEGACY_WARN_INTERVAL_MS) {
+    lastLegacyWarn.set(key, now);
+    logger.warn(
+      `[QueueAPI] Legacy Bearer auth used for callback by ${key} (${ip}) — will be removed in next release. Upgrade sidecar to HMAC.`,
+    );
+  }
 }
 
 /**
@@ -110,13 +138,38 @@ export const createQueueCallbackRouter = ({
   repo,
   knowledgeService,
   workerSecret,
+  allowLegacyBearer = true,
+  callbackRateLimit = { perMinute: 60, burst: 10 },
 }: QueueRouterOptions): Router => {
   const callbackRouter = Router();
 
-  // Worker secret auth middleware — scoped to callback routes only (/complete, /progress)
-  // NOT applied as callbackRouter.use() because the callback and main queue routers
-  // are both mounted at /api/queue. A blanket .use() would intercept requests meant
-  // for the main queue router (e.g. /jobs, /dispatch) and reject them.
+  // Issue #1087 — per-node-type rate limit applied BEFORE auth verification
+  // so that bad actors can't burn CPU brute-forcing signatures.
+  const limiter: RateLimiter = createTokenBucketLimiter(callbackRateLimit);
+  const rateLimitMiddleware = (
+    req: Request,
+    res: Response,
+    next: NextFunction,
+  ) => {
+    const key = bucketKeyFromRequest(req);
+    const verdict = limiter.consume(key);
+    if (!verdict.allowed) {
+      res.setHeader("Retry-After", String(verdict.retryAfterSec ?? 1));
+      logger.warn(
+        `[QueueAPI] Rate-limited callback from ${key} (ip=${req.ip}) — retry-after ${verdict.retryAfterSec}s`,
+      );
+      res.status(429).json({
+        error: "rate_limited",
+        retry_after_sec: verdict.retryAfterSec,
+      });
+      return;
+    }
+    next();
+  };
+
+  // Issue #1089 — HMAC + timestamp verification with optional legacy Bearer
+  // fallback. NOT applied as callbackRouter.use() because the callback and
+  // main queue routers are both mounted at /api/queue.
   let callbackAuthMiddleware: (
     req: Request,
     res: Response,
@@ -130,23 +183,63 @@ export const createQueueCallbackRouter = ({
       res: Response,
       next: NextFunction,
     ) => {
-      const authHeader = req.headers.authorization ?? "";
-      const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
-      const tokenBuf = Buffer.from(token);
-      if (
-        tokenBuf.length !== expectedBuf.length ||
-        !timingSafeEqual(tokenBuf, expectedBuf)
-      ) {
-        logger.warn(
-          `[QueueAPI] Rejected callback — invalid worker secret from ${req.ip} ${req.method} ${req.originalUrl}`,
-        );
-        res.status(401).json({ error: "Invalid worker secret" });
-        return;
+      const tsHeader = req.headers[HMAC_HEADER_TIMESTAMP];
+      const sigHeader = req.headers[HMAC_HEADER_SIGNATURE];
+      const timestamp = Array.isArray(tsHeader) ? tsHeader[0] : tsHeader;
+      const signature = Array.isArray(sigHeader) ? sigHeader[0] : sigHeader;
+
+      if (timestamp && signature) {
+        const rawBody =
+          (req as unknown as { rawBody?: Buffer }).rawBody ??
+          Buffer.from(JSON.stringify(req.body ?? {}));
+        const verdict = verifyHmacCallback({
+          secret: workerSecret,
+          timestamp,
+          signature,
+          rawBody,
+        });
+        if (!verdict.ok) {
+          logger.warn(
+            `[QueueAPI] Rejected HMAC callback from ${req.ip} ${req.method} ${req.originalUrl} — reason=${verdict.reason}`,
+          );
+          const status = verdict.reason === "stale_timestamp" ? 401 : 401;
+          res.status(status).json({
+            error:
+              verdict.reason === "stale_timestamp"
+                ? "stale_timestamp"
+                : "bad_signature",
+          });
+          return;
+        }
+        return next();
       }
-      next();
+
+      // No HMAC headers — fall back to legacy Bearer when allowed.
+      if (allowLegacyBearer) {
+        const authHeader = req.headers.authorization ?? "";
+        const token = authHeader.startsWith("Bearer ")
+          ? authHeader.slice(7)
+          : "";
+        const tokenBuf = Buffer.from(token);
+        if (
+          tokenBuf.length === expectedBuf.length &&
+          timingSafeEqual(tokenBuf, expectedBuf)
+        ) {
+          warnLegacyBearerOnce(bucketKeyFromRequest(req), req.ip ?? "unknown");
+          return next();
+        }
+      }
+
+      logger.warn(
+        `[QueueAPI] Rejected callback — missing/invalid HMAC and legacy Bearer ${
+          allowLegacyBearer ? "rejected" : "disabled"
+        } from ${req.ip} ${req.method} ${req.originalUrl}`,
+      );
+      res.status(401).json({ error: "unauthorized" });
+      return;
     };
     logger.info(
-      "[QueueAPI] Worker callback auth enabled (workerSecret configured)",
+      `[QueueAPI] Worker callback auth: HMAC enabled${allowLegacyBearer ? " (legacy Bearer fallback ON)" : ""}`,
     );
   } else {
     // No workerSecret — only allow localhost requests
@@ -172,6 +265,9 @@ export const createQueueCallbackRouter = ({
       "[QueueAPI] auth.workerSecret not configured — queue callbacks will only be accepted from localhost",
     );
   }
+
+  // Apply rate limit before auth on every callback route below.
+  callbackRouter.use(["/complete", "/progress"], rateLimitMiddleware);
 
   callbackRouter.post("/complete", callbackAuthMiddleware, async (req, res) => {
     try {
