@@ -7043,25 +7043,47 @@ export const createAdminRouter = ({
   async function videoGenWorkerBaseUrl(): Promise<{
     url: string;
     token?: string;
+    mode: "local" | "network";
   }> {
     const userConfig = await readUserConfig(defaultConfigPath());
     const vg = (userConfig.videoGen ?? {}) as Record<string, unknown>;
-    const url =
+    const isNetwork =
       vg.mode === "network" &&
       typeof vg.networkNodeUrl === "string" &&
-      vg.networkNodeUrl
-        ? vg.networkNodeUrl
-        : (process.env.M2_PRO_WORKER_URL ?? "http://localhost:5007");
+      vg.networkNodeUrl.length > 0;
+    const url = isNetwork
+      ? (vg.networkNodeUrl as string)
+      : (process.env.M2_PRO_WORKER_URL ?? "http://localhost:5007");
     const token =
       typeof vg.networkNodeToken === "string" && vg.networkNodeToken
         ? vg.networkNodeToken
         : process.env.M2_PRO_WORKER_TOKEN;
-    return { url: url.replace(/\/$/, ""), token };
+    return {
+      url: url.replace(/\/$/, ""),
+      token,
+      mode: isNetwork ? "network" : "local",
+    };
   }
 
   router.get("/capabilities", async (_req, res) => {
+    const { url, token, mode } = await videoGenWorkerBaseUrl();
+    const buildErrorBody = (errorMessage: string) => {
+      const isMacLocal =
+        mode === "local" && getPlatformCapabilities().isMacOS === true;
+      const body: {
+        error: string;
+        mode: "local" | "network";
+        url: string;
+        isMacLocal: boolean;
+        hint?: string;
+      } = { error: errorMessage, mode, url, isMacLocal };
+      if (isMacLocal) {
+        body.hint =
+          "The LTX video worker isn't reachable on this Mac. You can either run the LTX sidecar locally on this machine, or point at another Mac on your LAN via Admin → Video Generation Node.";
+      }
+      return body;
+    };
     try {
-      const { url, token } = await videoGenWorkerBaseUrl();
       const headers: Record<string, string> = {};
       if (token) headers.Authorization = `Bearer ${token}`;
       const response = await fetch(`${url}/capabilities`, {
@@ -7071,13 +7093,13 @@ export const createAdminRouter = ({
       if (!response.ok) {
         return res
           .status(502)
-          .json({ error: `Sidecar returned HTTP ${response.status}` });
+          .json(buildErrorBody(`Sidecar returned HTTP ${response.status}`));
       }
       const data = (await response.json()) as Record<string, unknown>;
       return res.json(data);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      return res.status(502).json({ error: message });
+      return res.status(502).json(buildErrorBody(message));
     }
   });
 

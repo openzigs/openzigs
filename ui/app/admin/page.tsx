@@ -186,6 +186,7 @@ export default function AdminPage() {
         </SectionCard>
 
         <SectionCard
+          id="video-gen-node"
           title={
             <span className="flex items-center gap-2">
               Video Generation Node{" "}

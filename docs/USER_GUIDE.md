@@ -5083,6 +5083,10 @@ You can offload image generation to a second Mac on your local network. This is 
 
 For detailed instructions, see [FLUXQ_SETUP.md](FLUXQ_SETUP.md).
 
+#### Remote Video Generation (LTX Network Node)
+
+The LTX video worker is **not run locally on macOS** — there is no Apple Silicon LTX sidecar in this repo. On Mac the LTX worker lives on a separate Mac mini (or any host with the GPU/VRAM headroom for LTX-2). Configure it the same way as the FluxQ node: in the OpenZigs Admin UI, open **Admin → Video Generation Node**, switch to **Network Node**, enter the remote URL and token, and **Save**. Without this, `/admin/models` will show an "LTX worker not configured" banner that links straight back to this panel. For the Mac mini sidecar setup itself see the [Worker Sidecar Setup (M2 Pro)](#worker-sidecar-setup-m2-pro) section below.
+
 #### Ken Burns Animation
 
 Each generated image is animated with a Ken Burns pan/zoom effect:

@@ -49,10 +49,7 @@ type CapabilitiesResponse = {
 
 const DEFAULT_FPS = 24;
 
-const SYNC_AUDIO_MODELS = new Set([
-  "ltxv-2-22b-distilled",
-  "ltxv-2-22b",
-]);
+const SYNC_AUDIO_MODELS = new Set(["ltxv-2-22b-distilled", "ltxv-2-22b"]);
 
 export default function AdminModelsPage() {
   const capsQuery = useQuery({
@@ -80,21 +77,15 @@ export default function AdminModelsPage() {
         </p>
         <h1 className="mt-1 text-3xl font-semibold text-foreground">Models</h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          Live capability report from the LTX video worker. GPU pool, max
-          frames per model, and supported audio modes.
+          Live capability report from the LTX video worker. GPU pool, max frames
+          per model, and supported audio modes.
         </p>
       </header>
 
       {capsQuery.isLoading ? (
         <CapabilitiesSkeleton />
       ) : capsQuery.isError ? (
-        <ErrorBanner
-          message={
-            capsQuery.error instanceof Error
-              ? capsQuery.error.message
-              : "Failed to load capabilities"
-          }
-        />
+        <ErrorBanner error={capsQuery.error} />
       ) : (
         <CapabilitiesView data={capsQuery.data ?? {}} />
       )}
@@ -134,10 +125,7 @@ function CapabilitiesView({ data }: { data: CapabilitiesResponse }) {
 
         {perDevice.length > 0 && (
           <div className="mt-4 overflow-hidden rounded-lg border border-border">
-            <table
-              className="w-full text-sm"
-              data-testid="gpu-table"
-            >
+            <table className="w-full text-sm" data-testid="gpu-table">
               <thead className="bg-muted/40 text-xs uppercase tracking-wide text-muted-foreground">
                 <tr>
                   <th className="px-3 py-2 text-left">Index</th>
@@ -177,8 +165,8 @@ function CapabilitiesView({ data }: { data: CapabilitiesResponse }) {
           <p className="mt-3 text-xs text-muted-foreground">
             Pooling mode <code className="font-mono">{data.pooling.mode}</code>:
             transformer →{" "}
-            <code className="font-mono">{data.pooling.transformer_device}</code>,
-            encoder →{" "}
+            <code className="font-mono">{data.pooling.transformer_device}</code>
+            , encoder →{" "}
             <code className="font-mono">{data.pooling.encoder_device}</code>,
             VAE → <code className="font-mono">{data.pooling.vae_device}</code>.
           </p>
@@ -192,10 +180,7 @@ function CapabilitiesView({ data }: { data: CapabilitiesResponse }) {
           </p>
         ) : (
           <div className="overflow-hidden rounded-lg border border-border">
-            <table
-              className="w-full text-sm"
-              data-testid="ltx-models-table"
-            >
+            <table className="w-full text-sm" data-testid="ltx-models-table">
               <thead className="bg-muted/40 text-xs uppercase tracking-wide text-muted-foreground">
                 <tr>
                   <th className="px-3 py-2 text-left">Model</th>
@@ -273,7 +258,51 @@ function CapabilitiesSkeleton() {
   );
 }
 
-function ErrorBanner({ message }: { message: string }) {
+function ErrorBanner({ error }: { error: unknown }) {
+  const message =
+    error instanceof Error ? error.message : "Failed to load capabilities";
+  const errorBody =
+    error && typeof error === "object" && "errorBody" in error
+      ? (error as { errorBody?: unknown }).errorBody
+      : undefined;
+  const body =
+    errorBody && typeof errorBody === "object"
+      ? (errorBody as {
+          mode?: string;
+          url?: string;
+          isMacLocal?: boolean;
+          hint?: string;
+        })
+      : undefined;
+
+  if (body?.isMacLocal === true) {
+    return (
+      <div
+        className="rounded-2xl border border-destructive/40 bg-destructive/10 p-6 text-sm text-destructive"
+        role="alert"
+      >
+        <p className="font-semibold">LTX worker not reachable</p>
+        <p className="mt-1 text-xs">
+          {body.hint ??
+            "The LTX video worker isn't reachable on this Mac. You can either run the LTX sidecar locally on this machine, or point at another Mac on your LAN via Admin → Video Generation Node."}
+        </p>
+        <p className="mt-3">
+          <a
+            href="/admin#video-gen-node"
+            className="inline-flex items-center gap-1 rounded-md border border-destructive/40 bg-background px-3 py-1.5 text-xs font-medium text-destructive hover:bg-destructive/10"
+          >
+            Configure LTX node →
+          </a>
+        </p>
+        {body.url && (
+          <p className="mt-2 text-[11px] text-muted-foreground">
+            Tried: <code className="font-mono">{body.url}</code>
+          </p>
+        )}
+      </div>
+    );
+  }
+
   return (
     <div
       className="rounded-2xl border border-destructive/40 bg-destructive/10 p-6 text-sm text-destructive"
@@ -283,7 +312,8 @@ function ErrorBanner({ message }: { message: string }) {
       <p className="mt-1 text-xs">{message}</p>
       <p className="mt-2 text-xs text-muted-foreground">
         Check that the LTX worker sidecar is running and reachable. The admin
-        proxy lives at <code className="font-mono">/api/admin/capabilities</code>.
+        proxy lives at{" "}
+        <code className="font-mono">/api/admin/capabilities</code>.
       </p>
     </div>
   );
@@ -298,14 +328,11 @@ function Badge({
   tone: "primary" | "success" | "warn" | "muted";
 } & React.HTMLAttributes<HTMLSpanElement>) {
   const toneClasses: Record<string, string> = {
-    primary:
-      "border-primary/30 bg-primary/10 text-primary",
+    primary: "border-primary/30 bg-primary/10 text-primary",
     success:
       "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
-    warn:
-      "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300",
-    muted:
-      "border-border bg-muted/30 text-muted-foreground",
+    warn: "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300",
+    muted: "border-border bg-muted/30 text-muted-foreground",
   };
   return (
     <span

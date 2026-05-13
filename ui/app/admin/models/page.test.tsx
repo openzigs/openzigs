@@ -77,9 +77,7 @@ describe("AdminModelsPage", () => {
     render(<AdminModelsPage />, { wrapper: createWrapper() });
 
     await waitFor(() => {
-      expect(screen.getByTestId("gpu-count-badge")).toHaveTextContent(
-        "2 GPUs",
-      );
+      expect(screen.getByTestId("gpu-count-badge")).toHaveTextContent("2 GPUs");
     });
     expect(screen.getByTestId("pooled-vram-badge")).toHaveTextContent(
       "48 GB pooled VRAM",
@@ -125,5 +123,64 @@ describe("AdminModelsPage", () => {
       ).toBeInTheDocument();
     });
     expect(screen.getByText("Sidecar offline")).toBeInTheDocument();
+  });
+
+  it("shows macOS remote-node CTA when error body has isMacLocal: true", async () => {
+    const err = new Error(
+      "/api/admin/capabilities failed with 502: Sidecar returned HTTP 404",
+    ) as Error & { errorBody?: unknown; status?: number };
+    err.status = 502;
+    err.errorBody = {
+      error: "Sidecar returned HTTP 404",
+      mode: "local",
+      url: "http://localhost:5007",
+      isMacLocal: true,
+      hint: "Video generation runs on a remote node on this Mac. Configure your LTX worker URL in Admin → Video Generation Node.",
+    };
+    mockedFetchJson.mockRejectedValueOnce(err);
+
+    render(<AdminModelsPage />, { wrapper: createWrapper() });
+
+    await waitFor(() => {
+      expect(screen.getByText("LTX worker not reachable")).toBeInTheDocument();
+    });
+    expect(
+      screen.getByText(/Video generation runs on a remote node on this Mac/),
+    ).toBeInTheDocument();
+    const cta = screen.getByRole("link", {
+      name: /Configure LTX node/i,
+    });
+    expect(cta).toHaveAttribute("href", "/admin#video-gen-node");
+    expect(screen.getByText(/Tried:/)).toBeInTheDocument();
+    expect(screen.getByText(/http:\/\/localhost:5007/)).toBeInTheDocument();
+  });
+
+  it("keeps the generic error copy when isMacLocal is false", async () => {
+    const err = new Error(
+      "/api/admin/capabilities failed with 502: ECONNREFUSED",
+    ) as Error & { errorBody?: unknown; status?: number };
+    err.status = 502;
+    err.errorBody = {
+      error: "ECONNREFUSED",
+      mode: "local",
+      url: "http://localhost:5007",
+      isMacLocal: false,
+    };
+    mockedFetchJson.mockRejectedValueOnce(err);
+
+    render(<AdminModelsPage />, { wrapper: createWrapper() });
+
+    await waitFor(() => {
+      expect(
+        screen.getByText("Failed to load capabilities"),
+      ).toBeInTheDocument();
+    });
+    expect(
+      screen.getByText(/Check that the LTX worker sidecar is running/),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("LTX worker not reachable")).toBeNull();
+    expect(
+      screen.queryByRole("link", { name: /Configure LTX node/i }),
+    ).toBeNull();
   });
 });
