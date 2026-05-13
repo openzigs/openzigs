@@ -3,7 +3,14 @@ import { describe, it, expect } from "vitest";
 import { ImageGenPanel } from "./image-gen-panel";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
-const createWrapper = (config = { mode: "local" as const, networkNodeUrl: "", networkNodeToken: "", hasToken: false }) => {
+const createWrapper = (
+  config = {
+    mode: "local" as const,
+    networkNodeUrl: "",
+    networkNodeToken: "",
+    hasToken: false,
+  },
+) => {
   const qc = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
@@ -22,7 +29,9 @@ describe("ImageGenPanel", () => {
 
     expect(screen.getByText("Local Process")).toBeInTheDocument();
     expect(screen.getByText("Network Node")).toBeInTheDocument();
-    expect(screen.getByText(/Image generation runs on this machine/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/Image generation runs on this machine/),
+    ).toBeInTheDocument();
   });
 
   it("shows network config fields when switching to network mode", () => {
@@ -32,7 +41,9 @@ describe("ImageGenPanel", () => {
 
     expect(screen.getByText("Node URL")).toBeInTheDocument();
     expect(screen.getByText(/Secret Token/)).toBeInTheDocument();
-    expect(screen.getByPlaceholderText("http://192.168.1.50:5005")).toBeInTheDocument();
+    expect(
+      screen.getByPlaceholderText("http://192.168.1.50:5005"),
+    ).toBeInTheDocument();
   });
 
   it("hides network config fields in local mode", () => {
