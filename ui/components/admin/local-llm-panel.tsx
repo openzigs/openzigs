@@ -471,7 +471,7 @@ export function LocalLlmPanel() {
               type="text"
               value={model}
               onChange={(e) => setModel(e.target.value)}
-              placeholder="gemma4:26b"
+              placeholder="gemma4:e2b-mlx-bf16"
               className="rounded border border-gray-300 px-3 py-2 font-mono text-xs"
               aria-label="Model name"
             />
