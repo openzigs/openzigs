@@ -90,7 +90,10 @@ describe("node-config-resolver", () => {
             networkNodeToken: `tok-${node}`,
           },
         });
-        const r = await resolveNodeConfig(node, { configPath });
+        const r = await resolveNodeConfig(node, {
+          configPath,
+          skipValidation: true,
+        });
         expect(r).toEqual({
           url: `https://${node}.example.com`,
           token: `tok-${node}`,
@@ -100,7 +103,10 @@ describe("node-config-resolver", () => {
 
       it(`falls back to local default URL for ${node} when unset`, async () => {
         await writeConfig({});
-        const r = await resolveNodeConfig(node, { configPath });
+        const r = await resolveNodeConfig(node, {
+          configPath,
+          skipValidation: true,
+        });
         expect(r.url).toMatch(/^http:\/\/localhost:\d+$/);
         expect(r.token).toBeUndefined();
         expect(r.allowLan).toBe(false);
@@ -111,7 +117,10 @@ describe("node-config-resolver", () => {
       await writeConfig({
         musicGen: { networkNodeUrl: "https://music.example.com" },
       });
-      const r = await resolveNodeConfig("music-gen", { configPath });
+      const r = await resolveNodeConfig("music-gen", {
+        configPath,
+        skipValidation: true,
+      });
       expect(r).toEqual({
         url: "https://music.example.com",
         token: undefined,
@@ -126,7 +135,10 @@ describe("node-config-resolver", () => {
           allowLan: true,
         },
       });
-      const r = await resolveNodeConfig("image-gen", { configPath });
+      const r = await resolveNodeConfig("image-gen", {
+        configPath,
+        skipValidation: true,
+      });
       expect(r.allowLan).toBe(true);
     });
 
@@ -134,6 +146,7 @@ describe("node-config-resolver", () => {
       await writeConfig({});
       const r = await resolveNodeConfig("image-gen", {
         configPath,
+        skipValidation: true,
         localDefaultUrl: "http://override:9000",
       });
       expect(r.url).toBe("http://override:9000");
@@ -145,6 +158,7 @@ describe("node-config-resolver", () => {
       });
       const r = await resolveNodeConfig("image-gen", {
         configPath,
+        skipValidation: true,
         localDefaultToken: "default-tok",
       });
       expect(r.token).toBe("default-tok");
@@ -152,7 +166,10 @@ describe("node-config-resolver", () => {
 
     it("ignores empty networkNodeUrl strings", async () => {
       await writeConfig({ imageGen: { networkNodeUrl: "" } });
-      const r = await resolveNodeConfig("image-gen", { configPath });
+      const r = await resolveNodeConfig("image-gen", {
+        configPath,
+        skipValidation: true,
+      });
       expect(r.url).toMatch(/^http:\/\/localhost:5005$/);
     });
 
@@ -160,8 +177,42 @@ describe("node-config-resolver", () => {
       await writeConfig({
         imageGen: { networkNodeUrl: "https://x", allowLan: "yes" },
       });
-      const r = await resolveNodeConfig("image-gen", { configPath });
+      const r = await resolveNodeConfig("image-gen", {
+        configPath,
+        skipValidation: true,
+      });
       expect(r.allowLan).toBe(false);
+    });
+
+    it("falls back to local default and calls onValidationError when SSRF guard rejects", async () => {
+      await writeConfig({
+        imageGen: { networkNodeUrl: "http://127.0.0.1:6379", allowLan: true },
+      });
+      const errors: Array<{ nodeType: string; url: string }> = [];
+      const r = await resolveNodeConfig("image-gen", {
+        configPath,
+        onValidationError: (_e, nodeType, url) => errors.push({ nodeType, url }),
+      });
+      expect(r.url).toBe("http://localhost:5005");
+      expect(errors).toHaveLength(1);
+      expect(errors[0]).toEqual({
+        nodeType: "image-gen",
+        url: "http://127.0.0.1:6379",
+      });
+    });
+
+    it("falls back to local default when LAN URL configured but allowLan=false", async () => {
+      await writeConfig({
+        imageGen: {
+          networkNodeUrl: "http://192.168.68.60:5005",
+          allowLan: false,
+        },
+      });
+      const r = await resolveNodeConfig("image-gen", {
+        configPath,
+        onValidationError: () => {},
+      });
+      expect(r.url).toBe("http://localhost:5005");
     });
   });
 });

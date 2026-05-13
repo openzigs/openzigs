@@ -13,6 +13,12 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import {
+  validateNodeUrl,
+  isLikelyLanUrl,
+  SsrfBlockedError,
+  LanNotAllowedError,
+} from "./url-validator.js";
 
 export type RemoteNodeType =
   | "image-gen"
@@ -75,6 +81,16 @@ export interface ResolverOverrides {
   localDefaultToken?: string;
   /** Path to the user config file. Defaults to `~/.openzigs/config.json`. */
   configPath?: string;
+  /**
+   * When true, skip the SSRF guard. Used by tests and by code paths that
+   * have already validated the URL upstream (e.g. the admin Save handler).
+   */
+  skipValidation?: boolean;
+  /**
+   * Optional logger for SSRF rejection events. Defaults to `console.warn`.
+   * Hooks for telemetry / Sentinel alerts can be wired here.
+   */
+  onValidationError?: (err: Error, nodeType: string, url: string) => void;
 }
 
 function defaultConfigPath(): string {
@@ -131,6 +147,32 @@ export async function resolveNodeConfig(
   const allowLan = ns?.allowLan === true;
 
   if (networkUrl) {
+    // Issue #1090 — defense-in-depth: re-validate the configured URL at
+    // every dispatch in case the file was edited externally between admin
+    // save (which validates) and the next job. On failure, fall back to the
+    // local default rather than throwing into the queue worker.
+    if (!overrides.skipValidation) {
+      try {
+        await validateNodeUrl(networkUrl, { allowLan });
+      } catch (err) {
+        const e = err as Error;
+        if (e instanceof SsrfBlockedError || e instanceof LanNotAllowedError) {
+          (
+            overrides.onValidationError ??
+            ((err2, nt, u) =>
+              console.warn(
+                `[node-resolver] rejected ${nt} URL ${u}: ${err2.message}`,
+              ))
+          )(e, nodeType, networkUrl);
+          return {
+            url: overrides.localDefaultUrl ?? spec.localDefaultUrl,
+            token: overrides.localDefaultToken,
+            allowLan,
+          };
+        }
+        throw e;
+      }
+    }
     return {
       url: networkUrl,
       token: networkToken ?? overrides.localDefaultToken,
@@ -144,6 +186,9 @@ export async function resolveNodeConfig(
     allowLan,
   };
 }
+
+/** Re-export so callers don't need a separate import. */
+export { isLikelyLanUrl };
 
 /** Exposed for tests / migrations. */
 export function namespaceForNode(nodeType: ResolvableNodeType): string {
