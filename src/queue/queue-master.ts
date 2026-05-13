@@ -457,14 +457,14 @@ export class QueueMaster extends EventEmitter {
       });
 
       if (!res.ok) {
-        logger.warn(
-          `[QueueMaster] LatentSync unload failed: ${res.status}`,
-        );
+        logger.warn(`[QueueMaster] LatentSync unload failed: ${res.status}`);
         return;
       }
 
       this.lipSyncStatus = { is_busy: false, loaded_model: null };
-      logger.info("[QueueMaster] LatentSync model unloaded for memory coordination");
+      logger.info(
+        "[QueueMaster] LatentSync model unloaded for memory coordination",
+      );
     } catch (err) {
       // If LatentSync sidecar is unreachable, skip gracefully
       const msg = err instanceof Error ? err.message : String(err);
@@ -786,7 +786,9 @@ export class QueueMaster extends EventEmitter {
         (j) => j.targetNode === "image-gen",
       );
       if (hasImageGenDispatch) {
-        logger.debug("[QueueMaster] Image-gen busy (generating), skipping tick");
+        logger.debug(
+          "[QueueMaster] Image-gen busy (generating), skipping tick",
+        );
         return;
       }
       logger.info(
@@ -847,10 +849,7 @@ export class QueueMaster extends EventEmitter {
     // backstop; this is the soft gate that avoids even trying when we
     // already know VRAM is starved.
     const vramFree = this.imageGenStatus.vram_free_gb;
-    if (
-      typeof vramFree === "number" &&
-      vramFree < this.imageGenMinFreeVramGb
-    ) {
+    if (typeof vramFree === "number" && vramFree < this.imageGenMinFreeVramGb) {
       this.imageGenVramCooldownUntil = nowMs + this.imageGenVramCooldownMs;
       logger.warn(
         `[QueueMaster] FluxQ VRAM low (${vramFree.toFixed(2)} GB free < ` +
@@ -911,14 +910,24 @@ export class QueueMaster extends EventEmitter {
     if (this.m2ProStatus.loaded_model) {
       pending = this.repo
         .getPendingJobsForModel("m2-pro", this.m2ProStatus.loaded_model, 5)
-        .filter((j) => !AUDIO_JOB_TYPES.has(j.type) && j.type !== "lipsync" && j.type !== "sadtalker");
+        .filter(
+          (j) =>
+            !AUDIO_JOB_TYPES.has(j.type) &&
+            j.type !== "lipsync" &&
+            j.type !== "sadtalker",
+        );
     }
 
     // If no jobs match loaded model, get any pending non-audio job
     if (pending.length === 0) {
       pending = this.repo
         .getPendingJobs("m2-pro", 5)
-        .filter((j) => !AUDIO_JOB_TYPES.has(j.type) && j.type !== "lipsync" && j.type !== "sadtalker");
+        .filter(
+          (j) =>
+            !AUDIO_JOB_TYPES.has(j.type) &&
+            j.type !== "lipsync" &&
+            j.type !== "sadtalker",
+        );
     }
 
     if (pending.length === 0) return;
@@ -1047,7 +1056,9 @@ export class QueueMaster extends EventEmitter {
       await this.dispatchTtsJob(job);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      const retryable = err instanceof Error && (err as Error & { retryable?: boolean }).retryable;
+      const retryable =
+        err instanceof Error &&
+        (err as Error & { retryable?: boolean }).retryable;
       if (retryable) {
         // Reset to pending so the next tick can retry
         this.repo.resetToPending(job.id);
@@ -1159,15 +1170,19 @@ export class QueueMaster extends EventEmitter {
     if (nodeConfig.token)
       headers["Authorization"] = `Bearer ${nodeConfig.token}`;
 
-    // Both endpoints work for status, but /status additionally exposes
-    // `vram_free_gb` which processImageGen() uses for the issue-#1022
-    // VRAM-headroom dispatch gate. /health is sufficient for the rest of
-    // the workers since they don't need VRAM gating here.
-    const endpoint = node === "image-gen" ? "/status" : "/status";
-    const res = await fetch(`${nodeConfig.url}${endpoint}`, {
+    // FluxQ builds before /status expose equivalent readiness/model state via
+    // /health. Prefer /status for vram_free_gb when available, then fall back so
+    // gallery Worker Nodes does not mark older network nodes offline.
+    let res = await fetch(`${nodeConfig.url}/status`, {
       headers,
       signal: AbortSignal.timeout(5000),
     });
+    if (node === "image-gen" && res.status === 404) {
+      res = await fetch(`${nodeConfig.url}/health`, {
+        headers,
+        signal: AbortSignal.timeout(5000),
+      });
+    }
     if (!res.ok) throw new Error(`Status check failed: ${res.status}`);
 
     const data = (await res.json()) as Record<string, unknown>;
@@ -1176,7 +1191,9 @@ export class QueueMaster extends EventEmitter {
       // FluxQ /status returns { is_busy, loaded_model, vram_free_gb, ready, ... }
       const vramRaw = data.vram_free_gb;
       const vram_free_gb =
-        typeof vramRaw === "number" && Number.isFinite(vramRaw) ? vramRaw : null;
+        typeof vramRaw === "number" && Number.isFinite(vramRaw)
+          ? vramRaw
+          : null;
       return {
         is_busy: !!(data.is_busy as boolean),
         loaded_model: (data.loaded_model as string) ?? null,
@@ -1334,10 +1351,7 @@ export class QueueMaster extends EventEmitter {
     };
 
     // Derive progress_url from callback_url for real-time progress streaming (#762)
-    const progressUrl = callbackUrl.replace(
-      /\/complete$/,
-      "/progress",
-    );
+    const progressUrl = callbackUrl.replace(/\/complete$/, "/progress");
     if (progressUrl !== callbackUrl) {
       body.progress_url = progressUrl;
     }
@@ -1454,7 +1468,15 @@ export class QueueMaster extends EventEmitter {
     // The sidecar expects { ref_audio (base64), ref_text, gen_text, emotion }.
     if (job.payload.f5tts_clips && job.payload.f5tts_clips.length > 0) {
       const resolvedClips = await Promise.all(
-        (job.payload.f5tts_clips as Array<{ emotion?: string; ref_audio_path: string; ref_text: string; ref_audio?: string; gen_text?: string }>).map(async (clip) => {
+        (
+          job.payload.f5tts_clips as Array<{
+            emotion?: string;
+            ref_audio_path: string;
+            ref_text: string;
+            ref_audio?: string;
+            gen_text?: string;
+          }>
+        ).map(async (clip) => {
           let refAudioB64 = clip.ref_audio ?? "";
           if (!refAudioB64 && clip.ref_audio_path) {
             const audioBytes = await fs.readFile(clip.ref_audio_path);
@@ -1487,7 +1509,9 @@ export class QueueMaster extends EventEmitter {
         const text = await res.text().catch(() => "");
         if (res.status === 409) {
           // Sidecar busy — don't fail the job, let it retry on next tick
-          throw Object.assign(new Error(`Audio sidecar /f5tts busy (409)`), { retryable: true });
+          throw Object.assign(new Error(`Audio sidecar /f5tts busy (409)`), {
+            retryable: true,
+          });
         }
         throw new Error(`Audio sidecar /f5tts returned ${res.status}: ${text}`);
       }
@@ -1823,7 +1847,9 @@ export class QueueMaster extends EventEmitter {
         const buf = await fs.readFile(job.payload.video_path);
         videoData = buf.toString("base64");
       } catch (err) {
-        logger.warn(`[QueueMaster] Failed to read video_path ${job.payload.video_path}: ${err}`);
+        logger.warn(
+          `[QueueMaster] Failed to read video_path ${job.payload.video_path}: ${err}`,
+        );
       }
     }
 
@@ -1832,7 +1858,9 @@ export class QueueMaster extends EventEmitter {
         const buf = await fs.readFile(job.payload.audio_path);
         audioData = buf.toString("base64");
       } catch (err) {
-        logger.warn(`[QueueMaster] Failed to read audio_path ${job.payload.audio_path}: ${err}`);
+        logger.warn(
+          `[QueueMaster] Failed to read audio_path ${job.payload.audio_path}: ${err}`,
+        );
       }
     }
 
@@ -1976,7 +2004,9 @@ export class QueueMaster extends EventEmitter {
         const buf = await fs.readFile(job.payload.audio_path);
         audioData = buf.toString("base64");
       } catch (err) {
-        logger.warn(`[QueueMaster] Failed to read audio_path ${job.payload.audio_path}: ${err}`);
+        logger.warn(
+          `[QueueMaster] Failed to read audio_path ${job.payload.audio_path}: ${err}`,
+        );
       }
     }
 
@@ -2089,7 +2119,10 @@ export class QueueMaster extends EventEmitter {
     // Check pipeline BEFORE multi-segment — pipeline segment sub-jobs have both
     // segmentIndex and pipeline_id, and should be handled by the pipeline handler
     // which manages segment ↔ stage coordination.
-    if (job.payload.pipeline_id && job.payload.pipeline_type === "talking-head") {
+    if (
+      job.payload.pipeline_id &&
+      job.payload.pipeline_type === "talking-head"
+    ) {
       try {
         await this.handleTalkingHeadPipelineStage(job, result);
         return;
@@ -2252,14 +2285,19 @@ export class QueueMaster extends EventEmitter {
     // never block the original video job's completion semantics.
     try {
       const audioMode = (job.payload as { audio_mode?: string }).audio_mode;
-      const isVideoJob =
-        job.type === "txt2video" || job.type === "img2video";
-      if (isVideoJob && audioMode === "auto" && result.media_type?.startsWith("video/")) {
-        const videoPath = (result.metadata?.video_path as string | undefined) ?? undefined;
+      const isVideoJob = job.type === "txt2video" || job.type === "img2video";
+      if (
+        isVideoJob &&
+        audioMode === "auto" &&
+        result.media_type?.startsWith("video/")
+      ) {
+        const videoPath =
+          (result.metadata?.video_path as string | undefined) ?? undefined;
         const fps = (job.payload.fps as number | undefined) ?? 24;
         const numFrames = (job.payload.num_frames as number | undefined) ?? 121;
         const durationSec = Math.max(1, Math.round(numFrames / fps));
-        const audioPrompt = (job.payload as { audio_prompt?: string }).audio_prompt;
+        const audioPrompt = (job.payload as { audio_prompt?: string })
+          .audio_prompt;
         if (videoPath) {
           void dispatchV2aJob({
             jobId: `${jobId}__v2a`,
@@ -2324,7 +2362,10 @@ export class QueueMaster extends EventEmitter {
 
     if (result.error) {
       handleStageFailure(pipelineId, result.error);
-      this.repo.markFailed(job.id, `Pipeline stage "${stageName}" failed: ${result.error}`);
+      this.repo.markFailed(
+        job.id,
+        `Pipeline stage "${stageName}" failed: ${result.error}`,
+      );
       this.emit("job:failed", job, result.error);
       return;
     }
@@ -2453,7 +2494,10 @@ export class QueueMaster extends EventEmitter {
         logger.warn(
           `[QueueMaster] Pipeline ${pipelineId} multi-segment failed: ${msg}`,
         );
-        handleStageFailure(pipelineId, `Multi-segment stitching failed: ${msg}`);
+        handleStageFailure(
+          pipelineId,
+          `Multi-segment stitching failed: ${msg}`,
+        );
         this.repo.markFailed(job.id, msg);
         this.emit("job:failed", job, msg);
         return;
@@ -2495,20 +2539,14 @@ export class QueueMaster extends EventEmitter {
     }
 
     // Advance pipeline to next stage
-    const { nextJob, done } = handleStageCompletion(
-      pipelineId,
-      job.id,
-      {
-        media_base64: result.media_base64,
-        media_type: result.media_type,
-        file_path: result.metadata?.file_path as string | undefined,
-      },
-    );
+    const { nextJob, done } = handleStageCompletion(pipelineId, job.id, {
+      media_base64: result.media_base64,
+      media_type: result.media_type,
+      file_path: result.metadata?.file_path as string | undefined,
+    });
 
     if (done) {
-      logger.info(
-        `[QueueMaster] Talking-head pipeline ${pipelineId} complete`,
-      );
+      logger.info(`[QueueMaster] Talking-head pipeline ${pipelineId} complete`);
       return;
     }
 

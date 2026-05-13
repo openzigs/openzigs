@@ -2328,7 +2328,9 @@ function GalleryStudio({
   const lipsyncHealthQuery = useQuery({
     queryKey: ["sidecar", "lipsync", "health"],
     queryFn: () =>
-      fetchJson<{ status: string; url?: string }>("/api/queue/sidecars/lipsync/health"),
+      fetchJson<{ status: string; url?: string }>(
+        "/api/queue/sidecars/lipsync/health",
+      ),
     retry: false,
     staleTime: 30_000,
   });
@@ -2338,9 +2340,10 @@ function GalleryStudio({
   const voicesQuery = useQuery({
     queryKey: ["voices"],
     queryFn: () =>
-      fetchJson<{ provider: string; voices: Array<{ id: string; name: string }> }>(
-        "/api/voice/voices",
-      ),
+      fetchJson<{
+        provider: string;
+        voices: Array<{ id: string; name: string }>;
+      }>("/api/voice/voices"),
     staleTime: 60_000,
   });
 
@@ -2348,9 +2351,13 @@ function GalleryStudio({
   const f5ttsProfilesQuery = useQuery({
     queryKey: ["f5tts-profiles"],
     queryFn: () =>
-      fetchJson<{ profiles: Array<{ id: string; name: string; clips: Array<{ emotion: string }> }> }>(
-        "/api/admin/audio/f5tts/profiles",
-      ),
+      fetchJson<{
+        profiles: Array<{
+          id: string;
+          name: string;
+          clips: Array<{ emotion: string }>;
+        }>;
+      }>("/api/admin/audio/f5tts/profiles"),
     staleTime: 30_000,
   });
   const f5ttsProfiles = (f5ttsProfilesQuery.data?.profiles ?? []).filter(
@@ -2519,8 +2526,9 @@ function GalleryStudio({
   const selectedCatalogEntry = ltxModelCatalog.find(
     (m) => m.repo === form.model_repo,
   );
-  const syncAudioModelSelected =
-    (selectedCatalogEntry?.id ?? "").startsWith("ltx-2");
+  const syncAudioModelSelected = (selectedCatalogEntry?.id ?? "").startsWith(
+    "ltx-2",
+  );
   const syncAudioAvailable =
     syncAudioModelSelected &&
     (capabilitiesQuery.data?.audio_modes ?? []).includes("native");
@@ -2529,9 +2537,9 @@ function GalleryStudio({
   // sidecar /health and only advertises "auto" in audio_modes when it is
   // actually reachable. Disable the option when unavailable so the UI does
   // not silently produce silent video.
-  const autoAudioAvailable = (capabilitiesQuery.data?.audio_modes ?? []).includes(
-    "auto",
-  );
+  const autoAudioAvailable = (
+    capabilitiesQuery.data?.audio_modes ?? []
+  ).includes("auto");
   if (
     !autoAudioAvailable &&
     form.audioMode === "auto" &&
@@ -2853,7 +2861,10 @@ function GalleryStudio({
           body: JSON.stringify(pipelinePayload),
         });
 
-        showToast("Talking Head pipeline started! TTS → Video → Lip Sync", "success");
+        showToast(
+          "Talking Head pipeline started! TTS → Video → Lip Sync",
+          "success",
+        );
         onCreated();
         setForm(DEFAULT_FORM);
         return;
@@ -3037,7 +3048,9 @@ function GalleryStudio({
               </span>
             )}
             {mode === "talkingHead" && (
-              <span className={`mt-1 inline-block rounded px-1.5 py-0.5 text-[9px] font-semibold ${lipsyncAvailable ? "bg-green-500/10 text-green-600 dark:text-green-400" : "bg-zinc-500/10 text-zinc-500"}`}>
+              <span
+                className={`mt-1 inline-block rounded px-1.5 py-0.5 text-[9px] font-semibold ${lipsyncAvailable ? "bg-green-500/10 text-green-600 dark:text-green-400" : "bg-zinc-500/10 text-zinc-500"}`}
+              >
                 {lipsyncAvailable ? "LatentSync ✓" : "No sidecar"}
               </span>
             )}
@@ -3174,10 +3187,20 @@ function GalleryStudio({
               <div className="flex items-center gap-2">
                 {form.speechText.trim() && (
                   <span className="text-[10px] text-muted-foreground/70">
-                    ~{Math.max(1, Math.round(form.speechText.trim().split(/\s+/).length / 2.5))}s
-                    {" "}({form.speechText.trim().split(/\s+/).length} words)
-                    {Math.round(form.speechText.trim().split(/\s+/).length / 2.5) > 30 && (
-                      <span className="ml-1 text-amber-500 font-semibold">⚠ may exceed video limit</span>
+                    ~
+                    {Math.max(
+                      1,
+                      Math.round(
+                        form.speechText.trim().split(/\s+/).length / 2.5,
+                      ),
+                    )}
+                    s ({form.speechText.trim().split(/\s+/).length} words)
+                    {Math.round(
+                      form.speechText.trim().split(/\s+/).length / 2.5,
+                    ) > 30 && (
+                      <span className="ml-1 text-amber-500 font-semibold">
+                        ⚠ may exceed video limit
+                      </span>
                     )}
                   </span>
                 )}
@@ -3336,7 +3359,9 @@ function GalleryStudio({
                 </label>
                 <select
                   value={form.lipsyncModelVersion}
-                  onChange={(e) => update("lipsyncModelVersion", e.target.value)}
+                  onChange={(e) =>
+                    update("lipsyncModelVersion", e.target.value)
+                  }
                   className="w-full rounded-lg border border-border bg-card px-2 py-1.5 text-xs text-foreground"
                 >
                   <option value="v1.6">v1.6 (recommended)</option>
@@ -3346,7 +3371,9 @@ function GalleryStudio({
               <div>
                 <label className="mb-1 flex items-center justify-between text-[10px] font-medium text-muted-foreground">
                   <span>Inference Steps</span>
-                  <span className="font-mono">{form.lipsyncInferenceSteps}</span>
+                  <span className="font-mono">
+                    {form.lipsyncInferenceSteps}
+                  </span>
                 </label>
                 <input
                   type="range"
@@ -3394,7 +3421,8 @@ function GalleryStudio({
             </div>
             {!lipsyncAvailable && (
               <p className="mt-2 text-[10px] text-amber-600 dark:text-amber-400">
-                Video will be generated without lip sync. Install the LatentSync sidecar to enable.
+                Video will be generated without lip sync. Install the LatentSync
+                sidecar to enable.
               </p>
             )}
           </div>
@@ -3525,9 +3553,7 @@ function GalleryStudio({
               <div>
                 <label className="mb-1 flex items-center justify-between text-[11px] font-medium text-muted-foreground">
                   <span>LoRA Strength (Likeness)</span>
-                  <span className="font-mono">
-                    {form.loraScale.toFixed(2)}
-                  </span>
+                  <span className="font-mono">{form.loraScale.toFixed(2)}</span>
                 </label>
                 <input
                   type="range"
@@ -3546,28 +3572,28 @@ function GalleryStudio({
                 </div>
               </div>
               <div>
-              <label className="mb-1 flex items-center justify-between text-[11px] font-medium text-muted-foreground">
-                <span>ControlNet Strength</span>
-                <span className="font-mono">
-                  {form.controlnetStrength.toFixed(2)}
-                </span>
-              </label>
-              <input
-                type="range"
-                min={0}
-                max={1}
-                step={0.05}
-                value={form.controlnetStrength}
-                onChange={(e) =>
-                  update("controlnetStrength", parseFloat(e.target.value))
-                }
-                className="w-full"
-              />
-              <div className="flex justify-between text-[10px] text-muted-foreground">
-                <span>Subtle</span>
-                <span>Strong pose control</span>
+                <label className="mb-1 flex items-center justify-between text-[11px] font-medium text-muted-foreground">
+                  <span>ControlNet Strength</span>
+                  <span className="font-mono">
+                    {form.controlnetStrength.toFixed(2)}
+                  </span>
+                </label>
+                <input
+                  type="range"
+                  min={0}
+                  max={1}
+                  step={0.05}
+                  value={form.controlnetStrength}
+                  onChange={(e) =>
+                    update("controlnetStrength", parseFloat(e.target.value))
+                  }
+                  className="w-full"
+                />
+                <div className="flex justify-between text-[10px] text-muted-foreground">
+                  <span>Subtle</span>
+                  <span>Strong pose control</span>
+                </div>
               </div>
-            </div>
             </>
           )}
         </div>
@@ -3811,9 +3837,8 @@ function GalleryStudio({
                     className="mt-1 inline-block rounded bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-400"
                     data-testid="extended-warning"
                   >
-                    ⚠ Will be generated as{" "}
-                    {Math.ceil(form.video_duration / 4)} stitched shots. Some
-                    drift may occur after 3+ shots.
+                    ⚠ Will be generated as {Math.ceil(form.video_duration / 4)}{" "}
+                    stitched shots. Some drift may occur after 3+ shots.
                   </p>
                 </>
               )}

@@ -49,11 +49,7 @@ export type AuthConfig = {
   workerSecret?: string;
 };
 
-export type AccessControlMode =
-  | "allowlist"
-  | "blocklist"
-  | "open"
-  | "closed";
+export type AccessControlMode = "allowlist" | "blocklist" | "open" | "closed";
 
 export type AccessControlConfig = {
   mode: AccessControlMode;
@@ -654,12 +650,7 @@ const appConfigSchema = z.object({
       guidanceScale: z.number().min(0).max(10).optional().default(1.5),
       enableDeepCache: z.boolean().optional().default(true),
       maxDurationSec: z.number().int().min(1).max(120).optional().default(30),
-      modelIdleTimeoutSec: z
-        .number()
-        .int()
-        .min(0)
-        .optional()
-        .default(300),
+      modelIdleTimeoutSec: z.number().int().min(0).optional().default(300),
       memoryLimitGB: z.number().min(1).max(128).optional().default(24),
     })
     .optional(),
@@ -668,18 +659,9 @@ const appConfigSchema = z.object({
       localVllm: z
         .object({
           enabled: z.boolean().optional().default(false),
-          model: z
-            .string()
-            .optional()
-            .default("Qwen/Qwen2.5-14B-Instruct-AWQ"),
+          model: z.string().optional().default("Qwen/Qwen2.5-14B-Instruct-AWQ"),
           baseUrl: z.string().optional().default("http://127.0.0.1:8000"),
-          maxQueueDepth: z
-            .number()
-            .int()
-            .min(1)
-            .max(64)
-            .optional()
-            .default(8),
+          maxQueueDepth: z.number().int().min(1).max(64).optional().default(8),
           timeoutMs: z
             .number()
             .int()

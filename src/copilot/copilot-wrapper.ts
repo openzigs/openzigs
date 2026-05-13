@@ -1018,9 +1018,7 @@ export class CopilotWrapperService
     });
 
     const chosen =
-      decision.provider === "local"
-        ? this.localProvider
-        : this.cloudProvider;
+      decision.provider === "local" ? this.localProvider : this.cloudProvider;
     this.providerConfig = chosen;
     if (chosen?.type === "local-copilot") {
       process.env.COPILOT_OFFLINE = "true";
@@ -1211,9 +1209,7 @@ export class CopilotWrapperService
     await this.ensureStarted();
 
     if (this.startFailed) {
-      const detail = this.lastStartError
-        ? `: ${this.lastStartError}`
-        : "";
+      const detail = this.lastStartError ? `: ${this.lastStartError}` : "";
       throw new Error(
         `Copilot SDK is unavailable${detail}. ` +
           "See Copilot CLI troubleshooting in docs/USER_GUIDE.md, " +
@@ -1528,10 +1524,10 @@ export class CopilotWrapperService
         detail.length > 200 ? `${detail.slice(0, 197)}...` : detail;
       this.lastStartError = truncated;
       this.startFailed = true;
-      logger.error(
-        `Copilot SDK failed to start: ${truncated}`,
-        { category: "system", error: detail },
-      );
+      logger.error(`Copilot SDK failed to start: ${truncated}`, {
+        category: "system",
+        error: detail,
+      });
     }
   }
 

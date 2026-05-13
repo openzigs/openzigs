@@ -22,17 +22,34 @@ import {
   DialogDescription,
   DialogFooter,
 } from "@/components/ui/dialog";
-import { Send, Loader2, Bot, User, AlertCircle, Trash2, FileDown, Printer } from "lucide-react";
+import {
+  Send,
+  Loader2,
+  Bot,
+  User,
+  AlertCircle,
+  Trash2,
+  FileDown,
+  Printer,
+} from "lucide-react";
 import { ChatMarkdown } from "@/components/chat-markdown";
 import { SmartTextarea, type SkillInfo } from "@/components/smart-textarea";
-import { FileAttachmentButton, FileDropZone, AttachmentBar } from "@/components/file-attachment";
+import {
+  FileAttachmentButton,
+  FileDropZone,
+  AttachmentBar,
+} from "@/components/file-attachment";
 import { VoiceMicButton } from "@/components/voice/voice-mic-button";
-import { ReasoningEffortSelector, ProviderBadge } from "@/components/reasoning-effort-selector";
+import {
+  ReasoningEffortSelector,
+  ProviderBadge,
+} from "@/components/reasoning-effort-selector";
 import { UserInputPrompt } from "@/components/user-input-prompt";
 import { WorkflowPreviewCard } from "@/components/workflow-preview-card";
 import { SessionContextBar } from "@/components/session-context-bar";
 import { ContextFuelGauge } from "@/components/chat/context-fuel-gauge";
-import { CostWidget } from "@/components/chat/cost-widget";import { VoiceControls } from "@/components/voice";
+import { CostWidget } from "@/components/chat/cost-widget";
+import { VoiceControls } from "@/components/voice";
 import { useTokenUsage } from "@/lib/hooks/use-token-usage";
 import { SubagentLivePanel } from "@/components/subagent-live-panel";
 import { AgentSelector } from "@/components/chat/agent-selector";
@@ -74,7 +91,8 @@ export const ChatView = () => {
   const [sending, setSending] = useState(false);
   const [thinking, setThinking] = useState(false);
   const [activeTool, setActiveTool] = useState<string | null>(null);
-  const [pendingApproval, setPendingApproval] = useState<ApprovalRequest | null>(null);
+  const [pendingApproval, setPendingApproval] =
+    useState<ApprovalRequest | null>(null);
   const [fallbackWarning, setFallbackWarning] = useState(false);
   const [tools, setTools] = useState<ToolInfo[]>([]);
   const [prompts, setPrompts] = useState<SavedPrompt[]>([]);
@@ -85,16 +103,27 @@ export const ChatView = () => {
   const [draftInput, setDraftInput] = useState("");
   const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
   const [speakText, setSpeakText] = useState<string | undefined>(undefined);
-  const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffort>("medium");
+  const [reasoningEffort, setReasoningEffort] =
+    useState<ReasoningEffort>("medium");
   const [provider, setProvider] = useState<ProviderInfo | null>(null);
-  const [sessionStatus, setSessionStatus] = useState<SessionStatus | null>(null);
-  const [activeInputRequest, setActiveInputRequest] = useState<UserInputRequest | null>(null);
+  const [sessionStatus, setSessionStatus] = useState<SessionStatus | null>(
+    null,
+  );
+  const [activeInputRequest, setActiveInputRequest] =
+    useState<UserInputRequest | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // Derive context window from the selected model's API response
   const selectedModelInfo = models.find((m) => m.id === selectedModel);
-  const contextWindowSize = (selectedModelInfo as unknown as { contextWindow?: number })?.contextWindow ?? null;
-  const { usage: tokenUsage, compacting: tokenCompacting, fillRatio, reset: resetTokenUsage } = useTokenUsage(contextWindowSize);
+  const contextWindowSize =
+    (selectedModelInfo as unknown as { contextWindow?: number })
+      ?.contextWindow ?? null;
+  const {
+    usage: tokenUsage,
+    compacting: tokenCompacting,
+    fillRatio,
+    reset: resetTokenUsage,
+  } = useTokenUsage(contextWindowSize);
   const { agents: subagentEntries } = useSubagentEvents(chatId);
 
   const streamRef = useRef<{ id: string; content: string } | null>(null);
@@ -122,7 +151,10 @@ export const ChatView = () => {
   // Persist history on change
   useEffect(() => {
     try {
-      localStorage.setItem(HISTORY_KEY, JSON.stringify(history.slice(-MAX_HISTORY)));
+      localStorage.setItem(
+        HISTORY_KEY,
+        JSON.stringify(history.slice(-MAX_HISTORY)),
+      );
     } catch {
       // localStorage full or unavailable
     }
@@ -161,7 +193,12 @@ export const ChatView = () => {
       finalizeStream();
       setMessages((prev) => [
         ...prev,
-        { id: `err-${Date.now()}`, role: "error", content: "No response received — the Copilot SDK may be unavailable. Check server logs." },
+        {
+          id: `err-${Date.now()}`,
+          role: "error",
+          content:
+            "No response received — the Copilot SDK may be unavailable. Check server logs.",
+        },
       ]);
     }, 300_000); // 5 minutes — browser automation and multi-step tool chains can take a while
   }, [clearStuckTimer, finalizeStream]);
@@ -170,7 +207,11 @@ export const ChatView = () => {
   useEffect(() => {
     const load = async () => {
       try {
-        const data = await fetchJson<{ models: ModelInfo[]; selectedModel?: string; fallback?: boolean }>("/api/models");
+        const data = await fetchJson<{
+          models: ModelInfo[];
+          selectedModel?: string;
+          fallback?: boolean;
+        }>("/api/models");
         setModels(data.models ?? []);
         if (data.selectedModel) setSelectedModel(data.selectedModel);
         if (data.fallback) setFallbackWarning(true);
@@ -185,7 +226,9 @@ export const ChatView = () => {
   useEffect(() => {
     const loadTools = async () => {
       try {
-        const data = await fetchJson<{ tools: ToolInfo[] | Record<string, ToolInfo[]> }>("/api/tools");
+        const data = await fetchJson<{
+          tools: ToolInfo[] | Record<string, ToolInfo[]>;
+        }>("/api/tools");
         if (Array.isArray(data.tools)) {
           setTools(data.tools);
         } else if (data.tools && typeof data.tools === "object") {
@@ -200,7 +243,9 @@ export const ChatView = () => {
     };
     const loadPrompts = async () => {
       try {
-        const data = await fetchJson<{ prompts: SavedPrompt[] }>("/api/admin/prompts");
+        const data = await fetchJson<{ prompts: SavedPrompt[] }>(
+          "/api/admin/prompts",
+        );
         setPrompts(data.prompts ?? []);
       } catch {
         // Prompts not available
@@ -208,7 +253,9 @@ export const ChatView = () => {
     };
     const loadSkills = async () => {
       try {
-        const data = await fetchJson<{ skills: SkillInfo[] }>("/api/admin/skills");
+        const data = await fetchJson<{ skills: SkillInfo[] }>(
+          "/api/admin/skills",
+        );
         setSkills(data.skills ?? []);
       } catch {
         // Skills not available
@@ -221,7 +268,9 @@ export const ChatView = () => {
 
   // Read banner-dismissed from localStorage after mount (avoids SSR hydration mismatch)
   useEffect(() => {
-    setBannerDismissed(localStorage.getItem("openzigs:skills-onboarded") === "true");
+    setBannerDismissed(
+      localStorage.getItem("openzigs:skills-onboarded") === "true",
+    );
   }, []);
 
   // Socket events
@@ -232,7 +281,10 @@ export const ChatView = () => {
       setChatId(data.chatId);
     };
 
-    const onHistory = (data: { messages?: Array<{ role: "user" | "assistant"; content: string }>; restored?: boolean }) => {
+    const onHistory = (data: {
+      messages?: Array<{ role: "user" | "assistant"; content: string }>;
+      restored?: boolean;
+    }) => {
       // If we're waiting for a restore, ignore non-restore history events
       // (prevents chat:request-session / initial connection history from
       // overwriting the restored session due to async race conditions)
@@ -247,7 +299,11 @@ export const ChatView = () => {
         if (data.restored) {
           pendingRestoreRef.current = false;
           setMessages([
-            { id: "restored-banner", role: "error" as const, content: "📂 Restored session history" },
+            {
+              id: "restored-banner",
+              role: "error" as const,
+              content: "📂 Restored session history",
+            },
             ...restored,
           ]);
         } else {
@@ -257,7 +313,11 @@ export const ChatView = () => {
         // Restore came back empty — still clear the pending flag
         pendingRestoreRef.current = false;
         setMessages([
-          { id: "restored-banner", role: "error" as const, content: "📂 Session exists but has no conversation history." },
+          {
+            id: "restored-banner",
+            role: "error" as const,
+            content: "📂 Session exists but has no conversation history.",
+          },
         ]);
       }
     };
@@ -265,7 +325,14 @@ export const ChatView = () => {
     const onResponse = (data: { content?: string }) => {
       finalizeStream();
       if (data.content) {
-        setMessages((prev) => [...prev, { id: `msg-${Date.now()}`, role: "assistant", content: data.content! }]);
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: `msg-${Date.now()}`,
+            role: "assistant",
+            content: data.content!,
+          },
+        ]);
         setSpeakText(data.content);
       }
     };
@@ -281,13 +348,18 @@ export const ChatView = () => {
       if (!streamRef.current) {
         const id = `stream-${Date.now()}`;
         streamRef.current = { id, content: "" };
-        setMessages((prev) => [...prev, { id, role: "assistant", content: "" }]);
+        setMessages((prev) => [
+          ...prev,
+          { id, role: "assistant", content: "" },
+        ]);
       }
       streamRef.current.content += data.chunk;
       const currentContent = streamRef.current.content;
       const currentId = streamRef.current.id;
       setMessages((prev) =>
-        prev.map((m) => (m.id === currentId ? { ...m, content: currentContent } : m))
+        prev.map((m) =>
+          m.id === currentId ? { ...m, content: currentContent } : m,
+        ),
       );
     };
 
@@ -303,7 +375,11 @@ export const ChatView = () => {
       finalizeStream();
       setMessages((prev) => [
         ...prev,
-        { id: `err-${Date.now()}`, role: "error", content: data.error ?? "An error occurred" },
+        {
+          id: `err-${Date.now()}`,
+          role: "error",
+          content: data.error ?? "An error occurred",
+        },
       ]);
     };
 
@@ -340,30 +416,41 @@ export const ChatView = () => {
 
     const onUserInputTimeout = (data: { requestId: string }) => {
       setActiveInputRequest((prev) =>
-        prev?.requestId === data.requestId ? null : prev
+        prev?.requestId === data.requestId ? null : prev,
       );
       setThinking(true);
       resetStuckTimer();
     };
 
     const onCompactionStart = () => {
-      showToast("Context compaction started — summarizing older messages", "info");
-      setSessionStatus((prev) => prev ? { ...prev, compactionActive: true } : prev);
+      showToast(
+        "Context compaction started — summarizing older messages",
+        "info",
+      );
+      setSessionStatus((prev) =>
+        prev ? { ...prev, compactionActive: true } : prev,
+      );
     };
 
     const onCompactionComplete = () => {
       showToast("Context compaction complete", "success");
-      setSessionStatus((prev) => prev ? { ...prev, compactionActive: false } : prev);
+      setSessionStatus((prev) =>
+        prev ? { ...prev, compactionActive: false } : prev,
+      );
     };
 
-    const onTaskNotification = (data: { type: string; task: { goal?: string; result?: string; error?: string; status?: string } }) => {
+    const onTaskNotification = (data: {
+      type: string;
+      task: { goal?: string; result?: string; error?: string; status?: string };
+    }) => {
       const task = data.task;
       const status = task.status ?? data.type;
       let notifContent: string;
       if (status === "completed") {
-        const preview = task.result && task.result.length > 500
-          ? task.result.slice(0, 500) + "…"
-          : task.result ?? "(no output)";
+        const preview =
+          task.result && task.result.length > 500
+            ? task.result.slice(0, 500) + "…"
+            : (task.result ?? "(no output)");
         notifContent = `✅ **Background task completed:** "${task.goal ?? "Unknown"}"\n\n${preview}`;
       } else {
         notifContent = `❌ **Background task failed:** "${task.goal ?? "Unknown"}"\n\nError: ${task.error ?? "Unknown error"}`;
@@ -438,12 +525,20 @@ export const ChatView = () => {
     if (!chatId) {
       setMessages((prev) => [
         ...prev,
-        { id: `err-${Date.now()}`, role: "error", content: "Waiting for server connection. Please try again in a moment." },
+        {
+          id: `err-${Date.now()}`,
+          role: "error",
+          content:
+            "Waiting for server connection. Please try again in a moment.",
+        },
       ]);
       return;
     }
 
-    setMessages((prev) => [...prev, { id: nextId(), role: "user", content: text }]);
+    setMessages((prev) => [
+      ...prev,
+      { id: nextId(), role: "user", content: text },
+    ]);
     socket.emit("chat:message", {
       content: text,
       model: selectedModel || undefined,
@@ -455,7 +550,8 @@ export const ChatView = () => {
               displayName: attachment.name,
             }))
           : undefined,
-      reasoningEffort: reasoningEffort !== "medium" ? reasoningEffort : undefined,
+      reasoningEffort:
+        reasoningEffort !== "medium" ? reasoningEffort : undefined,
     });
     setInput("");
     setAttachments([]);
@@ -473,11 +569,28 @@ export const ChatView = () => {
 
     // Start the stuck timer — will be reset on every stream chunk or tool-call event
     resetStuckTimer();
-  }, [input, chatId, socket, selectedModel, sending, connected, nextId, resetStuckTimer, attachments, reasoningEffort]);
+  }, [
+    input,
+    chatId,
+    socket,
+    selectedModel,
+    sending,
+    connected,
+    nextId,
+    resetStuckTimer,
+    attachments,
+    reasoningEffort,
+  ]);
 
   const saveAsMarkdown = useCallback((content: string) => {
     const date = new Date().toISOString().slice(0, 10);
-    const slug = content.trim().split("\n")[0].replace(/^#+\s*/, "").replace(/[^a-z0-9]+/gi, "-").slice(0, 40).toLowerCase();
+    const slug = content
+      .trim()
+      .split("\n")[0]
+      .replace(/^#+\s*/, "")
+      .replace(/[^a-z0-9]+/gi, "-")
+      .slice(0, 40)
+      .toLowerCase();
     const blob = new Blob([content], { type: "text/markdown;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -488,12 +601,18 @@ export const ChatView = () => {
   }, []);
 
   const saveAsPdf = useCallback((msgId: string) => {
-    const el = document.querySelector(`[data-chat-msg-id="${msgId}"]`) as HTMLElement | null;
+    const el = document.querySelector(
+      `[data-chat-msg-id="${msgId}"]`,
+    ) as HTMLElement | null;
     if (!el) return;
     const html = el.innerHTML;
     const win = window.open("", "_blank", "width=900,height=700");
-    if (!win) { showToast("Allow popups to use Save as PDF", "info"); return; }
-    win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Export</title><style>
+    if (!win) {
+      showToast("Allow popups to use Save as PDF", "info");
+      return;
+    }
+    win.document
+      .write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Export</title><style>
       body{font-family:system-ui,sans-serif;max-width:780px;margin:2rem auto;padding:1rem 2rem;line-height:1.7;color:#111;font-size:14px}
       h1,h2,h3,h4{margin:1.2em 0 .4em;line-height:1.3}h1{font-size:1.6em}h2{font-size:1.3em}h3{font-size:1.1em}
       p{margin:.5em 0}ul,ol{margin:.4em 0;padding-left:1.5em}li{margin:.2em 0}
@@ -509,14 +628,31 @@ export const ChatView = () => {
   }, []);
 
   // Quick-reply: send a choice directly (used by interactive choice pills in ChatMarkdown)
-  const sendQuickReply = useCallback((text: string) => {
-    if (!text || !socket || sending || !connected || !chatId) return;
-    setMessages((prev) => [...prev, { id: nextId(), role: "user", content: text }]);
-    socket.emit("chat:message", { content: text, model: selectedModel || undefined });
-    setSending(true);
-    setThinking(true);
-    resetStuckTimer();
-  }, [socket, sending, connected, chatId, selectedModel, nextId, resetStuckTimer]);
+  const sendQuickReply = useCallback(
+    (text: string) => {
+      if (!text || !socket || sending || !connected || !chatId) return;
+      setMessages((prev) => [
+        ...prev,
+        { id: nextId(), role: "user", content: text },
+      ]);
+      socket.emit("chat:message", {
+        content: text,
+        model: selectedModel || undefined,
+      });
+      setSending(true);
+      setThinking(true);
+      resetStuckTimer();
+    },
+    [
+      socket,
+      sending,
+      connected,
+      chatId,
+      selectedModel,
+      nextId,
+      resetStuckTimer,
+    ],
+  );
 
   const handleInputResponse = useCallback(
     (answer: string, wasFreeform: boolean) => {
@@ -530,7 +666,7 @@ export const ChatView = () => {
       setThinking(true);
       resetStuckTimer();
     },
-    [socket, activeInputRequest, resetStuckTimer]
+    [socket, activeInputRequest, resetStuckTimer],
   );
 
   const handleAddAttachments = useCallback((newFiles: ChatAttachment[]) => {
@@ -544,12 +680,15 @@ export const ChatView = () => {
   const handleApprovalResponse = useCallback(
     (approved: boolean) => {
       if (pendingApproval && socket) {
-        socket.emit("approval:response", { approvalId: pendingApproval.id, approved });
+        socket.emit("approval:response", {
+          approvalId: pendingApproval.id,
+          approved,
+        });
         setPendingApproval(null);
         setThinking(true);
       }
     },
-    [pendingApproval, socket]
+    [pendingApproval, socket],
   );
 
   const handleModelChange = useCallback(async (modelId: string) => {
@@ -594,407 +733,463 @@ export const ChatView = () => {
   const showConnecting = connected && !chatId;
 
   // Voice: handle captured voice query (submit as chat message)
-  const handleVoiceQuery = useCallback((query: string) => {
-    const text = query.trim();
-    console.log("[voice] handleVoiceQuery:", JSON.stringify(text), { chatId: !!chatId, socket: !!socket, connected, sending });
-    if (!text || !chatId || !socket || !connected || sending) return;
+  const handleVoiceQuery = useCallback(
+    (query: string) => {
+      const text = query.trim();
+      console.log("[voice] handleVoiceQuery:", JSON.stringify(text), {
+        chatId: !!chatId,
+        socket: !!socket,
+        connected,
+        sending,
+      });
+      if (!text || !chatId || !socket || !connected || sending) return;
 
-    setMessages((prev) => [...prev, { id: nextId(), role: "user", content: text }]);
-    socket.emit("chat:message", {
-      content: text,
-      model: selectedModel || undefined,
-      reasoningEffort: reasoningEffort !== "medium" ? reasoningEffort : undefined,
-    });
-    setSending(true);
-    setThinking(true);
-    setHistory((prev) => [...prev.slice(-(MAX_HISTORY - 1)), text]);
-    resetStuckTimer();
-  }, [chatId, socket, connected, sending, selectedModel, reasoningEffort, nextId, resetStuckTimer]);
+      setMessages((prev) => [
+        ...prev,
+        { id: nextId(), role: "user", content: text },
+      ]);
+      socket.emit("chat:message", {
+        content: text,
+        model: selectedModel || undefined,
+        reasoningEffort:
+          reasoningEffort !== "medium" ? reasoningEffort : undefined,
+      });
+      setSending(true);
+      setThinking(true);
+      setHistory((prev) => [...prev.slice(-(MAX_HISTORY - 1)), text]);
+      resetStuckTimer();
+    },
+    [
+      chatId,
+      socket,
+      connected,
+      sending,
+      selectedModel,
+      reasoningEffort,
+      nextId,
+      resetStuckTimer,
+    ],
+  );
 
   return (
     <>
       <div className="flex h-full min-h-0 flex-col bg-background">
-      {/* Header */}
-      <header className="flex items-center gap-4 border-b border-border bg-card px-5 py-3">
-        <h1 className="text-lg font-semibold text-foreground">OpenZigs</h1>
-        <div className="ml-auto flex items-center gap-3">
-          <AgentSelector sessionId={chatId} />
-          <ReasoningEffortSelector
-            value={reasoningEffort}
-            onChange={setReasoningEffort}
-            modelId={selectedModel}
-            modelCapabilities={models.find((m) => m.id === selectedModel)?.capabilities}
-          />
-          <ProviderBadge provider={provider} />
-          <span className="text-xs text-muted-foreground">Model</span>
-          <Select
-            value={selectedModel}
-            onValueChange={(value) => void handleModelChange(value)}
-            disabled={models.length === 0}
-          >
-            <SelectTrigger className="h-8 w-48 font-mono text-xs">
-              <SelectValue placeholder="Loading…" />
-            </SelectTrigger>
-            <SelectContent>
-              {models.map((m) => (
-                <SelectItem key={m.id} value={m.id} className="font-mono text-xs">
-                  {m.id}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <ContextFuelGauge
-            usage={tokenUsage}
-            contextWindow={contextWindowSize}
-            fillRatio={fillRatio}
-            compacting={tokenCompacting}
-          />
-          {chatId && <CostWidget sessionId={chatId} />}
-          <VoiceControls
-            onQueryCaptured={handleVoiceQuery}
-            speakText={speakText}
-          />
-          <span
-            className={cn(
-              "h-2.5 w-2.5 rounded-full transition-colors",
-              connected ? "bg-moss" : "bg-destructive"
-            )}
-            title={connected ? "Connected" : "Disconnected"}
-          />
-          {messages.length > 0 && (
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-8 w-8"
-              onClick={handleClearChat}
-              title="Clear chat"
-            >
-              <Trash2 className="h-4 w-4 text-muted-foreground" />
-            </Button>
-          )}
-        </div>
-      </header>
-
-      {/* Session context bar */}
-      <SessionContextBar status={sessionStatus} />
-
-      {/* Fallback warning */}
-      {fallbackWarning && (
-        <div className="border-b border-amber-600/30 bg-amber-500/10 px-5 py-2 text-center text-xs text-amber-700 dark:text-amber-400">
-          Copilot SDK unavailable — using fallback model list. See Copilot CLI troubleshooting in <code className="font-mono">docs/USER_GUIDE.md</code>, then have an admin POST <code className="font-mono">/api/admin/copilot/restart</code> to recover.
-        </div>
-      )}
-
-      {/* Connecting indicator */}
-      {showConnecting && (
-        <div className="border-b border-primary/20 bg-primary/5 px-5 py-2 text-center text-xs text-primary">
-          <Loader2 className="mr-1.5 inline-block h-3 w-3 animate-spin" />
-          Connecting to server…
-        </div>
-      )}
-
-      {/* Messages */}
-      <main className="min-h-0 flex flex-1 flex-col gap-4 overflow-y-auto p-5">
-        {messages.length === 0 && !thinking && (
-          <div className="flex flex-1 flex-col items-center justify-center gap-4 text-muted-foreground">
-            <Bot className="h-12 w-12 opacity-30" />
-            <p className="text-sm">Send a message to start chatting with OpenZigs.</p>
-            {!bannerDismissed && skills.length > 0 && (
-              <div className="w-full max-w-md rounded-xl border border-border bg-muted/30 p-4 text-xs">
-                <p className="mb-2 font-semibold text-foreground">{skills.length} skill{skills.length !== 1 ? "s" : ""} loaded</p>
-                <div className="grid grid-cols-2 gap-1 text-muted-foreground">
-                  {skills.map((s) => (
-                    <span key={s.name}>{s.displayName}</span>
-                  ))}
-                </div>
-                <p className="mt-2 text-muted-foreground">
-                  Type <code className="rounded bg-muted px-1">!</code> to browse skills, or just describe what you need.
-                </p>
-                <button
-                  type="button"
-                  className="mt-2 text-[10px] text-muted-foreground/60 hover:text-muted-foreground"
-                  onClick={() => {
-                    localStorage.setItem("openzigs:skills-onboarded", "true");
-                    setBannerDismissed(true);
-                  }}
-                >
-                  Dismiss
-                </button>
-              </div>
-            )}
-          </div>
-        )}
-
-        {messages.map((msg, msgIdx) => (
-          <div
-            key={msg.id}
-            className={cn(
-              "group flex items-start gap-3 animate-slide-in",
-              msg.role === "user" && "flex-row-reverse"
-            )}
-          >
-            {/* Avatar */}
-            <div
-              className={cn(
-                "flex h-8 w-8 shrink-0 items-center justify-center rounded-full",
-                msg.role === "user"
-                  ? "bg-primary text-primary-foreground"
-                  : msg.role === "error"
-                    ? "bg-destructive/10 text-destructive"
-                    : "bg-muted text-muted-foreground"
-              )}
-            >
-              {msg.role === "user" ? (
-                <User className="h-4 w-4" />
-              ) : msg.role === "error" ? (
-                <AlertCircle className="h-4 w-4" />
-              ) : (
-                <Bot className="h-4 w-4" />
-              )}
-            </div>
-            {/* Bubble */}
-            <div
-              className={cn(
-                "max-w-[75%] rounded-2xl px-4 py-3 text-sm leading-relaxed",
-                msg.role === "user"
-                  ? "whitespace-pre-wrap bg-primary text-primary-foreground"
-                  : msg.role === "error"
-                    ? "whitespace-pre-wrap border border-destructive/30 bg-destructive/5 text-destructive text-xs"
-                    : "bg-muted text-foreground"
-              )}
-            >
-              {msg.role === "assistant" ? (
-                <div data-chat-msg-id={msg.id}>
-                  <ChatMarkdown
-                    content={msg.content}
-                    isStreaming={streamRef.current?.id === msg.id}
-                    onChoiceSelect={
-                      msgIdx === lastAssistantIdx && !sending && !thinking
-                        ? sendQuickReply
-                        : undefined
-                    }
-                  />
-                </div>
-              ) : (
-                msg.content
-              )}
-            </div>
-            {/* Save actions — visible on hover for completed assistant messages */}
-            {msg.role === "assistant" && streamRef.current?.id !== msg.id && (
-              <div className="flex flex-col justify-end gap-0.5 pb-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                <button
-                  type="button"
-                  onClick={() => saveAsMarkdown(msg.content)}
-                  title="Save as Markdown"
-                  className="p-1.5 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
-                >
-                  <FileDown className="h-3.5 w-3.5" />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => saveAsPdf(msg.id)}
-                  title="Save as PDF"
-                  className="p-1.5 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
-                >
-                  <Printer className="h-3.5 w-3.5" />
-                </button>
-              </div>
-            )}
-          </div>
-        ))}
-
-        {/* Active user input prompt — or workflow preview card */}
-        {activeInputRequest && (
-          activeInputRequest.preview ? (
-            <div className="flex items-start gap-3 animate-slide-in">
-              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
-                <Bot className="h-4 w-4" />
-              </div>
-              <WorkflowPreviewCard
-                preview={activeInputRequest.preview}
-                onConfirm={() => handleInputResponse("confirm", false)}
-                onEdit={() => handleInputResponse("edit", true)}
-                onTestRun={
-                  activeInputRequest.preview.type === "scheduled-job"
-                    ? () => handleInputResponse("test-run", false)
-                    : undefined
-                }
-              />
-            </div>
-          ) : (
-            <UserInputPrompt
-              key={activeInputRequest.requestId}
-              request={activeInputRequest}
-              onSubmit={handleInputResponse}
+        {/* Header */}
+        <header className="flex items-center gap-4 border-b border-border bg-card px-5 py-3">
+          <h1 className="text-lg font-semibold text-foreground">OpenZigs</h1>
+          <div className="ml-auto flex items-center gap-3">
+            <AgentSelector sessionId={chatId} />
+            <ReasoningEffortSelector
+              value={reasoningEffort}
+              onChange={setReasoningEffort}
+              modelId={selectedModel}
+              modelCapabilities={
+                models.find((m) => m.id === selectedModel)?.capabilities
+              }
             />
-          )
-        )}
+            <ProviderBadge provider={provider} />
+            <span className="text-xs text-muted-foreground">Model</span>
+            <Select
+              value={selectedModel}
+              onValueChange={(value) => void handleModelChange(value)}
+              disabled={models.length === 0}
+            >
+              <SelectTrigger className="h-8 w-48 font-mono text-xs">
+                <SelectValue placeholder="Loading…" />
+              </SelectTrigger>
+              <SelectContent>
+                {models.map((m) => (
+                  <SelectItem
+                    key={m.id}
+                    value={m.id}
+                    className="font-mono text-xs"
+                  >
+                    {m.id}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <ContextFuelGauge
+              usage={tokenUsage}
+              contextWindow={contextWindowSize}
+              fillRatio={fillRatio}
+              compacting={tokenCompacting}
+            />
+            {chatId && <CostWidget sessionId={chatId} />}
+            <VoiceControls
+              onQueryCaptured={handleVoiceQuery}
+              speakText={speakText}
+            />
+            <span
+              className={cn(
+                "h-2.5 w-2.5 rounded-full transition-colors",
+                connected ? "bg-moss" : "bg-destructive",
+              )}
+              title={connected ? "Connected" : "Disconnected"}
+            />
+            {messages.length > 0 && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8"
+                onClick={handleClearChat}
+                title="Clear chat"
+              >
+                <Trash2 className="h-4 w-4 text-muted-foreground" />
+              </Button>
+            )}
+          </div>
+        </header>
 
-        {/* Thinking indicator */}
-        {/* Inline subagent activity */}
-        {subagentEntries.size > 0 && (
-          <SubagentInlineView entries={Array.from(subagentEntries.values())} className="mx-11" />
-        )}
+        {/* Session context bar */}
+        <SessionContextBar status={sessionStatus} />
 
-        {thinking && (
-          <div className="flex items-start gap-3 animate-slide-in">
-            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground">
-              <Bot className="h-4 w-4" />
-            </div>
-            <div className="flex items-center gap-1 rounded-2xl bg-muted px-4 py-3">
-              {activeTool ? <ToolProgress tool={activeTool} /> : <ThinkingDots />}
-            </div>
+        {/* Fallback warning */}
+        {fallbackWarning && (
+          <div className="border-b border-amber-600/30 bg-amber-500/10 px-5 py-2 text-center text-xs text-amber-700 dark:text-amber-400">
+            Copilot SDK unavailable — using fallback model list. See Copilot CLI
+            troubleshooting in{" "}
+            <code className="font-mono">docs/USER_GUIDE.md</code>, then have an
+            admin POST{" "}
+            <code className="font-mono">/api/admin/copilot/restart</code> to
+            recover.
           </div>
         )}
 
-        <div ref={messagesEndRef} />
-      </main>
+        {/* Connecting indicator */}
+        {showConnecting && (
+          <div className="border-b border-primary/20 bg-primary/5 px-5 py-2 text-center text-xs text-primary">
+            <Loader2 className="mr-1.5 inline-block h-3 w-3 animate-spin" />
+            Connecting to server…
+          </div>
+        )}
 
-      {/* Subagent live progress */}
-      <SubagentLivePanel sessionId={chatId} />
+        {/* Messages */}
+        <main className="min-h-0 flex flex-1 flex-col gap-4 overflow-y-auto p-5">
+          {messages.length === 0 && !thinking && (
+            <div className="flex flex-1 flex-col items-center justify-center gap-4 text-muted-foreground">
+              <Bot className="h-12 w-12 opacity-30" />
+              <p className="text-sm">
+                Send a message to start chatting with OpenZigs.
+              </p>
+              {!bannerDismissed && skills.length > 0 && (
+                <div className="w-full max-w-md rounded-xl border border-border bg-muted/30 p-4 text-xs">
+                  <p className="mb-2 font-semibold text-foreground">
+                    {skills.length} skill{skills.length !== 1 ? "s" : ""} loaded
+                  </p>
+                  <div className="grid grid-cols-2 gap-1 text-muted-foreground">
+                    {skills.map((s) => (
+                      <span key={s.name}>{s.displayName}</span>
+                    ))}
+                  </div>
+                  <p className="mt-2 text-muted-foreground">
+                    Type <code className="rounded bg-muted px-1">!</code> to
+                    browse skills, or just describe what you need.
+                  </p>
+                  <button
+                    type="button"
+                    className="mt-2 text-[10px] text-muted-foreground/60 hover:text-muted-foreground"
+                    onClick={() => {
+                      localStorage.setItem("openzigs:skills-onboarded", "true");
+                      setBannerDismissed(true);
+                    }}
+                  >
+                    Dismiss
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
 
-      {/* Input */}
-      <footer className="border-t border-border bg-card px-5 py-4">
-        <form
-          className="mx-auto flex max-w-3xl items-end gap-3"
-          onSubmit={(e) => {
-            e.preventDefault();
-            handleSend();
-          }}
-        >
-          <FileAttachmentButton
-            onAttach={handleAddAttachments}
-            disabled={inputDisabled}
-            attachmentCount={attachments.length}
-          />
-          <VoiceMicButton
-            onTranscript={(text) => {
-              setInput((prev) => (prev ? `${prev} ${text}` : text));
-              autoResize();
-            }}
-            disabled={inputDisabled}
-          />
-          <div className="relative flex-1">
-            <FileDropZone
-              onDrop={handleAddAttachments}
-              attachmentCount={attachments.length}
-              disabled={inputDisabled}
+          {messages.map((msg, msgIdx) => (
+            <div
+              key={msg.id}
+              className={cn(
+                "group flex items-start gap-3 animate-slide-in",
+                msg.role === "user" && "flex-row-reverse",
+              )}
             >
-            <SmartTextarea
-              ref={textareaRef}
-              value={input}
-              onValueChange={(val) => {
-                setInput(val);
+              {/* Avatar */}
+              <div
+                className={cn(
+                  "flex h-8 w-8 shrink-0 items-center justify-center rounded-full",
+                  msg.role === "user"
+                    ? "bg-primary text-primary-foreground"
+                    : msg.role === "error"
+                      ? "bg-destructive/10 text-destructive"
+                      : "bg-muted text-muted-foreground",
+                )}
+              >
+                {msg.role === "user" ? (
+                  <User className="h-4 w-4" />
+                ) : msg.role === "error" ? (
+                  <AlertCircle className="h-4 w-4" />
+                ) : (
+                  <Bot className="h-4 w-4" />
+                )}
+              </div>
+              {/* Bubble */}
+              <div
+                className={cn(
+                  "max-w-[75%] rounded-2xl px-4 py-3 text-sm leading-relaxed",
+                  msg.role === "user"
+                    ? "whitespace-pre-wrap bg-primary text-primary-foreground"
+                    : msg.role === "error"
+                      ? "whitespace-pre-wrap border border-destructive/30 bg-destructive/5 text-destructive text-xs"
+                      : "bg-muted text-foreground",
+                )}
+              >
+                {msg.role === "assistant" ? (
+                  <div data-chat-msg-id={msg.id}>
+                    <ChatMarkdown
+                      content={msg.content}
+                      isStreaming={streamRef.current?.id === msg.id}
+                      onChoiceSelect={
+                        msgIdx === lastAssistantIdx && !sending && !thinking
+                          ? sendQuickReply
+                          : undefined
+                      }
+                    />
+                  </div>
+                ) : (
+                  msg.content
+                )}
+              </div>
+              {/* Save actions — visible on hover for completed assistant messages */}
+              {msg.role === "assistant" && streamRef.current?.id !== msg.id && (
+                <div className="flex flex-col justify-end gap-0.5 pb-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <button
+                    type="button"
+                    onClick={() => saveAsMarkdown(msg.content)}
+                    title="Save as Markdown"
+                    className="p-1.5 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+                  >
+                    <FileDown className="h-3.5 w-3.5" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => saveAsPdf(msg.id)}
+                    title="Save as PDF"
+                    className="p-1.5 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+                  >
+                    <Printer className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              )}
+            </div>
+          ))}
+
+          {/* Active user input prompt — or workflow preview card */}
+          {activeInputRequest &&
+            (activeInputRequest.preview ? (
+              <div className="flex items-start gap-3 animate-slide-in">
+                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
+                  <Bot className="h-4 w-4" />
+                </div>
+                <WorkflowPreviewCard
+                  preview={activeInputRequest.preview}
+                  onConfirm={() => handleInputResponse("confirm", false)}
+                  onEdit={() => handleInputResponse("edit", true)}
+                  onTestRun={
+                    activeInputRequest.preview.type === "scheduled-job"
+                      ? () => handleInputResponse("test-run", false)
+                      : undefined
+                  }
+                />
+              </div>
+            ) : (
+              <UserInputPrompt
+                key={activeInputRequest.requestId}
+                request={activeInputRequest}
+                onSubmit={handleInputResponse}
+              />
+            ))}
+
+          {/* Thinking indicator */}
+          {/* Inline subagent activity */}
+          {subagentEntries.size > 0 && (
+            <SubagentInlineView
+              entries={Array.from(subagentEntries.values())}
+              className="mx-11"
+            />
+          )}
+
+          {thinking && (
+            <div className="flex items-start gap-3 animate-slide-in">
+              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground">
+                <Bot className="h-4 w-4" />
+              </div>
+              <div className="flex items-center gap-1 rounded-2xl bg-muted px-4 py-3">
+                {activeTool ? (
+                  <ToolProgress tool={activeTool} />
+                ) : (
+                  <ThinkingDots />
+                )}
+              </div>
+            </div>
+          )}
+
+          <div ref={messagesEndRef} />
+        </main>
+
+        {/* Subagent live progress */}
+        <SubagentLivePanel sessionId={chatId} />
+
+        {/* Input */}
+        <footer className="border-t border-border bg-card px-5 py-4">
+          <form
+            className="mx-auto flex max-w-3xl items-end gap-3"
+            onSubmit={(e) => {
+              e.preventDefault();
+              handleSend();
+            }}
+          >
+            <FileAttachmentButton
+              onAttach={handleAddAttachments}
+              disabled={inputDisabled}
+              attachmentCount={attachments.length}
+            />
+            <VoiceMicButton
+              onTranscript={(text) => {
+                setInput((prev) => (prev ? `${prev} ${text}` : text));
                 autoResize();
               }}
-              tools={tools}
-              prompts={prompts}
-              models={models}
-              skills={skills}
-              placeholder={
-                !connected
-                  ? "Connecting…"
-                  : showConnecting
-                    ? "Almost ready…"
-                    : "Type a message… (/ prompts · # tools · @ models · ! skills)"
-              }
-              rows={2}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
-                  e.preventDefault();
-                  handleSend();
-                  return;
-                }
-                // History navigation: only when cursor is at position 0 or input is empty
-                const el = textareaRef.current;
-                const atStart = !el || el.selectionStart === 0;
-                if (e.key === "ArrowUp" && (atStart || !input)) {
-                  e.preventDefault();
-                  if (history.length === 0) return;
-                  if (historyIndex === -1) {
-                    // Entering history mode — save current draft
-                    setDraftInput(input);
-                    const idx = history.length - 1;
-                    setHistoryIndex(idx);
-                    setInput(history[idx]);
-                  } else if (historyIndex > 0) {
-                    const idx = historyIndex - 1;
-                    setHistoryIndex(idx);
-                    setInput(history[idx]);
-                  }
-                  return;
-                }
-                if (e.key === "ArrowDown" && historyIndex >= 0) {
-                  e.preventDefault();
-                  if (historyIndex < history.length - 1) {
-                    const idx = historyIndex + 1;
-                    setHistoryIndex(idx);
-                    setInput(history[idx]);
-                  } else {
-                    // Past the end — restore draft
-                    setHistoryIndex(-1);
-                    setInput(draftInput);
-                  }
-                  return;
-                }
-                if (e.key === "Escape" && historyIndex >= 0) {
-                  e.preventDefault();
-                  setHistoryIndex(-1);
-                  setInput(draftInput);
-                }
-              }}
               disabled={inputDisabled}
-              style={{ maxHeight: "300px" }}
             />
-            </FileDropZone>
-            <AttachmentBar attachments={attachments} onRemove={handleRemoveAttachment} />
-          </div>
-          <Button
-            type="submit"
-            size="icon"
-            className="h-11 w-11 shrink-0 rounded-xl"
-            disabled={inputDisabled || !input.trim() || !chatId || !connected}
-          >
-            {sending ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <Send className="h-4 w-4" />
-            )}
-          </Button>
-        </form>
-      </footer>
-
-      {/* Approval dialog */}
-      <Dialog open={!!pendingApproval} onOpenChange={(open) => !open && handleApprovalResponse(false)}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>Tool Approval Required</DialogTitle>
-            <DialogDescription>
-              The assistant wants to use a tool that requires your approval.
-            </DialogDescription>
-          </DialogHeader>
-          {pendingApproval && (
-            <div className="space-y-3">
-              <p className="font-mono text-sm text-primary">{pendingApproval.tool}</p>
-              {pendingApproval.explanation && (
-                <p className="text-sm text-muted-foreground">{pendingApproval.explanation}</p>
-              )}
-              <pre className="max-h-48 overflow-y-auto whitespace-pre-wrap rounded-lg border border-border bg-muted p-3 font-mono text-xs text-muted-foreground">
-                {pendingApproval.preview ??
-                  JSON.stringify(pendingApproval.args, null, 2)}
-              </pre>
+            <div className="relative flex-1">
+              <FileDropZone
+                onDrop={handleAddAttachments}
+                attachmentCount={attachments.length}
+                disabled={inputDisabled}
+              >
+                <SmartTextarea
+                  ref={textareaRef}
+                  value={input}
+                  onValueChange={(val) => {
+                    setInput(val);
+                    autoResize();
+                  }}
+                  tools={tools}
+                  prompts={prompts}
+                  models={models}
+                  skills={skills}
+                  placeholder={
+                    !connected
+                      ? "Connecting…"
+                      : showConnecting
+                        ? "Almost ready…"
+                        : "Type a message… (/ prompts · # tools · @ models · ! skills)"
+                  }
+                  rows={2}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.shiftKey) {
+                      e.preventDefault();
+                      handleSend();
+                      return;
+                    }
+                    // History navigation: only when cursor is at position 0 or input is empty
+                    const el = textareaRef.current;
+                    const atStart = !el || el.selectionStart === 0;
+                    if (e.key === "ArrowUp" && (atStart || !input)) {
+                      e.preventDefault();
+                      if (history.length === 0) return;
+                      if (historyIndex === -1) {
+                        // Entering history mode — save current draft
+                        setDraftInput(input);
+                        const idx = history.length - 1;
+                        setHistoryIndex(idx);
+                        setInput(history[idx]);
+                      } else if (historyIndex > 0) {
+                        const idx = historyIndex - 1;
+                        setHistoryIndex(idx);
+                        setInput(history[idx]);
+                      }
+                      return;
+                    }
+                    if (e.key === "ArrowDown" && historyIndex >= 0) {
+                      e.preventDefault();
+                      if (historyIndex < history.length - 1) {
+                        const idx = historyIndex + 1;
+                        setHistoryIndex(idx);
+                        setInput(history[idx]);
+                      } else {
+                        // Past the end — restore draft
+                        setHistoryIndex(-1);
+                        setInput(draftInput);
+                      }
+                      return;
+                    }
+                    if (e.key === "Escape" && historyIndex >= 0) {
+                      e.preventDefault();
+                      setHistoryIndex(-1);
+                      setInput(draftInput);
+                    }
+                  }}
+                  disabled={inputDisabled}
+                  style={{ maxHeight: "300px" }}
+                />
+              </FileDropZone>
+              <AttachmentBar
+                attachments={attachments}
+                onRemove={handleRemoveAttachment}
+              />
             </div>
-          )}
-          <DialogFooter>
-            <Button variant="outline" onClick={() => handleApprovalResponse(false)}>
-              Deny
+            <Button
+              type="submit"
+              size="icon"
+              className="h-11 w-11 shrink-0 rounded-xl"
+              disabled={inputDisabled || !input.trim() || !chatId || !connected}
+            >
+              {sending ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Send className="h-4 w-4" />
+              )}
             </Button>
-            <Button onClick={() => handleApprovalResponse(true)}>
-              Approve
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+          </form>
+        </footer>
+
+        {/* Approval dialog */}
+        <Dialog
+          open={!!pendingApproval}
+          onOpenChange={(open) => !open && handleApprovalResponse(false)}
+        >
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle>Tool Approval Required</DialogTitle>
+              <DialogDescription>
+                The assistant wants to use a tool that requires your approval.
+              </DialogDescription>
+            </DialogHeader>
+            {pendingApproval && (
+              <div className="space-y-3">
+                <p className="font-mono text-sm text-primary">
+                  {pendingApproval.tool}
+                </p>
+                {pendingApproval.explanation && (
+                  <p className="text-sm text-muted-foreground">
+                    {pendingApproval.explanation}
+                  </p>
+                )}
+                <pre className="max-h-48 overflow-y-auto whitespace-pre-wrap rounded-lg border border-border bg-muted p-3 font-mono text-xs text-muted-foreground">
+                  {pendingApproval.preview ??
+                    JSON.stringify(pendingApproval.args, null, 2)}
+                </pre>
+              </div>
+            )}
+            <DialogFooter>
+              <Button
+                variant="outline"
+                onClick={() => handleApprovalResponse(false)}
+              >
+                Deny
+              </Button>
+              <Button onClick={() => handleApprovalResponse(true)}>
+                Approve
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </div>
       <ToastContainer />
     </>
