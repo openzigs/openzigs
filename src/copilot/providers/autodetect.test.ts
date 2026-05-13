@@ -1,11 +1,17 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { autodetectEndpoints } from "./autodetect.js";
+import {
+  autodetectEndpoints,
+  VLLM_UNSUPPORTED_DARWIN_REASON,
+} from "./autodetect.js";
 
 vi.mock("../../logging/logger.js", () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 
-const mockResponse = (body: unknown, init: { ok?: boolean; status?: number } = {}) =>
+const mockResponse = (
+  body: unknown,
+  init: { ok?: boolean; status?: number } = {},
+) =>
   ({
     ok: init.ok ?? true,
     status: init.status ?? 200,
@@ -24,7 +30,10 @@ describe("autodetectEndpoints", () => {
       }
       throw new Error("connection refused");
     });
-    const result = await autodetectEndpoints({ fetchImpl: fetchImpl as unknown as typeof fetch });
+    const result = await autodetectEndpoints({
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      platform: "linux",
+    });
     expect(result.ollama).toEqual({
       endpoint: "http://127.0.0.1:11434/v1",
       models: ["gemma4:26b", "llama3.1:8b"],
@@ -40,7 +49,10 @@ describe("autodetectEndpoints", () => {
       }
       throw new Error("ECONNREFUSED");
     });
-    const result = await autodetectEndpoints({ fetchImpl: fetchImpl as unknown as typeof fetch });
+    const result = await autodetectEndpoints({
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      platform: "linux",
+    });
     expect(result.vllm).toEqual({
       endpoint: "http://127.0.0.1:8000/v1",
       models: ["google/gemma-4-26b-it"],
@@ -53,13 +65,21 @@ describe("autodetectEndpoints", () => {
     const fetchImpl = vi.fn(async () => {
       throw new Error("ECONNREFUSED");
     });
-    const result = await autodetectEndpoints({ fetchImpl: fetchImpl as unknown as typeof fetch });
+    const result = await autodetectEndpoints({
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      platform: "linux",
+    });
     expect(result).toEqual({ ollama: null, vllm: null });
   });
 
   it("treats non-2xx responses as misses", async () => {
-    const fetchImpl = vi.fn(async () => mockResponse({}, { ok: false, status: 404 }));
-    const result = await autodetectEndpoints({ fetchImpl: fetchImpl as unknown as typeof fetch });
+    const fetchImpl = vi.fn(async () =>
+      mockResponse({}, { ok: false, status: 404 }),
+    );
+    const result = await autodetectEndpoints({
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      platform: "linux",
+    });
     expect(result.ollama).toBeNull();
     expect(result.vllm).toBeNull();
   });
@@ -77,6 +97,7 @@ describe("autodetectEndpoints", () => {
     });
     const result = await autodetectEndpoints({
       fetchImpl: fetchImpl as unknown as typeof fetch,
+      platform: "linux",
       timeoutMs: 50,
     });
     expect(result.ollama).toBeNull();
@@ -84,23 +105,30 @@ describe("autodetectEndpoints", () => {
   });
 
   it("handles malformed JSON response gracefully", async () => {
-    const fetchImpl = vi.fn(async () =>
-      ({
-        ok: true,
-        status: 200,
-        json: async () => {
-          throw new Error("malformed");
-        },
-      }) as unknown as Response,
+    const fetchImpl = vi.fn(
+      async () =>
+        ({
+          ok: true,
+          status: 200,
+          json: async () => {
+            throw new Error("malformed");
+          },
+        }) as unknown as Response,
     );
-    const result = await autodetectEndpoints({ fetchImpl: fetchImpl as unknown as typeof fetch });
+    const result = await autodetectEndpoints({
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      platform: "linux",
+    });
     expect(result.ollama).toBeNull();
     expect(result.vllm).toBeNull();
   });
 
   it("handles missing data array in response", async () => {
     const fetchImpl = vi.fn(async () => mockResponse({}));
-    const result = await autodetectEndpoints({ fetchImpl: fetchImpl as unknown as typeof fetch });
+    const result = await autodetectEndpoints({
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      platform: "linux",
+    });
     expect(result.ollama).not.toBeNull();
     expect(result.ollama?.models).toEqual([]);
   });
@@ -109,6 +137,7 @@ describe("autodetectEndpoints", () => {
     const fetchImpl = vi.fn(async () => mockResponse({ data: [] }));
     await autodetectEndpoints({
       fetchImpl: fetchImpl as unknown as typeof fetch,
+      platform: "linux",
       ollamaBaseUrl: "http://127.0.0.1:11434///",
     });
     expect(fetchImpl).toHaveBeenCalledWith(
@@ -121,7 +150,45 @@ describe("autodetectEndpoints", () => {
     const fetchImpl = vi.fn(async () =>
       mockResponse({ data: [{ id: "good" }, { id: 42 }, { foo: "bar" }] }),
     );
-    const result = await autodetectEndpoints({ fetchImpl: fetchImpl as unknown as typeof fetch });
+    const result = await autodetectEndpoints({
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      platform: "linux",
+    });
     expect(result.ollama?.models).toEqual(["good"]);
+  });
+
+  it("on darwin, skips vLLM probe entirely and reports it unsupported", async () => {
+    const fetchImpl = vi.fn(async (url) => {
+      if (String(url).includes("11434")) {
+        return mockResponse({ data: [{ id: "gemma4:26b" }] });
+      }
+      throw new Error("vLLM should not be probed on darwin");
+    });
+    const result = await autodetectEndpoints({
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      platform: "darwin",
+      timeoutMs: 1000,
+    });
+
+    expect(result.ollama).not.toBeNull();
+    expect(result.vllm).toBeNull();
+    expect(result.unsupported?.vllm).toBe(VLLM_UNSUPPORTED_DARWIN_REASON);
+    const vllmCalls = fetchImpl.mock.calls.filter((c) =>
+      String(c[0]).includes("8000"),
+    );
+    expect(vllmCalls).toHaveLength(0);
+  });
+
+  it("on darwin with no Ollama, returns ollama:null + vllm:null + unsupported.vllm", async () => {
+    const fetchImpl = vi.fn(async () => {
+      throw new Error("ECONNREFUSED");
+    });
+    const result = await autodetectEndpoints({
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      platform: "darwin",
+    });
+    expect(result.ollama).toBeNull();
+    expect(result.vllm).toBeNull();
+    expect(result.unsupported?.vllm).toBe(VLLM_UNSUPPORTED_DARWIN_REASON);
   });
 });

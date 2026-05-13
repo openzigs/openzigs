@@ -281,17 +281,17 @@ function ErrorBanner({ error }: { error: unknown }) {
         className="rounded-2xl border border-destructive/40 bg-destructive/10 p-6 text-sm text-destructive"
         role="alert"
       >
-        <p className="font-semibold">LTX worker not configured</p>
+        <p className="font-semibold">LTX worker not reachable</p>
         <p className="mt-1 text-xs">
           {body.hint ??
-            "Video generation runs on a remote node on this Mac. Configure your LTX worker URL in Admin → Video Generation Node."}
+            "The LTX video worker isn't reachable on this Mac. You can either run the LTX sidecar locally on this machine, or point at another Mac on your LAN via Admin → Video Generation Node."}
         </p>
         <p className="mt-3">
           <a
             href="/admin#video-gen-node"
             className="inline-flex items-center gap-1 rounded-md border border-destructive/40 bg-background px-3 py-1.5 text-xs font-medium text-destructive hover:bg-destructive/10"
           >
-            Configure remote LTX node →
+            Configure LTX node →
           </a>
         </p>
         {body.url && (

@@ -37,6 +37,11 @@ import {
   autodetectEndpoints,
   type AutodetectResult,
 } from "../copilot/providers/autodetect.js";
+import { resolveOllamaTarget } from "../copilot/providers/ollama-resolver.js";
+import {
+  resolveAndAssertOllamaTarget,
+  OllamaTargetError,
+} from "../copilot/providers/ollama-resolver.js";
 import { logger } from "../logging/logger.js";
 import type { AuditLogger } from "../logging/audit-logger.js";
 
@@ -72,7 +77,8 @@ const defaultConfigPath = () =>
   path.join(os.homedir(), ".openzigs", "config.json");
 
 const VLLM_KEY_BYTES = 32;
-const generateVllmApiKey = () => randomBytes(VLLM_KEY_BYTES).toString("base64url");
+const generateVllmApiKey = () =>
+  randomBytes(VLLM_KEY_BYTES).toString("base64url");
 
 const maskKey = (key: string | undefined): string | null => {
   if (!key) return null;
@@ -80,9 +86,7 @@ const maskKey = (key: string | undefined): string | null => {
   return `${key.slice(0, 4)}…${key.slice(-4)}`;
 };
 
-const readJson = async (
-  filePath: string,
-): Promise<Record<string, unknown>> => {
+const readJson = async (filePath: string): Promise<Record<string, unknown>> => {
   try {
     const raw = await fs.readFile(filePath, "utf-8");
     const stripped = raw.charCodeAt(0) === 0xfeff ? raw.slice(1) : raw;
@@ -123,10 +127,24 @@ async function readLocalLlmBlock(
     localLlm: {
       autodetect: block.autodetect ?? true,
       provider: (block.provider ?? null) as LocalCopilotProviderConfig | null,
-      vllmApiKey: typeof block.vllmApiKey === "string" ? block.vllmApiKey : undefined,
+      vllmApiKey:
+        typeof block.vllmApiKey === "string" ? block.vllmApiKey : undefined,
       privacyMode: block.privacyMode ?? { globalLockdown: false },
-      smartRouter: block.smartRouter ?? { enabled: true, cloudThresholdTokens: 4096 },
+      smartRouter: block.smartRouter ?? {
+        enabled: true,
+        cloudThresholdTokens: 4096,
+      },
       costMeter: block.costMeter ?? { enabled: true, fetchLivePricing: true },
+      // #1077-B: ollama node block (local 11434 default; LAN-reachable in
+      // network mode). The autodetect handler below threads `localUrl` /
+      // `networkNodeUrl` into the probe so users with a remote Ollama
+      // node still get autodetected models in the wizard + admin UI.
+      ollama: block.ollama ?? {
+        mode: "local",
+        localUrl: "http://127.0.0.1:11434",
+        networkNodeUrl: "",
+        networkNodeToken: "",
+      },
     },
   };
 }
@@ -152,7 +170,10 @@ export async function ensureVllmApiKey(
     return { apiKey: localLlm.vllmApiKey, created: false };
   }
   const apiKey = generateVllmApiKey();
-  await persistLocalLlmBlock(configPath, raw, { ...localLlm, vllmApiKey: apiKey });
+  await persistLocalLlmBlock(configPath, raw, {
+    ...localLlm,
+    vllmApiKey: apiKey,
+  });
   return { apiKey, created: true };
 }
 
@@ -171,7 +192,9 @@ const setProviderBodySchema = z.preprocess((raw) => {
   if (next.endpoint == null && typeof obj.baseUrl === "string") {
     // Local-copilot provider expects a /v1 suffix; the wizard sends bare host.
     const base = obj.baseUrl as string;
-    next.endpoint = base.endsWith("/v1") ? base : `${base.replace(/\/$/, "")}/v1`;
+    next.endpoint = base.endsWith("/v1")
+      ? base
+      : `${base.replace(/\/$/, "")}/v1`;
     delete next.baseUrl;
   }
   if (next.model == null && typeof obj.modelId === "string") {
@@ -214,7 +237,29 @@ export function createLocalLlmRouter(deps: LocalLlmDeps = {}): Router {
         res.json({ ...empty, skipped: true });
         return;
       }
-      const result = await autodetectEndpoints({ fetchImpl: deps.fetchImpl });
+      // SSRF guard — refuse to probe a blocked Ollama target. Surfaces a
+      // 400 instead of silently falling back to loopback so the operator
+      // sees the misconfiguration.
+      let assertedBaseUrl: string;
+      try {
+        assertedBaseUrl = resolveAndAssertOllamaTarget(localLlm.ollama).baseUrl;
+      } catch (err) {
+        if (err instanceof OllamaTargetError) {
+          logger.warn(
+            "local-llm autodetect: refusing to probe blocked Ollama target",
+            { reason: err.reason, message: err.message },
+          );
+          res.status(400).json({ error: err.message });
+          return;
+        }
+        throw err;
+      }
+      const result = await autodetectEndpoints({
+        fetchImpl: deps.fetchImpl,
+        // #1077-B: respect the configured remote-Ollama target so the
+        // wizard "Test connection" button discovers models on a LAN node.
+        ollamaBaseUrl: assertedBaseUrl,
+      });
       if (audit) {
         await audit.log({
           level: "info",
@@ -232,7 +277,11 @@ export function createLocalLlmRouter(deps: LocalLlmDeps = {}): Router {
       // canonical `{endpoint, models, recommendedModel}` shape so both the
       // admin panel and the offline setup wizard can consume the same body.
       const augment = (
-        d: { endpoint: string; models?: string[]; recommendedModel: string | null } | null,
+        d: {
+          endpoint: string;
+          models?: string[];
+          recommendedModel: string | null;
+        } | null,
       ) =>
         d
           ? {
@@ -241,10 +290,20 @@ export function createLocalLlmRouter(deps: LocalLlmDeps = {}): Router {
               baseUrl: d.endpoint.replace(/\/v1\/?$/, ""),
             }
           : { reachable: false };
+      const vllmUnsupported = result.unsupported?.vllm;
       res.json({
         ...result,
         ollama: result.ollama ? augment(result.ollama) : { reachable: false },
-        vllm: result.vllm ? augment(result.vllm) : { reachable: false },
+        vllm: result.vllm
+          ? augment(result.vllm)
+          : vllmUnsupported
+            ? {
+                reachable: false,
+                available: false,
+                unsupported: true,
+                reason: vllmUnsupported,
+              }
+            : { reachable: false },
       });
     } catch (err) {
       logger.warn("local-llm autodetect failed", {
@@ -278,6 +337,7 @@ export function createLocalLlmRouter(deps: LocalLlmDeps = {}): Router {
   router.get("/status", async (_req: Request, res: Response) => {
     const { localLlm } = await readLocalLlmBlock(configPath);
     const provider = localLlm.provider ?? null;
+    const ollamaTarget = resolveOllamaTarget(localLlm.ollama);
     res.json({
       provider: provider
         ? {
@@ -300,42 +360,52 @@ export function createLocalLlmRouter(deps: LocalLlmDeps = {}): Router {
         masked: maskKey(localLlm.vllmApiKey),
         present: !!localLlm.vllmApiKey,
       },
+      ollama: {
+        mode: ollamaTarget.mode,
+        resolvedUrl: ollamaTarget.baseUrl,
+      },
     });
   });
 
-  router.post("/provider", async (req: Request, res: Response): Promise<void> => {
-    const parsed = setProviderBodySchema.safeParse(req.body);
-    if (!parsed.success) {
-      res.status(400).json({
-        error: "invalid_provider",
-        details: parsed.error.flatten(),
+  router.post(
+    "/provider",
+    async (req: Request, res: Response): Promise<void> => {
+      const parsed = setProviderBodySchema.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({
+          error: "invalid_provider",
+          details: parsed.error.flatten(),
+        });
+        return;
+      }
+      const { raw, localLlm } = await readLocalLlmBlock(configPath);
+      await persistLocalLlmBlock(configPath, raw, {
+        ...localLlm,
+        provider: parsed.data,
       });
-      return;
-    }
-    const { raw, localLlm } = await readLocalLlmBlock(configPath);
-    await persistLocalLlmBlock(configPath, raw, {
-      ...localLlm,
-      provider: parsed.data,
-    });
-    if (audit) {
-      await audit.log({
-        level: "info",
-        category: "session",
-        event: "provider.registered",
-        details: {
-          type: parsed.data.type,
-          endpoint: parsed.data.endpoint,
-          model: parsed.data.model,
-          // apiKey deliberately omitted from audit details
-        },
-      });
-    }
-    res.json({ ok: true });
-  });
+      if (audit) {
+        await audit.log({
+          level: "info",
+          category: "session",
+          event: "provider.registered",
+          details: {
+            type: parsed.data.type,
+            endpoint: parsed.data.endpoint,
+            model: parsed.data.model,
+            // apiKey deliberately omitted from audit details
+          },
+        });
+      }
+      res.json({ ok: true });
+    },
+  );
 
   router.delete("/provider", async (_req: Request, res: Response) => {
     const { raw, localLlm } = await readLocalLlmBlock(configPath);
-    await persistLocalLlmBlock(configPath, raw, { ...localLlm, provider: null });
+    await persistLocalLlmBlock(configPath, raw, {
+      ...localLlm,
+      provider: null,
+    });
     if (audit) {
       await audit.log({
         level: "info",
@@ -347,36 +417,42 @@ export function createLocalLlmRouter(deps: LocalLlmDeps = {}): Router {
     res.json({ ok: true });
   });
 
-  router.post("/privacy/global", async (req: Request, res: Response): Promise<void> => {
-    const parsed = privacyBodySchema.safeParse(req.body);
-    if (!parsed.success) {
-      res
-        .status(400)
-        .json({ error: "invalid_privacy", details: parsed.error.flatten() });
-      return;
-    }
-    const { raw, localLlm } = await readLocalLlmBlock(configPath);
-    await persistLocalLlmBlock(configPath, raw, {
-      ...localLlm,
-      privacyMode: { globalLockdown: parsed.data.globalLockdown },
-    });
-    if (audit) {
-      await audit.log({
-        level: "security",
-        category: "security",
-        event: parsed.data.globalLockdown
-          ? "privacy.global_lockdown_enabled"
-          : "privacy.global_lockdown_disabled",
-        details: { globalLockdown: parsed.data.globalLockdown },
+  router.post(
+    "/privacy/global",
+    async (req: Request, res: Response): Promise<void> => {
+      const parsed = privacyBodySchema.safeParse(req.body);
+      if (!parsed.success) {
+        res
+          .status(400)
+          .json({ error: "invalid_privacy", details: parsed.error.flatten() });
+        return;
+      }
+      const { raw, localLlm } = await readLocalLlmBlock(configPath);
+      await persistLocalLlmBlock(configPath, raw, {
+        ...localLlm,
+        privacyMode: { globalLockdown: parsed.data.globalLockdown },
       });
-    }
-    res.json({ ok: true, globalLockdown: parsed.data.globalLockdown });
-  });
+      if (audit) {
+        await audit.log({
+          level: "security",
+          category: "security",
+          event: parsed.data.globalLockdown
+            ? "privacy.global_lockdown_enabled"
+            : "privacy.global_lockdown_disabled",
+          details: { globalLockdown: parsed.data.globalLockdown },
+        });
+      }
+      res.json({ ok: true, globalLockdown: parsed.data.globalLockdown });
+    },
+  );
 
   router.post("/vllm-key/rotate", async (_req: Request, res: Response) => {
     const { raw, localLlm } = await readLocalLlmBlock(configPath);
     const apiKey = generateVllmApiKey();
-    await persistLocalLlmBlock(configPath, raw, { ...localLlm, vllmApiKey: apiKey });
+    await persistLocalLlmBlock(configPath, raw, {
+      ...localLlm,
+      vllmApiKey: apiKey,
+    });
     if (audit) {
       await audit.log({
         level: "security",

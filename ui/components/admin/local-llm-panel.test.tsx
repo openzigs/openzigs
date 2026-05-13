@@ -2,6 +2,46 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
+
+// Mock shadcn/Radix Select primitives so SelectItem renders inline (Radix
+// only mounts items when the popover opens; jsdom + pointer events are
+// flaky). Passing through `disabled` + `data-testid` lets us assert the
+// vLLM-disabled affordance directly.
+vi.mock("@/components/ui/select", () => ({
+  Select: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  SelectTrigger: ({
+    children,
+    ...props
+  }: { children: ReactNode } & Record<string, unknown>) => (
+    <button type="button" {...props}>
+      {children}
+    </button>
+  ),
+  SelectValue: () => null,
+  SelectContent: ({ children }: { children: ReactNode }) => (
+    <div>{children}</div>
+  ),
+  SelectItem: ({
+    children,
+    value,
+    disabled,
+    ...props
+  }: {
+    children: ReactNode;
+    value: string;
+    disabled?: boolean;
+  } & Record<string, unknown>) => (
+    <div
+      role="option"
+      data-value={value}
+      aria-disabled={disabled ? "true" : undefined}
+      {...props}
+    >
+      {children}
+    </div>
+  ),
+}));
+
 import { LocalLlmPanel } from "./local-llm-panel";
 
 // Mock the api module so we can intercept fetchJson cleanly.
@@ -63,6 +103,20 @@ const renderPanel = (status: StatusPayload = baseStatus) => {
   return render(<LocalLlmPanel />, { wrapper: Wrapper });
 };
 
+const renderPanelWithPlatform = (
+  platform: { vllmSupported: boolean; vllmUnsupportedReason: string | null },
+  status: StatusPayload = baseStatus,
+) => {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  qc.setQueryData(["local-llm", "status"], status);
+  qc.setQueryData(["system", "platform"], platform);
+  const Wrapper = ({ children }: { children: ReactNode }) => (
+    <QueryClientProvider client={qc}>{children}</QueryClientProvider>
+  );
+  Wrapper.displayName = "LocalLlmPanelPlatformWrapper";
+  return render(<LocalLlmPanel />, { wrapper: Wrapper });
+};
+
 beforeEach(() => {
   fetchJsonMock.mockReset();
   showToastMock.mockReset();
@@ -71,7 +125,8 @@ beforeEach(() => {
   // Default: status endpoint always returns baseStatus; everything else
   // resolves to {} unless an individual test overrides per-URL.
   fetchJsonMock.mockImplementation((url: string) => {
-    if (url === "/api/admin/local-llm/status") return Promise.resolve(baseStatus);
+    if (url === "/api/admin/local-llm/status")
+      return Promise.resolve(baseStatus);
     if (url === "/api/admin/local-llm/router")
       return Promise.resolve({
         enabled: true,
@@ -107,7 +162,11 @@ describe("LocalLlmPanel", () => {
   it("shows failed-over badge when failover is active", () => {
     renderPanel({
       ...baseStatus,
-      health: { ...baseStatus.health, status: "failed-over", failoverActive: true },
+      health: {
+        ...baseStatus.health,
+        status: "failed-over",
+        failoverActive: true,
+      },
     });
     expect(screen.getByTestId("health-badge")).toHaveTextContent("Failed over");
   });
@@ -241,10 +300,13 @@ describe("LocalLlmPanel", () => {
       fetchJsonMock.mock.calls as Array<[string, RequestInit]>
     ).find(
       ([url, init]) =>
-        url === "/api/admin/local-llm/privacy/global" && init?.method === "POST",
+        url === "/api/admin/local-llm/privacy/global" &&
+        init?.method === "POST",
     );
     expect(postCall).toBeDefined();
-    expect(JSON.parse(String(postCall![1].body))).toEqual({ globalLockdown: true });
+    expect(JSON.parse(String(postCall![1].body))).toEqual({
+      globalLockdown: true,
+    });
   });
 
   it("reveals rotated vLLM key once and shows it inline", async () => {
@@ -266,7 +328,9 @@ describe("LocalLlmPanel", () => {
     });
     // Hide button restores the masked state.
     fireEvent.click(screen.getByRole("button", { name: /hide/i }));
-    expect(screen.queryByText("ROTATED_KEY_PLAINTEXT_xxx")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("ROTATED_KEY_PLAINTEXT_xxx"),
+    ).not.toBeInTheDocument();
   });
 
   it("shows masked key when one is stored and not yet revealed", () => {
@@ -292,12 +356,14 @@ describe("LocalLlmPanel", () => {
       });
       renderPanel();
       await waitFor(() => {
-        const toggle = screen.getByTestId("smart-router-toggle") as HTMLInputElement;
+        const toggle = screen.getByTestId(
+          "smart-router-toggle",
+        ) as HTMLInputElement;
         expect(toggle.checked).toBe(false);
       });
-      expect(screen.getByTestId("smart-router-threshold-value")).toHaveTextContent(
-        "1024",
-      );
+      expect(
+        screen.getByTestId("smart-router-threshold-value"),
+      ).toHaveTextContent("1024");
     });
 
     it("toggling the checkbox POSTs the new state preserving threshold", async () => {
@@ -306,7 +372,9 @@ describe("LocalLlmPanel", () => {
       await waitFor(() => {
         expect(screen.getByTestId("smart-router-toggle")).toBeInTheDocument();
       });
-      const toggle = screen.getByTestId("smart-router-toggle") as HTMLInputElement;
+      const toggle = screen.getByTestId(
+        "smart-router-toggle",
+      ) as HTMLInputElement;
       // Initial state from default mock: enabled=true, threshold=4096.
       expect(toggle.checked).toBe(true);
       fireEvent.click(toggle);
@@ -327,9 +395,13 @@ describe("LocalLlmPanel", () => {
     it("changing the slider POSTs the new threshold", async () => {
       renderPanel();
       await waitFor(() => {
-        expect(screen.getByTestId("smart-router-threshold")).toBeInTheDocument();
+        expect(
+          screen.getByTestId("smart-router-threshold"),
+        ).toBeInTheDocument();
       });
-      const slider = screen.getByTestId("smart-router-threshold") as HTMLInputElement;
+      const slider = screen.getByTestId(
+        "smart-router-threshold",
+      ) as HTMLInputElement;
       // Stops = [256, 1024, 4096, 8192]. Move slider to index 0 → 256.
       fireEvent.change(slider, { target: { value: "0" } });
       await waitFor(() => {
@@ -418,6 +490,41 @@ describe("LocalLlmPanel", () => {
       expect(
         screen.getByRole("button", { name: /test connection/i }),
       ).toBeInTheDocument();
+    });
+  });
+
+  // Bug #1077-A1: admin combobox parity with the setup wizard. On Apple
+  // Silicon (or any host where the platform endpoint reports
+  // vllmSupported=false), the vLLM preset must be disabled and the reason
+  // surfaced inline — same "label-don't-hide" UX the wizard uses.
+  describe("vLLM unsupported state (admin parity bug #1077-A1)", () => {
+    it("disables the vLLM preset and shows the unsupported reason on Apple Silicon", () => {
+      renderPanelWithPlatform({
+        vllmSupported: false,
+        vllmUnsupportedReason:
+          "vLLM is not supported on Apple Silicon — use Ollama + MLX instead.",
+      });
+      const vllmItem = screen.getByTestId("provider-preset-vllm");
+      expect(vllmItem).toHaveAttribute("aria-disabled", "true");
+      expect(vllmItem.textContent).toMatch(/⛔/);
+      expect(vllmItem.textContent).toMatch(/Apple Silicon/);
+      const notice = screen.getByTestId("vllm-unsupported-notice");
+      expect(notice).toHaveTextContent(
+        /vLLM is not supported on Apple Silicon/,
+      );
+    });
+
+    it("leaves the vLLM preset enabled on supported hosts", () => {
+      renderPanelWithPlatform({
+        vllmSupported: true,
+        vllmUnsupportedReason: null,
+      });
+      const vllmItem = screen.getByTestId("provider-preset-vllm");
+      expect(vllmItem).not.toHaveAttribute("aria-disabled", "true");
+      expect(vllmItem.textContent).not.toMatch(/⛔/);
+      expect(
+        screen.queryByTestId("vllm-unsupported-notice"),
+      ).not.toBeInTheDocument();
     });
   });
 });

@@ -142,13 +142,13 @@ describe("AdminModelsPage", () => {
     render(<AdminModelsPage />, { wrapper: createWrapper() });
 
     await waitFor(() => {
-      expect(screen.getByText("LTX worker not configured")).toBeInTheDocument();
+      expect(screen.getByText("LTX worker not reachable")).toBeInTheDocument();
     });
     expect(
       screen.getByText(/Video generation runs on a remote node on this Mac/),
     ).toBeInTheDocument();
     const cta = screen.getByRole("link", {
-      name: /Configure remote LTX node/i,
+      name: /Configure LTX node/i,
     });
     expect(cta).toHaveAttribute("href", "/admin#video-gen-node");
     expect(screen.getByText(/Tried:/)).toBeInTheDocument();
@@ -178,9 +178,9 @@ describe("AdminModelsPage", () => {
     expect(
       screen.getByText(/Check that the LTX worker sidecar is running/),
     ).toBeInTheDocument();
-    expect(screen.queryByText("LTX worker not configured")).toBeNull();
+    expect(screen.queryByText("LTX worker not reachable")).toBeNull();
     expect(
-      screen.queryByRole("link", { name: /Configure remote LTX node/i }),
+      screen.queryByRole("link", { name: /Configure LTX node/i }),
     ).toBeNull();
   });
 });

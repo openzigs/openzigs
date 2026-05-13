@@ -7,6 +7,17 @@ import { showToast } from "@/components/toast";
 import { Loader2, Power, Zap } from "lucide-react";
 
 /**
+ * Subset of the `/api/system/platform` response we consume for the admin
+ * parity bug-fix (#1077-A2) — vLLM has no Apple Silicon build, so the
+ * panel must render an "⛔ unsupported" notice in place of the model
+ * picker / Start button on Mac hosts.
+ */
+interface PlatformResponse {
+  vllmSupported?: boolean;
+  vllmUnsupportedReason?: string | null;
+}
+
+/**
  * Admin panel for the local vLLM TP=2 sidecar (Epic #888 / Issue #922).
  *
  * Displays:
@@ -84,11 +95,7 @@ export const extractErrorMessage = (err: unknown): string => {
 const KvCacheBar = ({ percent }: { percent: number }) => {
   const pct = Math.max(0, Math.min(100, percent));
   const color =
-    pct > 90
-      ? "bg-red-500"
-      : pct > 70
-        ? "bg-amber-500"
-        : "bg-emerald-500";
+    pct > 90 ? "bg-red-500" : pct > 70 ? "bg-amber-500" : "bg-emerald-500";
   return (
     <div className="space-y-1">
       <div className="flex justify-between text-xs text-muted-foreground">
@@ -110,10 +117,23 @@ export const VllmPanel = () => {
   const [selectedModel, setSelectedModel] = useState<string>("");
   const [confirmStop, setConfirmStop] = useState(false);
 
+  // Bug #1077-A2: short-circuit the panel on hosts that can't run vLLM.
+  const platformQuery = useQuery({
+    queryKey: ["system", "platform"],
+    queryFn: () => fetchJson<PlatformResponse>("/api/system/platform"),
+    staleTime: 5 * 60_000,
+  });
+  const vllmSupported = platformQuery.data?.vllmSupported !== false;
+  const vllmUnsupportedReason =
+    platformQuery.data?.vllmUnsupportedReason ?? null;
+
   const statusQuery = useQuery({
     queryKey: ["vllm-status"],
     queryFn: () => fetchJson<VllmStatus>("/api/admin/gpu/vllm/status"),
     refetchInterval: 5_000,
+    // Don't poll status on hosts where vLLM can't run — saves ~12 req/min
+    // and avoids a constant red error badge on Mac.
+    enabled: vllmSupported,
   });
 
   const startMutation = useMutation({
@@ -150,9 +170,15 @@ export const VllmPanel = () => {
   });
 
   const data = statusQuery.data;
-  const cacheUsage = data ? findMetric(data.metrics, "vllm:gpu_cache_usage_perc") : null;
-  const numRunning = data ? findMetric(data.metrics, "vllm:num_requests_running") : null;
-  const numWaiting = data ? findMetric(data.metrics, "vllm:num_requests_waiting") : null;
+  const cacheUsage = data
+    ? findMetric(data.metrics, "vllm:gpu_cache_usage_perc")
+    : null;
+  const numRunning = data
+    ? findMetric(data.metrics, "vllm:num_requests_running")
+    : null;
+  const numWaiting = data
+    ? findMetric(data.metrics, "vllm:num_requests_waiting")
+    : null;
   const isRunning = !!data?.claim;
 
   const modelToStart = selectedModel || data?.defaultModel || "";
@@ -163,130 +189,166 @@ export const VllmPanel = () => {
       aria-labelledby="vllm-panel-heading"
     >
       <header className="flex items-center justify-between">
-        <h2 id="vllm-panel-heading" className="flex items-center gap-2 text-lg font-semibold">
+        <h2
+          id="vllm-panel-heading"
+          className="flex items-center gap-2 text-lg font-semibold"
+        >
           <Zap className="h-5 w-5" aria-hidden />
           Local vLLM (TP=2)
         </h2>
         {statusQuery.isFetching && (
-          <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" aria-label="Refreshing" />
+          <Loader2
+            className="h-4 w-4 animate-spin text-muted-foreground"
+            aria-label="Refreshing"
+          />
         )}
       </header>
 
-      {statusQuery.isError && (
-        <p className="text-sm text-red-500" role="alert">
-          Failed to fetch vLLM status: {(statusQuery.error as Error).message}
-        </p>
-      )}
-
-      {data && (
+      {!vllmSupported ? (
+        <div
+          className="rounded border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-900 dark:text-amber-200"
+          role="note"
+          data-testid="vllm-panel-unsupported-notice"
+        >
+          <p className="font-medium">
+            ⛔{" "}
+            {vllmUnsupportedReason ??
+              "vLLM is not supported on this platform — use Ollama + MLX instead."}
+          </p>
+          <p className="mt-1 text-xs">
+            The model picker and Start control are hidden because the vLLM
+            sidecar cannot run here. Configure Ollama via the Local LLM Provider
+            panel above.
+          </p>
+        </div>
+      ) : (
         <>
-          <dl className="grid grid-cols-2 gap-3 text-sm">
-            <div>
-              <dt className="text-muted-foreground">Status</dt>
-              <dd>
-                {data.reachable ? (
-                  <span className="text-emerald-500">Running</span>
-                ) : isRunning ? (
-                  <span className="text-amber-500">Starting (claim active, /v1/models not yet 200)</span>
-                ) : (
-                  <span className="text-muted-foreground">Stopped</span>
-                )}
-              </dd>
-            </div>
-            <div>
-              <dt className="text-muted-foreground">Model</dt>
-              <dd className="font-mono text-xs">{data.model ?? "—"}</dd>
-            </div>
-            <div>
-              <dt className="text-muted-foreground">Running requests</dt>
-              <dd>{numRunning ?? "—"}</dd>
-            </div>
-            <div>
-              <dt className="text-muted-foreground">Queued requests</dt>
-              <dd>{numWaiting ?? "—"}</dd>
-            </div>
-          </dl>
-
-          {cacheUsage !== null && <KvCacheBar percent={cacheUsage * 100} />}
-
-          {!isRunning && (
-            <div className="space-y-2 border-t border-border pt-3">
-              <label htmlFor="vllm-model-select" className="block text-sm font-medium">
-                Model
-              </label>
-              <select
-                id="vllm-model-select"
-                value={modelToStart}
-                onChange={(e) => setSelectedModel(e.target.value)}
-                className="w-full rounded border border-border bg-background px-2 py-1 text-sm"
-              >
-                {data.allowedModels.map((m) => (
-                  <option key={m.id} value={m.id}>
-                    {m.label} ({m.approxWeightsGb} GB, {m.quantization})
-                    {m.recommendedFor12GbDual ? " ★" : ""}
-                  </option>
-                ))}
-              </select>
-              <button
-                type="button"
-                disabled={startMutation.isPending}
-                onClick={() => startMutation.mutate(modelToStart)}
-                className="inline-flex items-center gap-2 rounded bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
-              >
-                {startMutation.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
-                <Power className="h-4 w-4" aria-hidden />
-                Start vLLM
-              </button>
-              <p className="text-xs text-muted-foreground">
-                First cold start may take 3–5 min while vLLM downloads weights.
-              </p>
-            </div>
+          {statusQuery.isError && (
+            <p className="text-sm text-red-500" role="alert">
+              Failed to fetch vLLM status:{" "}
+              {(statusQuery.error as Error).message}
+            </p>
           )}
 
-          {isRunning && (
-            <div className="space-y-2 border-t border-border pt-3">
-              {!confirmStop && (
-                <button
-                  type="button"
-                  onClick={() => setConfirmStop(true)}
-                  className="inline-flex items-center gap-2 rounded border border-red-500 px-3 py-1.5 text-sm font-medium text-red-500 hover:bg-red-500/10"
-                >
-                  <Power className="h-4 w-4" aria-hidden />
-                  Stop vLLM
-                </button>
-              )}
-              {confirmStop && (
-                <div
-                  role="alertdialog"
-                  aria-labelledby="vllm-stop-confirm"
-                  className="space-y-2 rounded border border-red-500 bg-red-500/10 p-3"
-                >
-                  <p id="vllm-stop-confirm" className="text-sm font-medium">
-                    Stop vLLM? In-flight chat completions will fail.
+          {data && (
+            <>
+              <dl className="grid grid-cols-2 gap-3 text-sm">
+                <div>
+                  <dt className="text-muted-foreground">Status</dt>
+                  <dd>
+                    {data.reachable ? (
+                      <span className="text-emerald-500">Running</span>
+                    ) : isRunning ? (
+                      <span className="text-amber-500">
+                        Starting (claim active, /v1/models not yet 200)
+                      </span>
+                    ) : (
+                      <span className="text-muted-foreground">Stopped</span>
+                    )}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-muted-foreground">Model</dt>
+                  <dd className="font-mono text-xs">{data.model ?? "—"}</dd>
+                </div>
+                <div>
+                  <dt className="text-muted-foreground">Running requests</dt>
+                  <dd>{numRunning ?? "—"}</dd>
+                </div>
+                <div>
+                  <dt className="text-muted-foreground">Queued requests</dt>
+                  <dd>{numWaiting ?? "—"}</dd>
+                </div>
+              </dl>
+
+              {cacheUsage !== null && <KvCacheBar percent={cacheUsage * 100} />}
+
+              {!isRunning && (
+                <div className="space-y-2 border-t border-border pt-3">
+                  <label
+                    htmlFor="vllm-model-select"
+                    className="block text-sm font-medium"
+                  >
+                    Model
+                  </label>
+                  <select
+                    id="vllm-model-select"
+                    value={modelToStart}
+                    onChange={(e) => setSelectedModel(e.target.value)}
+                    className="w-full rounded border border-border bg-background px-2 py-1 text-sm"
+                  >
+                    {data.allowedModels.map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {m.label} ({m.approxWeightsGb} GB, {m.quantization})
+                        {m.recommendedFor12GbDual ? " ★" : ""}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    disabled={startMutation.isPending}
+                    onClick={() => startMutation.mutate(modelToStart)}
+                    className="inline-flex items-center gap-2 rounded bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
+                  >
+                    {startMutation.isPending && (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    )}
+                    <Power className="h-4 w-4" aria-hidden />
+                    Start vLLM
+                  </button>
+                  <p className="text-xs text-muted-foreground">
+                    First cold start may take 3–5 min while vLLM downloads
+                    weights.
                   </p>
-                  <div className="flex gap-2">
-                    <button
-                      type="button"
-                      disabled={stopMutation.isPending}
-                      onClick={() => stopMutation.mutate()}
-                      className="rounded bg-red-600 px-3 py-1 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
-                    >
-                      {stopMutation.isPending && (
-                        <Loader2 className="mr-1 inline h-4 w-4 animate-spin" />
-                      )}
-                      Confirm Stop
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setConfirmStop(false)}
-                      className="rounded border border-border px-3 py-1 text-sm"
-                    >
-                      Cancel
-                    </button>
-                  </div>
                 </div>
               )}
-            </div>
+
+              {isRunning && (
+                <div className="space-y-2 border-t border-border pt-3">
+                  {!confirmStop && (
+                    <button
+                      type="button"
+                      onClick={() => setConfirmStop(true)}
+                      className="inline-flex items-center gap-2 rounded border border-red-500 px-3 py-1.5 text-sm font-medium text-red-500 hover:bg-red-500/10"
+                    >
+                      <Power className="h-4 w-4" aria-hidden />
+                      Stop vLLM
+                    </button>
+                  )}
+                  {confirmStop && (
+                    <div
+                      role="alertdialog"
+                      aria-labelledby="vllm-stop-confirm"
+                      className="space-y-2 rounded border border-red-500 bg-red-500/10 p-3"
+                    >
+                      <p id="vllm-stop-confirm" className="text-sm font-medium">
+                        Stop vLLM? In-flight chat completions will fail.
+                      </p>
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          disabled={stopMutation.isPending}
+                          onClick={() => stopMutation.mutate()}
+                          className="rounded bg-red-600 px-3 py-1 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
+                        >
+                          {stopMutation.isPending && (
+                            <Loader2 className="mr-1 inline h-4 w-4 animate-spin" />
+                          )}
+                          Confirm Stop
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setConfirmStop(false)}
+                          className="rounded border border-border px-3 py-1 text-sm"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </>
           )}
         </>
       )}

@@ -293,9 +293,12 @@ export class GpuDispatcher extends EventEmitter {
         : allLanes;
 
     const healthy = candidates.filter((l) => l.state !== "error");
-    const pool = healthy.length > 0
-      ? healthy
-      : (allowFallback ? allLanes.filter((l) => l.state !== "error") : []);
+    const pool =
+      healthy.length > 0
+        ? healthy
+        : allowFallback
+          ? allLanes.filter((l) => l.state !== "error")
+          : [];
 
     if (pool.length === 0) return null;
 
@@ -482,7 +485,11 @@ export class GpuDispatcher extends EventEmitter {
     if (!lane || lane.state !== "error") return false;
     lane.state = "idle";
     lane.lastError = undefined;
-    this.audit("gpu.state_changed", { gpuIndex, state: "idle", source: "manual" });
+    this.audit("gpu.state_changed", {
+      gpuIndex,
+      state: "idle",
+      source: "manual",
+    });
     this.emitLaneState(lane);
     this.tryRun(gpuIndex);
     return true;

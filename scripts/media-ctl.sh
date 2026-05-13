@@ -235,11 +235,16 @@ flux_sync() {
     fail "Source not found: $src"
   fi
   local req_src="$script_dir/../sidecars/image-gen/requirements.txt"
+  local path_utils_src="$script_dir/../sidecars/image-gen/path_utils.py"
   info "Syncing server.py → $FLUXQ_DIR/server.py"
   cp "$src" "$FLUXQ_DIR/server.py"
   if [[ -f "$req_src" ]]; then
     info "Syncing requirements.txt → $FLUXQ_DIR/requirements.txt"
     cp "$req_src" "$FLUXQ_DIR/requirements.txt"
+  fi
+  if [[ -f "$path_utils_src" ]]; then
+    info "Syncing path_utils.py → $FLUXQ_DIR/path_utils.py"
+    cp "$path_utils_src" "$FLUXQ_DIR/path_utils.py"
   fi
   ok "FluxQ synced. Restart to apply: $0 flux restart"
 }
