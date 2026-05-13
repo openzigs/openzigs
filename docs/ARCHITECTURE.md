@@ -712,6 +712,16 @@ OpenZigs supports running fully offline against a local OpenAI-compatible endpoi
 
 The result is exposed at `GET /api/system/platform` and rendered by `<SystemRequirementsCard>` on the admin page.
 
+### Apple Silicon as a First-Class Platform (Epic #1065)
+
+The local-LLM stack is validated end-to-end on `darwin/arm64` (M-series). Three platform-aware behaviours keep the Mac path honest instead of silently falling through NVIDIA-shaped code:
+
+1. **`autodetectEndpoints` skips the vLLM probe on `darwin`.** vLLM has no Apple Silicon build, so probing port 8000 always 404s and adds latency. The function returns `unsupported: { vllm: "vLLM is not supported on Apple Silicon — use Ollama + MLX instead." }` and the offline setup wizard renders the reason verbatim instead of a misleading "❌ not reachable" line.
+2. **`detectGpuProfile` does not spawn `nvidia-smi` on `darwin`.** It returns a synthetic `apple_silicon: { name: "Apple Silicon GPU (Metal)", unified: true, unified_memory_gb }` block with NVIDIA-shaped fields collapsed to zero/empty. Consumers that previously rendered VRAM or CUDA labels now show "Unified Memory" + "Apple Silicon GPU (Metal)" on Mac.
+3. **The GPU dispatcher registers one Metal lane on Apple Silicon.** Because the unified memory pool is a single physical GPU, LLM/image/video workloads must serialize through one mutex lane (not zero — that would create a synthetic lane with no contention guarantees, and not many — there is one device). `_gpuCount = profile.gpus.length || (profile.apple_silicon ? 1 : 0)` in `server.ts`.
+
+Both `autodetectEndpoints` and `detectGpuProfile` accept an injectable `platform: NodeJS.Platform` so the Apple Silicon branches are unit-tested on Linux/Windows CI rigs without `process.platform` mocks.
+
 ### Smart Router (Issue #1062)
 
 **`src/copilot/smart-router.ts`** — pure `routeRequest(input): RoutingDecision`. Decides per request whether to hit local or cloud:

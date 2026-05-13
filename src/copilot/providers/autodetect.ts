@@ -4,6 +4,10 @@
  * Probes Ollama (default 11434) and vLLM (default 8000) for an OpenAI-compatible
  * `/v1/models` endpoint. Used at server startup to populate the admin UI with
  * a recommended `local-copilot` provider config — never auto-writes config.
+ *
+ * Mac validation (issue #1075): vLLM has no Apple Silicon build, so the probe
+ * is short-circuited on `darwin` to fail-fast (≤2 s) with a structured reason
+ * instead of waiting for a TCP timeout.
  */
 
 import { logger } from "../../logging/logger.js";
@@ -20,6 +24,15 @@ export type DetectedEndpoint = {
 export type AutodetectResult = {
   ollama: DetectedEndpoint | null;
   vllm: DetectedEndpoint | null;
+  /**
+   * Per-target reason when a probe was skipped because the host platform
+   * cannot run that backend (e.g. vLLM on Apple Silicon). Absent when every
+   * probe was attempted normally.
+   */
+  unsupported?: {
+    vllm?: string;
+    ollama?: string;
+  };
 };
 
 export type AutodetectOptions = {
@@ -31,6 +44,9 @@ export type AutodetectOptions = {
   ollamaBaseUrl?: string;
   /** Override vLLM base URL (without `/v1`). Default `http://127.0.0.1:8000`. */
   vllmBaseUrl?: string;
+  /** Override `process.platform` (default `process.platform`). Used to gate
+   *  Apple Silicon vLLM short-circuit in tests. */
+  platform?: NodeJS.Platform;
 };
 
 const DEFAULT_OLLAMA_URL = "http://127.0.0.1:11434";
@@ -77,6 +93,9 @@ async function probeEndpoint(
  * Probe both Ollama and vLLM in parallel. Quiet on miss; info-log on hit.
  * Never throws — returns `{ ollama: null, vllm: null }` if both unreachable.
  */
+export const VLLM_UNSUPPORTED_DARWIN_REASON =
+  "vLLM is not supported on Apple Silicon — use Ollama + MLX instead.";
+
 export async function autodetectEndpoints(
   options: AutodetectOptions = {},
 ): Promise<AutodetectResult> {
@@ -84,10 +103,14 @@ export async function autodetectEndpoints(
   const timeoutMs = options.timeoutMs ?? 1000;
   const ollamaBaseUrl = options.ollamaBaseUrl ?? DEFAULT_OLLAMA_URL;
   const vllmBaseUrl = options.vllmBaseUrl ?? DEFAULT_VLLM_URL;
+  const platform = options.platform ?? process.platform;
+  const vllmUnsupported = platform === "darwin";
 
   const [ollama, vllm] = await Promise.all([
     probeEndpoint(ollamaBaseUrl, OLLAMA_RECOMMENDED, fetchImpl, timeoutMs),
-    probeEndpoint(vllmBaseUrl, VLLM_RECOMMENDED, fetchImpl, timeoutMs),
+    vllmUnsupported
+      ? Promise.resolve(null)
+      : probeEndpoint(vllmBaseUrl, VLLM_RECOMMENDED, fetchImpl, timeoutMs),
   ]);
 
   if (ollama) {
@@ -101,5 +124,9 @@ export async function autodetectEndpoints(
     );
   }
 
-  return { ollama, vllm };
+  const result: AutodetectResult = { ollama, vllm };
+  if (vllmUnsupported) {
+    result.unsupported = { vllm: VLLM_UNSUPPORTED_DARWIN_REASON };
+  }
+  return result;
 }

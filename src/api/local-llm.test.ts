@@ -190,13 +190,11 @@ describe("local-llm admin router", () => {
 
     it("rejects invalid endpoint URL", async () => {
       const app = buildApp();
-      const r = await request(app)
-        .post("/api/admin/local-llm/provider")
-        .send({
-          type: "local-copilot",
-          endpoint: "not-a-url",
-          model: "gemma4:26b",
-        });
+      const r = await request(app).post("/api/admin/local-llm/provider").send({
+        type: "local-copilot",
+        endpoint: "not-a-url",
+        model: "gemma4:26b",
+      });
       expect(r.status).toBe(400);
     });
 
@@ -204,13 +202,11 @@ describe("local-llm admin router", () => {
     // than `{endpoint, model}`. The router must accept both shapes.
     it("accepts wizard-shaped {baseUrl, modelId} body", async () => {
       const app = buildApp();
-      const r = await request(app)
-        .post("/api/admin/local-llm/provider")
-        .send({
-          type: "local-copilot",
-          baseUrl: "http://127.0.0.1:11434",
-          modelId: "gemma4:26b",
-        });
+      const r = await request(app).post("/api/admin/local-llm/provider").send({
+        type: "local-copilot",
+        baseUrl: "http://127.0.0.1:11434",
+        modelId: "gemma4:26b",
+      });
       expect(r.status).toBe(200);
       const onDisk = JSON.parse(await fs.readFile(tmpConfigPath, "utf-8"));
       // baseUrl gets a /v1 suffix appended when persisted.
@@ -247,6 +243,33 @@ describe("local-llm admin router", () => {
       expect(auditLogs.some((l) => l.event === "provider.autodetected")).toBe(
         true,
       );
+    });
+
+    // PR #1077 review follow-up: SSRF guard on the autodetect sink.
+    // The wizard branch fetches the resolved Ollama base URL — if that URL
+    // is set to a cloud-metadata host via saved config, autodetect must
+    // refuse before any outbound probe.
+    it("refuses to probe a saved cloud-metadata Ollama URL (SSRF guard)", async () => {
+      await fs.writeFile(
+        tmpConfigPath,
+        JSON.stringify({
+          localLlm: {
+            ollama: {
+              mode: "network",
+              networkNodeUrl: "http://169.254.169.254",
+            },
+          },
+        }),
+        "utf-8",
+      );
+      const fetchImpl = vi.fn();
+      const app = buildApp({ fetchImpl: fetchImpl as unknown as typeof fetch });
+      const r = await request(app)
+        .post("/api/admin/local-llm/autodetect")
+        .send({});
+      expect(r.status).toBe(400);
+      expect(String(r.body.error)).toMatch(/blocked|internal|loopback/i);
+      expect(fetchImpl).not.toHaveBeenCalled();
     });
   });
 
@@ -407,8 +430,10 @@ describe("local-llm admin router", () => {
     });
 
     it("POST /router persists, fires runtime hook, audit-logs", async () => {
-      const hookCalls: Array<{ enabled: boolean; cloudThresholdTokens: number }> =
-        [];
+      const hookCalls: Array<{
+        enabled: boolean;
+        cloudThresholdTokens: number;
+      }> = [];
       const app = buildApp({
         onSmartRouterChanged: (cfg) => hookCalls.push(cfg),
       });

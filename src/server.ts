@@ -60,16 +60,10 @@ import { createTasksRouter } from "./api/tasks.js";
 import { createSeoRouter } from "./api/seo.js";
 import { createFilesRouter } from "./api/files.js";
 import { createVllmAdminRouter } from "./api/admin/vllm.js";
-import {
-  createLocalLlmRouter,
-  ensureVllmApiKey,
-} from "./api/local-llm.js";
+import { createLocalLlmRouter, ensureVllmApiKey } from "./api/local-llm.js";
 import { LocalEndpointHealthMonitor } from "./sentinel/local-endpoint-health.js";
 import { GpuCoordinator } from "./gpu/gpu-coordinator.js";
-import {
-  GpuDispatcher,
-  setActiveGpuDispatcher,
-} from "./gpu/gpu-dispatcher.js";
+import { GpuDispatcher, setActiveGpuDispatcher } from "./gpu/gpu-dispatcher.js";
 import { createGpuDispatcherAdminRouter } from "./api/admin/gpu-dispatcher.js";
 import { createSessionCostsRouter } from "./api/session-costs.js";
 import { CostMeter } from "./costs/cost-meter.js";
@@ -237,9 +231,17 @@ const config = await loadConfig();
 // generate an API key and write a `copilot.provider` block to config.json.
 // Disabled by default; opt in via llm.localVllm.enabled=true.
 try {
-  const vllmCfg = (config as unknown as {
-    llm?: { localVllm?: { enabled?: boolean; baseUrl?: string; autoRegister?: boolean } };
-  }).llm?.localVllm;
+  const vllmCfg = (
+    config as unknown as {
+      llm?: {
+        localVllm?: {
+          enabled?: boolean;
+          baseUrl?: string;
+          autoRegister?: boolean;
+        };
+      };
+    }
+  ).llm?.localVllm;
   if (vllmCfg?.enabled && vllmCfg.autoRegister !== false) {
     const result = await autoRegisterIfDetected({
       baseUrl: vllmCfg.baseUrl,
@@ -324,8 +326,17 @@ const gpuCoordinator = new GpuCoordinator({
 // Per-GPU job queue with mutual exclusion. Detects GPU count up-front and
 // surfaces lane state via /api/system/gpu + /api/admin/gpu/dispatcher and
 // over Socket.IO (`gpu:dispatcher:state`).
+//
+// Issue #1071: on Apple Silicon there is one unified-memory Metal device.
+// We register it as a single lane so LLM/image/video workloads serialize
+// instead of double-binding the GPU — same mutex semantics, single lane.
 const _bootGpuProfile = await getGpuProfile().catch(() => null);
-const _gpuCount = _bootGpuProfile?.gpus?.length ?? 0;
+const _gpuCount =
+  _bootGpuProfile?.gpus && _bootGpuProfile.gpus.length > 0
+    ? _bootGpuProfile.gpus.length
+    : _bootGpuProfile?.apple_silicon
+      ? 1
+      : 0;
 const _gpuDispatcherCfg = config.gpu?.dispatcher;
 const gpuDispatcher = new GpuDispatcher({
   gpuCount: _gpuCount,
@@ -334,7 +345,8 @@ const gpuDispatcher = new GpuDispatcher({
   defaultAllowFallback: _gpuDispatcherCfg?.allowFallback ?? false,
   audit: (event, details) => {
     void auditLogger.log({
-      level: event.endsWith("_failed") || event.includes("error") ? "warn" : "info",
+      level:
+        event.endsWith("_failed") || event.includes("error") ? "warn" : "info",
       category: "system",
       event,
       details,
@@ -385,9 +397,8 @@ shareTokenRepo.migrate();
 // Epic #951 (Studio Pitch) sub-issue #953: seed 8 starter Brand Kits.
 // Idempotent — only inserts kits whose id is not already in the DB.
 {
-  const { seedStarterBrandKits } = await import(
-    "./pitch/starter-brand-kits.js"
-  );
+  const { seedStarterBrandKits } =
+    await import("./pitch/starter-brand-kits.js");
   seedStarterBrandKits(brandKitRepo);
 }
 const postTemplateRepo = new PostTemplateRepository(db);
@@ -1312,11 +1323,7 @@ const adminRouter = createAdminRouter({
 // URL the UI depends on. The wrapper hookup + bootstrap happens later, where
 // the rest of the local-llm wiring lives.
 const costMeter = new CostMeter({ db, auditLogger });
-app.use(
-  "/api/admin",
-  authMiddleware,
-  createSessionCostsRouter({ costMeter }),
-);
+app.use("/api/admin", authMiddleware, createSessionCostsRouter({ costMeter }));
 app.use("/api/admin", authMiddleware, adminRouter);
 
 // vLLM admin routes (Epic #888 / Issue #922) — kept out of admin.ts.
@@ -1351,13 +1358,24 @@ ensureVllmApiKey(localLlmConfigPath).catch((err) => {
 // the user already has a provider on disk so /status is meaningful from t=0.
 let localEndpointHealthMonitor: LocalEndpointHealthMonitor | undefined;
 try {
-  const cfgRaw = await fs.readFile(localLlmConfigPath, "utf-8").catch(() => "{}");
+  const cfgRaw = await fs
+    .readFile(localLlmConfigPath, "utf-8")
+    .catch(() => "{}");
   const cfgParsed = JSON.parse(cfgRaw) as {
     localLlm?: {
       provider?: { endpoint?: string; apiKey?: string } | null;
       privacyMode?: { globalLockdown?: boolean };
     };
-    sentinel?: { localLlmHealth?: { enabled?: boolean; intervalMs?: number; failoverThreshold?: number; failoverWindowMs?: number; failbackSuccesses?: number; probeTimeoutMs?: number } };
+    sentinel?: {
+      localLlmHealth?: {
+        enabled?: boolean;
+        intervalMs?: number;
+        failoverThreshold?: number;
+        failoverWindowMs?: number;
+        failbackSuccesses?: number;
+        probeTimeoutMs?: number;
+      };
+    };
   };
   const provider = cfgParsed.localLlm?.provider;
   const healthCfg = cfgParsed.sentinel?.localLlmHealth ?? {};
@@ -1371,7 +1389,8 @@ try {
       failbackSuccesses: healthCfg.failbackSuccesses,
       probeTimeoutMs: healthCfg.probeTimeoutMs,
       auditLogger,
-      isPrivacyLocked: () => Boolean(cfgParsed.localLlm?.privacyMode?.globalLockdown),
+      isPrivacyLocked: () =>
+        Boolean(cfgParsed.localLlm?.privacyMode?.globalLockdown),
     });
     localEndpointHealthMonitor.start();
     localEndpointHealthMonitor.on("failover", (info) => {
@@ -1414,7 +1433,9 @@ copilot.setAuditLogger(auditLogger);
 // immediately if the user has a local provider configured + a cloud provider
 // in copilot config.
 try {
-  const cfgRaw = await fs.readFile(localLlmConfigPath, "utf-8").catch(() => "{}");
+  const cfgRaw = await fs
+    .readFile(localLlmConfigPath, "utf-8")
+    .catch(() => "{}");
   const cfgParsed = JSON.parse(cfgRaw) as {
     localLlm?: {
       provider?: {
@@ -1467,7 +1488,13 @@ void (async () => {
       .readFile(localLlmConfigPath, "utf-8")
       .catch(() => "{}");
     const cfgParsed = JSON.parse(cfgRaw) as {
-      localLlm?: { costMeter?: { enabled?: boolean; fetchLivePricing?: boolean; pricingUrl?: string } };
+      localLlm?: {
+        costMeter?: {
+          enabled?: boolean;
+          fetchLivePricing?: boolean;
+          pricingUrl?: string;
+        };
+      };
     };
     const costCfg = cfgParsed.localLlm?.costMeter ?? {};
     if (costCfg.enabled === false || costCfg.fetchLivePricing === false) return;

@@ -14,6 +14,7 @@ import { TaskEnginePanel } from "@/components/admin/task-engine-panel";
 import { SessionsPanel } from "@/components/admin/sessions-panel";
 import { ModelConfigPanel } from "@/components/admin/model-config-panel";
 import { LocalLlmPanel } from "@/components/admin/local-llm-panel";
+import { OllamaNodePanel } from "@/components/admin/ollama-node-panel";
 import { SystemRequirementsCard } from "@/components/admin/system-requirements-card";
 import { CostSummaryCard } from "@/components/admin/cost-summary-card";
 import { AgentsPanel } from "@/components/admin/agents-panel";
@@ -124,9 +125,11 @@ export default function AdminPage() {
           <LocalLlmPanel />
         </SectionCard>
 
-        <SectionCard title="System Requirements">
-          <SystemRequirementsCard />
+        <SectionCard title="Ollama Node" defaultOpen={false}>
+          <OllamaNodePanel />
         </SectionCard>
+
+        <SystemRequirementsCard />
 
         <SectionCard title="Cost Summary">
           <CostSummaryCard />

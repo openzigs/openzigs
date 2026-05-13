@@ -26,7 +26,13 @@ export const localCopilotProviderSchema = z.object({
   /** Optional bearer token / API key (vLLM auto-generates one). */
   apiKey: z.string().optional(),
   /** Per-request timeout in ms. Default 120s. */
-  timeoutMs: z.number().int().min(1000).max(600_000).optional().default(120_000),
+  timeoutMs: z
+    .number()
+    .int()
+    .min(1000)
+    .max(600_000)
+    .optional()
+    .default(120_000),
 });
 
 export type LocalCopilotProviderConfig = z.infer<
@@ -60,7 +66,13 @@ export const smartRouterSchema = z
   .object({
     enabled: z.boolean().optional().default(true),
     /** Default 4096 tokens — planner's locked decision (2026-05-08). */
-    cloudThresholdTokens: z.number().int().min(0).max(1_000_000).optional().default(4096),
+    cloudThresholdTokens: z
+      .number()
+      .int()
+      .min(0)
+      .max(1_000_000)
+      .optional()
+      .default(4096),
   })
   .optional()
   .default({ enabled: true, cloudThresholdTokens: 4096 });
@@ -86,6 +98,42 @@ export const costMeterSchema = z
 
 export type CostMeterConfig = z.infer<typeof costMeterSchema>;
 
+// ── remote Ollama node (#1077-B) ────────────────────────────────────────
+
+/**
+ * Optional remote-Ollama target. Mirrors the FluxQ "Network Node" pattern
+ * (`imageGen.{mode,networkNodeUrl,networkNodeToken}`) so users can run
+ * Ollama on a beefier second Mac on the LAN (gemma4:31b INT4 needs ≥36 GB
+ * unified memory). Defaults route to the local 11434 socket so existing
+ * single-machine installs keep working.
+ *
+ * Mode semantics:
+ *   - `local`   → use `localUrl` (default `http://127.0.0.1:11434`).
+ *   - `network` → use `networkNodeUrl` (must pass SSRF guard) +
+ *                 optional bearer token.
+ *
+ * Env overrides (read by `getOllamaBaseUrl()`):
+ *   - `OLLAMA_MODE` ∈ {local, network}
+ *   - `OLLAMA_NETWORK_URL`
+ *   - `OLLAMA_NETWORK_TOKEN`
+ */
+export const ollamaNodeSchema = z
+  .object({
+    mode: z.enum(["local", "network"]).optional().default("local"),
+    localUrl: z.string().optional().default("http://127.0.0.1:11434"),
+    networkNodeUrl: z.string().optional().default(""),
+    networkNodeToken: z.string().optional().default(""),
+  })
+  .optional()
+  .default({
+    mode: "local",
+    localUrl: "http://127.0.0.1:11434",
+    networkNodeUrl: "",
+    networkNodeToken: "",
+  });
+
+export type OllamaNodeConfig = z.infer<typeof ollamaNodeSchema>;
+
 export const localLlmSchema = z
   .object({
     /** Probe `/v1/models` on Ollama (11434) and vLLM (8000) at startup. */
@@ -98,11 +146,15 @@ export const localLlmSchema = z
      * regenerates the value via `/api/admin/local-llm/vllm-key/rotate`.
      */
     vllmApiKey: z.string().optional(),
-    privacyMode: privacyModeSchema.optional().default({ globalLockdown: false }),
+    privacyMode: privacyModeSchema
+      .optional()
+      .default({ globalLockdown: false }),
     /** Latency-based smart router (#1062). */
     smartRouter: smartRouterSchema,
     /** Per-session cost meter (#1059). */
     costMeter: costMeterSchema,
+    /** Remote Ollama node (#1077-B) — local socket or LAN-reachable peer. */
+    ollama: ollamaNodeSchema,
   })
   .optional()
   .default({
@@ -111,6 +163,12 @@ export const localLlmSchema = z
     privacyMode: { globalLockdown: false },
     smartRouter: { enabled: true, cloudThresholdTokens: 4096 },
     costMeter: { enabled: true, fetchLivePricing: true },
+    ollama: {
+      mode: "local",
+      localUrl: "http://127.0.0.1:11434",
+      networkNodeUrl: "",
+      networkNodeToken: "",
+    },
   });
 
 export type LocalLlmConfig = z.infer<typeof localLlmSchema>;
