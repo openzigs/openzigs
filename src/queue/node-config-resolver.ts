@@ -41,36 +41,55 @@ interface NodeNamespaceSpec {
   configKey: string;
   /** Default URL to fall back to when no remote URL is configured. */
   localDefaultUrl: string;
+  /** Convenience port (extracted from localDefaultUrl) for UI display. */
+  defaultPort: number;
 }
 
-const NODE_SPEC: Record<ResolvableNodeType, NodeNamespaceSpec> = {
+export const RESOLVABLE_NODE_TYPES = [
+  "image-gen",
+  "video-gen",
+  "music-gen",
+  "rvc",
+  "lip-sync",
+  "audio",
+  "sad-talker",
+] as const satisfies readonly ResolvableNodeType[];
+
+export const NODE_SPEC: Record<ResolvableNodeType, NodeNamespaceSpec> = {
   "image-gen": {
     configKey: "imageGen",
     localDefaultUrl: "http://localhost:5005",
+    defaultPort: 5005,
   },
   "video-gen": {
     configKey: "videoGen",
     localDefaultUrl: "http://localhost:5007",
+    defaultPort: 5007,
   },
   "music-gen": {
     configKey: "musicGen",
     localDefaultUrl: "http://localhost:5009",
+    defaultPort: 5009,
   },
   rvc: {
     configKey: "musicStudio",
     localDefaultUrl: "http://localhost:5010",
+    defaultPort: 5010,
   },
   "lip-sync": {
     configKey: "lipSync",
     localDefaultUrl: "http://localhost:5010",
+    defaultPort: 5010,
   },
   audio: {
     configKey: "audioSidecar",
     localDefaultUrl: "http://localhost:5006",
+    defaultPort: 5006,
   },
   "sad-talker": {
     configKey: "sadTalker",
     localDefaultUrl: "http://localhost:5011",
+    defaultPort: 5011,
   },
 };
 
