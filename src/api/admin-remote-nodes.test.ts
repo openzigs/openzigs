@@ -308,6 +308,42 @@ describe("createRemoteNodesRouter", () => {
     ]);
   });
 
+  it("POST /:nodeType/test honors explicit unsaved allowLan=true", async () => {
+    const calls: string[] = [];
+    const fakeFetch: typeof fetch = (async (input: unknown) => {
+      calls.push(String(input));
+      return new Response(JSON.stringify({ status: "ok" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }) as typeof fetch;
+    buildApp({ fetchImpl: fakeFetch });
+    const { port, close } = await listen();
+    const r = await fetch(
+      `http://127.0.0.1:${port}/remote-nodes/image-gen/test`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          url: "http://192.168.68.60:5005",
+          allowLan: true,
+        }),
+      },
+    );
+    const body = (await r.json()) as {
+      health: { ok: boolean };
+      capabilities: { ok: boolean };
+    };
+    close();
+    expect(r.status).toBe(200);
+    expect(body.health.ok).toBe(true);
+    expect(body.capabilities.ok).toBe(true);
+    expect(calls).toEqual([
+      "http://192.168.68.60:5005/health",
+      "http://192.168.68.60:5005/capabilities",
+    ]);
+  });
+
   it("POST /:nodeType/test caps oversized probe responses", async () => {
     await writeUserConfig(configPath, {
       imageGen: { networkNodeUrl: "https://large.example.com" },

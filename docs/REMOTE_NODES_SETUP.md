@@ -152,6 +152,13 @@ export CALLBACK_SECRET="GENERATE-A-LONG-RANDOM-STRING"
 export OPENZIGS_CALLBACK_URL="https://your-primary-server/api/queue/complete"
 ```
 
+`OPENZIGS_CALLBACK_URL` is also used by the sidecar SSRF guard as a
+server-controlled trusted callback host. Local/LAN callback URLs continue to
+work by default; public callback hosts are accepted only when their host exactly
+matches `OPENZIGS_CALLBACK_URL` or an entry in `OPENZIGS_TRUSTED_CALLBACK_HOSTS`
+(comma-separated host, host:port, or URL values). Do not put arbitrary domains
+in that allowlist; it should contain only your OpenZigs primary callback hosts.
+
 For launchd/systemd-managed sidecars, set the env var in the unit's
 `EnvironmentFile`/`<key>EnvironmentVariables</key>` plist block. Example
 launchd snippet:
@@ -219,6 +226,7 @@ to test a single node.
 | `400 lan_not_allowed`                          | URL resolves to RFC1918 but **Allow LAN** is off                              | Tick the checkbox or use a public hostname                                         |
 | Test shows `/health: OK`, `/capabilities: FAIL`| Sidecar is on an old build without `/capabilities`                            | Update the sidecar (run `pip install -r requirements.txt && restart`)              |
 | Callbacks fail with `401`                      | `CALLBACK_SECRET` mismatch or clock skew >5min between primary and worker     | Check secrets on both sides and `ntpdate`/`chrony` clocks                          |
+| Public callbacks rejected as SSRF              | Worker does not trust the primary callback host                                | Set `OPENZIGS_CALLBACK_URL=https://your-primary-server/api/queue/complete` or add the host to `OPENZIGS_TRUSTED_CALLBACK_HOSTS` |
 | `429 rate_limited` from `/api/queue/complete`  | Worker is firing too many callbacks                                           | Raise `auth.callbackRateLimit.perMinute` in primary `config.json`                  |
 | Test request succeeds but UI shows `WifiOff`   | `url` saved but cleared by an env var override                                | Check that `OPENZIGS_*_NODE_URL` env vars on the primary server are not overriding |
 | Cloudflare returns `502`                       | Sidecar not running on the mapped local port                                  | `lsof -iTCP:<port>` on the worker; restart the sidecar                             |

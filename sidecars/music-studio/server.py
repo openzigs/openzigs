@@ -22,11 +22,9 @@ import os
 import tempfile
 import time
 import traceback
-import ipaddress
 import re as _re
 from pathlib import Path
 from typing import Any, Optional
-from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 from urllib.error import URLError
 
@@ -46,45 +44,10 @@ logger = logging.getLogger("music-studio-sidecar")
 
 # ── Security Utilities ───────────────────────────────────────
 
-def _is_safe_callback_host(host: str) -> bool:
-    """SSRF allowlist: private/loopback/.local/link-local hosts only.
-
-    Sidecar callbacks carry generated audio (base64) back to the openzigs
-    primary on the LAN. Restricting the host to private destinations
-    prevents a tunnel-exposed sidecar from being abused as a data-exfil
-    relay via attacker-supplied `callback_url`.
-    """
-    if not host:
-        return False
-    host = host.lower()
-    if host in ("localhost", "127.0.0.1", "::1"):
-        return True
-    try:
-        addr = ipaddress.ip_address(host.strip("[]"))
-        return addr.is_private or addr.is_loopback or addr.is_link_local
-    except ValueError:
-        return host.endswith(".local")
-
-
-def validate_callback_url(url: str) -> str:
-    """Validate that a callback/webhook URL is safe (SSRF protection).
-
-    Allows only http/https and only private / loopback / .local /
-    link-local destinations. Returns the validated URL string, or raises
-    ValueError.
-    """
-    parsed = urlparse(url)
-    if parsed.scheme not in ("http", "https"):
-        raise ValueError(f"URL scheme must be http or https, got: {parsed.scheme}")
-    hostname = (parsed.hostname or "").lower()
-    if not hostname:
-        raise ValueError("URL must have a hostname")
-    if not _is_safe_callback_host(hostname):
-        raise ValueError(
-            f"Blocked callback host {hostname!r}: only private / loopback / "
-            ".local / link-local destinations are permitted"
-        )
-    return url
+_SHARED_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "_shared")
+if _SHARED_DIR not in sys.path:
+    sys.path.insert(0, _SHARED_DIR)
+from callback_validator import validate_callback_url  # type: ignore[import-not-found]  # noqa: E402
 
 
 def safe_join(base_dir: str, user_path: str) -> str:

@@ -326,9 +326,7 @@ export function createRemoteNodesRouter(
       ((cfg[NODE_SPEC[nodeType].configKey] ?? {}) as Record<string, unknown>)
         .networkNodeToken;
     const allowLan =
-      body.allowLan === true || body.allowLan === undefined
-        ? view.allowLan
-        : false;
+      typeof body.allowLan === "boolean" ? body.allowLan : view.allowLan;
 
     if (!url) {
       return res.status(400).json({ error: "no_url_configured" });

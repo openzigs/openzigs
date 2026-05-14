@@ -25,57 +25,11 @@ from pathlib import Path
 from typing import Optional
 
 import httpx
-import ipaddress
 from fastapi import Depends, FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger("m2pro-worker")
-
-
-# ── Security Utilities ───────────────────────────────────────
-
-def _is_safe_callback_host(host: str) -> bool:
-    """SSRF allowlist: private/loopback/.local/link-local hosts only.
-
-    Sidecar callbacks are designed to reach the openzigs primary on the
-    LAN. With the worker now Internet-reachable via Cloudflare Tunnel a
-    caller-supplied `callback_url: https://attacker.tld` would exfiltrate
-    the base64 media payload, so the callback target must be restricted
-    to private network destinations.
-    """
-    if not host:
-        return False
-    if host in ("localhost", "127.0.0.1", "::1"):
-        return True
-    try:
-        addr = ipaddress.ip_address(host.strip("[]"))
-        return addr.is_private or addr.is_loopback or addr.is_link_local
-    except ValueError:
-        # Not an IP literal — only allow .local mDNS hostnames.
-        return host.endswith(".local")
-
-
-def validate_callback_url(url: str) -> str:
-    """Validate that a callback URL is safe (SSRF guard).
-
-    Allows http/https only, and restricts the host to private/loopback/
-    .local/link-local destinations. Mirrors `_is_safe_callback_url` used
-    on the progress callback path so the two endpoints share one policy.
-    """
-    from urllib.parse import urlparse
-    parsed = urlparse(url)
-    if parsed.scheme not in ("http", "https"):
-        raise ValueError(f"URL scheme must be http or https, got: {parsed.scheme}")
-    hostname = (parsed.hostname or "").lower()
-    if not hostname:
-        raise ValueError("URL must have a hostname")
-    if not _is_safe_callback_host(hostname):
-        raise ValueError(
-            f"Blocked callback host {hostname!r}: only private / loopback / "
-            ".local / link-local destinations are permitted"
-        )
-    return url
 
 
 # ── Constants ────────────────────────────────────────────────
@@ -113,6 +67,10 @@ _SHARED_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "_s
 if _SHARED_DIR not in _sys.path:
     _sys.path.insert(0, _SHARED_DIR)
 from signed_callback import prepare_signed_post  # type: ignore[import-not-found]
+from callback_validator import (  # type: ignore[import-not-found]
+    is_safe_callback_url as _is_safe_callback_url,
+    validate_callback_url,
+)
 
 NODE_TYPE = "video-gen"
 
@@ -555,18 +513,6 @@ _last_progress_time: float = 0.0
 _PROGRESS_THROTTLE_SEC: float = 0.5  # Max 2 POSTs/second
 
 
-def _is_safe_callback_url(url: str) -> bool:
-    """Validate that a callback URL targets a private/loopback host (SSRF guard)."""
-    from urllib.parse import urlparse
-    try:
-        parsed = urlparse(url)
-        if parsed.scheme not in ("http", "https"):
-            return False
-        return _is_safe_callback_host((parsed.hostname or "").lower())
-    except Exception:
-        return False
-
-
 async def _report_progress(
     job_id: str,
     progress_url: str | None,
@@ -579,7 +525,7 @@ async def _report_progress(
     if not progress_url:
         return
     if not _is_safe_callback_url(progress_url):
-        logger.warning(f"Rejected progress_url with non-private host: {progress_url}")
+        logger.warning(f"Rejected progress_url with untrusted host: {progress_url}")
         return
     now = time.monotonic()
     if now - _last_progress_time < _PROGRESS_THROTTLE_SEC:
