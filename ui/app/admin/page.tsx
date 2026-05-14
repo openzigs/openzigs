@@ -186,10 +186,7 @@ export default function AdminPage() {
           <ImageGenPanel />
         </SectionCard>
 
-        <SectionCard
-          title="Remote Media Worker Nodes"
-          defaultOpen={false}
-        >
+        <SectionCard title="Remote Media Worker Nodes" defaultOpen={false}>
           <RemoteNodesPanel />
         </SectionCard>
 

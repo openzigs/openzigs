@@ -35,24 +35,46 @@ logger = logging.getLogger("m2pro-worker")
 
 # ── Security Utilities ───────────────────────────────────────
 
-def validate_callback_url(url: str) -> str:
-    """Validate that a callback URL is safe.
+def _is_safe_callback_host(host: str) -> bool:
+    """SSRF allowlist: private/loopback/.local/link-local hosts only.
 
-    Allows http/https to private-network and loopback hosts (required for
-    LAN sidecar→primary callbacks).  Blocks metadata endpoints and
-    non-HTTP schemes.
+    Sidecar callbacks are designed to reach the openzigs primary on the
+    LAN. With the worker now Internet-reachable via Cloudflare Tunnel a
+    caller-supplied `callback_url: https://attacker.tld` would exfiltrate
+    the base64 media payload, so the callback target must be restricted
+    to private network destinations.
+    """
+    if not host:
+        return False
+    if host in ("localhost", "127.0.0.1", "::1"):
+        return True
+    try:
+        addr = ipaddress.ip_address(host.strip("[]"))
+        return addr.is_private or addr.is_loopback or addr.is_link_local
+    except ValueError:
+        # Not an IP literal — only allow .local mDNS hostnames.
+        return host.endswith(".local")
+
+
+def validate_callback_url(url: str) -> str:
+    """Validate that a callback URL is safe (SSRF guard).
+
+    Allows http/https only, and restricts the host to private/loopback/
+    .local/link-local destinations. Mirrors `_is_safe_callback_url` used
+    on the progress callback path so the two endpoints share one policy.
     """
     from urllib.parse import urlparse
     parsed = urlparse(url)
     if parsed.scheme not in ("http", "https"):
         raise ValueError(f"URL scheme must be http or https, got: {parsed.scheme}")
-    hostname = parsed.hostname or ""
+    hostname = (parsed.hostname or "").lower()
     if not hostname:
         raise ValueError("URL must have a hostname")
-    _blocked = {"metadata.google.internal", "metadata.google.com",
-                "169.254.169.254"}  # cloud metadata endpoints
-    if hostname.lower() in _blocked:
-        raise ValueError(f"Blocked metadata hostname: {hostname}")
+    if not _is_safe_callback_host(hostname):
+        raise ValueError(
+            f"Blocked callback host {hostname!r}: only private / loopback / "
+            ".local / link-local destinations are permitted"
+        )
     return url
 
 
@@ -540,15 +562,7 @@ def _is_safe_callback_url(url: str) -> bool:
         parsed = urlparse(url)
         if parsed.scheme not in ("http", "https"):
             return False
-        host = parsed.hostname or ""
-        if host in ("localhost", "127.0.0.1", "::1"):
-            return True
-        try:
-            addr = ipaddress.ip_address(host)
-            return addr.is_private or addr.is_loopback
-        except ValueError:
-            # Hostname, not IP — allow .local mDNS names (common in LAN setups)
-            return host.endswith(".local")
+        return _is_safe_callback_host((parsed.hostname or "").lower())
     except Exception:
         return False
 

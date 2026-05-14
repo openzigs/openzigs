@@ -74,6 +74,36 @@ _TRAINING_BASE_DIR = os.path.join(os.path.expanduser("~"), ".openzigs", "trainin
 # import the exact same code path the routes use.
 from path_utils import safe_join, sanitize_path as _sanitize_path  # noqa: E402
 
+import ipaddress as _ipaddress  # noqa: E402
+from urllib.parse import urlparse as _urlparse  # noqa: E402
+
+
+def _is_safe_callback_url(url: str) -> bool:
+    """SSRF guard for caller-supplied callback URLs.
+
+    Sidecar callbacks carry generated media (base64) back to the openzigs
+    primary on the LAN. With the sidecar potentially Internet-reachable
+    (Cloudflare Tunnel, etc.), restrict the callback host to private /
+    loopback / .local / link-local destinations so an attacker cannot use
+    a `callback_url: https://attacker.tld` to exfiltrate the result.
+    """
+    try:
+        parsed = _urlparse(url)
+        if parsed.scheme not in ("http", "https"):
+            return False
+        host = (parsed.hostname or "").lower()
+        if not host:
+            return False
+        if host in ("localhost", "127.0.0.1", "::1"):
+            return True
+        try:
+            addr = _ipaddress.ip_address(host.strip("[]"))
+            return addr.is_private or addr.is_loopback or addr.is_link_local
+        except ValueError:
+            return host.endswith(".local")
+    except Exception:
+        return False
+
 
 def _get_training_dir(character_id: str) -> str:
     """Return persistent training directory for a character."""
@@ -337,6 +367,12 @@ def _post_callback(job_id: str, callback_url: Optional[str], payload: dict) -> N
     _store_result(job_id, payload)
     if not callback_url:
         log.info(f"[async] Result for job {job_id} stored (no callback URL — polling only)")
+        return
+    if not _is_safe_callback_url(callback_url):
+        log.warning(
+            f"[async] Refusing callback for job {job_id} — host not on SSRF "
+            f"allowlist (private/loopback/.local only): {callback_url}"
+        )
         return
     body = json.dumps(payload).encode("utf-8")
     max_retries = 3

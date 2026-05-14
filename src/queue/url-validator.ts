@@ -5,9 +5,10 @@
  * to them. Blocks loopback, link-local, cloud-metadata, and (by default)
  * RFC1918 ranges. Users opt back in to RFC1918 per-node via `allowLan: true`.
  *
- * The validator resolves hostnames via DNS and checks **every** returned IP
- * to defeat DNS rebinding (a hostname can resolve to a public address now and
- * a private address on the next lookup).
+ * The validator resolves hostnames via DNS and checks every IP returned by
+ * that resolution. This blocks split-horizon answers in the validation step;
+ * call sites still need outbound-request hardening such as redirect bounds
+ * because the later fetch performs its own DNS resolution.
  */
 
 import dns from "node:dns/promises";
@@ -190,8 +191,8 @@ export async function validateNodeUrl(
     classification: classifyAddress(r.address),
   }));
 
-  // Check **every** resolved IP — defeats DNS rebinding where one record is
-  // public and another is private.
+  // Check every IP from this DNS answer so mixed public/private responses
+  // cannot slip through validation.
   for (const r of classifications) {
     if (r.classification === "loopback" || r.classification === "link-local") {
       throw new SsrfBlockedError(

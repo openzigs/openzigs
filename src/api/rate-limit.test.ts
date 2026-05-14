@@ -77,34 +77,7 @@ describe("createTokenBucketLimiter", () => {
 });
 
 describe("bucketKeyFromRequest", () => {
-  it("prefers X-OpenZigs-Node-Type header", () => {
-    const k = bucketKeyFromRequest({
-      headers: { "x-openzigs-node-type": "image-gen" },
-      body: { node: "video-gen" },
-      ip: "1.2.3.4",
-    });
-    expect(k).toBe("node:image-gen");
-  });
-
-  it("falls back to body.node when header missing", () => {
-    const k = bucketKeyFromRequest({
-      headers: {},
-      body: { node: "video-gen" },
-      ip: "1.2.3.4",
-    });
-    expect(k).toBe("node:video-gen");
-  });
-
-  it("falls back to body.nodeType when body.node missing", () => {
-    const k = bucketKeyFromRequest({
-      headers: {},
-      body: { nodeType: "music-gen" },
-      ip: "1.2.3.4",
-    });
-    expect(k).toBe("node:music-gen");
-  });
-
-  it("falls back to req.ip when no node info available", () => {
+  it("keys on req.ip", () => {
     const k = bucketKeyFromRequest({
       headers: {},
       body: {},
@@ -118,21 +91,63 @@ describe("bucketKeyFromRequest", () => {
     expect(k).toBe("ip:unknown");
   });
 
-  it("ignores empty header value", () => {
-    const k = bucketKeyFromRequest({
-      headers: { "x-openzigs-node-type": "" },
+  // Regression: bucket key MUST NOT be influenced by caller-controlled
+  // input. Otherwise an attacker rotates X-OpenZigs-Node-Type / body.node
+  // per request to bypass the per-bucket limit and grow the bucket map.
+  it("ignores caller-supplied X-OpenZigs-Node-Type header", () => {
+    const k1 = bucketKeyFromRequest({
+      headers: { "x-openzigs-node-type": "image-gen" },
+      body: {},
+      ip: "1.2.3.4",
+    });
+    const k2 = bucketKeyFromRequest({
+      headers: { "x-openzigs-node-type": "video-gen" },
+      body: {},
+      ip: "1.2.3.4",
+    });
+    expect(k1).toBe("ip:1.2.3.4");
+    expect(k2).toBe("ip:1.2.3.4");
+    expect(k1).toBe(k2);
+  });
+
+  it("ignores caller-supplied body.node / body.nodeType fields", () => {
+    const k1 = bucketKeyFromRequest({
+      headers: {},
       body: { node: "music-gen" },
       ip: "1.2.3.4",
     });
-    expect(k).toBe("node:music-gen");
-  });
-
-  it("ignores non-string body fields", () => {
-    const k = bucketKeyFromRequest({
+    const k2 = bucketKeyFromRequest({
       headers: {},
-      body: { node: 42, nodeType: ["x"] },
+      body: { nodeType: "rvc" },
       ip: "1.2.3.4",
     });
-    expect(k).toBe("ip:1.2.3.4");
+    expect(k1).toBe("ip:1.2.3.4");
+    expect(k2).toBe("ip:1.2.3.4");
+  });
+
+  it("malicious header rotation cannot exhaust an honest bucket", () => {
+    // Same source IP, attacker rotates the header per request — bucket
+    // must NOT rotate, so the limiter still throttles them.
+    const limiter = (() => {
+      // small inline limiter to keep this test self-contained
+      const buckets = new Map<string, number>();
+      return {
+        consume(key: string): boolean {
+          const remaining = buckets.get(key) ?? 2;
+          if (remaining <= 0) return false;
+          buckets.set(key, remaining - 1);
+          return true;
+        },
+      };
+    })();
+    const requests = ["a", "b", "c", "d"].map((nodeType) => ({
+      headers: { "x-openzigs-node-type": nodeType },
+      body: {},
+      ip: "9.9.9.9",
+    }));
+    const verdicts = requests.map((r) =>
+      limiter.consume(bucketKeyFromRequest(r)),
+    );
+    expect(verdicts).toEqual([true, true, false, false]);
   });
 });

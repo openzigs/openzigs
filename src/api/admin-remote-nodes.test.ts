@@ -196,6 +196,43 @@ describe("createRemoteNodesRouter", () => {
     expect(r.status).toBe(400);
   });
 
+  it("PUT /:nodeType rejects oversized token with 400 token_too_long", async () => {
+    buildApp();
+    const { port, close } = await listen();
+    const oversized = "a".repeat(4097);
+    const r = await fetch(`http://127.0.0.1:${port}/remote-nodes/image-gen`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        url: "https://images.example.com",
+        token: oversized,
+      }),
+    });
+    const body = (await r.json()) as { error: string };
+    close();
+    expect(r.status).toBe(400);
+    expect(body.error).toBe("token_too_long");
+    const cfg = await readUserConfig(configPath);
+    expect(cfg.imageGen).toBeUndefined();
+  });
+
+  it("PUT /:nodeType rejects oversized URL with 400 url_too_long", async () => {
+    buildApp();
+    const { port, close } = await listen();
+    const oversizedUrl = `https://images.example.com/${"a".repeat(4097)}`;
+    const r = await fetch(`http://127.0.0.1:${port}/remote-nodes/image-gen`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ url: oversizedUrl }),
+    });
+    const body = (await r.json()) as { error: string };
+    close();
+    expect(r.status).toBe(400);
+    expect(body.error).toBe("url_too_long");
+    const cfg = await readUserConfig(configPath);
+    expect(cfg.imageGen).toBeUndefined();
+  });
+
   it("DELETE /:nodeType clears saved fields", async () => {
     await writeUserConfig(configPath, {
       imageGen: {
@@ -227,9 +264,14 @@ describe("createRemoteNodesRouter", () => {
       },
     });
     const calls: string[] = [];
-    const fakeFetch: typeof fetch = (async (input: unknown) => {
+    const initOptions: RequestInit[] = [];
+    const fakeFetch: typeof fetch = (async (
+      input: unknown,
+      init?: RequestInit,
+    ) => {
       const url = String(input);
       calls.push(url);
+      initOptions.push(init ?? {});
       const body = url.endsWith("/health")
         ? { status: "ok" }
         : { models: ["flux-dev"] };
@@ -260,6 +302,40 @@ describe("createRemoteNodesRouter", () => {
       "https://probe.example.com/health",
       "https://probe.example.com/capabilities",
     ]);
+    expect(initOptions.map((init) => init.redirect)).toEqual([
+      "manual",
+      "manual",
+    ]);
+  });
+
+  it("POST /:nodeType/test caps oversized probe responses", async () => {
+    await writeUserConfig(configPath, {
+      imageGen: { networkNodeUrl: "https://large.example.com" },
+    });
+    const fakeFetch: typeof fetch = (async () =>
+      new Response("x", {
+        status: 200,
+        headers: { "content-length": String(1024 * 1024 + 1) },
+      })) as typeof fetch;
+    buildApp({ fetchImpl: fakeFetch });
+    const { port, close } = await listen();
+    const r = await fetch(
+      `http://127.0.0.1:${port}/remote-nodes/image-gen/test`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({}),
+      },
+    );
+    const body = (await r.json()) as {
+      health: { ok: boolean; error?: string };
+      capabilities: { ok: boolean; error?: string };
+    };
+    close();
+    expect(body.health.ok).toBe(false);
+    expect(body.health.error).toContain("response too large");
+    expect(body.capabilities.ok).toBe(false);
+    expect(body.capabilities.error).toContain("response too large");
   });
 
   it("POST /:nodeType/test returns 400 when no URL configured", async () => {

@@ -1,9 +1,12 @@
 /**
  * Issue #1087 — In-memory token-bucket rate limiter for queue callbacks.
  *
- * Keyed by node type (from `X-OpenZigs-Node-Type` header or request body
- * `node`/`nodeType` field). Falls back to client IP when no node header is
- * present (legacy sidecars).
+ * Keyed by client IP (server-derived; Express `trust proxy` is set so
+ * `req.ip` reflects the real peer when behind a tunnel/proxy). Caller-
+ * supplied identifiers like `X-OpenZigs-Node-Type` or body fields are
+ * intentionally NOT used — an attacker could otherwise rotate the bucket
+ * key per request to bypass the limit and grow the in-memory bucket map
+ * unboundedly.
  *
  * Resets on process restart — acceptable for v1; per-issue acceptance.
  */
@@ -66,25 +69,17 @@ export function createTokenBucketLimiter(config: RateLimitConfig): RateLimiter {
 }
 
 /**
- * Pull a sensible bucket key from a callback request.
- * Order: explicit `X-OpenZigs-Node-Type` header → request body `node` →
- * `req.ip` (legacy fallback).
+ * Derive a rate-limit bucket key from a callback request.
+ *
+ * SECURITY: Only `req.ip` is used. Caller-supplied headers and body fields
+ * MUST NOT influence the bucket key — otherwise an attacker can rotate
+ * the key per request to (a) bypass the per-bucket limit and
+ * (b) grow the bucket map without bound.
  */
 export function bucketKeyFromRequest(req: {
-  headers: Record<string, string | string[] | undefined>;
+  headers?: Record<string, string | string[] | undefined>;
   body?: unknown;
   ip?: string;
 }): string {
-  const headerVal = req.headers["x-openzigs-node-type"];
-  if (typeof headerVal === "string" && headerVal.length > 0) {
-    return `node:${headerVal}`;
-  }
-  if (req.body && typeof req.body === "object") {
-    const node = (req.body as Record<string, unknown>).node;
-    if (typeof node === "string" && node.length > 0) return `node:${node}`;
-    const nodeType = (req.body as Record<string, unknown>).nodeType;
-    if (typeof nodeType === "string" && nodeType.length > 0)
-      return `node:${nodeType}`;
-  }
   return `ip:${req.ip ?? "unknown"}`;
 }

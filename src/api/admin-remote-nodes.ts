@@ -32,6 +32,58 @@ import { logger } from "../logging/logger.js";
 
 const TOKEN_MASK = "••••••••";
 
+const MAX_TOKEN_LENGTH = 4096;
+const MAX_URL_LENGTH = 4096;
+const MAX_PROBE_RESPONSE_BYTES = 1024 * 1024;
+
+async function readBoundedProbeResponse(
+  response: globalThis.Response,
+  maxBytes = MAX_PROBE_RESPONSE_BYTES,
+): Promise<unknown> {
+  const contentLength = response.headers.get("content-length");
+  if (contentLength && Number(contentLength) > maxBytes) {
+    throw new Error(`response too large (>${maxBytes} bytes)`);
+  }
+
+  if (!response.body) {
+    return "";
+  }
+
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  let done = false;
+  while (!done) {
+    const chunk = await reader.read();
+    done = chunk.done;
+    const value = chunk.value;
+    if (done || !value) continue;
+    total += value.byteLength;
+    if (total > maxBytes) {
+      await reader.cancel();
+      throw new Error(`response too large (>${maxBytes} bytes)`);
+    }
+    chunks.push(value);
+  }
+
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  const text = new TextDecoder().decode(bytes);
+  const contentType = response.headers.get("content-type") ?? "";
+  if (contentType.includes("application/json")) {
+    try {
+      return JSON.parse(text) as unknown;
+    } catch {
+      return text;
+    }
+  }
+  return text;
+}
+
 export function defaultConfigPath(): string {
   return (
     process.env.OPENZIGS_CONFIG_PATH ??
@@ -159,6 +211,22 @@ export function createRemoteNodesRouter(
       typeof body.token === "string" ? body.token.trim() : undefined;
     const allowLan = body.allowLan === true;
 
+    if (
+      typeof body.token === "string" &&
+      body.token.length > MAX_TOKEN_LENGTH
+    ) {
+      return res.status(400).json({
+        error: "token_too_long",
+        message: `token must be <= ${MAX_TOKEN_LENGTH} characters`,
+      });
+    }
+    if (typeof body.url === "string" && body.url.length > MAX_URL_LENGTH) {
+      return res.status(400).json({
+        error: "url_too_long",
+        message: `url must be <= ${MAX_URL_LENGTH} characters`,
+      });
+    }
+
     if (url !== undefined && url.length > 0) {
       if (!/^https?:\/\/.+/.test(url)) {
         return res
@@ -234,6 +302,21 @@ export function createRemoteNodesRouter(
       return res.status(404).json({ error: "unknown_node_type" });
     }
     const body = (req.body ?? {}) as Record<string, unknown>;
+    if (
+      typeof body.token === "string" &&
+      body.token.length > MAX_TOKEN_LENGTH
+    ) {
+      return res.status(400).json({
+        error: "token_too_long",
+        message: `token must be <= ${MAX_TOKEN_LENGTH} characters`,
+      });
+    }
+    if (typeof body.url === "string" && body.url.length > MAX_URL_LENGTH) {
+      return res.status(400).json({
+        error: "url_too_long",
+        message: `url must be <= ${MAX_URL_LENGTH} characters`,
+      });
+    }
     const cfg = await readUserConfig(cfgPath);
     const view = buildNodeView(nodeType, cfg);
     const url =
@@ -289,15 +372,12 @@ export function createRemoteNodesRouter(
     try {
       const r = await f(`${base}/health`, {
         headers,
+        redirect: "manual",
         signal: AbortSignal.timeout(5000),
       });
       out.health.status = r.status;
+      out.health.data = await readBoundedProbeResponse(r);
       out.health.ok = r.ok;
-      try {
-        out.health.data = await r.json();
-      } catch {
-        out.health.data = await r.text();
-      }
     } catch (e) {
       out.health.error = (e as Error).message;
     }
@@ -305,15 +385,12 @@ export function createRemoteNodesRouter(
     try {
       const r = await f(`${base}/capabilities`, {
         headers,
+        redirect: "manual",
         signal: AbortSignal.timeout(5000),
       });
       out.capabilities.status = r.status;
+      out.capabilities.data = await readBoundedProbeResponse(r);
       out.capabilities.ok = r.ok;
-      try {
-        out.capabilities.data = await r.json();
-      } catch {
-        out.capabilities.data = await r.text();
-      }
     } catch (e) {
       out.capabilities.error = (e as Error).message;
     }

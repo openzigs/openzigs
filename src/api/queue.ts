@@ -202,8 +202,7 @@ export const createQueueCallbackRouter = ({
           logger.warn(
             `[QueueAPI] Rejected HMAC callback from ${req.ip} ${req.method} ${req.originalUrl} — reason=${verdict.reason}`,
           );
-          const status = verdict.reason === "stale_timestamp" ? 401 : 401;
-          res.status(status).json({
+          res.status(401).json({
             error:
               verdict.reason === "stale_timestamp"
                 ? "stale_timestamp"

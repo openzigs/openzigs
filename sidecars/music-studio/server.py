@@ -46,31 +46,44 @@ logger = logging.getLogger("music-studio-sidecar")
 
 # ── Security Utilities ───────────────────────────────────────
 
+def _is_safe_callback_host(host: str) -> bool:
+    """SSRF allowlist: private/loopback/.local/link-local hosts only.
+
+    Sidecar callbacks carry generated audio (base64) back to the openzigs
+    primary on the LAN. Restricting the host to private destinations
+    prevents a tunnel-exposed sidecar from being abused as a data-exfil
+    relay via attacker-supplied `callback_url`.
+    """
+    if not host:
+        return False
+    host = host.lower()
+    if host in ("localhost", "127.0.0.1", "::1"):
+        return True
+    try:
+        addr = ipaddress.ip_address(host.strip("[]"))
+        return addr.is_private or addr.is_loopback or addr.is_link_local
+    except ValueError:
+        return host.endswith(".local")
+
+
 def validate_callback_url(url: str) -> str:
     """Validate that a callback/webhook URL is safe (SSRF protection).
 
-    Allows only http/https schemes and blocks private/internal networks.
-    Returns the validated URL string, or raises ValueError.
+    Allows only http/https and only private / loopback / .local /
+    link-local destinations. Returns the validated URL string, or raises
+    ValueError.
     """
     parsed = urlparse(url)
     if parsed.scheme not in ("http", "https"):
         raise ValueError(f"URL scheme must be http or https, got: {parsed.scheme}")
-    hostname = parsed.hostname or ""
+    hostname = (parsed.hostname or "").lower()
     if not hostname:
         raise ValueError("URL must have a hostname")
-    # Block well-known internal hostnames
-    _blocked = {"localhost", "0.0.0.0", "metadata.google.internal"}
-    if hostname.lower() in _blocked:
-        raise ValueError(f"Blocked hostname: {hostname}")
-    # Check if hostname is an IP and block private ranges
-    try:
-        addr = ipaddress.ip_address(hostname.strip("[]"))
-        if addr.is_private or addr.is_loopback or addr.is_link_local or addr.is_reserved:
-            raise ValueError(f"Blocked private/internal IP: {addr}")
-    except ValueError as e:
-        if "Blocked" in str(e):
-            raise
-        # Not an IP literal — hostname is fine
+    if not _is_safe_callback_host(hostname):
+        raise ValueError(
+            f"Blocked callback host {hostname!r}: only private / loopback / "
+            ".local / link-local destinations are permitted"
+        )
     return url
 
 

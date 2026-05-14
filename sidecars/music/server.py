@@ -14,6 +14,7 @@ Endpoints:
 import argparse
 import base64
 import gc
+import ipaddress
 import json
 import logging
 import os
@@ -34,6 +35,34 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(message)s",
 )
 logger = logging.getLogger("acestep-sidecar")
+
+
+# ── Security Utilities ───────────────────────────────────────
+
+def _is_safe_callback_url(url: str) -> bool:
+    """SSRF guard: only allow private / loopback / .local / link-local hosts.
+
+    Sidecar callbacks ship base64 audio back to the openzigs primary on the
+    LAN. With the sidecar potentially Internet-reachable, the callback host
+    must be restricted so an attacker-supplied `callback_url` can't be used
+    to exfiltrate the generated audio to a public destination.
+    """
+    try:
+        parsed = urlparse(url)
+        if parsed.scheme not in ("http", "https"):
+            return False
+        host = (parsed.hostname or "").lower()
+        if not host:
+            return False
+        if host in ("localhost", "127.0.0.1", "::1"):
+            return True
+        try:
+            addr = ipaddress.ip_address(host.strip("[]"))
+            return addr.is_private or addr.is_loopback or addr.is_link_local
+        except ValueError:
+            return host.endswith(".local")
+    except Exception:
+        return False
 
 # ── State ────────────────────────────────────────────────────
 
@@ -310,10 +339,10 @@ def run_async_job(
     # POST callback if URL provided
     if callback_url:
         try:
-            parsed = urlparse(callback_url)
-            if parsed.scheme not in ("http", "https"):
+            if not _is_safe_callback_url(callback_url):
                 logger.warning(
-                    f"Invalid callback scheme: {parsed.scheme}"
+                    f"Refusing callback for job {job_id} — host not on SSRF "
+                    f"allowlist (private/loopback/.local only): {callback_url}"
                 )
                 return
 
