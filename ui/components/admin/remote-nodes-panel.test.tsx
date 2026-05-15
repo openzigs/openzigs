@@ -161,6 +161,24 @@ describe("RemoteNodesPanel", () => {
     });
   });
 
+  it("uses password-style CF Access Client ID inputs with a visibility toggle (#1099)", async () => {
+    mockedFetch.mockResolvedValueOnce(buildNodes());
+    wrap(<RemoteNodesPanel />);
+    await waitFor(() => {
+      expect(screen.getAllByLabelText("Show CF Access client ID").length).toBe(
+        5,
+      );
+    });
+    const idInputs = screen.getAllByPlaceholderText(
+      "abc123.access",
+    ) as HTMLInputElement[];
+    expect(idInputs.every((input) => input.type === "password")).toBe(true);
+
+    fireEvent.click(screen.getAllByLabelText("Show CF Access client ID")[0]);
+    expect(idInputs[0].type).toBe("text");
+    expect(screen.getAllByLabelText("Hide CF Access client ID").length).toBe(1);
+  });
+
   it("submits CF Access fields in the save body (#1099)", async () => {
     mockedFetch.mockResolvedValueOnce(buildNodes());
     mockedFetch.mockResolvedValueOnce({ ok: true });
@@ -231,6 +249,30 @@ describe("RemoteNodesPanel", () => {
       expect(putCall).toBeDefined();
       const body = JSON.parse((putCall![1] as RequestInit).body as string);
       expect(body.cfAccessClientId).toBe("");
+    });
+  });
+
+  it("clears a configured CF Access secret by sending empty string (#1099)", async () => {
+    mockedFetch.mockResolvedValueOnce(buildNodes());
+    mockedFetch.mockResolvedValueOnce({ ok: true });
+    mockedFetch.mockResolvedValueOnce(buildNodes());
+    wrap(<RemoteNodesPanel />);
+    await waitFor(() => {
+      expect(screen.getByText("Video Generation")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByText("Clear CF Access secret"));
+    fireEvent.click(screen.getAllByText("Save")[1]);
+
+    await waitFor(() => {
+      const putCall = mockedFetch.mock.calls.find(
+        ([url, init]) =>
+          url === "/api/admin/remote-nodes/video-gen" &&
+          (init as RequestInit)?.method === "PUT",
+      );
+      expect(putCall).toBeDefined();
+      const body = JSON.parse((putCall![1] as RequestInit).body as string);
+      expect(body.cfAccessClientSecret).toBe("");
     });
   });
 });

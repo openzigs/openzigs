@@ -1,4 +1,5 @@
 ﻿import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import fs from "node:fs/promises";
 import { QueueMaster } from "./queue-master.js";
 import type { MediaJob, QueueConfig } from "./types.js";
 
@@ -16,6 +17,7 @@ vi.mock("node:fs/promises", () => ({
 
 const mockFetch = vi.fn();
 vi.stubGlobal("fetch", mockFetch);
+const mockReadFile = vi.mocked(fs.readFile);
 
 function makeJob(overrides: Partial<MediaJob> = {}): MediaJob {
   return {
@@ -79,6 +81,8 @@ describe("QueueMaster", () => {
     vi.clearAllMocks();
     // Reset mockFetch fully to clear persistent mockRejectedValue from previous tests
     mockFetch.mockReset();
+    mockReadFile.mockReset();
+    mockReadFile.mockRejectedValue(new Error("no config"));
     vi.useFakeTimers();
     repo = makeRepo();
     config = makeConfig();
@@ -118,7 +122,10 @@ describe("QueueMaster", () => {
       mockFetch.mockRejectedValue(new Error("unreachable"));
       const statuses = await qm.getNodeStatuses();
       expect(statuses).toHaveLength(4);
-      expect(statuses[0]).toMatchObject({ node: "image-gen", reachable: false });
+      expect(statuses[0]).toMatchObject({
+        node: "image-gen",
+        reachable: false,
+      });
       expect(statuses[1]).toMatchObject({ node: "m2-pro", reachable: false });
       expect(statuses[2]).toMatchObject({ node: "music", reachable: false });
       expect(statuses[3]).toMatchObject({ node: "lipsync", reachable: false });
@@ -295,6 +302,49 @@ describe("QueueMaster", () => {
 
       await qm.tick();
       expect(repo.markDispatched).toHaveBeenCalledWith("job-1");
+    });
+
+    it("dispatches image jobs with Bearer and CF Access service-token headers", async () => {
+      const job = makeJob();
+      repo.getPendingJobs.mockReturnValue([job]);
+      repo.listJobs.mockReturnValue([]);
+      mockReadFile.mockResolvedValue(
+        JSON.stringify({
+          imageGen: {
+            networkNodeUrl: "https://203.0.113.10:5005",
+            networkNodeToken: "worker-bearer",
+            cfAccessClientId: "cf-client-id",
+            cfAccessClientSecret: "cf-client-secret",
+          },
+        }),
+      );
+
+      mockFetch
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              is_busy: false,
+              model: "flux-schnell",
+              model_loaded: true,
+            }),
+        })
+        .mockResolvedValueOnce({ status: 202, ok: true })
+        .mockRejectedValue(new Error("skip"));
+
+      await qm.tick();
+
+      const dispatchCall = mockFetch.mock.calls.find((call) =>
+        String(call[0]).includes("/generate-async"),
+      );
+      expect(dispatchCall).toBeDefined();
+      expect((dispatchCall![1]?.headers as Record<string, string>)).toEqual(
+        expect.objectContaining({
+          Authorization: "Bearer worker-bearer",
+          "CF-Access-Client-Id": "cf-client-id",
+          "CF-Access-Client-Secret": "cf-client-secret",
+        }),
+      );
     });
 
     it("dispatches pending video job to m2-pro", async () => {
@@ -1473,8 +1523,7 @@ describe("QueueMaster", () => {
         .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({}) }) // music unreachable â€” use resolved empty
         .mockResolvedValueOnce({
           ok: true,
-          json: () =>
-            Promise.resolve({ busy: false, loaded_model: null }),
+          json: () => Promise.resolve({ busy: false, loaded_model: null }),
         }); // lipsync health
 
       await qm.getNodeStatuses();
@@ -1506,13 +1555,11 @@ describe("QueueMaster", () => {
       mockFetch
         .mockResolvedValueOnce({
           ok: true,
-          json: () =>
-            Promise.resolve({ is_busy: false, loaded_model: null }),
+          json: () => Promise.resolve({ is_busy: false, loaded_model: null }),
         }) // image-gen
         .mockResolvedValueOnce({
           ok: true,
-          json: () =>
-            Promise.resolve({ is_busy: false, loaded_model: null }),
+          json: () => Promise.resolve({ is_busy: false, loaded_model: null }),
         }) // m2-pro
         .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({}) }) // music
         .mockResolvedValueOnce({
@@ -1536,8 +1583,7 @@ describe("QueueMaster", () => {
 
       // Verify unload-model was called on lipsync sidecar
       const unloadCall = mockFetch.mock.calls.find(
-        (c) =>
-          typeof c[0] === "string" && c[0].includes("/unload-model"),
+        (c) => typeof c[0] === "string" && c[0].includes("/unload-model"),
       );
       expect(unloadCall).toBeDefined();
     });
@@ -1547,13 +1593,11 @@ describe("QueueMaster", () => {
       mockFetch
         .mockResolvedValueOnce({
           ok: true,
-          json: () =>
-            Promise.resolve({ is_busy: false, loaded_model: null }),
+          json: () => Promise.resolve({ is_busy: false, loaded_model: null }),
         }) // image-gen
         .mockResolvedValueOnce({
           ok: true,
-          json: () =>
-            Promise.resolve({ is_busy: false, loaded_model: null }),
+          json: () => Promise.resolve({ is_busy: false, loaded_model: null }),
         }) // m2-pro
         .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({}) }) // music
         .mockResolvedValueOnce({
@@ -1581,8 +1625,7 @@ describe("QueueMaster", () => {
       mockFetch
         .mockResolvedValueOnce({
           ok: true,
-          json: () =>
-            Promise.resolve({ is_busy: false, loaded_model: null }),
+          json: () => Promise.resolve({ is_busy: false, loaded_model: null }),
         })
         .mockResolvedValueOnce({
           ok: true,
@@ -1595,8 +1638,7 @@ describe("QueueMaster", () => {
         .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({}) })
         .mockResolvedValueOnce({
           ok: true,
-          json: () =>
-            Promise.resolve({ busy: false, loaded_model: null }),
+          json: () => Promise.resolve({ busy: false, loaded_model: null }),
         });
 
       await qm.getNodeStatuses();
@@ -1638,8 +1680,7 @@ describe("QueueMaster", () => {
       mockFetch
         .mockResolvedValueOnce({
           ok: true,
-          json: () =>
-            Promise.resolve({ is_busy: false, loaded_model: null }),
+          json: () => Promise.resolve({ is_busy: false, loaded_model: null }),
         })
         .mockResolvedValueOnce({
           ok: true,
@@ -1652,8 +1693,7 @@ describe("QueueMaster", () => {
         .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({}) })
         .mockResolvedValueOnce({
           ok: true,
-          json: () =>
-            Promise.resolve({ busy: false, loaded_model: null }),
+          json: () => Promise.resolve({ busy: false, loaded_model: null }),
         });
 
       await qm.getNodeStatuses();
@@ -1691,13 +1731,11 @@ describe("QueueMaster", () => {
       mockFetch
         .mockResolvedValueOnce({
           ok: true,
-          json: () =>
-            Promise.resolve({ is_busy: false, loaded_model: null }),
+          json: () => Promise.resolve({ is_busy: false, loaded_model: null }),
         })
         .mockResolvedValueOnce({
           ok: true,
-          json: () =>
-            Promise.resolve({ is_busy: false, loaded_model: null }),
+          json: () => Promise.resolve({ is_busy: false, loaded_model: null }),
         })
         .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({}) })
         .mockResolvedValueOnce({
@@ -1733,8 +1771,7 @@ describe("QueueMaster", () => {
 
       repo.getPendingJobs.mockReturnValue([]);
       repo.getPendingJobsForModel.mockImplementation(
-        (_node: string, model: string) =>
-          model === "f5-tts" ? [ttsJob] : [],
+        (_node: string, model: string) => (model === "f5-tts" ? [ttsJob] : []),
       );
       repo.listJobs.mockReturnValue([]);
       repo.getJob.mockReturnValue(ttsJob);
@@ -1801,8 +1838,7 @@ describe("QueueMaster", () => {
 
       repo.getPendingJobs.mockReturnValue([]);
       repo.getPendingJobsForModel.mockImplementation(
-        (_node: string, model: string) =>
-          model === "f5-tts" ? [ttsJob] : [],
+        (_node: string, model: string) => (model === "f5-tts" ? [ttsJob] : []),
       );
       repo.listJobs.mockReturnValue([]);
 
@@ -1836,8 +1872,7 @@ describe("QueueMaster", () => {
       // processM2Pro filters by !AUDIO_JOB_TYPES â€” tts is now in that set
       repo.getPendingJobs.mockReturnValue([ttsJob]);
       repo.getPendingJobsForModel.mockImplementation(
-        (_node: string, model: string) =>
-          model === "f5-tts" ? [ttsJob] : [],
+        (_node: string, model: string) => (model === "f5-tts" ? [ttsJob] : []),
       );
       repo.listJobs.mockReturnValue([]);
       repo.getJob.mockReturnValue(ttsJob);
@@ -1888,8 +1923,7 @@ describe("QueueMaster", () => {
 
       repo.getPendingJobs.mockReturnValue([]);
       repo.getPendingJobsForModel.mockImplementation(
-        (_node: string, model: string) =>
-          model === "f5-tts" ? [ttsJob] : [],
+        (_node: string, model: string) => (model === "f5-tts" ? [ttsJob] : []),
       );
       repo.listJobs.mockReturnValue([]);
 
@@ -1937,8 +1971,7 @@ describe("QueueMaster", () => {
 
       repo.getPendingJobs.mockReturnValue([]);
       repo.getPendingJobsForModel.mockImplementation(
-        (_node: string, model: string) =>
-          model === "f5-tts" ? [ttsJob] : [],
+        (_node: string, model: string) => (model === "f5-tts" ? [ttsJob] : []),
       );
       repo.listJobs.mockReturnValue([]);
       repo.getJob.mockReturnValue(ttsJob);

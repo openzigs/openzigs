@@ -52,8 +52,11 @@ const NodeCard = ({ node }: NodeCardProps) => {
   const [cfAccessClientId, setCfAccessClientId] = useState(
     node.cfAccessClientId ?? "",
   );
+  const [showCfClientId, setShowCfClientId] = useState(false);
   const [cfAccessClientSecret, setCfAccessClientSecret] = useState("");
   const [showCfSecret, setShowCfSecret] = useState(false);
+  const [clearCfAccessClientSecret, setClearCfAccessClientSecret] =
+    useState(false);
   const [allowLan, setAllowLan] = useState(node.allowLan);
   const [testResult, setTestResult] = useState<TestResult | null>(null);
   const [testing, setTesting] = useState(false);
@@ -69,6 +72,7 @@ const NodeCard = ({ node }: NodeCardProps) => {
       showToast(`${NODE_LABELS[node.nodeType]} saved`, "success");
       setToken("");
       setCfAccessClientSecret("");
+      setClearCfAccessClientSecret(false);
     },
     onError: (err) =>
       showToast(`Save failed: ${(err as Error).message}`, "error"),
@@ -86,6 +90,7 @@ const NodeCard = ({ node }: NodeCardProps) => {
       setToken("");
       setCfAccessClientId("");
       setCfAccessClientSecret("");
+      setClearCfAccessClientSecret(false);
       setAllowLan(false);
       setTestResult(null);
     },
@@ -101,8 +106,11 @@ const NodeCard = ({ node }: NodeCardProps) => {
     const body: Record<string, unknown> = { url: url.trim(), allowLan };
     if (token.trim()) body.token = token.trim();
     body.cfAccessClientId = cfAccessClientId.trim();
-    if (cfAccessClientSecret.trim())
+    if (clearCfAccessClientSecret) {
+      body.cfAccessClientSecret = "";
+    } else if (cfAccessClientSecret.trim()) {
       body.cfAccessClientSecret = cfAccessClientSecret.trim();
+    }
     saveMutation.mutate(body);
   };
 
@@ -210,14 +218,32 @@ const NodeCard = ({ node }: NodeCardProps) => {
           </p>
           <label className="block text-sm">
             <span className="text-muted-foreground">CF-Access-Client-Id</span>
-            <input
-              type="text"
-              value={cfAccessClientId}
-              onChange={(e) => setCfAccessClientId(e.target.value)}
-              placeholder="abc123.access"
-              autoComplete="off"
-              className="mt-1 w-full rounded border px-2 py-1 text-sm"
-            />
+            <div className="mt-1 flex gap-1">
+              <input
+                type={showCfClientId ? "text" : "password"}
+                value={cfAccessClientId}
+                onChange={(e) => setCfAccessClientId(e.target.value)}
+                placeholder="abc123.access"
+                autoComplete="off"
+                className="flex-1 rounded border px-2 py-1 text-sm"
+              />
+              <button
+                type="button"
+                aria-label={
+                  showCfClientId
+                    ? "Hide CF Access client ID"
+                    : "Show CF Access client ID"
+                }
+                onClick={() => setShowCfClientId((v) => !v)}
+                className="px-2 border rounded"
+              >
+                {showCfClientId ? (
+                  <EyeOff className="h-4 w-4" />
+                ) : (
+                  <Eye className="h-4 w-4" />
+                )}
+              </button>
+            </div>
           </label>
           <label className="block text-sm">
             <span className="text-muted-foreground">
@@ -230,9 +256,14 @@ const NodeCard = ({ node }: NodeCardProps) => {
               <input
                 type={showCfSecret ? "text" : "password"}
                 value={cfAccessClientSecret}
-                onChange={(e) => setCfAccessClientSecret(e.target.value)}
+                onChange={(e) => {
+                  setCfAccessClientSecret(e.target.value);
+                  if (e.target.value.trim()) setClearCfAccessClientSecret(false);
+                }}
                 placeholder={
-                  node.hasCfAccessClientSecret
+                  clearCfAccessClientSecret
+                    ? "Will be cleared on save"
+                    : node.hasCfAccessClientSecret
                     ? "••••••••"
                     : "Service token secret"
                 }
@@ -256,6 +287,20 @@ const NodeCard = ({ node }: NodeCardProps) => {
                 )}
               </button>
             </div>
+            {node.hasCfAccessClientSecret && (
+              <button
+                type="button"
+                onClick={() => {
+                  setCfAccessClientSecret("");
+                  setClearCfAccessClientSecret((value) => !value);
+                }}
+                className="mt-1 text-xs text-red-600 hover:underline"
+              >
+                {clearCfAccessClientSecret
+                  ? "Keep CF Access secret"
+                  : "Clear CF Access secret"}
+              </button>
+            )}
           </label>
         </div>
       </div>

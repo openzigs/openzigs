@@ -182,9 +182,9 @@ shipped version.
 1. Navigate to `Admin → Remote Media Worker Nodes`.
 2. For each node you want remote, paste the public URL (e.g.
    `https://image.example.com`).
-3. Optionally paste a Bearer token (only if you fronted the tunnel with a
-   reverse proxy that requires one). Cloudflare Access is preferred — see
-   §10.
+3. Optionally paste a Bearer token for sidecar-level authorization. If the
+  hostname is protected by Cloudflare Access, also fill the CF Access service
+  token fields described in [§10](#10-cloudflare-access-optional-recommended).
 4. Leave **Allow LAN** off unless the URL resolves to a private RFC1918
    address.
 5. Click **Test Connection**. You should see two green ticks for `/health` and
@@ -195,16 +195,47 @@ shipped version.
 
 ## 10. Cloudflare Access (optional, recommended)
 
-To restrict callers to your OpenZigs server only:
+Use Cloudflare Access when your tunnel hostnames are public but should only be
+callable by your primary OpenZigs server. Access service tokens authenticate the
+request at Cloudflare's edge before traffic reaches the worker; OpenZigs can
+still send its normal Bearer token to the sidecar behind that edge gate.
+
+Recommended production layering after this feature lands is option 3:
+**Cloudflare Access in front + Bearer/HMAC inside**.
+
+- Cloudflare Access service token: protects inbound dispatch requests at the
+  Cloudflare edge with `CF-Access-Client-Id` and
+  `CF-Access-Client-Secret`.
+- Remote node Bearer token: optionally authenticates the dispatch inside the
+  sidecar after the request passes Access.
+- HMAC-signed callbacks: protect worker-to-primary callbacks on
+  `/api/queue/complete` and `/api/queue/progress`.
+
+To configure Access:
 
 1. In the Cloudflare dashboard, open `Zero Trust → Access → Applications →
-   Add an application → Self-hosted`.
-2. Add each `*.example.com` hostname.
-3. Create a service token (`Service Auth → Service Tokens`) and add an
-   `Access policy` requiring it.
-4. Set `CF-Access-Client-Id` and `CF-Access-Client-Secret` headers on the
-   primary server side using a forwarding proxy, or use mTLS if your
-   deployment supports it. (HMAC continues to protect callbacks regardless.)
+  Add an application → Self-hosted`.
+2. Add each node hostname, such as `image.example.com`, `video.example.com`,
+  and `music.example.com`.
+3. Open `Zero Trust → Access → Service Auth → Service Tokens`, create a token,
+  and copy both the `Client ID` and `Client Secret` values.
+4. Return to the Access application and add an Access policy that allows that
+  service token. Keep the policy scoped to the worker hostnames used by
+  OpenZigs.
+5. In OpenZigs, open `Admin → Remote Media Worker Nodes`, paste the node URL,
+  and fill the per-node **CF-Access-Client-Id** and
+  **CF-Access-Client-Secret** fields.
+6. Click **Test Connection**. The probe sends both CF Access headers to
+  `/health` and `/capabilities`, plus `Authorization: Bearer ...` if a node
+  token is set.
+7. Click **Save**. The Admin API persists the service token, masks the secret
+  on future GET responses, and reports only `hasCfAccessClientSecret: true` to
+  the UI. Use **Clear CF Access secret** to remove the stored Access secret
+  without resetting the node URL.
+
+If the CF Access fields are blank, OpenZigs sends no `CF-Access-Client-*`
+headers. This keeps existing tunnel-only and Bearer-only deployments backwards
+compatible.
 
 ## 11. Verify with the smoke test
 
