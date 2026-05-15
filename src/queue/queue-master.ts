@@ -14,6 +14,11 @@ import { logger } from "../logging/logger.js";
 import type { MediaQueueRepository } from "./media-queue-repository.js";
 import { AUDIO_JOB_TYPES } from "./types.js";
 import { dispatchV2aJob } from "./v2a-client.js";
+import {
+  resolveNodeConfig,
+  buildNodeAuthHeaders,
+  type ResolvableNodeType,
+} from "./node-config-resolver.js";
 import type {
   MediaJob,
   QueueConfig,
@@ -216,8 +221,7 @@ export class QueueMaster extends EventEmitter {
     const nodeConfig = await this.getLipSyncNodeConfig();
     try {
       const headers: Record<string, string> = {};
-      if (nodeConfig.token)
-        headers["Authorization"] = `Bearer ${nodeConfig.token}`;
+      Object.assign(headers, buildNodeAuthHeaders(nodeConfig));
 
       const res = await fetch(`${nodeConfig.url}/health`, {
         headers,
@@ -252,8 +256,7 @@ export class QueueMaster extends EventEmitter {
     const nodeConfig = await this.getMusicNodeConfig();
     try {
       const headers: Record<string, string> = {};
-      if (nodeConfig.token)
-        headers["Authorization"] = `Bearer ${nodeConfig.token}`;
+      Object.assign(headers, buildNodeAuthHeaders(nodeConfig));
 
       const res = await fetch(`${nodeConfig.url}/status`, {
         headers,
@@ -446,8 +449,7 @@ export class QueueMaster extends EventEmitter {
       const headers: Record<string, string> = {
         "Content-Type": "application/json",
       };
-      if (nodeConfig.token)
-        headers["Authorization"] = `Bearer ${nodeConfig.token}`;
+      Object.assign(headers, buildNodeAuthHeaders(nodeConfig));
 
       const res = await fetch(`${nodeConfig.url}/unload-model`, {
         method: "POST",
@@ -479,43 +481,38 @@ export class QueueMaster extends EventEmitter {
    * ~/.openzigs/config.json. Falls back to the baked-in startup config.
    * Ensures token/URL changes saved via the admin UI take effect without
    * requiring a server restart.
+   *
+   * Issue #1088: now covers all five remote-addressable node types
+   * (image-gen, video-gen / m2-pro, music-gen, rvc, lip-sync) plus the two
+   * adjacent helpers (audio TTS, sad-talker) so that every networkNodeUrl
+   * read in this file flows through one resolver.
    */
-  private async getLiveNodeConfig(node: TargetNode): Promise<WorkerNodeConfig> {
-    try {
-      const cfgPath = path.join(os.homedir(), ".openzigs", "config.json");
-      const raw = await fs.readFile(cfgPath, "utf-8");
-      const cfg = JSON.parse(raw) as Record<string, unknown>;
-      if (node === "image-gen") {
-        const ig = cfg.imageGen as Record<string, unknown> | undefined;
-        if (
-          ig?.mode === "network" &&
-          typeof ig.networkNodeUrl === "string" &&
-          ig.networkNodeUrl
-        ) {
-          return {
-            url: ig.networkNodeUrl,
-            token:
-              typeof ig.networkNodeToken === "string"
-                ? ig.networkNodeToken
-                : this.config.imageGen.token,
-          };
-        }
-      } else {
-        const vg = cfg.videoGen as Record<string, unknown> | undefined;
-        if (typeof vg?.networkNodeUrl === "string" && vg.networkNodeUrl) {
-          return {
-            url: vg.networkNodeUrl,
-            token:
-              typeof vg.networkNodeToken === "string"
-                ? vg.networkNodeToken
-                : this.config.m2Pro.token,
-          };
-        }
-      }
-    } catch {
-      // config unreadable — fall through to startup config
-    }
-    return node === "image-gen" ? this.config.imageGen : this.config.m2Pro;
+  private async getLiveNodeConfig(
+    node: TargetNode | ResolvableNodeType,
+  ): Promise<WorkerNodeConfig> {
+    const fallback =
+      node === "image-gen"
+        ? this.config.imageGen
+        : node === "m2-pro" || node === "video-gen"
+          ? this.config.m2Pro
+          : node === "rvc"
+            ? this.config.musicStudio
+            : node === "lip-sync"
+              ? this.config.lipSync
+              : node === "audio"
+                ? this.config.audioSidecar
+                : node === "sad-talker"
+                  ? this.config.sadTalker
+                  : undefined;
+
+    const resolverNode: ResolvableNodeType =
+      node === "m2-pro" ? "video-gen" : (node as ResolvableNodeType);
+
+    const resolved = await resolveNodeConfig(resolverNode, {
+      localDefaultUrl: fallback?.url,
+      localDefaultToken: fallback?.token,
+    });
+    return resolved;
   }
 
   /**
@@ -529,8 +526,7 @@ export class QueueMaster extends EventEmitter {
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
     };
-    if (nodeConfig.token)
-      headers["Authorization"] = `Bearer ${nodeConfig.token}`;
+    Object.assign(headers, buildNodeAuthHeaders(nodeConfig));
 
     try {
       const res = await fetch(`${nodeConfig.url}/unload`, {
@@ -612,8 +608,7 @@ export class QueueMaster extends EventEmitter {
         const headers: Record<string, string> = {
           "Content-Type": "application/json",
         };
-        if (nodeConfig.token)
-          headers["Authorization"] = `Bearer ${nodeConfig.token}`;
+        Object.assign(headers, buildNodeAuthHeaders(nodeConfig));
 
         const res = await fetch(`${nodeConfig.url}/model`, {
           method: "POST",
@@ -689,8 +684,7 @@ export class QueueMaster extends EventEmitter {
             ? await this.getMusicNodeConfig()
             : await this.getLiveNodeConfig(node);
         const headers: Record<string, string> = {};
-        if (nodeConfig.token)
-          headers["Authorization"] = `Bearer ${nodeConfig.token}`;
+        Object.assign(headers, buildNodeAuthHeaders(nodeConfig));
 
         const res = await fetch(`${nodeConfig.url}/job-result/${job.id}`, {
           headers,
@@ -967,8 +961,7 @@ export class QueueMaster extends EventEmitter {
     try {
       const nodeConfig = await this.getMusicNodeConfig();
       const headers: Record<string, string> = {};
-      if (nodeConfig.token)
-        headers["Authorization"] = `Bearer ${nodeConfig.token}`;
+      Object.assign(headers, buildNodeAuthHeaders(nodeConfig));
 
       const res = await fetch(`${nodeConfig.url}/status`, {
         headers,
@@ -1030,8 +1023,7 @@ export class QueueMaster extends EventEmitter {
     try {
       const nodeConfig = await this.getAudioNodeConfig();
       const headers: Record<string, string> = {};
-      if (nodeConfig.token)
-        headers["Authorization"] = `Bearer ${nodeConfig.token}`;
+      Object.assign(headers, buildNodeAuthHeaders(nodeConfig));
 
       const res = await fetch(`${nodeConfig.url}/health`, {
         headers,
@@ -1084,8 +1076,7 @@ export class QueueMaster extends EventEmitter {
     try {
       const nodeConfig = await this.getMusicStudioNodeConfig();
       const headers: Record<string, string> = {};
-      if (nodeConfig.token)
-        headers["Authorization"] = `Bearer ${nodeConfig.token}`;
+      Object.assign(headers, buildNodeAuthHeaders(nodeConfig));
 
       const res = await fetch(`${nodeConfig.url}/health`, {
         headers,
@@ -1167,8 +1158,7 @@ export class QueueMaster extends EventEmitter {
     node: TargetNode,
   ): Promise<WorkerStatus> {
     const headers: Record<string, string> = {};
-    if (nodeConfig.token)
-      headers["Authorization"] = `Bearer ${nodeConfig.token}`;
+    Object.assign(headers, buildNodeAuthHeaders(nodeConfig));
 
     // FluxQ builds before /status expose equivalent readiness/model state via
     // /health. Prefer /status for vram_free_gb when available, then fall back so
@@ -1240,11 +1230,12 @@ export class QueueMaster extends EventEmitter {
   }
 
   private async dispatchImageJob(job: MediaJob): Promise<void> {
-    const { url, token } = await this.getLiveNodeConfig("image-gen");
+    const nodeConfig = await this.getLiveNodeConfig("image-gen");
+    const { url } = nodeConfig;
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
     };
-    if (token) headers["Authorization"] = `Bearer ${token}`;
+    Object.assign(headers, buildNodeAuthHeaders(nodeConfig));
 
     let endpoint: string;
     if (job.type === "img2img") {
@@ -1324,11 +1315,12 @@ export class QueueMaster extends EventEmitter {
   }
 
   private async dispatchVideoJob(job: MediaJob): Promise<void> {
-    const { url, token } = await this.getLiveNodeConfig("m2-pro");
+    const nodeConfig = await this.getLiveNodeConfig("m2-pro");
+    const { url } = nodeConfig;
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
     };
-    if (token) headers["Authorization"] = `Bearer ${token}`;
+    Object.assign(headers, buildNodeAuthHeaders(nodeConfig));
 
     const callbackUrl = this.resolveCallbackUrl(url);
     const body: Record<string, unknown> = {
@@ -1391,8 +1383,7 @@ export class QueueMaster extends EventEmitter {
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
     };
-    if (nodeConfig.token)
-      headers["Authorization"] = `Bearer ${nodeConfig.token}`;
+    Object.assign(headers, buildNodeAuthHeaders(nodeConfig));
 
     const callbackUrl = this.resolveCallbackUrl(nodeConfig.url);
 
@@ -1424,29 +1415,11 @@ export class QueueMaster extends EventEmitter {
   }
 
   /**
-   * Returns the WorkerNodeConfig for the music generation sidecar
-   * by reading musicGen from ~/.openzigs/config.json. Falls back to m2Pro config.
+   * Returns the WorkerNodeConfig for the music generation sidecar.
+   * Issue #1088: delegates to the unified resolver.
    */
   private async getMusicNodeConfig(): Promise<WorkerNodeConfig> {
-    try {
-      const cfgPath = path.join(os.homedir(), ".openzigs", "config.json");
-      const raw = await fs.readFile(cfgPath, "utf-8");
-      const cfg = JSON.parse(raw) as Record<string, unknown>;
-      const mg = cfg.musicGen as Record<string, unknown> | undefined;
-      if (typeof mg?.networkNodeUrl === "string" && mg.networkNodeUrl) {
-        return {
-          url: mg.networkNodeUrl,
-          token:
-            typeof mg.networkNodeToken === "string"
-              ? mg.networkNodeToken
-              : undefined,
-        };
-      }
-    } catch {
-      // config unreadable — fall through
-    }
-    // Default: music sidecar on localhost:5009
-    return { url: "http://localhost:5009" };
+    return this.getLiveNodeConfig("music-gen");
   }
 
   /**
@@ -1460,8 +1433,7 @@ export class QueueMaster extends EventEmitter {
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
     };
-    if (nodeConfig.token)
-      headers["Authorization"] = `Bearer ${nodeConfig.token}`;
+    Object.assign(headers, buildNodeAuthHeaders(nodeConfig));
 
     // F5-TTS voice cloning: dispatch to /f5tts with pre-resolved clips
     // Pipeline stores clips as { emotion, ref_audio_path, ref_text } (DB rows).
@@ -1572,24 +1544,11 @@ export class QueueMaster extends EventEmitter {
       return this.config.audioSidecar;
     }
     try {
-      const cfgPath = path.join(os.homedir(), ".openzigs", "config.json");
-      const raw = await fs.readFile(cfgPath, "utf-8");
-      const cfg = JSON.parse(raw) as Record<string, unknown>;
-      const audio = cfg.audioSidecar as Record<string, unknown> | undefined;
-      if (typeof audio?.networkNodeUrl === "string" && audio.networkNodeUrl) {
-        return {
-          url: audio.networkNodeUrl,
-          token:
-            typeof audio.networkNodeToken === "string"
-              ? audio.networkNodeToken
-              : undefined,
-        };
-      }
+      // Issue #1088: delegate to the unified resolver.
+      return await this.getLiveNodeConfig("audio");
     } catch {
-      // config unreadable — fall through
+      return { url: "http://localhost:5006" };
     }
-    // Default: audio sidecar on localhost:5006
-    return { url: "http://localhost:5006" };
   }
 
   private async dispatchMusicStudioJob(job: MediaJob): Promise<void> {
@@ -1597,8 +1556,7 @@ export class QueueMaster extends EventEmitter {
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
     };
-    if (nodeConfig.token)
-      headers["Authorization"] = `Bearer ${nodeConfig.token}`;
+    Object.assign(headers, buildNodeAuthHeaders(nodeConfig));
 
     const callbackUrl = this.resolveCallbackUrl(nodeConfig.url);
 
@@ -1651,8 +1609,7 @@ export class QueueMaster extends EventEmitter {
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
     };
-    if (nodeConfig.token)
-      headers["Authorization"] = `Bearer ${nodeConfig.token}`;
+    Object.assign(headers, buildNodeAuthHeaders(nodeConfig));
 
     let callbackUrl = this.config.callbackUrl;
     const sidecarHost = new URL(nodeConfig.url).hostname;
@@ -1725,29 +1682,8 @@ export class QueueMaster extends EventEmitter {
    * by reading musicStudio from ~/.openzigs/config.json.
    */
   private async getMusicStudioNodeConfig(): Promise<WorkerNodeConfig> {
-    // Check QueueConfig first (may be set from default.json)
-    if (this.config.musicStudio?.url) {
-      return this.config.musicStudio;
-    }
-    try {
-      const cfgPath = path.join(os.homedir(), ".openzigs", "config.json");
-      const raw = await fs.readFile(cfgPath, "utf-8");
-      const cfg = JSON.parse(raw) as Record<string, unknown>;
-      const ms = cfg.musicStudio as Record<string, unknown> | undefined;
-      if (typeof ms?.networkNodeUrl === "string" && ms.networkNodeUrl) {
-        return {
-          url: ms.networkNodeUrl,
-          token:
-            typeof ms.networkNodeToken === "string"
-              ? ms.networkNodeToken
-              : undefined,
-        };
-      }
-    } catch {
-      // config unreadable — fall through
-    }
-    // Default: music-studio sidecar on localhost:5010
-    return { url: "http://localhost:5010" };
+    // Issue #1088: delegate to the unified resolver.
+    return this.getLiveNodeConfig("rvc");
   }
 
   // ── Lip Sync Sidecar (LatentSync) ─────────────────────────
@@ -1762,8 +1698,7 @@ export class QueueMaster extends EventEmitter {
     try {
       const nodeConfig = await this.getLipSyncNodeConfig();
       const headers: Record<string, string> = {};
-      if (nodeConfig.token)
-        headers["Authorization"] = `Bearer ${nodeConfig.token}`;
+      Object.assign(headers, buildNodeAuthHeaders(nodeConfig));
 
       const res = await fetch(`${nodeConfig.url}/health`, {
         headers,
@@ -1832,8 +1767,7 @@ export class QueueMaster extends EventEmitter {
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
     };
-    if (nodeConfig.token)
-      headers["Authorization"] = `Bearer ${nodeConfig.token}`;
+    Object.assign(headers, buildNodeAuthHeaders(nodeConfig));
 
     const callbackUrl = this.resolveCallbackUrl(nodeConfig.url);
     const progressUrl = callbackUrl.replace(/\/complete$/, "/progress");
@@ -1894,28 +1828,8 @@ export class QueueMaster extends EventEmitter {
   }
 
   private async getLipSyncNodeConfig(): Promise<WorkerNodeConfig> {
-    if (this.config.lipSync?.url) {
-      return this.config.lipSync;
-    }
-    try {
-      const cfgPath = path.join(os.homedir(), ".openzigs", "config.json");
-      const raw = await fs.readFile(cfgPath, "utf-8");
-      const cfg = JSON.parse(raw) as Record<string, unknown>;
-      const ls = cfg.lipSync as Record<string, unknown> | undefined;
-      if (typeof ls?.networkNodeUrl === "string" && ls.networkNodeUrl) {
-        return {
-          url: ls.networkNodeUrl,
-          token:
-            typeof ls.networkNodeToken === "string"
-              ? ls.networkNodeToken
-              : undefined,
-        };
-      }
-    } catch {
-      // config unreadable — fall through
-    }
-    // Default: lip-sync sidecar on localhost:5010 (CUDA) or 5008 (MPS)
-    return { url: "http://localhost:5010" };
+    // Issue #1088: delegate to the unified resolver.
+    return this.getLiveNodeConfig("lip-sync");
   }
 
   // ── SadTalker Dispatch ────────────────────────────────────
@@ -1925,8 +1839,7 @@ export class QueueMaster extends EventEmitter {
     try {
       const nodeConfig = await this.getSadTalkerNodeConfig();
       const headers: Record<string, string> = {};
-      if (nodeConfig.token)
-        headers["Authorization"] = `Bearer ${nodeConfig.token}`;
+      Object.assign(headers, buildNodeAuthHeaders(nodeConfig));
 
       const res = await fetch(`${nodeConfig.url}/health`, {
         headers,
@@ -1991,8 +1904,7 @@ export class QueueMaster extends EventEmitter {
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
     };
-    if (nodeConfig.token)
-      headers["Authorization"] = `Bearer ${nodeConfig.token}`;
+    Object.assign(headers, buildNodeAuthHeaders(nodeConfig));
 
     const callbackUrl = this.resolveCallbackUrl(nodeConfig.url);
     const progressUrl = callbackUrl.replace(/\/complete$/, "/progress");
@@ -2041,27 +1953,8 @@ export class QueueMaster extends EventEmitter {
   }
 
   private async getSadTalkerNodeConfig(): Promise<WorkerNodeConfig> {
-    if (this.config.sadTalker?.url) {
-      return this.config.sadTalker;
-    }
-    try {
-      const cfgPath = path.join(os.homedir(), ".openzigs", "config.json");
-      const raw = await fs.readFile(cfgPath, "utf-8");
-      const cfg = JSON.parse(raw) as Record<string, unknown>;
-      const st = cfg.sadTalker as Record<string, unknown> | undefined;
-      if (typeof st?.networkNodeUrl === "string" && st.networkNodeUrl) {
-        return {
-          url: st.networkNodeUrl,
-          token:
-            typeof st.networkNodeToken === "string"
-              ? st.networkNodeToken
-              : undefined,
-        };
-      }
-    } catch {
-      // config unreadable — fall through
-    }
-    return { url: "http://localhost:5011" };
+    // Issue #1088: delegate to the unified resolver.
+    return this.getLiveNodeConfig("sad-talker");
   }
 
   // ── Progress Reporting ────────────────────────────────────
@@ -2423,8 +2316,7 @@ export class QueueMaster extends EventEmitter {
               try {
                 const nodeConfig = await this.getLipSyncNodeConfig();
                 const headers: Record<string, string> = {};
-                if (nodeConfig.token)
-                  headers["Authorization"] = `Bearer ${nodeConfig.token}`;
+                Object.assign(headers, buildNodeAuthHeaders(nodeConfig));
                 await fetch(`${nodeConfig.url}/health`, {
                   headers,
                   signal: AbortSignal.timeout(5_000),
@@ -2557,8 +2449,7 @@ export class QueueMaster extends EventEmitter {
       try {
         const nodeConfig = await this.getSadTalkerNodeConfig();
         const headers: Record<string, string> = {};
-        if (nodeConfig.token)
-          headers["Authorization"] = `Bearer ${nodeConfig.token}`;
+        Object.assign(headers, buildNodeAuthHeaders(nodeConfig));
         await fetch(`${nodeConfig.url}/health`, {
           headers,
           signal: AbortSignal.timeout(5_000),
@@ -2584,8 +2475,7 @@ export class QueueMaster extends EventEmitter {
         try {
           const nodeConfig = await this.getLipSyncNodeConfig();
           const headers: Record<string, string> = {};
-          if (nodeConfig.token)
-            headers["Authorization"] = `Bearer ${nodeConfig.token}`;
+          Object.assign(headers, buildNodeAuthHeaders(nodeConfig));
           await fetch(`${nodeConfig.url}/health`, {
             headers,
             signal: AbortSignal.timeout(5_000),

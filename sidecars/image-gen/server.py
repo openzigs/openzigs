@@ -52,6 +52,14 @@ from PIL import Image
 # When CALLBACK_SECRET is set, outgoing callback POSTs include
 # Authorization: Bearer <secret> so the openzigs server can verify them.
 _callback_secret: Optional[str] = os.getenv("CALLBACK_SECRET") or None
+
+# Issue #1089 — HMAC signing helper.
+import sys as _sys
+_SHARED_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "_shared")
+if _SHARED_DIR not in _sys.path:
+    _sys.path.insert(0, _SHARED_DIR)
+from signed_callback import signed_headers as _signed_headers  # type: ignore[import-not-found]
+NODE_TYPE = "image-gen"
 from pydantic import BaseModel, Field, field_validator
 
 # ── Persistent Training Directory ──────────────────────────────
@@ -65,6 +73,10 @@ _TRAINING_BASE_DIR = os.path.join(os.path.expanduser("~"), ".openzigs", "trainin
 # Sub-issue #907: helpers live in path_utils.py so the regression tests
 # import the exact same code path the routes use.
 from path_utils import safe_join, sanitize_path as _sanitize_path  # noqa: E402
+
+from callback_validator import (  # type: ignore[import-not-found]  # noqa: E402
+    is_safe_callback_url as _is_safe_callback_url,
+)
 
 
 def _get_training_dir(character_id: str) -> str:
@@ -330,12 +342,16 @@ def _post_callback(job_id: str, callback_url: Optional[str], payload: dict) -> N
     if not callback_url:
         log.info(f"[async] Result for job {job_id} stored (no callback URL — polling only)")
         return
+    if not _is_safe_callback_url(callback_url):
+        log.warning(
+            f"[async] Refusing callback for job {job_id} — host not on SSRF "
+            f"allowlist (local/LAN or trusted callback host only): {callback_url}"
+        )
+        return
     body = json.dumps(payload).encode("utf-8")
     max_retries = 3
     for attempt in range(1, max_retries + 1):
-        headers = {"Content-Type": "application/json"}
-        if _callback_secret:
-            headers["Authorization"] = f"Bearer {_callback_secret}"
+        headers = _signed_headers(_callback_secret, body, NODE_TYPE, legacy_bearer=True)
         req = urllib.request.Request(
             callback_url,
             data=body,
@@ -861,6 +877,54 @@ async def health():
         available_models=list(MODEL_REGISTRY.keys()),
         version=SIDECAR_VERSION,
     )
+
+
+@app.get("/capabilities")
+async def capabilities():
+    """Apple Silicon (MLX/MFLUX) capability report for the admin Models page."""
+    import subprocess
+    total_gb = 0.0
+    free_gb = 0.0
+    try:
+        result = subprocess.run(
+            ["sysctl", "-n", "hw.memsize"], capture_output=True, text=True, timeout=2
+        )
+        total_gb = round(int(result.stdout.strip()) / (1024 ** 3), 1)
+    except Exception:
+        pass
+    try:
+        import psutil
+        vm = psutil.virtual_memory()
+        total_gb = round(vm.total / (1024 ** 3), 1)
+        free_gb = round(vm.available / (1024 ** 3), 1)
+    except Exception:
+        pass
+    return {
+        "cuda_available": False,
+        "device_count": 1,
+        "pooled_vram_gb": total_gb,
+        "per_device": [
+            {
+                "index": 0,
+                "name": "Apple Silicon GPU (Metal / MLX)",
+                "total_gb": int(total_gb),
+                "free_gb": int(free_gb),
+            }
+        ],
+        "pooling": {
+            "mode": "unified",
+            "active": True,
+            "transformer_device": "mlx",
+            "encoder_device": "mlx",
+            "vae_device": "mlx",
+        },
+        "available_models": list(MODEL_REGISTRY.keys()),
+        "env": {
+            "SIDECAR_VERSION": SIDECAR_VERSION,
+            "WORKER": "mac-mini",
+            "BACKEND": "mflux",
+        },
+    }
 
 
 @app.get("/models")

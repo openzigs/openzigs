@@ -236,6 +236,7 @@ flux_sync() {
   fi
   local req_src="$script_dir/../sidecars/image-gen/requirements.txt"
   local path_utils_src="$script_dir/../sidecars/image-gen/path_utils.py"
+  local shared_dir="$script_dir/../sidecars/_shared"
   info "Syncing server.py → $FLUXQ_DIR/server.py"
   cp "$src" "$FLUXQ_DIR/server.py"
   if [[ -f "$req_src" ]]; then
@@ -246,6 +247,12 @@ flux_sync() {
     info "Syncing path_utils.py → $FLUXQ_DIR/path_utils.py"
     cp "$path_utils_src" "$FLUXQ_DIR/path_utils.py"
   fi
+  for _shared_mod in signed_callback.py callback_validator.py; do
+    if [[ -f "$shared_dir/$_shared_mod" ]]; then
+      info "Syncing $_shared_mod → $FLUXQ_DIR/$_shared_mod"
+      cp "$shared_dir/$_shared_mod" "$FLUXQ_DIR/$_shared_mod"
+    fi
+  done
   ok "FluxQ synced. Restart to apply: $0 flux restart"
 }
 

@@ -52,6 +52,7 @@ import {
 import { AVAILABLE_VOICES } from "../voice/types.js";
 import { loadSkillMetadata } from "../skills/skill-loader.js";
 import { isAllowedNetworkNodeUrl } from "../security/url-validation.js";
+import { createRemoteNodesRouter } from "./admin-remote-nodes.js";
 import {
   resolveAndAssertOllamaTarget,
   OllamaTargetError,
@@ -4884,6 +4885,9 @@ export const createAdminRouter = ({
   };
   router.use("/image-gen", sidecarPlatformGate);
   router.use("/music-studio", sidecarPlatformGate);
+
+  // Issue #1092 — dedicated Remote Nodes admin sub-router.
+  router.use("/remote-nodes", createRemoteNodesRouter());
 
   // ── Image Generation Node Configuration ──
   router.get("/image-gen/config", async (_req, res) => {

@@ -25,7 +25,6 @@ import uuid
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
 from typing import Optional
-from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 from urllib.error import URLError
 
@@ -34,6 +33,16 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(message)s",
 )
 logger = logging.getLogger("acestep-sidecar")
+
+
+# ── Security Utilities ───────────────────────────────────────
+
+_SHARED_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "_shared")
+if _SHARED_DIR not in sys.path:
+    sys.path.insert(0, _SHARED_DIR)
+from callback_validator import (  # type: ignore[import-not-found]  # noqa: E402
+    is_safe_callback_url as _is_safe_callback_url,
+)
 
 # ── State ────────────────────────────────────────────────────
 
@@ -310,18 +319,18 @@ def run_async_job(
     # POST callback if URL provided
     if callback_url:
         try:
-            parsed = urlparse(callback_url)
-            if parsed.scheme not in ("http", "https"):
+            if not _is_safe_callback_url(callback_url):
                 logger.warning(
-                    f"Invalid callback scheme: {parsed.scheme}"
+                    f"Refusing callback for job {job_id} — host not on SSRF "
+                    f"allowlist (local/LAN or trusted callback host only): {callback_url}"
                 )
                 return
 
             data = json.dumps(result).encode("utf-8")
+            # Issue #1089 — sign callback with HMAC + timestamp.
+            from signed_callback import signed_headers as _sh  # type: ignore[import-not-found]
             _cb_secret = os.getenv("CALLBACK_SECRET") or None
-            headers = {"Content-Type": "application/json"}
-            if _cb_secret:
-                headers["Authorization"] = f"Bearer {_cb_secret}"
+            headers = _sh(_cb_secret, data, "music-gen", legacy_bearer=True)
             req = Request(
                 callback_url,
                 data=data,

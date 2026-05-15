@@ -47,6 +47,13 @@ export type AuthConfig = {
   rateLimit: RateLimitConfig;
   /** Optional shared secret for queue worker callbacks. When set, /api/queue callback endpoints require this as a Bearer token. */
   workerSecret?: string;
+  /** Issue #1089 — accept legacy Bearer auth in addition to HMAC. */
+  allowLegacyBearer?: boolean;
+  /** Issue #1087 — per-node-type rate limit on callback endpoints. */
+  callbackRateLimit?: {
+    perMinute: number;
+    burst: number;
+  };
 };
 
 export type AccessControlMode = "allowlist" | "blocklist" | "open" | "closed";
@@ -421,6 +428,22 @@ const authSchema = z.object({
   role: z.enum(["viewer", "operator", "admin"]).optional(),
   rateLimit: rateLimitSchema,
   workerSecret: z.string().optional(),
+  /**
+   * Issue #1089 — when true, queue callback endpoints accept legacy
+   * `Authorization: Bearer <workerSecret>` instead of HMAC. Default true
+   * for one release; set to false after every sidecar is upgraded.
+   */
+  allowLegacyBearer: z.boolean().optional().default(true),
+  /**
+   * Issue #1087 — per-node-type token bucket on callback endpoints.
+   */
+  callbackRateLimit: z
+    .object({
+      perMinute: z.number().int().min(1).max(10000).optional().default(60),
+      burst: z.number().int().min(1).max(1000).optional().default(10),
+    })
+    .optional()
+    .default({ perMinute: 60, burst: 10 }),
 });
 
 const accessControlSchema = z.object({
@@ -645,6 +668,7 @@ const appConfigSchema = z.object({
       enabled: z.boolean().optional().default(false),
       networkNodeUrl: z.string().optional().default(""),
       networkNodeToken: z.string().optional().default(""),
+      allowLan: z.boolean().optional().default(false),
       defaultModel: z.string().optional().default("latentsync-v1.5"),
       inferenceSteps: z.number().int().min(1).max(100).optional().default(20),
       guidanceScale: z.number().min(0).max(10).optional().default(1.5),
@@ -990,7 +1014,28 @@ export const loadConfig = async (
   // We apply env substitution after merging so user config can also use ${ENV_VARS}
   const userConfigRaw = await readJsonFile(configPath);
 
-  const mergedRaw = deepMerge(defaultConfigRaw ?? {}, userConfigRaw ?? {});
+  // Issue #1090 — auto-enable allowLan for any pre-existing RFC1918
+  // networkNodeUrl so the new SSRF guard does not break working LAN setups.
+  const { migrateAllowLan } = await import("./migrations.js");
+  const migration = migrateAllowLan(userConfigRaw);
+  let migratedUserConfig: Record<string, unknown> | null = userConfigRaw;
+  if (migration.migratedNamespaces.length > 0) {
+    migratedUserConfig = migration.userConfig;
+    for (const ns of migration.migratedNamespaces) {
+      logger.warn(
+        `[migration] auto-enabled allowLan for ${ns} (RFC1918 URL detected)`,
+      );
+    }
+    try {
+      await writeJsonFile(configPath, migratedUserConfig);
+    } catch (err) {
+      logger.warn(
+        `[migration] failed to persist allowLan migration: ${(err as Error).message}`,
+      );
+    }
+  }
+
+  const mergedRaw = deepMerge(defaultConfigRaw ?? {}, migratedUserConfig ?? {});
   const merged = applyEnv(mergedRaw) as AppConfig;
 
   const parsed = appConfigSchema.safeParse(merged);
@@ -998,5 +1043,5 @@ export const loadConfig = async (
     throw new Error(`Invalid config: ${parsed.error.message}`);
   }
 
-  return ensureToken(parsed.data, configPath, userConfigRaw);
+  return ensureToken(parsed.data, configPath, migratedUserConfig);
 };

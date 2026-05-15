@@ -12,6 +12,7 @@ import { promisify } from "node:util";
 import { logger } from "../logging/logger.js";
 import type { MediaJob, MediaJobPayload, WorkerNodeConfig } from "./types.js";
 import { MAX_VIDEO_FRAMES, VALID_VIDEO_DURATIONS } from "./types.js";
+import { buildNodeAuthHeaders } from "./node-config-resolver.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -38,7 +39,13 @@ const segmentTrackers = new Map<string, SegmentTracker>();
 // ── Tracker Persistence ─────────────────────────────────────
 
 function trackerDir(parentJobId: string): string {
-  return path.join(os.homedir(), ".openzigs", "gallery", "segments", parentJobId);
+  return path.join(
+    os.homedir(),
+    ".openzigs",
+    "gallery",
+    "segments",
+    parentJobId,
+  );
 }
 
 function trackerFilePath(parentJobId: string): string {
@@ -61,14 +68,18 @@ async function persistTracker(tracker: SegmentTracker): Promise<void> {
 }
 
 /** Recover tracker from disk if not in memory. */
-async function recoverTracker(parentJobId: string): Promise<SegmentTracker | undefined> {
+async function recoverTracker(
+  parentJobId: string,
+): Promise<SegmentTracker | undefined> {
   const cached = segmentTrackers.get(parentJobId);
   if (cached) return cached;
   try {
     const data = await fs.readFile(trackerFilePath(parentJobId), "utf-8");
     const tracker = JSON.parse(data) as SegmentTracker;
     segmentTrackers.set(parentJobId, tracker);
-    logger.info(`[MultiSegment] Recovered tracker from disk for parent ${parentJobId}`);
+    logger.info(
+      `[MultiSegment] Recovered tracker from disk for parent ${parentJobId}`,
+    );
     return tracker;
   } catch {
     return undefined;
@@ -280,8 +291,7 @@ async function extractLastFrame(
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
     };
-    if (nodeConfig.token)
-      headers["Authorization"] = `Bearer ${nodeConfig.token}`;
+    Object.assign(headers, buildNodeAuthHeaders(nodeConfig));
 
     const res = await fetch(`${nodeConfig.url}/last-frame`, {
       method: "POST",

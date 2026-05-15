@@ -26,6 +26,7 @@ import { IntegrationsPanel } from "@/components/admin/integrations-panel";
 import { MemoryPanel } from "@/components/admin/memory-panel";
 import { DirectorPanel } from "@/components/admin/director-panel";
 import { ImageGenPanel } from "@/components/admin/image-gen-panel";
+import { RemoteNodesPanel } from "@/components/admin/remote-nodes-panel";
 import { VideoGenPanel } from "@/components/admin/video-gen-panel";
 import { MusicGenPanel } from "@/components/admin/music-gen-panel";
 import { PresenterConfigPanel } from "@/components/admin/presenter-config-panel";
@@ -183,6 +184,10 @@ export default function AdminPage() {
           defaultOpen={false}
         >
           <ImageGenPanel />
+        </SectionCard>
+
+        <SectionCard title="Remote Media Worker Nodes" defaultOpen={false}>
+          <RemoteNodesPanel />
         </SectionCard>
 
         <SectionCard

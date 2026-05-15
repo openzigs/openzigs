@@ -22,11 +22,9 @@ import os
 import tempfile
 import time
 import traceback
-import ipaddress
 import re as _re
 from pathlib import Path
 from typing import Any, Optional
-from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 from urllib.error import URLError
 
@@ -46,32 +44,10 @@ logger = logging.getLogger("music-studio-sidecar")
 
 # ── Security Utilities ───────────────────────────────────────
 
-def validate_callback_url(url: str) -> str:
-    """Validate that a callback/webhook URL is safe (SSRF protection).
-
-    Allows only http/https schemes and blocks private/internal networks.
-    Returns the validated URL string, or raises ValueError.
-    """
-    parsed = urlparse(url)
-    if parsed.scheme not in ("http", "https"):
-        raise ValueError(f"URL scheme must be http or https, got: {parsed.scheme}")
-    hostname = parsed.hostname or ""
-    if not hostname:
-        raise ValueError("URL must have a hostname")
-    # Block well-known internal hostnames
-    _blocked = {"localhost", "0.0.0.0", "metadata.google.internal"}
-    if hostname.lower() in _blocked:
-        raise ValueError(f"Blocked hostname: {hostname}")
-    # Check if hostname is an IP and block private ranges
-    try:
-        addr = ipaddress.ip_address(hostname.strip("[]"))
-        if addr.is_private or addr.is_loopback or addr.is_link_local or addr.is_reserved:
-            raise ValueError(f"Blocked private/internal IP: {addr}")
-    except ValueError as e:
-        if "Blocked" in str(e):
-            raise
-        # Not an IP literal — hostname is fine
-    return url
+_SHARED_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "_shared")
+if _SHARED_DIR not in sys.path:
+    sys.path.insert(0, _SHARED_DIR)
+from callback_validator import validate_callback_url  # type: ignore[import-not-found]  # noqa: E402
 
 
 def safe_join(base_dir: str, user_path: str) -> str:
@@ -90,10 +66,14 @@ def safe_join(base_dir: str, user_path: str) -> str:
 def _safe_urlopen(url: str, data: bytes | None = None, timeout: int = 30) -> None:
     """urlopen wrapper that validates the URL first (SSRF protection)."""
     validate_callback_url(url)
-    headers = {"Content-Type": "application/json"}
+    # Issue #1089 — sign callbacks with HMAC + timestamp.
+    import sys as _sys
+    _shared = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "_shared")
+    if _shared not in _sys.path:
+        _sys.path.insert(0, _shared)
+    from signed_callback import signed_headers as _sh  # type: ignore[import-not-found]
     _cb_secret = os.getenv("CALLBACK_SECRET") or None
-    if _cb_secret:
-        headers["Authorization"] = f"Bearer {_cb_secret}"
+    headers = _sh(_cb_secret, data or b"", "rvc", legacy_bearer=True)
     req = Request(url, data=data, headers=headers, method="POST")
     urlopen(req, timeout=timeout)
 

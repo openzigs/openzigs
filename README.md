@@ -75,6 +75,7 @@ Open **http://localhost:3001** for the UI. The API server runs on **http://local
 | **[Installation](docs/INSTALL.md)** | Download links, system requirements, platform-specific setup instructions. |
 | **[Architecture](docs/ARCHITECTURE.md)** | System design, component breakdown, security model, Mermaid diagrams. |
 | **[User Guide](docs/USER_GUIDE.md)** | Configuration, connecting channels, tool management. |
+| **[Remote Media Nodes](docs/REMOTE_NODES_SETUP.md)** | Cloudflare Tunnel setup for remote sidecars (image-gen, video, music, RVC, lip-sync). |
 
 ---
 

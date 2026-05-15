@@ -55,7 +55,8 @@ export const ImageGenPanel = () => {
       queryClient.invalidateQueries({ queryKey: ["image-gen-config"] });
       showToast("Image generation settings saved", "success");
     },
-    onError: (err) => showToast(`Save failed: ${(err as Error).message}`, "error"),
+    onError: (err) =>
+      showToast(`Save failed: ${(err as Error).message}`, "error"),
   });
 
   const handleSave = () => {
@@ -103,7 +104,9 @@ export const ImageGenPanel = () => {
     <div className="space-y-5">
       {/* Mode Toggle */}
       <div className="space-y-2">
-        <label className="text-xs font-medium text-muted-foreground">Sidecar Mode</label>
+        <label className="text-xs font-medium text-muted-foreground">
+          Sidecar Mode
+        </label>
         <div className="flex gap-2">
           <button
             onClick={() => setMode("local")}
@@ -137,7 +140,9 @@ export const ImageGenPanel = () => {
       {mode === "network" && (
         <div className="space-y-3 rounded-lg border border-border bg-muted/30 p-4">
           <div className="space-y-1.5">
-            <label className="text-xs font-medium text-muted-foreground">Node URL</label>
+            <label className="text-xs font-medium text-muted-foreground">
+              Node URL
+            </label>
             <input
               type="text"
               placeholder="http://192.168.1.50:5005"
@@ -158,7 +163,11 @@ export const ImageGenPanel = () => {
               <div className="relative flex-1">
                 <input
                   type={showToken ? "text" : "password"}
-                  placeholder={configQuery.data?.hasToken ? "••••••••  (leave blank to keep)" : "Paste secret token from remote node"}
+                  placeholder={
+                    configQuery.data?.hasToken
+                      ? "••••••••  (leave blank to keep)"
+                      : "Paste secret token from remote node"
+                  }
                   value={nodeToken}
                   onChange={(e) => setNodeToken(e.target.value)}
                   className="w-full rounded-lg border border-border bg-card px-3 py-2 pr-10 text-sm text-foreground placeholder:text-muted-foreground/50"
@@ -168,7 +177,11 @@ export const ImageGenPanel = () => {
                   onClick={() => setShowToken(!showToken)}
                   className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
                 >
-                  {showToken ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  {showToken ? (
+                    <EyeOff className="h-4 w-4" />
+                  ) : (
+                    <Eye className="h-4 w-4" />
+                  )}
                 </button>
               </div>
             </div>
@@ -192,8 +205,14 @@ export const ImageGenPanel = () => {
         </button>
 
         {healthResult && (
-          <span className={`flex items-center gap-1.5 text-sm font-medium ${healthResult.ok ? "text-green-500" : "text-red-500"}`}>
-            {healthResult.ok ? <Wifi className="h-4 w-4" /> : <WifiOff className="h-4 w-4" />}
+          <span
+            className={`flex items-center gap-1.5 text-sm font-medium ${healthResult.ok ? "text-green-500" : "text-red-500"}`}
+          >
+            {healthResult.ok ? (
+              <Wifi className="h-4 w-4" />
+            ) : (
+              <WifiOff className="h-4 w-4" />
+            )}
             {healthResult.ok
               ? `Connected${healthResult.loaded_model ? ` · ${healthResult.loaded_model}` : ""}${healthResult.device ? ` · ${healthResult.device}` : ""}`
               : `Failed: ${healthResult.error ?? "unreachable"}`}

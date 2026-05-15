@@ -7,7 +7,13 @@ import { secureDirOptions } from "../config/file-permissions.js";
 import readline from "node:readline";
 
 export const AUDIT_LEVELS = ["info", "warn", "error", "security"] as const;
-export const AUDIT_CATEGORIES = ["session", "message", "tool", "security", "system"] as const;
+export const AUDIT_CATEGORIES = [
+  "session",
+  "message",
+  "tool",
+  "security",
+  "system",
+] as const;
 
 export type AuditLevel = (typeof AUDIT_LEVELS)[number];
 export type AuditCategory = (typeof AUDIT_CATEGORIES)[number];
@@ -40,16 +46,13 @@ export type AuditLoggerOptions = {
   clock?: () => Date;
 };
 
-type StoredAuditEntry = Omit<AuditLogEntry, "timestamp"> & { timestamp: string };
+type StoredAuditEntry = Omit<AuditLogEntry, "timestamp"> & {
+  timestamp: string;
+};
 
 const defaultAuditDir = () => path.join(os.homedir(), ".openzigs", "logs");
 
-const sensitivePatterns = [
-  /api[_-]?key/i,
-  /password/i,
-  /secret/i,
-  /token/i
-];
+const sensitivePatterns = [/api[_-]?key/i, /password/i, /secret/i, /token/i];
 
 const isSensitiveKey = (key: string) => {
   return sensitivePatterns.some((pattern) => pattern.test(key));
@@ -93,7 +96,8 @@ const formatDate = (date: Date) => {
   return `${year}-${month}-${day}`;
 };
 
-const isAuditFile = (name: string) => /^audit-\d{4}-\d{2}-\d{2}\.jsonl$/.test(name);
+const isAuditFile = (name: string) =>
+  /^audit-\d{4}-\d{2}-\d{2}\.jsonl$/.test(name);
 
 const parseAuditEntry = (line: string): AuditLogEntry | null => {
   if (!line.trim()) {
@@ -103,7 +107,7 @@ const parseAuditEntry = (line: string): AuditLogEntry | null => {
     const parsed = JSON.parse(line) as StoredAuditEntry;
     return {
       ...parsed,
-      timestamp: new Date(parsed.timestamp)
+      timestamp: new Date(parsed.timestamp),
     };
   } catch {
     return null;
@@ -139,21 +143,30 @@ export class AuditLogger {
       sessionId: entry.sessionId,
       userId: entry.userId,
       event: entry.event,
-      details: redactedDetails
+      details: redactedDetails,
     };
 
     await fs.mkdir(this.baseDir, secureDirOptions());
-    const filePath = path.join(this.baseDir, `audit-${formatDate(timestamp)}.jsonl`);
+    const filePath = path.join(
+      this.baseDir,
+      `audit-${formatDate(timestamp)}.jsonl`,
+    );
     const stored: StoredAuditEntry = {
       ...fullEntry,
-      timestamp: fullEntry.timestamp.toISOString()
+      timestamp: fullEntry.timestamp.toISOString(),
     };
     await fs.appendFile(filePath, `${JSON.stringify(stored)}\n`, "utf-8");
 
     return fullEntry;
   }
 
-  async query({ category, level, since, until, limit = 100 }: AuditQuery = {}): Promise<AuditLogEntry[]> {
+  async query({
+    category,
+    level,
+    since,
+    until,
+    limit = 100,
+  }: AuditQuery = {}): Promise<AuditLogEntry[]> {
     const entries = await this.readAllEntries({ since, until });
     const filtered = entries.filter((entry) => {
       if (category && entry.category !== category) {
@@ -175,7 +188,10 @@ export class AuditLogger {
     return filtered.slice(0, Math.max(0, limit));
   }
 
-  private async readAllEntries({ since, until }: { since?: Date; until?: Date } = {}): Promise<AuditLogEntry[]> {
+  private async readAllEntries({
+    since,
+    until,
+  }: { since?: Date; until?: Date } = {}): Promise<AuditLogEntry[]> {
     try {
       const entries = await fs.readdir(this.baseDir);
       const auditFiles = entries
@@ -188,10 +204,30 @@ export class AuditLogger {
           if (!date) {
             return false;
           }
-          if (since && date < new Date(Date.UTC(since.getUTCFullYear(), since.getUTCMonth(), since.getUTCDate()))) {
+          if (
+            since &&
+            date <
+              new Date(
+                Date.UTC(
+                  since.getUTCFullYear(),
+                  since.getUTCMonth(),
+                  since.getUTCDate(),
+                ),
+              )
+          ) {
             return false;
           }
-          if (until && date > new Date(Date.UTC(until.getUTCFullYear(), until.getUTCMonth(), until.getUTCDate()))) {
+          if (
+            until &&
+            date >
+              new Date(
+                Date.UTC(
+                  until.getUTCFullYear(),
+                  until.getUTCMonth(),
+                  until.getUTCDate(),
+                ),
+              )
+          ) {
             return false;
           }
           return true;
@@ -202,7 +238,10 @@ export class AuditLogger {
       for (const file of auditFiles) {
         const filePath = path.join(this.baseDir, file);
         const stream = fsSync.createReadStream(filePath, { encoding: "utf-8" });
-        const rl = readline.createInterface({ input: stream, crlfDelay: Infinity });
+        const rl = readline.createInterface({
+          input: stream,
+          crlfDelay: Infinity,
+        });
         for await (const line of rl) {
           const entry = parseAuditEntry(line);
           if (entry) {
@@ -213,7 +252,11 @@ export class AuditLogger {
 
       return records;
     } catch (error) {
-      if (error instanceof Error && "code" in error && (error as { code?: string }).code === "ENOENT") {
+      if (
+        error instanceof Error &&
+        "code" in error &&
+        (error as { code?: string }).code === "ENOENT"
+      ) {
         return [];
       }
       throw error;

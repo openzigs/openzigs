@@ -79,10 +79,14 @@ def safe_join(base_dir: str, user_path: str) -> str:
 
 def _post_to_callback(endpoint_url: str, data: bytes, timeout: int = 30) -> None:
     """POST data to a server-configured callback URL (not user-supplied)."""
-    headers = {"Content-Type": "application/json"}
+    # Issue #1089 — sign callbacks with HMAC + timestamp.
+    import sys as _sys
+    _shared = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "_shared")
+    if _shared not in _sys.path:
+        _sys.path.insert(0, _shared)
+    from signed_callback import signed_headers as _sh  # type: ignore[import-not-found]
     _cb_secret = os.getenv("CALLBACK_SECRET") or None
-    if _cb_secret:
-        headers["Authorization"] = f"Bearer {_cb_secret}"
+    headers = _sh(_cb_secret, data, "lip-sync", legacy_bearer=True)
     req = Request(endpoint_url, data=data, headers=headers, method="POST")
     urlopen(req, timeout=timeout)
 

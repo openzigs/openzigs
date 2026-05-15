@@ -51,11 +51,9 @@ export class IntegrationsPage {
     this.airtableLabel = page.getByText("Personal Access Token (pat_...)");
 
     // Scope to the Airtable bordered container first, then locate inputs
-    this.airtableSection = page
-      .locator("div.rounded-lg")
-      .filter({
-        has: page.getByRole("heading", { name: "Airtable", exact: true }),
-      });
+    this.airtableSection = page.locator("div.rounded-lg").filter({
+      has: page.getByRole("heading", { name: "Airtable", exact: true }),
+    });
     this.airtableKeyInput = this.airtableSection.locator(
       'input[type="password"]',
     );

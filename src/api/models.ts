@@ -12,9 +12,12 @@ export type ModelsRouterOptions = {
   userConfigPath?: string;
 };
 
-const defaultUserConfigPath = () => path.resolve(PROJECT_ROOT, "config", "user.json");
+const defaultUserConfigPath = () =>
+  path.resolve(PROJECT_ROOT, "config", "user.json");
 
-const readUserConfig = async (configPath: string): Promise<Record<string, unknown>> => {
+const readUserConfig = async (
+  configPath: string,
+): Promise<Record<string, unknown>> => {
   try {
     const raw = await fs.readFile(configPath, "utf-8");
     return JSON.parse(raw) as Record<string, unknown>;
@@ -23,7 +26,10 @@ const readUserConfig = async (configPath: string): Promise<Record<string, unknow
   }
 };
 
-const writeUserConfig = async (configPath: string, data: Record<string, unknown>) => {
+const writeUserConfig = async (
+  configPath: string,
+  data: Record<string, unknown>,
+) => {
   await fs.mkdir(path.dirname(configPath), { recursive: true });
   await fs.writeFile(configPath, JSON.stringify(data, null, 2), "utf-8");
 };
@@ -34,7 +40,9 @@ const fetchOllamaModels = (baseUrl: string): Promise<{ id: string }[]> => {
     const lib = url.protocol === "https:" ? https : http;
     const req = lib.get(url.toString(), { timeout: 5000 }, (res) => {
       let data = "";
-      res.on("data", (chunk: Buffer) => { data += chunk.toString(); });
+      res.on("data", (chunk: Buffer) => {
+        data += chunk.toString();
+      });
       res.on("end", () => {
         try {
           const parsed = JSON.parse(data) as { models?: { name: string }[] };
@@ -46,16 +54,32 @@ const fetchOllamaModels = (baseUrl: string): Promise<{ id: string }[]> => {
       });
     });
     req.on("error", reject);
-    req.on("timeout", () => { req.destroy(); reject(new Error("Ollama /api/tags timed out")); });
+    req.on("timeout", () => {
+      req.destroy();
+      reject(new Error("Ollama /api/tags timed out"));
+    });
   });
 };
 
-const withTimeout = <T>(promise: Promise<T>, ms: number, label: string): Promise<T> => {
+const withTimeout = <T>(
+  promise: Promise<T>,
+  ms: number,
+  label: string,
+): Promise<T> => {
   return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+    const timer = setTimeout(
+      () => reject(new Error(`${label} timed out after ${ms}ms`)),
+      ms,
+    );
     promise.then(
-      (value) => { clearTimeout(timer); resolve(value); },
-      (err) => { clearTimeout(timer); reject(err); }
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (err) => {
+        clearTimeout(timer);
+        reject(err);
+      },
     );
   });
 };
@@ -69,13 +93,19 @@ const FALLBACK_MODELS = [
   { id: "o3-mini" },
 ];
 
-export const createModelsRouter = ({ copilot, userConfigPath }: ModelsRouterOptions): Router => {
+export const createModelsRouter = ({
+  copilot,
+  userConfigPath,
+}: ModelsRouterOptions): Router => {
   const router = Router();
   const configPath = userConfigPath ?? defaultUserConfigPath();
 
   router.get("/", async (_req, res) => {
     const userConfig = await readUserConfig(configPath);
-    const selectedModel = typeof userConfig.selectedModel === "string" ? userConfig.selectedModel : null;
+    const selectedModel =
+      typeof userConfig.selectedModel === "string"
+        ? userConfig.selectedModel
+        : null;
 
     // When a BYOK Ollama provider is active, list models from Ollama instead of Copilot SDK
     const provider = copilot.getProvider();
@@ -86,16 +116,26 @@ export const createModelsRouter = ({ copilot, userConfigPath }: ModelsRouterOpti
           ...m,
           contextWindow: MODEL_CONTEXT_WINDOWS[m.id] ?? null,
         }));
-        return res.status(200).json({ models: modelsWithContext, selectedModel });
+        return res
+          .status(200)
+          .json({ models: modelsWithContext, selectedModel });
       } catch {
         // Ollama unreachable — return the selected model so the UI is minimally functional
-        const fallback = selectedModel ? [{ id: selectedModel, contextWindow: null }] : [];
-        return res.status(200).json({ models: fallback, selectedModel, fallback: true });
+        const fallback = selectedModel
+          ? [{ id: selectedModel, contextWindow: null }]
+          : [];
+        return res
+          .status(200)
+          .json({ models: fallback, selectedModel, fallback: true });
       }
     }
 
     try {
-      const models = await withTimeout(copilot.listModels(), 5000, "listModels");
+      const models = await withTimeout(
+        copilot.listModels(),
+        5000,
+        "listModels",
+      );
       const modelsWithContext = models.map((m) => ({
         ...m,
         contextWindow: MODEL_CONTEXT_WINDOWS[m.id] ?? null,
@@ -107,7 +147,9 @@ export const createModelsRouter = ({ copilot, userConfigPath }: ModelsRouterOpti
         ...m,
         contextWindow: MODEL_CONTEXT_WINDOWS[m.id] ?? null,
       }));
-      return res.status(200).json({ models: modelsWithContext, selectedModel, fallback: true });
+      return res
+        .status(200)
+        .json({ models: modelsWithContext, selectedModel, fallback: true });
     }
   });
 

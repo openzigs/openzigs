@@ -345,7 +345,11 @@ export interface MediaJobPayload {
   /** Reference audio path/base64 for voice cloning in pipeline */
   reference_audio?: string;
   /** F5-TTS clips for voice cloning (emotion, ref_audio_path, ref_text) */
-  f5tts_clips?: Array<{ emotion: string; ref_audio_path: string; ref_text: string }>;
+  f5tts_clips?: Array<{
+    emotion: string;
+    ref_audio_path: string;
+    ref_text: string;
+  }>;
   /** Video prompt for the video generation stage of a pipeline */
   video_prompt?: string;
   /** Reference image (base64) for video generation stage */
@@ -449,6 +453,12 @@ export interface JobCompletionPayload {
 export interface WorkerNodeConfig {
   url: string;
   token?: string;
+  /** Per-node opt-in for RFC1918 / private-range URLs (issue #1090 SSRF guard). */
+  allowLan?: boolean;
+  /** Cloudflare Access service-token client ID (#1100). */
+  cfAccessClientId?: string;
+  /** Cloudflare Access service-token client secret (#1100). */
+  cfAccessClientSecret?: string;
 }
 
 export interface QueueConfig {
