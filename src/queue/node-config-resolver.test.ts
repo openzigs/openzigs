@@ -191,7 +191,8 @@ describe("node-config-resolver", () => {
       const errors: Array<{ nodeType: string; url: string }> = [];
       const r = await resolveNodeConfig("image-gen", {
         configPath,
-        onValidationError: (_e, nodeType, url) => errors.push({ nodeType, url }),
+        onValidationError: (_e, nodeType, url) =>
+          errors.push({ nodeType, url }),
       });
       expect(r.url).toBe("http://localhost:5005");
       expect(errors).toHaveLength(1);

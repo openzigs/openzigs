@@ -67,6 +67,8 @@ describe("buildNodeView", () => {
       hasToken: false,
       tokenMask: "",
       allowLan: false,
+      cfAccessClientId: "",
+      hasCfAccessClientSecret: false,
     });
   });
 
@@ -82,6 +84,25 @@ describe("buildNodeView", () => {
     expect(v.hasToken).toBe(true);
     expect(v.tokenMask).toBe("••••••••");
     expect(v.allowLan).toBe(true);
+  });
+
+  it("exposes cfAccessClientId plain and masks cfAccessClientSecret", () => {
+    const v = buildNodeView("video-gen", {
+      videoGen: {
+        networkNodeUrl: "https://video.example.com",
+        cfAccessClientId: "client-id-123",
+        cfAccessClientSecret: "super-cf-secret",
+      },
+    });
+    expect(v.cfAccessClientId).toBe("client-id-123");
+    expect(v.hasCfAccessClientSecret).toBe(true);
+    expect(JSON.stringify(v)).not.toContain("super-cf-secret");
+  });
+
+  it("returns empty cfAccessClientId and hasCfAccessClientSecret=false when unset", () => {
+    const v = buildNodeView("image-gen", {});
+    expect(v.cfAccessClientId).toBe("");
+    expect(v.hasCfAccessClientSecret).toBe(false);
   });
 });
 
@@ -414,5 +435,253 @@ describe("createRemoteNodesRouter", () => {
     expect(body.health.ok).toBe(false);
     expect(body.health.error).toContain("ECONNREFUSED");
     expect(body.capabilities.ok).toBe(false);
+  });
+});
+
+describe("Cloudflare Access service-token support (#1100)", () => {
+  it("PUT persists cfAccessClientId and cfAccessClientSecret", async () => {
+    buildApp();
+    const { port, close } = await listen();
+    const r = await fetch(`http://127.0.0.1:${port}/remote-nodes/image-gen`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        url: "https://images.example.com",
+        cfAccessClientId: "cf-id-abc",
+        cfAccessClientSecret: "cf-sec-xyz",
+      }),
+    });
+    close();
+    expect(r.status).toBe(200);
+    const cfg = await readUserConfig(configPath);
+    const ig = cfg.imageGen as Record<string, unknown>;
+    expect(ig.cfAccessClientId).toBe("cf-id-abc");
+    expect(ig.cfAccessClientSecret).toBe("cf-sec-xyz");
+  });
+
+  it("GET masks cfAccessClientSecret and surfaces hasCfAccessClientSecret", async () => {
+    await writeUserConfig(configPath, {
+      imageGen: {
+        networkNodeUrl: "https://x.example.com",
+        cfAccessClientId: "cf-id-abc",
+        cfAccessClientSecret: "ultra-secret-value-do-not-leak",
+      },
+    });
+    buildApp();
+    const { port, close } = await listen();
+    const r = await fetch(`http://127.0.0.1:${port}/remote-nodes/image-gen`);
+    const text = await r.text();
+    close();
+    expect(r.status).toBe(200);
+    expect(text).not.toContain("ultra-secret-value-do-not-leak");
+    const body = JSON.parse(text) as {
+      cfAccessClientId: string;
+      hasCfAccessClientSecret: boolean;
+    };
+    expect(body.cfAccessClientId).toBe("cf-id-abc");
+    expect(body.hasCfAccessClientSecret).toBe(true);
+  });
+
+  it("GET / never returns cfAccessClientSecret in any node entry", async () => {
+    await writeUserConfig(configPath, {
+      videoGen: {
+        networkNodeUrl: "https://v.example.com",
+        cfAccessClientSecret: "absolutely-confidential-cf-secret",
+      },
+    });
+    buildApp();
+    const { port, close } = await listen();
+    const r = await fetch(`http://127.0.0.1:${port}/remote-nodes/`);
+    const text = await r.text();
+    close();
+    expect(text).not.toContain("absolutely-confidential-cf-secret");
+  });
+
+  it("PUT clears cfAccessClientId/Secret when empty string is sent", async () => {
+    await writeUserConfig(configPath, {
+      imageGen: {
+        networkNodeUrl: "https://x.example.com",
+        cfAccessClientId: "cf-id-abc",
+        cfAccessClientSecret: "cf-sec-xyz",
+      },
+    });
+    buildApp();
+    const { port, close } = await listen();
+    const r = await fetch(`http://127.0.0.1:${port}/remote-nodes/image-gen`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        url: "https://x.example.com",
+        cfAccessClientId: "",
+        cfAccessClientSecret: "",
+      }),
+    });
+    close();
+    expect(r.status).toBe(200);
+    const cfg = await readUserConfig(configPath);
+    const ig = cfg.imageGen as Record<string, unknown>;
+    expect(ig.cfAccessClientId).toBeUndefined();
+    expect(ig.cfAccessClientSecret).toBeUndefined();
+  });
+
+  it("DELETE clears cfAccessClientId and cfAccessClientSecret too", async () => {
+    await writeUserConfig(configPath, {
+      imageGen: {
+        networkNodeUrl: "https://x.example.com",
+        networkNodeToken: "t",
+        cfAccessClientId: "cf-id-abc",
+        cfAccessClientSecret: "cf-sec-xyz",
+        allowLan: true,
+      },
+    });
+    buildApp();
+    const { port, close } = await listen();
+    const r = await fetch(`http://127.0.0.1:${port}/remote-nodes/image-gen`, {
+      method: "DELETE",
+    });
+    close();
+    expect(r.status).toBe(200);
+    const cfg = await readUserConfig(configPath);
+    const ig = cfg.imageGen as Record<string, unknown>;
+    expect(ig.cfAccessClientId).toBeUndefined();
+    expect(ig.cfAccessClientSecret).toBeUndefined();
+  });
+
+  it("PUT rejects oversized cfAccessClientSecret with 400", async () => {
+    buildApp();
+    const { port, close } = await listen();
+    const r = await fetch(`http://127.0.0.1:${port}/remote-nodes/image-gen`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        url: "https://images.example.com",
+        cfAccessClientSecret: "a".repeat(4097),
+      }),
+    });
+    const body = (await r.json()) as { error: string };
+    close();
+    expect(r.status).toBe(400);
+    expect(body.error).toBe("cf_access_client_secret_too_long");
+  });
+
+  it("PUT rejects oversized cfAccessClientId with 400", async () => {
+    buildApp();
+    const { port, close } = await listen();
+    const r = await fetch(`http://127.0.0.1:${port}/remote-nodes/image-gen`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        url: "https://images.example.com",
+        cfAccessClientId: "a".repeat(4097),
+      }),
+    });
+    const body = (await r.json()) as { error: string };
+    close();
+    expect(r.status).toBe(400);
+    expect(body.error).toBe("cf_access_client_id_too_long");
+  });
+
+  it("Test probe sends Authorization + CF-Access-Client-* headers when fully configured", async () => {
+    await writeUserConfig(configPath, {
+      imageGen: {
+        networkNodeUrl: "https://probe.example.com",
+        networkNodeToken: "tok-bearer",
+        cfAccessClientId: "cf-id-probe",
+        cfAccessClientSecret: "cf-sec-probe",
+      },
+    });
+    const captured: Array<Record<string, string>> = [];
+    const fakeFetch: typeof fetch = (async (
+      _input: unknown,
+      init?: RequestInit,
+    ) => {
+      captured.push((init?.headers ?? {}) as Record<string, string>);
+      return new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }) as typeof fetch;
+    buildApp({ fetchImpl: fakeFetch });
+    const { port, close } = await listen();
+    const r = await fetch(
+      `http://127.0.0.1:${port}/remote-nodes/image-gen/test`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({}),
+      },
+    );
+    close();
+    expect(r.status).toBe(200);
+    expect(captured.length).toBe(2);
+    for (const h of captured) {
+      expect(h["Authorization"]).toBe("Bearer tok-bearer");
+      expect(h["CF-Access-Client-Id"]).toBe("cf-id-probe");
+      expect(h["CF-Access-Client-Secret"]).toBe("cf-sec-probe");
+    }
+  });
+
+  it("Test probe omits CF-Access-Client-* headers when not configured", async () => {
+    await writeUserConfig(configPath, {
+      imageGen: {
+        networkNodeUrl: "https://probe.example.com",
+        networkNodeToken: "tok-bearer",
+      },
+    });
+    const captured: Array<Record<string, string>> = [];
+    const fakeFetch: typeof fetch = (async (
+      _input: unknown,
+      init?: RequestInit,
+    ) => {
+      captured.push((init?.headers ?? {}) as Record<string, string>);
+      return new Response("{}", {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }) as typeof fetch;
+    buildApp({ fetchImpl: fakeFetch });
+    const { port, close } = await listen();
+    await fetch(`http://127.0.0.1:${port}/remote-nodes/image-gen/test`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    close();
+    expect(captured.length).toBe(2);
+    for (const h of captured) {
+      expect(h["Authorization"]).toBe("Bearer tok-bearer");
+      expect(h["CF-Access-Client-Id"]).toBeUndefined();
+      expect(h["CF-Access-Client-Secret"]).toBeUndefined();
+    }
+  });
+
+  it("Test probe accepts CF Access creds from request body (unsaved)", async () => {
+    await writeUserConfig(configPath, {
+      imageGen: { networkNodeUrl: "https://probe.example.com" },
+    });
+    const captured: Array<Record<string, string>> = [];
+    const fakeFetch: typeof fetch = (async (
+      _input: unknown,
+      init?: RequestInit,
+    ) => {
+      captured.push((init?.headers ?? {}) as Record<string, string>);
+      return new Response("{}", {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }) as typeof fetch;
+    buildApp({ fetchImpl: fakeFetch });
+    const { port, close } = await listen();
+    await fetch(`http://127.0.0.1:${port}/remote-nodes/image-gen/test`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        cfAccessClientId: "body-id",
+        cfAccessClientSecret: "body-sec",
+      }),
+    });
+    close();
+    expect(captured[0]["CF-Access-Client-Id"]).toBe("body-id");
+    expect(captured[0]["CF-Access-Client-Secret"]).toBe("body-sec");
   });
 });

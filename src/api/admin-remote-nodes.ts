@@ -132,6 +132,8 @@ interface NodeView {
   hasToken: boolean;
   tokenMask: string;
   allowLan: boolean;
+  cfAccessClientId: string;
+  hasCfAccessClientSecret: boolean;
 }
 
 export function buildNodeView(
@@ -144,6 +146,10 @@ export function buildNodeView(
   const token =
     typeof ns.networkNodeToken === "string" ? ns.networkNodeToken : "";
   const allowLan = ns.allowLan === true;
+  const cfAccessClientId =
+    typeof ns.cfAccessClientId === "string" ? ns.cfAccessClientId : "";
+  const cfAccessClientSecret =
+    typeof ns.cfAccessClientSecret === "string" ? ns.cfAccessClientSecret : "";
   return {
     nodeType,
     configKey: spec.configKey,
@@ -152,6 +158,8 @@ export function buildNodeView(
     hasToken: token.length > 0,
     tokenMask: token ? TOKEN_MASK : "",
     allowLan,
+    cfAccessClientId,
+    hasCfAccessClientSecret: cfAccessClientSecret.length > 0,
   };
 }
 
@@ -209,6 +217,14 @@ export function createRemoteNodesRouter(
     const url = typeof body.url === "string" ? body.url.trim() : undefined;
     const token =
       typeof body.token === "string" ? body.token.trim() : undefined;
+    const cfAccessClientId =
+      typeof body.cfAccessClientId === "string"
+        ? body.cfAccessClientId.trim()
+        : undefined;
+    const cfAccessClientSecret =
+      typeof body.cfAccessClientSecret === "string"
+        ? body.cfAccessClientSecret.trim()
+        : undefined;
     const allowLan = body.allowLan === true;
 
     if (
@@ -218,6 +234,24 @@ export function createRemoteNodesRouter(
       return res.status(400).json({
         error: "token_too_long",
         message: `token must be <= ${MAX_TOKEN_LENGTH} characters`,
+      });
+    }
+    if (
+      typeof body.cfAccessClientId === "string" &&
+      body.cfAccessClientId.length > MAX_TOKEN_LENGTH
+    ) {
+      return res.status(400).json({
+        error: "cf_access_client_id_too_long",
+        message: `cfAccessClientId must be <= ${MAX_TOKEN_LENGTH} characters`,
+      });
+    }
+    if (
+      typeof body.cfAccessClientSecret === "string" &&
+      body.cfAccessClientSecret.length > MAX_TOKEN_LENGTH
+    ) {
+      return res.status(400).json({
+        error: "cf_access_client_secret_too_long",
+        message: `cfAccessClientSecret must be <= ${MAX_TOKEN_LENGTH} characters`,
       });
     }
     if (typeof body.url === "string" && body.url.length > MAX_URL_LENGTH) {
@@ -262,6 +296,20 @@ export function createRemoteNodesRouter(
       if (token !== undefined && token.length > 0) {
         updated.networkNodeToken = token;
       }
+      if (cfAccessClientId !== undefined) {
+        if (cfAccessClientId.length > 0) {
+          updated.cfAccessClientId = cfAccessClientId;
+        } else {
+          delete updated.cfAccessClientId;
+        }
+      }
+      if (cfAccessClientSecret !== undefined) {
+        if (cfAccessClientSecret.length > 0) {
+          updated.cfAccessClientSecret = cfAccessClientSecret;
+        } else {
+          delete updated.cfAccessClientSecret;
+        }
+      }
       updated.allowLan = allowLan;
       cfg[spec.configKey] = updated;
       await writeUserConfig(cfgPath, cfg);
@@ -286,6 +334,8 @@ export function createRemoteNodesRouter(
       const existing = (cfg[spec.configKey] ?? {}) as Record<string, unknown>;
       delete existing.networkNodeUrl;
       delete existing.networkNodeToken;
+      delete existing.cfAccessClientId;
+      delete existing.cfAccessClientSecret;
       delete existing.allowLan;
       cfg[spec.configKey] = existing;
       await writeUserConfig(cfgPath, cfg);
@@ -319,12 +369,23 @@ export function createRemoteNodesRouter(
     }
     const cfg = await readUserConfig(cfgPath);
     const view = buildNodeView(nodeType, cfg);
+    const stored = (cfg[NODE_SPEC[nodeType].configKey] ?? {}) as Record<
+      string,
+      unknown
+    >;
     const url =
       (typeof body.url === "string" && body.url.trim()) || view.url || "";
     const token =
       (typeof body.token === "string" && body.token.trim()) ||
-      ((cfg[NODE_SPEC[nodeType].configKey] ?? {}) as Record<string, unknown>)
-        .networkNodeToken;
+      stored.networkNodeToken;
+    const cfAccessClientId =
+      (typeof body.cfAccessClientId === "string" &&
+        body.cfAccessClientId.trim()) ||
+      stored.cfAccessClientId;
+    const cfAccessClientSecret =
+      (typeof body.cfAccessClientSecret === "string" &&
+        body.cfAccessClientSecret.trim()) ||
+      stored.cfAccessClientSecret;
     const allowLan =
       typeof body.allowLan === "boolean" ? body.allowLan : view.allowLan;
 
@@ -351,6 +412,15 @@ export function createRemoteNodesRouter(
     const headers: Record<string, string> = {};
     if (typeof token === "string" && token.length > 0) {
       headers["Authorization"] = `Bearer ${token}`;
+    }
+    if (typeof cfAccessClientId === "string" && cfAccessClientId.length > 0) {
+      headers["CF-Access-Client-Id"] = cfAccessClientId;
+    }
+    if (
+      typeof cfAccessClientSecret === "string" &&
+      cfAccessClientSecret.length > 0
+    ) {
+      headers["CF-Access-Client-Secret"] = cfAccessClientSecret;
     }
     const base = url.replace(/\/$/, "");
 
