@@ -879,6 +879,54 @@ async def health():
     )
 
 
+@app.get("/capabilities")
+async def capabilities():
+    """Apple Silicon (MLX/MFLUX) capability report for the admin Models page."""
+    import subprocess
+    total_gb = 0.0
+    free_gb = 0.0
+    try:
+        result = subprocess.run(
+            ["sysctl", "-n", "hw.memsize"], capture_output=True, text=True, timeout=2
+        )
+        total_gb = round(int(result.stdout.strip()) / (1024 ** 3), 1)
+    except Exception:
+        pass
+    try:
+        import psutil
+        vm = psutil.virtual_memory()
+        total_gb = round(vm.total / (1024 ** 3), 1)
+        free_gb = round(vm.available / (1024 ** 3), 1)
+    except Exception:
+        pass
+    return {
+        "cuda_available": False,
+        "device_count": 1,
+        "pooled_vram_gb": total_gb,
+        "per_device": [
+            {
+                "index": 0,
+                "name": "Apple Silicon GPU (Metal / MLX)",
+                "total_gb": int(total_gb),
+                "free_gb": int(free_gb),
+            }
+        ],
+        "pooling": {
+            "mode": "unified",
+            "active": True,
+            "transformer_device": "mlx",
+            "encoder_device": "mlx",
+            "vae_device": "mlx",
+        },
+        "available_models": list(MODEL_REGISTRY.keys()),
+        "env": {
+            "SIDECAR_VERSION": SIDECAR_VERSION,
+            "WORKER": "mac-mini",
+            "BACKEND": "mflux",
+        },
+    }
+
+
 @app.get("/models")
 async def list_models():
     """List available models and their metadata."""
