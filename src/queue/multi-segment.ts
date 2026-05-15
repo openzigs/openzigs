@@ -12,6 +12,7 @@ import { promisify } from "node:util";
 import { logger } from "../logging/logger.js";
 import type { MediaJob, MediaJobPayload, WorkerNodeConfig } from "./types.js";
 import { MAX_VIDEO_FRAMES, VALID_VIDEO_DURATIONS } from "./types.js";
+import { buildNodeAuthHeaders } from "./node-config-resolver.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -290,8 +291,7 @@ async function extractLastFrame(
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
     };
-    if (nodeConfig.token)
-      headers["Authorization"] = `Bearer ${nodeConfig.token}`;
+    Object.assign(headers, buildNodeAuthHeaders(nodeConfig));
 
     const res = await fetch(`${nodeConfig.url}/last-frame`, {
       method: "POST",

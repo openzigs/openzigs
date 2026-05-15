@@ -34,6 +34,38 @@ export interface ResolvedNodeConfig {
   token?: string;
   /** Per-node opt-in for RFC1918 / private-range URLs (#1090 SSRF guard). */
   allowLan: boolean;
+  /** Cloudflare Access service-token client ID (#1100). */
+  cfAccessClientId?: string;
+  /** Cloudflare Access service-token client secret (#1100). */
+  cfAccessClientSecret?: string;
+}
+
+/**
+ * Build the outbound auth headers for a remote-node request.
+ *
+ * - `Authorization: Bearer <token>` when `token` is set (sidecar auth).
+ * - `CF-Access-Client-Id` / `CF-Access-Client-Secret` when CF Access
+ *   service-token credentials are configured. The two header sets coexist:
+ *   the CF Access pair authenticates to the Cloudflare Access edge, the
+ *   Bearer token authenticates inside the sidecar (defense in depth).
+ */
+export function buildNodeAuthHeaders(
+  config: Pick<
+    ResolvedNodeConfig,
+    "token" | "cfAccessClientId" | "cfAccessClientSecret"
+  >,
+): Record<string, string> {
+  const headers: Record<string, string> = {};
+  if (config.token && config.token.length > 0) {
+    headers["Authorization"] = `Bearer ${config.token}`;
+  }
+  if (config.cfAccessClientId && config.cfAccessClientId.length > 0) {
+    headers["CF-Access-Client-Id"] = config.cfAccessClientId;
+  }
+  if (config.cfAccessClientSecret && config.cfAccessClientSecret.length > 0) {
+    headers["CF-Access-Client-Secret"] = config.cfAccessClientSecret;
+  }
+  return headers;
 }
 
 interface NodeNamespaceSpec {
@@ -163,6 +195,18 @@ export async function resolveNodeConfig(
     ns && typeof ns.networkNodeToken === "string"
       ? ns.networkNodeToken
       : undefined;
+  const cfAccessClientId =
+    ns &&
+    typeof ns.cfAccessClientId === "string" &&
+    ns.cfAccessClientId.length > 0
+      ? ns.cfAccessClientId
+      : undefined;
+  const cfAccessClientSecret =
+    ns &&
+    typeof ns.cfAccessClientSecret === "string" &&
+    ns.cfAccessClientSecret.length > 0
+      ? ns.cfAccessClientSecret
+      : undefined;
   const allowLan = ns?.allowLan === true;
 
   if (networkUrl) {
@@ -187,6 +231,8 @@ export async function resolveNodeConfig(
             url: overrides.localDefaultUrl ?? spec.localDefaultUrl,
             token: overrides.localDefaultToken,
             allowLan,
+            cfAccessClientId,
+            cfAccessClientSecret,
           };
         }
         throw e;
@@ -196,6 +242,8 @@ export async function resolveNodeConfig(
       url: networkUrl,
       token: networkToken ?? overrides.localDefaultToken,
       allowLan,
+      cfAccessClientId,
+      cfAccessClientSecret,
     };
   }
 
@@ -203,6 +251,8 @@ export async function resolveNodeConfig(
     url: overrides.localDefaultUrl ?? spec.localDefaultUrl,
     token: overrides.localDefaultToken,
     allowLan,
+    cfAccessClientId,
+    cfAccessClientSecret,
   };
 }
 

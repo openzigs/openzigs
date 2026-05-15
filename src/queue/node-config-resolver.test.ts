@@ -6,6 +6,7 @@ import {
   resolveNodeConfig,
   readNodeNamespace,
   namespaceForNode,
+  buildNodeAuthHeaders,
   type ResolvableNodeType,
 } from "./node-config-resolver.js";
 
@@ -98,6 +99,8 @@ describe("node-config-resolver", () => {
           url: `https://${node}.example.com`,
           token: `tok-${node}`,
           allowLan: false,
+          cfAccessClientId: undefined,
+          cfAccessClientSecret: undefined,
         });
       });
 
@@ -125,6 +128,8 @@ describe("node-config-resolver", () => {
         url: "https://music.example.com",
         token: undefined,
         allowLan: false,
+        cfAccessClientId: undefined,
+        cfAccessClientSecret: undefined,
       });
     });
 
@@ -215,5 +220,100 @@ describe("node-config-resolver", () => {
       });
       expect(r.url).toBe("http://localhost:5005");
     });
+
+    it("surfaces cfAccessClientId and cfAccessClientSecret when configured (#1098)", async () => {
+      await writeConfig({
+        imageGen: {
+          networkNodeUrl: "https://x.example.com",
+          networkNodeToken: "tok",
+          cfAccessClientId: "cf-id",
+          cfAccessClientSecret: "cf-sec",
+        },
+      });
+      const r = await resolveNodeConfig("image-gen", {
+        configPath,
+        skipValidation: true,
+      });
+      expect(r.cfAccessClientId).toBe("cf-id");
+      expect(r.cfAccessClientSecret).toBe("cf-sec");
+      expect(r.token).toBe("tok");
+    });
+
+    it("omits CF Access fields when not configured (#1098 backward compat)", async () => {
+      await writeConfig({
+        imageGen: {
+          networkNodeUrl: "https://x.example.com",
+          networkNodeToken: "tok",
+        },
+      });
+      const r = await resolveNodeConfig("image-gen", {
+        configPath,
+        skipValidation: true,
+      });
+      expect(r.cfAccessClientId).toBeUndefined();
+      expect(r.cfAccessClientSecret).toBeUndefined();
+    });
+
+    it("treats empty-string CF Access fields as unset (#1098)", async () => {
+      await writeConfig({
+        imageGen: {
+          networkNodeUrl: "https://x.example.com",
+          cfAccessClientId: "",
+          cfAccessClientSecret: "",
+        },
+      });
+      const r = await resolveNodeConfig("image-gen", {
+        configPath,
+        skipValidation: true,
+      });
+      expect(r.cfAccessClientId).toBeUndefined();
+      expect(r.cfAccessClientSecret).toBeUndefined();
+    });
+  });
+});
+
+describe("buildNodeAuthHeaders (#1098)", () => {
+  it("returns empty object when no token and no CF Access creds", () => {
+    const h = buildNodeAuthHeaders({});
+    expect(h).toEqual({});
+  });
+
+  it("returns only Authorization when only token is set", () => {
+    const h = buildNodeAuthHeaders({ token: "tok" });
+    expect(h).toEqual({ Authorization: "Bearer tok" });
+  });
+
+  it("returns only CF-Access-Client-* when only CF Access creds are set", () => {
+    const h = buildNodeAuthHeaders({
+      cfAccessClientId: "cf-id",
+      cfAccessClientSecret: "cf-sec",
+    });
+    expect(h).toEqual({
+      "CF-Access-Client-Id": "cf-id",
+      "CF-Access-Client-Secret": "cf-sec",
+    });
+    expect(h["Authorization"]).toBeUndefined();
+  });
+
+  it("returns all three headers when token + CF Access creds are set", () => {
+    const h = buildNodeAuthHeaders({
+      token: "tok",
+      cfAccessClientId: "cf-id",
+      cfAccessClientSecret: "cf-sec",
+    });
+    expect(h).toEqual({
+      Authorization: "Bearer tok",
+      "CF-Access-Client-Id": "cf-id",
+      "CF-Access-Client-Secret": "cf-sec",
+    });
+  });
+
+  it("omits empty-string credentials", () => {
+    const h = buildNodeAuthHeaders({
+      token: "",
+      cfAccessClientId: "",
+      cfAccessClientSecret: "",
+    });
+    expect(h).toEqual({});
   });
 });

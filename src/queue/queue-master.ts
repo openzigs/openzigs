@@ -16,6 +16,7 @@ import { AUDIO_JOB_TYPES } from "./types.js";
 import { dispatchV2aJob } from "./v2a-client.js";
 import {
   resolveNodeConfig,
+  buildNodeAuthHeaders,
   type ResolvableNodeType,
 } from "./node-config-resolver.js";
 import type {
@@ -220,8 +221,7 @@ export class QueueMaster extends EventEmitter {
     const nodeConfig = await this.getLipSyncNodeConfig();
     try {
       const headers: Record<string, string> = {};
-      if (nodeConfig.token)
-        headers["Authorization"] = `Bearer ${nodeConfig.token}`;
+      Object.assign(headers, buildNodeAuthHeaders(nodeConfig));
 
       const res = await fetch(`${nodeConfig.url}/health`, {
         headers,
@@ -256,8 +256,7 @@ export class QueueMaster extends EventEmitter {
     const nodeConfig = await this.getMusicNodeConfig();
     try {
       const headers: Record<string, string> = {};
-      if (nodeConfig.token)
-        headers["Authorization"] = `Bearer ${nodeConfig.token}`;
+      Object.assign(headers, buildNodeAuthHeaders(nodeConfig));
 
       const res = await fetch(`${nodeConfig.url}/status`, {
         headers,
@@ -450,8 +449,7 @@ export class QueueMaster extends EventEmitter {
       const headers: Record<string, string> = {
         "Content-Type": "application/json",
       };
-      if (nodeConfig.token)
-        headers["Authorization"] = `Bearer ${nodeConfig.token}`;
+      Object.assign(headers, buildNodeAuthHeaders(nodeConfig));
 
       const res = await fetch(`${nodeConfig.url}/unload-model`, {
         method: "POST",
@@ -528,8 +526,7 @@ export class QueueMaster extends EventEmitter {
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
     };
-    if (nodeConfig.token)
-      headers["Authorization"] = `Bearer ${nodeConfig.token}`;
+    Object.assign(headers, buildNodeAuthHeaders(nodeConfig));
 
     try {
       const res = await fetch(`${nodeConfig.url}/unload`, {
@@ -611,8 +608,7 @@ export class QueueMaster extends EventEmitter {
         const headers: Record<string, string> = {
           "Content-Type": "application/json",
         };
-        if (nodeConfig.token)
-          headers["Authorization"] = `Bearer ${nodeConfig.token}`;
+        Object.assign(headers, buildNodeAuthHeaders(nodeConfig));
 
         const res = await fetch(`${nodeConfig.url}/model`, {
           method: "POST",
@@ -688,8 +684,7 @@ export class QueueMaster extends EventEmitter {
             ? await this.getMusicNodeConfig()
             : await this.getLiveNodeConfig(node);
         const headers: Record<string, string> = {};
-        if (nodeConfig.token)
-          headers["Authorization"] = `Bearer ${nodeConfig.token}`;
+        Object.assign(headers, buildNodeAuthHeaders(nodeConfig));
 
         const res = await fetch(`${nodeConfig.url}/job-result/${job.id}`, {
           headers,
@@ -966,8 +961,7 @@ export class QueueMaster extends EventEmitter {
     try {
       const nodeConfig = await this.getMusicNodeConfig();
       const headers: Record<string, string> = {};
-      if (nodeConfig.token)
-        headers["Authorization"] = `Bearer ${nodeConfig.token}`;
+      Object.assign(headers, buildNodeAuthHeaders(nodeConfig));
 
       const res = await fetch(`${nodeConfig.url}/status`, {
         headers,
@@ -1029,8 +1023,7 @@ export class QueueMaster extends EventEmitter {
     try {
       const nodeConfig = await this.getAudioNodeConfig();
       const headers: Record<string, string> = {};
-      if (nodeConfig.token)
-        headers["Authorization"] = `Bearer ${nodeConfig.token}`;
+      Object.assign(headers, buildNodeAuthHeaders(nodeConfig));
 
       const res = await fetch(`${nodeConfig.url}/health`, {
         headers,
@@ -1083,8 +1076,7 @@ export class QueueMaster extends EventEmitter {
     try {
       const nodeConfig = await this.getMusicStudioNodeConfig();
       const headers: Record<string, string> = {};
-      if (nodeConfig.token)
-        headers["Authorization"] = `Bearer ${nodeConfig.token}`;
+      Object.assign(headers, buildNodeAuthHeaders(nodeConfig));
 
       const res = await fetch(`${nodeConfig.url}/health`, {
         headers,
@@ -1166,8 +1158,7 @@ export class QueueMaster extends EventEmitter {
     node: TargetNode,
   ): Promise<WorkerStatus> {
     const headers: Record<string, string> = {};
-    if (nodeConfig.token)
-      headers["Authorization"] = `Bearer ${nodeConfig.token}`;
+    Object.assign(headers, buildNodeAuthHeaders(nodeConfig));
 
     // FluxQ builds before /status expose equivalent readiness/model state via
     // /health. Prefer /status for vram_free_gb when available, then fall back so
@@ -1239,11 +1230,12 @@ export class QueueMaster extends EventEmitter {
   }
 
   private async dispatchImageJob(job: MediaJob): Promise<void> {
-    const { url, token } = await this.getLiveNodeConfig("image-gen");
+    const nodeConfig = await this.getLiveNodeConfig("image-gen");
+    const { url } = nodeConfig;
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
     };
-    if (token) headers["Authorization"] = `Bearer ${token}`;
+    Object.assign(headers, buildNodeAuthHeaders(nodeConfig));
 
     let endpoint: string;
     if (job.type === "img2img") {
@@ -1323,11 +1315,12 @@ export class QueueMaster extends EventEmitter {
   }
 
   private async dispatchVideoJob(job: MediaJob): Promise<void> {
-    const { url, token } = await this.getLiveNodeConfig("m2-pro");
+    const nodeConfig = await this.getLiveNodeConfig("m2-pro");
+    const { url } = nodeConfig;
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
     };
-    if (token) headers["Authorization"] = `Bearer ${token}`;
+    Object.assign(headers, buildNodeAuthHeaders(nodeConfig));
 
     const callbackUrl = this.resolveCallbackUrl(url);
     const body: Record<string, unknown> = {
@@ -1390,8 +1383,7 @@ export class QueueMaster extends EventEmitter {
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
     };
-    if (nodeConfig.token)
-      headers["Authorization"] = `Bearer ${nodeConfig.token}`;
+    Object.assign(headers, buildNodeAuthHeaders(nodeConfig));
 
     const callbackUrl = this.resolveCallbackUrl(nodeConfig.url);
 
@@ -1441,8 +1433,7 @@ export class QueueMaster extends EventEmitter {
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
     };
-    if (nodeConfig.token)
-      headers["Authorization"] = `Bearer ${nodeConfig.token}`;
+    Object.assign(headers, buildNodeAuthHeaders(nodeConfig));
 
     // F5-TTS voice cloning: dispatch to /f5tts with pre-resolved clips
     // Pipeline stores clips as { emotion, ref_audio_path, ref_text } (DB rows).
@@ -1565,8 +1556,7 @@ export class QueueMaster extends EventEmitter {
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
     };
-    if (nodeConfig.token)
-      headers["Authorization"] = `Bearer ${nodeConfig.token}`;
+    Object.assign(headers, buildNodeAuthHeaders(nodeConfig));
 
     const callbackUrl = this.resolveCallbackUrl(nodeConfig.url);
 
@@ -1619,8 +1609,7 @@ export class QueueMaster extends EventEmitter {
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
     };
-    if (nodeConfig.token)
-      headers["Authorization"] = `Bearer ${nodeConfig.token}`;
+    Object.assign(headers, buildNodeAuthHeaders(nodeConfig));
 
     let callbackUrl = this.config.callbackUrl;
     const sidecarHost = new URL(nodeConfig.url).hostname;
@@ -1709,8 +1698,7 @@ export class QueueMaster extends EventEmitter {
     try {
       const nodeConfig = await this.getLipSyncNodeConfig();
       const headers: Record<string, string> = {};
-      if (nodeConfig.token)
-        headers["Authorization"] = `Bearer ${nodeConfig.token}`;
+      Object.assign(headers, buildNodeAuthHeaders(nodeConfig));
 
       const res = await fetch(`${nodeConfig.url}/health`, {
         headers,
@@ -1779,8 +1767,7 @@ export class QueueMaster extends EventEmitter {
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
     };
-    if (nodeConfig.token)
-      headers["Authorization"] = `Bearer ${nodeConfig.token}`;
+    Object.assign(headers, buildNodeAuthHeaders(nodeConfig));
 
     const callbackUrl = this.resolveCallbackUrl(nodeConfig.url);
     const progressUrl = callbackUrl.replace(/\/complete$/, "/progress");
@@ -1852,8 +1839,7 @@ export class QueueMaster extends EventEmitter {
     try {
       const nodeConfig = await this.getSadTalkerNodeConfig();
       const headers: Record<string, string> = {};
-      if (nodeConfig.token)
-        headers["Authorization"] = `Bearer ${nodeConfig.token}`;
+      Object.assign(headers, buildNodeAuthHeaders(nodeConfig));
 
       const res = await fetch(`${nodeConfig.url}/health`, {
         headers,
@@ -1918,8 +1904,7 @@ export class QueueMaster extends EventEmitter {
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
     };
-    if (nodeConfig.token)
-      headers["Authorization"] = `Bearer ${nodeConfig.token}`;
+    Object.assign(headers, buildNodeAuthHeaders(nodeConfig));
 
     const callbackUrl = this.resolveCallbackUrl(nodeConfig.url);
     const progressUrl = callbackUrl.replace(/\/complete$/, "/progress");
@@ -2331,8 +2316,7 @@ export class QueueMaster extends EventEmitter {
               try {
                 const nodeConfig = await this.getLipSyncNodeConfig();
                 const headers: Record<string, string> = {};
-                if (nodeConfig.token)
-                  headers["Authorization"] = `Bearer ${nodeConfig.token}`;
+                Object.assign(headers, buildNodeAuthHeaders(nodeConfig));
                 await fetch(`${nodeConfig.url}/health`, {
                   headers,
                   signal: AbortSignal.timeout(5_000),
@@ -2465,8 +2449,7 @@ export class QueueMaster extends EventEmitter {
       try {
         const nodeConfig = await this.getSadTalkerNodeConfig();
         const headers: Record<string, string> = {};
-        if (nodeConfig.token)
-          headers["Authorization"] = `Bearer ${nodeConfig.token}`;
+        Object.assign(headers, buildNodeAuthHeaders(nodeConfig));
         await fetch(`${nodeConfig.url}/health`, {
           headers,
           signal: AbortSignal.timeout(5_000),
@@ -2492,8 +2475,7 @@ export class QueueMaster extends EventEmitter {
         try {
           const nodeConfig = await this.getLipSyncNodeConfig();
           const headers: Record<string, string> = {};
-          if (nodeConfig.token)
-            headers["Authorization"] = `Bearer ${nodeConfig.token}`;
+          Object.assign(headers, buildNodeAuthHeaders(nodeConfig));
           await fetch(`${nodeConfig.url}/health`, {
             headers,
             signal: AbortSignal.timeout(5_000),

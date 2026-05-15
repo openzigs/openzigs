@@ -455,6 +455,10 @@ export interface WorkerNodeConfig {
   token?: string;
   /** Per-node opt-in for RFC1918 / private-range URLs (issue #1090 SSRF guard). */
   allowLan?: boolean;
+  /** Cloudflare Access service-token client ID (#1100). */
+  cfAccessClientId?: string;
+  /** Cloudflare Access service-token client secret (#1100). */
+  cfAccessClientSecret?: string;
 }
 
 export interface QueueConfig {
