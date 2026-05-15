@@ -32,6 +32,8 @@ const buildNodes = () => ({
       allowLan: false,
       defaultPort: 5007,
       envVar: "OPENZIGS_VIDEO_NODE_URL",
+      cfAccessClientId: "abc.access",
+      hasCfAccessClientSecret: true,
     },
     {
       nodeType: "music-gen",
@@ -86,7 +88,7 @@ describe("RemoteNodesPanel", () => {
     mockedFetch.mockResolvedValueOnce(buildNodes());
     wrap(<RemoteNodesPanel />);
     await waitFor(() => {
-      expect(screen.getByText("(configured)")).toBeInTheDocument();
+      expect(screen.getAllByText("(configured)").length).toBeGreaterThan(0);
     });
   });
 
@@ -122,5 +124,113 @@ describe("RemoteNodesPanel", () => {
     });
     fireEvent.click(screen.getAllByLabelText("Show token")[0]);
     expect(screen.getAllByLabelText("Hide token").length).toBeGreaterThan(0);
+  });
+
+  it("renders CF Access service-token inputs per node (#1099)", async () => {
+    mockedFetch.mockResolvedValueOnce(buildNodes());
+    wrap(<RemoteNodesPanel />);
+    await waitFor(() => {
+      expect(screen.getAllByText("CF-Access-Client-Id").length).toBe(5);
+    });
+    expect(screen.getAllByText("CF-Access-Client-Secret").length).toBe(5);
+  });
+
+  it("hydrates CF Access Client ID from existing config (#1099)", async () => {
+    mockedFetch.mockResolvedValueOnce(buildNodes());
+    wrap(<RemoteNodesPanel />);
+    await waitFor(() => {
+      const idInputs = screen.getAllByPlaceholderText(
+        "abc123.access",
+      ) as HTMLInputElement[];
+      expect(idInputs.find((i) => i.value === "abc.access")).toBeDefined();
+    });
+  });
+
+  it("masks the CF Access secret with a placeholder when configured (#1099)", async () => {
+    mockedFetch.mockResolvedValueOnce(buildNodes());
+    wrap(<RemoteNodesPanel />);
+    await waitFor(() => {
+      const secretInputs = screen.getAllByPlaceholderText(
+        /Service token secret|••••••••/,
+      ) as HTMLInputElement[];
+      expect(
+        secretInputs.find((i) => i.placeholder === "••••••••"),
+      ).toBeDefined();
+      // Value never echoed back
+      secretInputs.forEach((i) => expect(i.value).toBe(""));
+    });
+  });
+
+  it("submits CF Access fields in the save body (#1099)", async () => {
+    mockedFetch.mockResolvedValueOnce(buildNodes());
+    mockedFetch.mockResolvedValueOnce({ ok: true });
+    mockedFetch.mockResolvedValueOnce(buildNodes());
+    wrap(<RemoteNodesPanel />);
+    await waitFor(() => {
+      expect(screen.getByText("Image Generation")).toBeInTheDocument();
+    });
+
+    const urlInputs = screen.getAllByPlaceholderText(
+      /https:\/\/.+\.example\.com/,
+    ) as HTMLInputElement[];
+    const imageUrlInput = urlInputs.find(
+      (i) => i.placeholder === "https://image-gen.example.com",
+    )!;
+    fireEvent.change(imageUrlInput, {
+      target: { value: "https://img.example.com" },
+    });
+
+    const idInputs = screen.getAllByPlaceholderText(
+      "abc123.access",
+    ) as HTMLInputElement[];
+    fireEvent.change(idInputs[0], { target: { value: "my-cf-id" } });
+
+    const secretInputs = screen.getAllByPlaceholderText(
+      "Service token secret",
+    ) as HTMLInputElement[];
+    fireEvent.change(secretInputs[0], { target: { value: "my-cf-secret" } });
+
+    fireEvent.click(screen.getAllByText("Save")[0]);
+
+    await waitFor(() => {
+      const putCall = mockedFetch.mock.calls.find(
+        ([url, init]) =>
+          url === "/api/admin/remote-nodes/image-gen" &&
+          (init as RequestInit)?.method === "PUT",
+      );
+      expect(putCall).toBeDefined();
+      const body = JSON.parse((putCall![1] as RequestInit).body as string);
+      expect(body.cfAccessClientId).toBe("my-cf-id");
+      expect(body.cfAccessClientSecret).toBe("my-cf-secret");
+    });
+  });
+
+  it("clears CF Access Client ID by sending empty string (#1099)", async () => {
+    mockedFetch.mockResolvedValueOnce(buildNodes());
+    mockedFetch.mockResolvedValueOnce({ ok: true });
+    mockedFetch.mockResolvedValueOnce(buildNodes());
+    wrap(<RemoteNodesPanel />);
+    await waitFor(() => {
+      expect(screen.getByText("Video Generation")).toBeInTheDocument();
+    });
+
+    const idInputs = screen.getAllByPlaceholderText(
+      "abc123.access",
+    ) as HTMLInputElement[];
+    const videoIdInput = idInputs.find((i) => i.value === "abc.access")!;
+    fireEvent.change(videoIdInput, { target: { value: "" } });
+
+    fireEvent.click(screen.getAllByText("Save")[1]);
+
+    await waitFor(() => {
+      const putCall = mockedFetch.mock.calls.find(
+        ([url, init]) =>
+          url === "/api/admin/remote-nodes/video-gen" &&
+          (init as RequestInit)?.method === "PUT",
+      );
+      expect(putCall).toBeDefined();
+      const body = JSON.parse((putCall![1] as RequestInit).body as string);
+      expect(body.cfAccessClientId).toBe("");
+    });
   });
 });
