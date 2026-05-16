@@ -40,7 +40,9 @@ class FakeSession {
   async sendAndWait({ prompt }: { prompt: string }) {
     if (!prompt) throw new Error("missing prompt");
     this.emit("assistant.message_delta", { data: { deltaContent: "ok" } });
-    this.emit("assistant.usage", { data: { inputTokens: 200, outputTokens: 50 } });
+    this.emit("assistant.usage", {
+      data: { inputTokens: 200, outputTokens: 50 },
+    });
     this.emit("session.idle", {});
   }
   async destroy() {
@@ -53,9 +55,10 @@ class FakeSession {
 }
 
 class FakeCopilotClient {
-  public lastSessionConfig:
-    | { provider?: { type?: string; baseUrl?: string }; sessionId?: string }
-    | null = null;
+  public lastSessionConfig: {
+    provider?: { type?: string; baseUrl?: string };
+    sessionId?: string;
+  } | null = null;
   public sessions: FakeSession[] = [];
   async start() {
     /* noop */
@@ -274,6 +277,49 @@ describe("CopilotWrapperService — smart router wiring", () => {
     expect(audits.find((a) => a.event === "router.decision")).toBeUndefined();
     // Cost meter still records the call as cloud-kind (default fallback).
     expect(costs[0].providerKind).toBe("cloud");
+  });
+
+  it("overrides a channel cloud-model name with the local model when routed to local-copilot", async () => {
+    // Simulates Telegram channel passing model: "gpt-5-mini" while smart router
+    // selects the local-copilot provider (e.g. Ollama). The cloud model name must
+    // NOT reach the local endpoint — the local provider's own model is used instead.
+    const { client, costs } = buildHarness({
+      smartRouter: { enabled: true, cloudThresholdTokens: 4096 },
+    });
+    // "gpt-5-mini" is a cloud model name injected by the Telegram channel config
+    await drain(
+      new CopilotWrapperService({
+        client,
+        localProvider,
+        cloudProvider,
+        smartRouter: { enabled: true, cloudThresholdTokens: 4096 },
+        costMeter: {
+          record: (r) => {
+            costs.push({
+              sessionId: r.sessionId,
+              modelId: r.modelId,
+              inputTokens: r.inputTokens,
+              outputTokens: r.outputTokens,
+              providerKind: r.providerKind,
+            });
+            return r;
+          },
+        },
+      }).chat("hello", { model: "gpt-5-mini", conversationId: "conv-g" }),
+    );
+
+    // The SDK session must receive the local model, NOT "gpt-5-mini"
+    expect(client.lastSessionConfig).not.toBeNull();
+    const sessionModel = (client.lastSessionConfig as Record<string, unknown>)
+      .model as string | undefined;
+    expect(sessionModel).toBe("gemma4:26b");
+    // Provider endpoint must still be the local one
+    expect(client.lastSessionConfig?.provider?.baseUrl).toBe(
+      "http://127.0.0.1:11434/v1",
+    );
+    // Cost row uses the local model ID
+    expect(costs[0].modelId).toBe("gemma4:26b");
+    expect(costs[0].providerKind).toBe("local-copilot");
   });
 });
 
