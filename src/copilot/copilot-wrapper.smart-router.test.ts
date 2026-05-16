@@ -321,6 +321,41 @@ describe("CopilotWrapperService — smart router wiring", () => {
     expect(costs[0].modelId).toBe("gemma4:26b");
     expect(costs[0].providerKind).toBe("local-copilot");
   });
+
+  it("suppresses reasoningEffort when smart router selects local-copilot provider", async () => {
+    // Regression: when defaultReasoningEffort is configured (e.g. "medium") and
+    // the active local model nominally passes modelSupportsReasoning (o3-mini used
+    // here to force the static fallback to true), the SDK receives reasoningEffort
+    // for a local endpoint. The SDK parses colons in the model name as option-key
+    // prefixes and throws "Unknown model option key: <tag>:defaultReasoningEffort".
+    // Local providers must never receive reasoningEffort regardless of model name.
+    const { client } = buildHarness({
+      smartRouter: { enabled: true, cloudThresholdTokens: 4096 },
+    });
+    // Use a model name that the static modelSupportsReasoning fallback considers
+    // reasoning-capable ("o3-mini" starts with "o3").
+    const reasoningWrapper = new CopilotWrapperService({
+      client,
+      localProvider: {
+        type: "local-copilot",
+        endpoint: "http://127.0.0.1:11434/v1",
+        model: "o3-mini", // local Ollama that happens to share a cloud model name
+      },
+      cloudProvider,
+      smartRouter: { enabled: true, cloudThresholdTokens: 4096 },
+      defaultReasoningEffort: "medium",
+    });
+
+    await drain(reasoningWrapper.chat("hello", { conversationId: "conv-h" }));
+
+    const cfg = client.lastSessionConfig as Record<string, unknown>;
+    // reasoningEffort must be absent — local providers reject it
+    expect(cfg.reasoningEffort).toBeUndefined();
+    // provider is still the local endpoint
+    expect(client.lastSessionConfig?.provider?.baseUrl).toBe(
+      "http://127.0.0.1:11434/v1",
+    );
+  });
 });
 
 describe("CopilotWrapperService — cost meter integration", () => {
