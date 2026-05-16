@@ -534,7 +534,54 @@ decord_stub = (
 )
 patch("latentsync/utils/util.py", "from decord import AudioReader, VideoReader", decord_stub, "decord stub")
 
-# inference.py — MPS device detection
+# av_reader.py — decord cpu/ndarray stubs (cpu() is a default arg, must be callable)
+av_stub_old = (
+    "    class _DecordStub:\n"
+    "        def __init__(self, *a, **kw): raise RuntimeError('decord unavailable')\n"
+)
+# Only patch if the file still has the bare import block (i.e. not already patched)
+av_path = os.path.join(base, "latentsync", "utils", "av_reader.py")
+if os.path.exists(av_path):
+    av_src = open(av_path).read()
+    if "MPS_AV_PATCH_APPLIED" not in av_src and "from decord" in av_src:
+        av_src = av_src.replace(
+            "from decord.video_reader import VideoReader\n"
+            "from decord.audio_reader import AudioReader\n"
+            "from decord.ndarray import cpu\n"
+            "from decord import ndarray as _nd\n"
+            "from decord.bridge import bridge_out",
+            "# MPS_AV_PATCH_APPLIED\n"
+            "raise ImportError('force stub')"
+        )
+        # Replace entire import section with try/except
+        av_src_new = (
+            "# MPS_AV_PATCH_APPLIED\n"
+            "try:\n"
+            "    from decord.video_reader import VideoReader\n"
+            "    from decord.audio_reader import AudioReader\n"
+            "    from decord.ndarray import cpu\n"
+            "    from decord import ndarray as _nd\n"
+            "    from decord.bridge import bridge_out\n"
+            "except ImportError:\n"
+            "    class _DecordStub:\n"
+            "        def __init__(self, *a, **kw): raise RuntimeError('decord unavailable')\n"
+            "    cpu = lambda *a, **kw: None  # cpu(0) is a default arg; must be callable\n"
+            "    AudioReader = VideoReader = _DecordStub\n"
+            "    bridge_out = lambda x: x\n"
+            "    class ndarray: pass\n"
+        )
+        # Prepend the try/except block before the old import block
+        target = ("from decord.video_reader import VideoReader\n"
+                  "from decord.audio_reader import AudioReader\n"
+                  "from decord.ndarray import cpu\n"
+                  "from decord import ndarray as _nd\n"
+                  "from decord.bridge import bridge_out")
+        av_src_orig = open(av_path).read()
+        if target in av_src_orig:
+            open(av_path, "w").write(av_src_orig.replace(target, av_src_new.rstrip()))
+            print("  patched: latentsync/utils/av_reader.py (decord cpu stub)")
+        else:
+            print("  av_reader.py: decord import block not found, skipping")
 inf_path = os.path.join(base, "scripts", "inference.py")
 if os.path.exists(inf_path):
     src = open(inf_path).read()
