@@ -34,6 +34,13 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator
 import uvicorn
 
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv()
+except Exception:
+    pass
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
@@ -599,7 +606,7 @@ async def generate(req: LipSyncRequest):
     return {"job_id": req.job_id, "status": "accepted"}
 
 
-@app.get("/health")
+@app.get("/health", dependencies=[Depends(verify_auth)])
 async def health():
     import psutil
 
@@ -616,7 +623,7 @@ async def health():
     }
 
 
-@app.get("/capabilities")
+@app.get("/capabilities", dependencies=[Depends(verify_auth)])
 async def capabilities():
     """Apple Silicon (MPS/PyTorch) capability report for the admin Models page."""
     total_gb = 0.0

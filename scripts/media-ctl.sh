@@ -450,7 +450,9 @@ lipsync_setup() {
   if [[ ! -f "$venv/bin/python" ]]; then
     info "Creating .venv-mps..."
     local py=""
-    for c in python3.12 python3.11 python3.10 python3; do
+    # LatentSync's dependency stack still needs Python 3.11 on macOS arm64:
+    # decord has no usable wheels for Python 3.12/3.14 here.
+    for c in python3.11 python3.10 python3.12 python3; do
       command -v "$c" >/dev/null 2>&1 && py="$c" && break
     done
     [[ -z "$py" ]] && fail "Python 3.10+ not found. Install: brew install python@3.11"
@@ -459,7 +461,13 @@ lipsync_setup() {
 
   info "Installing requirements-mps.txt (first run takes a few minutes)..."
   "$venv/bin/python" -m pip install --upgrade pip --quiet 2>/dev/null
-  "$venv/bin/python" -m pip install -r "$LIPSYNC_DIR/requirements-mps.txt" --quiet 2>&1 | tail -5
+  if ! "$venv/bin/python" -m pip install -r "$LIPSYNC_DIR/requirements-mps.txt" --quiet 2>&1 | tail -5; then
+    warn "Full requirements install failed; retrying without decord (no macOS arm64 PyPI wheel)."
+    local filtered_req
+    filtered_req="$TMPDIR/lipsync-requirements-mps-no-decord.txt"
+    grep -v '^decord' "$LIPSYNC_DIR/requirements-mps.txt" > "$filtered_req"
+    "$venv/bin/python" -m pip install -r "$filtered_req" --quiet 2>&1 | tail -5
+  fi
 
   # MPS check
   if "$venv/bin/python" -c "import torch; assert torch.backends.mps.is_available()" 2>/dev/null; then
@@ -522,6 +530,7 @@ lipsync_restart() {
 }
 
 lipsync_status() {
+  load_lipsync_env
   section "── Lipsync (LatentSync, port 5012) ──"
   local lc_out
   lc_out=$(launchctl list | grep "$LIPSYNC_PLIST_LABEL" 2>/dev/null || true)
@@ -537,7 +546,11 @@ lipsync_status() {
   local url
   url=$(lipsync_api_url)
   local health
-  if health=$(curl -sf --max-time 3 "$url/health" 2>/dev/null); then
+  local -a curl_opts=(-sf --max-time 3 "$url/health")
+  if [[ -n "${LIPSYNC_SECRET_TOKEN:-}" ]]; then
+    curl_opts+=(-H "Authorization: Bearer $LIPSYNC_SECRET_TOKEN")
+  fi
+  if health=$(curl "${curl_opts[@]}" 2>/dev/null); then
     echo "$health" | python3 -m json.tool 2>/dev/null || echo "$health"
   else
     warn "Health endpoint unreachable at $url/health"
