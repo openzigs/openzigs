@@ -483,8 +483,9 @@ lipsync_setup() {
   #   $LATENTSYNC_DIR/checkpoints/latentsync_unet_v1.5.pt ← versioned symlink
   local latentsync_dir="${LATENTSYNC_DIR:-$HOME/.openzigs/models/latentsync}"
 
-  # 1. Clone LatentSync source (inference.py, configs/, etc.)
-  if [[ ! -f "$latentsync_dir/inference.py" ]]; then
+  # 1. Clone LatentSync source (scripts/inference.py, configs/, latentsync/ package, etc.)
+  # inference.py lives in scripts/ subdirectory, not the repo root.
+  if [[ ! -f "$latentsync_dir/scripts/inference.py" ]]; then
     info "Cloning LatentSync source → $latentsync_dir ..."
     if command -v git >/dev/null 2>&1; then
       if [[ -d "$latentsync_dir/.git" ]]; then
@@ -499,6 +500,74 @@ lipsync_setup() {
     fi
   else
     info "LatentSync source already present at $latentsync_dir"
+  fi
+
+  # 1b. Apply MPS compatibility patches to the LatentSync source clone.
+  # These fix:
+  #   - decord (unavailable on macOS ARM) — wrapped in try/except with stubs
+  #   - device hardcoded to "cuda" → auto-detected (mps/cuda/cpu)
+  #   - cuda_to_int() + insightface providers for MPS/CPU
+  #   - ImageProcessor receives actual pipeline device instead of "cuda"
+  if [[ -f "$latentsync_dir/scripts/inference.py" ]]; then
+    "$venv/bin/python" - "$latentsync_dir" <<'PATCHEOF'
+import os, sys, re, py_compile
+
+base = sys.argv[1]
+
+def patch(relpath, old, new, label):
+    p = os.path.join(base, relpath)
+    if not os.path.exists(p): return
+    src = open(p).read()
+    if old in src:
+        open(p, "w").write(src.replace(old, new))
+        print(f"  patched: {relpath} ({label})")
+
+# util.py — decord stub
+decord_stub = (
+    "try:\n"
+    "    from decord import AudioReader, VideoReader\n"
+    "except ImportError:\n"
+    "    class AudioReader:\n"
+    "        def __init__(self, *a, **kw): raise RuntimeError(\"decord unavailable\")\n"
+    "    class VideoReader:\n"
+    "        def __init__(self, *a, **kw): raise RuntimeError(\"decord unavailable\")"
+)
+patch("latentsync/utils/util.py", "from decord import AudioReader, VideoReader", decord_stub, "decord stub")
+
+# inference.py — MPS device detection
+inf_path = os.path.join(base, "scripts", "inference.py")
+if os.path.exists(inf_path):
+    src = open(inf_path).read()
+    if "MPS_PATCH_APPLIED" not in src:
+        src = src.replace("import torch\n",
+            'import torch\n# MPS_PATCH_APPLIED\n'
+            '_device = "mps" if torch.backends.mps.is_available() else ("cuda" if torch.cuda.is_available() else "cpu")\n'
+            'print(f"LatentSync using device: {_device}")\n')
+        src = src.replace('device="cuda"', 'device=_device')
+        src = src.replace('.to("cuda")', '.to(_device)')
+        open(inf_path, "w").write(src)
+        print("  patched: scripts/inference.py (MPS device)")
+
+# face_detector.py — cuda_to_int + providers
+patch("latentsync/utils/face_detector.py",
+    'if device.type != "cuda":\n        raise ValueError(f"Device type must be \'cuda\', got: {device.type}")\n    return device.index',
+    'if device.type == "cuda":\n        return device.index if device.index is not None else 0\n    return -1  # CPU/MPS',
+    "cuda_to_int MPS")
+patch("latentsync/utils/face_detector.py",
+    'providers=["CUDAExecutionProvider"],',
+    'providers=(["CUDAExecutionProvider", "CoreMLExecutionProvider", "CPUExecutionProvider"] if __import__("torch").cuda.is_available() else ["CoreMLExecutionProvider", "CPUExecutionProvider"]),',
+    "providers MPS")
+
+# lipsync_pipeline.py — fix ImageProcessor device
+patch("latentsync/pipelines/lipsync_pipeline.py",
+    'ImageProcessor(height, device="cuda", mask_image=mask_image)',
+    'ImageProcessor(height, device=str(device), mask_image=mask_image)',
+    "ImageProcessor device")
+
+print("  MPS patches complete.")
+PATCHEOF
+  else
+    warn "LatentSync source not present — skipping patches. Re-run setup after clone."
   fi
 
   # 2. Download checkpoint weights to expected path

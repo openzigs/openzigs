@@ -26,6 +26,21 @@ pydantic>=2.0.0
 huggingface-hub>=0.20.0
 omegaconf>=2.3.0
 einops>=0.7.0
-decord>=0.6.0
+# decord is not available on macOS ARM64 via PyPI — the sidecar patches LatentSync
+# source to stub it out. The pipeline uses imageio/OpenCV for video I/O on MPS.
+# decord>=0.6.0
 # Issue #1103 — face / landmark detection used by LatentSync's preprocessor.
 mediapipe>=0.10.9
+# ── Additional packages required by LatentSync's inference pipeline ──────────
+imageio>=2.31.0
+imageio-ffmpeg>=0.5.0
+scenedetect>=0.6.0
+ffmpeg-python>=0.2.0
+lpips>=0.1.4
+face-alignment>=1.4.1
+kornia>=0.7.0
+insightface>=0.7.3
+# onnxruntime-gpu is Linux/Windows only; macOS MPS uses the CPU provider
+onnxruntime>=1.17.0
+DeepCache>=0.1.1
+python_speech_features>=0.6
