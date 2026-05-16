@@ -434,7 +434,8 @@ def _run_latentsync_subprocess(
     }
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=600, cwd=latentsync_dir, env=subprocess_env)  # noqa: S603
     if result.returncode != 0:
-        raise RuntimeError(f"LatentSync inference failed: {result.stderr[-1000:]}")
+        combined = (result.stdout + "\n" + result.stderr).strip()
+        raise RuntimeError(f"LatentSync inference failed: {combined[-3000:]}")
 
 
 async def process_lipsync_job(req: LipSyncRequest) -> None:
@@ -576,13 +577,14 @@ async def process_lipsync_job(req: LipSyncRequest) -> None:
         logger.error("Job %s failed: %s\n%s", job_id, exc, tb)
         job_progress[job_id] = {
             "status": "failed",
-            "error": str(exc)[:500],
+            "error": str(exc)[:3000],
+            "traceback": tb[:3000],
             "completed_at": time.time(),
         }
         if CALLBACK_URL:
             try:
                 err_payload = json.dumps(
-                    {"job_id": job_id, "status": "failed", "error": str(exc)[:500]}
+                    {"job_id": job_id, "status": "failed", "error": str(exc)[:3000]}
                 ).encode()
                 _post_to_callback(CALLBACK_URL, data=err_payload)
             except Exception:
