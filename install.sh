@@ -598,13 +598,15 @@ install_sidecar_lipsync() {
     echo -e "  ${YELLOW}⚠ torch reports MPS unavailable. Sidecar will fall back to CPU (slow).${RESET}"
   fi
 
-  # Pre-fetch v1.5 weights so the first /generate doesn't time out.
-  local HF_CACHE="${HF_HOME:-$HOME/.cache/huggingface}"
-  echo "  Pre-fetching ByteDance/LatentSync-1.5 to $HF_CACHE ..."
-  HF_HOME="$HF_CACHE" "$VENV_DIR/bin/python" -c \
-    "from huggingface_hub import snapshot_download; snapshot_download('ByteDance/LatentSync-1.5')" \
+  # Clone LatentSync-1.5 source + weights to ~/.openzigs/models/latentsync so
+  # the sidecar's subprocess fallback can locate inference.py and checkpoints.
+  local LATENTSYNC_MODEL_DIR="$HOME/.openzigs/models/latentsync"
+  echo "  Downloading ByteDance/LatentSync-1.5 to $LATENTSYNC_MODEL_DIR ..."
+  mkdir -p "$LATENTSYNC_MODEL_DIR"
+  "$VENV_DIR/bin/python" -c \
+    "from huggingface_hub import snapshot_download; snapshot_download('ByteDance/LatentSync-1.5', local_dir='$LATENTSYNC_MODEL_DIR')" \
     2>&1 | tail -3 || \
-    echo -e "  ${YELLOW}⚠ Model pre-fetch failed — will download on first /generate instead.${RESET}"
+    echo -e "  ${YELLOW}⚠ Model download failed — run manually: huggingface-cli download ByteDance/LatentSync-1.5 --local-dir ~/.openzigs/models/latentsync${RESET}"
 
   echo -e "  ${GREEN}✓ Lip Sync sidecar ready${RESET}"
   echo "    Start: $VENV_DIR/bin/python $LIP_DIR/server.py --port 5012"

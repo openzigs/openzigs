@@ -18,6 +18,7 @@ import json
 import logging
 import os
 import re
+import sys
 import tempfile
 import time
 import traceback
@@ -410,7 +411,7 @@ def _run_latentsync_subprocess(
 
     # All arguments are validated and path-safe; no shell=True
     cmd = [
-        "python",
+        sys.executable,
         inference_script,
         "--unet_config_path", config_path,
         "--inference_ckpt_path", ckpt_path,
