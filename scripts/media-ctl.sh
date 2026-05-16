@@ -37,16 +37,21 @@ set -euo pipefail
 # ── Defaults ──────────────────────────────────────────────────────────────────
 FLUXQ_DIR="${FLUXQ_DIR:-$HOME/fluxq-node}"
 LTX_DIR="${LTX_DIR:-$HOME/ltx-worker}"
+LIPSYNC_DIR="${LIPSYNC_DIR:-$HOME/lipsync-worker}"
 
 FLUX_PLIST_LABEL="com.openzigs.fluxq"
 LTX_PLIST_LABEL="com.openzigs.ltx-worker"
+LIPSYNC_PLIST_LABEL="com.openzigs.lipsync"
 FLUX_PLIST_PATH="$HOME/Library/LaunchAgents/${FLUX_PLIST_LABEL}.plist"
 LTX_PLIST_PATH="$HOME/Library/LaunchAgents/${LTX_PLIST_LABEL}.plist"
+LIPSYNC_PLIST_PATH="$HOME/Library/LaunchAgents/${LIPSYNC_PLIST_LABEL}.plist"
 
 FLUX_STDOUT_LOG="/tmp/fluxq-stdout.log"
 FLUX_STDERR_LOG="/tmp/fluxq-stderr.log"
 LTX_STDOUT_LOG="/tmp/ltx-worker-stdout.log"
 LTX_STDERR_LOG="/tmp/ltx-worker-stderr.log"
+LIPSYNC_STDOUT_LOG="/tmp/lipsync-stdout.log"
+LIPSYNC_STDERR_LOG="/tmp/lipsync-stderr.log"
 
 # ── Colors ────────────────────────────────────────────────────────────────────
 RED='\033[0;31m'
@@ -78,6 +83,13 @@ load_ltx_env() {
   fi
 }
 
+load_lipsync_env() {
+  local env_file="$LIPSYNC_DIR/.env"
+  if [[ -f "$env_file" ]]; then
+    set -a; source "$env_file"; set +a
+  fi
+}
+
 require_flux_token() {
   load_flux_env
   if [[ -z "${FLUXQ_SECRET_TOKEN:-}" ]]; then
@@ -89,6 +101,13 @@ require_ltx_token() {
   load_ltx_env
   if [[ -z "${LTX_SECRET_TOKEN:-}" ]]; then
     fail "LTX_SECRET_TOKEN not set. Add it to $LTX_DIR/.env"
+  fi
+}
+
+require_lipsync_token() {
+  load_lipsync_env
+  if [[ -z "${LIPSYNC_SECRET_TOKEN:-}" ]]; then
+    fail "LIPSYNC_SECRET_TOKEN not set. Add it to $LIPSYNC_DIR/.env"
   fi
 }
 
@@ -106,6 +125,11 @@ ltx_api_url() {
   echo "http://${host}:${M2_PRO_PORT:-5007}"
 }
 
+lipsync_api_url() {
+  load_lipsync_env
+  echo "http://127.0.0.1:5012"
+}
+
 check_flux_plist() {
   if [[ ! -f "$FLUX_PLIST_PATH" ]]; then
     fail "FluxQ plist not found at $FLUX_PLIST_PATH — run setup-fluxq-node.sh first"
@@ -115,6 +139,45 @@ check_flux_plist() {
 check_ltx_plist() {
   if [[ ! -f "$LTX_PLIST_PATH" ]]; then
     fail "LTX plist not found at $LTX_PLIST_PATH — run setup-ltx-node.sh first"
+  fi
+}
+
+check_lipsync_plist() {
+  if [[ ! -f "$LIPSYNC_PLIST_PATH" ]]; then
+    info "Lipsync plist not found — creating $LIPSYNC_PLIST_PATH"
+    local venv="$LIPSYNC_DIR/.venv-mps/bin/python"
+    if [[ ! -f "$venv" ]]; then
+      fail "Venv not found at $LIPSYNC_DIR/.venv-mps — run: lipsync setup first"
+    fi
+    mkdir -p ~/Library/LaunchAgents
+    cat > "$LIPSYNC_PLIST_PATH" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>       <string>${LIPSYNC_PLIST_LABEL}</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>${venv}</string>
+    <string>${LIPSYNC_DIR}/server.py</string>
+    <string>--port</string><string>5012</string>
+  </array>
+  <key>WorkingDirectory</key> <string>${LIPSYNC_DIR}</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key><string>/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin</string>
+    <key>PYTORCH_ENABLE_MPS_FALLBACK</key><string>1</string>
+  </dict>
+  <key>KeepAlive</key>    <true/>
+  <key>RunAtLoad</key>    <false/>
+  <key>StandardOutPath</key> <string>${LIPSYNC_STDOUT_LOG}</string>
+  <key>StandardErrorPath</key><string>${LIPSYNC_STDERR_LOG}</string>
+  <key>ThrottleInterval</key><integer>10</integer>
+</dict>
+</plist>
+PLIST
+    ok "Created plist at $LIPSYNC_PLIST_PATH"
   fi
 }
 
@@ -344,6 +407,162 @@ ltx_unload() {
   echo "$response" | python3 -m json.tool 2>/dev/null || echo "$response"
 }
 
+# ── Lipsync Commands ──────────────────────────────────────────────────────────
+
+lipsync_setup() {
+  # Bootstrap ~/lipsync-worker from repo sources.  Idempotent — safe to re-run.
+  local script_dir
+  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  local src_dir="$script_dir/../sidecars/lipsync"
+  local shared_dir="$script_dir/../sidecars/_shared"
+
+  info "Setting up lipsync-worker at $LIPSYNC_DIR"
+  mkdir -p "$LIPSYNC_DIR"
+
+  # Core files
+  cp "$src_dir/server.py"               "$LIPSYNC_DIR/server.py"
+  cp "$src_dir/requirements-mps.txt"    "$LIPSYNC_DIR/requirements-mps.txt"
+  [[ -f "$src_dir/.env.example" ]] && cp "$src_dir/.env.example" "$LIPSYNC_DIR/.env.example"
+  for _m in signed_callback.py callback_validator.py; do
+    [[ -f "$shared_dir/$_m" ]] && cp "$shared_dir/$_m" "$LIPSYNC_DIR/$_m"
+  done
+
+  # .env — create if missing
+  if [[ ! -f "$LIPSYNC_DIR/.env" ]]; then
+    local token
+    token=$(python3 -c "import secrets; print(secrets.token_hex(32))")
+    local cb_secret=""
+    [[ -f "$HOME/.openzigs/worker-secret" ]] && cb_secret=$(cat "$HOME/.openzigs/worker-secret")
+    {
+      echo "LIPSYNC_SECRET_TOKEN=$token"
+      echo "CALLBACK_SECRET=${cb_secret}"
+      echo "CALLBACK_URL=http://localhost:3000/api/queue/complete"
+      echo "PROGRESS_URL=http://localhost:3000/api/queue/progress"
+    } > "$LIPSYNC_DIR/.env"
+    chmod 600 "$LIPSYNC_DIR/.env"
+    ok "Generated .env with new LIPSYNC_SECRET_TOKEN (edit CALLBACK_URL if using tunnel)"
+  else
+    info ".env already exists — not overwriting"
+  fi
+
+  # Venv
+  local venv="$LIPSYNC_DIR/.venv-mps"
+  if [[ ! -f "$venv/bin/python" ]]; then
+    info "Creating .venv-mps..."
+    local py=""
+    for c in python3.12 python3.11 python3.10 python3; do
+      command -v "$c" >/dev/null 2>&1 && py="$c" && break
+    done
+    [[ -z "$py" ]] && fail "Python 3.10+ not found. Install: brew install python@3.11"
+    "$py" -m venv "$venv"
+  fi
+
+  info "Installing requirements-mps.txt (first run takes a few minutes)..."
+  "$venv/bin/python" -m pip install --upgrade pip --quiet 2>/dev/null
+  "$venv/bin/python" -m pip install -r "$LIPSYNC_DIR/requirements-mps.txt" --quiet 2>&1 | tail -5
+
+  # MPS check
+  if "$venv/bin/python" -c "import torch; assert torch.backends.mps.is_available()" 2>/dev/null; then
+    ok "MPS available"
+  else
+    warn "torch reports MPS unavailable — will fall back to CPU (slow)"
+  fi
+
+  # Pre-fetch model
+  info "Pre-fetching ByteDance/LatentSync-1.5 model (~3 GB, cached in HF_HOME)..."
+  HF_TOKEN="${HF_TOKEN:-}" "$venv/bin/python" -c \
+    "from huggingface_hub import snapshot_download; snapshot_download('ByteDance/LatentSync-1.5')" \
+    2>&1 | tail -5 || warn "Model pre-fetch failed — will download on first /generate"
+
+  check_lipsync_plist
+  ok "Lipsync-worker ready. Start with: $0 lipsync start"
+}
+
+lipsync_sync() {
+  local script_dir
+  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  local src_dir="$script_dir/../sidecars/lipsync"
+  local shared_dir="$script_dir/../sidecars/_shared"
+  [[ ! -f "$src_dir/server.py" ]] && fail "Source not found: $src_dir/server.py"
+  info "Syncing server.py → $LIPSYNC_DIR/server.py"
+  cp "$src_dir/server.py" "$LIPSYNC_DIR/server.py"
+  [[ -f "$src_dir/requirements-mps.txt" ]] && {
+    info "Syncing requirements-mps.txt"
+    cp "$src_dir/requirements-mps.txt" "$LIPSYNC_DIR/requirements-mps.txt"
+  }
+  for _m in signed_callback.py callback_validator.py; do
+    [[ -f "$shared_dir/$_m" ]] && {
+      info "Syncing $_m"
+      cp "$shared_dir/$_m" "$LIPSYNC_DIR/$_m"
+    }
+  done
+  ok "Lipsync synced. Restart to apply: $0 lipsync restart"
+}
+
+lipsync_start() {
+  check_lipsync_plist
+  info "Loading launchctl job: $LIPSYNC_PLIST_LABEL"
+  launchctl load "$LIPSYNC_PLIST_PATH" 2>/dev/null || warn "Job may already be loaded"
+  launchctl kickstart -k "gui/$(id -u)/$LIPSYNC_PLIST_LABEL" 2>/dev/null || true
+  sleep 3
+  lipsync_status
+}
+
+lipsync_stop() {
+  check_lipsync_plist
+  info "Unloading launchctl job: $LIPSYNC_PLIST_LABEL"
+  launchctl unload "$LIPSYNC_PLIST_PATH" 2>/dev/null || warn "Job may not have been loaded"
+  ok "Lipsync stopped."
+}
+
+lipsync_restart() {
+  lipsync_stop
+  sleep 1
+  lipsync_start
+}
+
+lipsync_status() {
+  section "── Lipsync (LatentSync, port 5012) ──"
+  local lc_out
+  lc_out=$(launchctl list | grep "$LIPSYNC_PLIST_LABEL" 2>/dev/null || true)
+  if [[ -z "$lc_out" ]]; then
+    warn "Job not loaded."
+  else
+    echo "$lc_out"
+    local pid
+    pid=$(echo "$lc_out" | awk '{print $1}')
+    [[ "$pid" != "-" ]] && ok "PID: $pid" || \
+      warn "Job loaded but not running (last exit: $(echo "$lc_out" | awk '{print $2}'))"
+  fi
+  local url
+  url=$(lipsync_api_url)
+  local health
+  if health=$(curl -sf --max-time 3 "$url/health" 2>/dev/null); then
+    echo "$health" | python3 -m json.tool 2>/dev/null || echo "$health"
+  else
+    warn "Health endpoint unreachable at $url/health"
+  fi
+}
+
+lipsync_logs() {
+  info "Tailing lipsync logs — Ctrl+C to stop"
+  tail -F "$LIPSYNC_STDERR_LOG" "$LIPSYNC_STDOUT_LOG" 2>/dev/null
+}
+
+lipsync_unload() {
+  require_lipsync_token
+  local url
+  url=$(lipsync_api_url)
+  info "Unloading lipsync model..."
+  local response
+  response=$(curl -sf -X POST "$url/unload-model" \
+    -H "Authorization: Bearer $LIPSYNC_SECRET_TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{}' 2>/dev/null) \
+    || fail "Request failed. Is lipsync running?"
+  echo "$response" | python3 -m json.tool 2>/dev/null || echo "$response"
+}
+
 ltx_sync() {
   local script_dir
   script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -437,6 +656,8 @@ cmd_status_all() {
   flux_status
   echo
   ltx_status
+  echo
+  lipsync_status
 }
 
 cmd_switch() {
@@ -484,6 +705,9 @@ cmd_sync_all() {
   echo
   info "Syncing LTX worker files..."
   ltx_sync
+  echo
+  info "Syncing lipsync files..."
+  lipsync_sync
 }
 
 cmd_help() {
@@ -511,17 +735,27 @@ cmd_help() {
   echo -e "    ${CYAN}ltx generate [pipeline] [prompt] [audio] [tiling]${NC} Quick test generation"
   echo -e "    ${CYAN}ltx models${NC}           List available LTX model catalog from worker"
   echo
+  echo -e "    ${CYAN}lipsync setup${NC}        Bootstrap ~/lipsync-worker (venv + deps + model)"
+  echo -e "    ${CYAN}lipsync start${NC}        Start lipsync sidecar (launchctl)"
+  echo -e "    ${CYAN}lipsync stop${NC}         Stop lipsync sidecar"
+  echo -e "    ${CYAN}lipsync restart${NC}      Restart lipsync sidecar"
+  echo -e "    ${CYAN}lipsync status${NC}       Launchctl state + /health"
+  echo -e "    ${CYAN}lipsync logs${NC}         Tail lipsync logs"
+  echo -e "    ${CYAN}lipsync unload${NC}       Unload model from RAM"
+  echo -e "    ${CYAN}lipsync sync${NC}         Sync server.py from repo → ~/lipsync-worker"
+  echo
   echo -e "  ${BOLD}Unified commands:${NC}"
-  echo -e "    ${CYAN}status${NC}               Show status of both services"
-  echo -e "    ${CYAN}sync${NC}                 Sync both FluxQ and LTX server files from repo"
+  echo -e "    ${CYAN}status${NC}               Show status of all three services"
+  echo -e "    ${CYAN}sync${NC}                 Sync all three server files from repo"
   echo -e "    ${CYAN}switch flux [model]${NC}  Unload LTX, load FluxQ model"
   echo -e "    ${CYAN}switch ltx${NC}           Unload FluxQ, LTX loads on first job"
   echo
   echo -e "  ${BOLD}Environment:${NC}"
-  echo -e "    FLUXQ_DIR   FluxQ install dir  (default: ~/fluxq-node)"
-  echo -e "    LTX_DIR     LTX install dir    (default: ~/ltx-worker)"
+  echo -e "    FLUXQ_DIR      FluxQ install dir     (default: ~/fluxq-node)"
+  echo -e "    LTX_DIR        LTX install dir       (default: ~/ltx-worker)"
+  echo -e "    LIPSYNC_DIR    Lipsync install dir   (default: ~/lipsync-worker)"
   echo
-  echo -e "  ${YELLOW}Note:${NC} Both services share M2 unified memory."
+  echo -e "  ${YELLOW}Note:${NC} All three services share M2 unified memory."
   echo -e "        Only one model can be loaded at a time."
   echo -e "        Video gen pipelines: distilled (fast), dev (photorealistic),"
   echo -e "          dev-two-stage (quality), dev-two-stage-hq (max quality)."
@@ -580,6 +814,29 @@ dispatch_ltx() {
   esac
 }
 
+dispatch_lipsync() {
+  local cmd="${1:-help}"
+  shift || true
+  case "$cmd" in
+    setup)   lipsync_setup ;;
+    start)   lipsync_start ;;
+    stop)    lipsync_stop ;;
+    restart) lipsync_restart ;;
+    status)  lipsync_status ;;
+    logs)    lipsync_logs ;;
+    unload)  lipsync_unload ;;
+    sync)    lipsync_sync ;;
+    help|--help|-h)
+      echo -e "Usage: $0 lipsync <setup|start|stop|restart|status|logs|unload|sync>"
+      ;;
+    *)
+      warn "Unknown lipsync command: $cmd"
+      echo -e "Usage: $0 lipsync <setup|start|stop|restart|status|logs|unload|sync>"
+      exit 1
+      ;;
+  esac
+}
+
 # ── Main Dispatch ─────────────────────────────────────────────────────────────
 
 ARG1="${1:-help}"
@@ -588,6 +845,7 @@ shift || true
 case "$ARG1" in
   flux)    dispatch_flux "$@" ;;
   ltx)     dispatch_ltx "$@" ;;
+  lipsync) dispatch_lipsync "$@" ;;
   status)  cmd_status_all ;;
   sync)    cmd_sync_all ;;
   switch)  cmd_switch "$@" ;;

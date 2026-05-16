@@ -80,10 +80,14 @@ def safe_join(base_dir: str, user_path: str) -> str:
 def _post_to_callback(endpoint_url: str, data: bytes, timeout: int = 30) -> None:
     """POST data to a server-configured callback URL (not user-supplied)."""
     # Issue #1089 — sign callbacks with HMAC + timestamp.
+    # Look in the script's own directory first (standalone/deployed) then fall
+    # back to the repo's sidecars/_shared/ for in-tree runs.
     import sys as _sys
-    _shared = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "_shared")
-    if _shared not in _sys.path:
-        _sys.path.insert(0, _shared)
+    _own_dir = os.path.dirname(os.path.abspath(__file__))
+    _shared = os.path.join(_own_dir, "..", "_shared")
+    for _p in (_own_dir, _shared):
+        if _p not in _sys.path:
+            _sys.path.insert(0, _p)
     from signed_callback import signed_headers as _sh  # type: ignore[import-not-found]
     _cb_secret = os.getenv("CALLBACK_SECRET") or None
     headers = _sh(_cb_secret, data, "lip-sync", legacy_bearer=True)
@@ -609,6 +613,47 @@ async def health():
         "model_version": worker_state.get("model_version"),
         "device": DEVICE,
         "memory_rss_mb": round(mem.rss / 1024 / 1024, 1),
+    }
+
+
+@app.get("/capabilities")
+async def capabilities():
+    """Apple Silicon (MPS/PyTorch) capability report for the admin Models page."""
+    total_gb = 0.0
+    free_gb = 0.0
+    try:
+        import psutil
+        vm = psutil.virtual_memory()
+        total_gb = round(vm.total / (1024 ** 3), 1)
+        free_gb = round(vm.available / (1024 ** 3), 1)
+    except Exception:
+        pass
+    return {
+        "cuda_available": False,
+        "device_count": 1,
+        "pooled_vram_gb": total_gb,
+        "per_device": [
+            {
+                "index": 0,
+                "name": "Apple Silicon GPU (Metal / MPS)",
+                "total_gb": int(total_gb),
+                "free_gb": int(free_gb),
+            }
+        ],
+        "pooling": {
+            "mode": "unified",
+            "active": True,
+            "device": DEVICE,
+        },
+        "max_ram_gb_v1_5": 8,
+        "max_ram_gb_v1_6": 18,
+        "available_models": ["v1.5", "v1.6"],
+        "host_ram_gb": HOST_RAM_GB,
+        "env": {
+            "WORKER": "mac-mini",
+            "BACKEND": "mps",
+            "DEFAULT_MODEL": DEFAULT_MODEL,
+        },
     }
 
 
