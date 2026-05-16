@@ -31,7 +31,7 @@ from urllib.request import Request, urlopen
 from urllib.error import URLError
 
 from fastapi import FastAPI, HTTPException, Depends, Header
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
 from pydantic import BaseModel, Field, field_validator
 import uvicorn
 
@@ -776,6 +776,25 @@ async def status(job_id: str):
     if not info:
         raise HTTPException(status_code=404, detail="Job not found")
     return {"job_id": job_id, **info}
+
+
+_GALLERY_FILENAME_RE = re.compile(r"^lipsync_[a-fA-F0-9\-]{36}\.mp4$")
+
+
+@app.get("/gallery/{filename}", dependencies=[Depends(verify_auth)])
+async def gallery(filename: str):
+    # Fallback retrieval for remote workers when the callback POST cannot
+    # reach the OpenZigs server (e.g. mac mini behind CF tunnel, no LAN route).
+    # Strict filename allowlist prevents path traversal.
+    if not _GALLERY_FILENAME_RE.match(filename):
+        raise HTTPException(status_code=400, detail="Invalid filename")
+    try:
+        full_path = safe_join(GALLERY_DIR, filename)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+    if not os.path.exists(full_path):
+        raise HTTPException(status_code=404, detail="File not found")
+    return FileResponse(full_path, media_type="video/mp4", filename=filename)
 
 
 @app.post("/unload-model", dependencies=[Depends(verify_auth)])

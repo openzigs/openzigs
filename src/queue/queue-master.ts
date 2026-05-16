@@ -697,6 +697,7 @@ export class QueueMaster extends EventEmitter {
       await this.processTtsJobs();
       await this.processMusicJobs();
       await this.processMusicStudioJobs();
+      await this.reconcileLipSyncJobs();
       await this.processLipSyncJobs();
       await this.processSadTalkerJobs();
     } catch (err) {
@@ -1729,6 +1730,112 @@ export class QueueMaster extends EventEmitter {
   }
 
   // ── Lip Sync Sidecar (LatentSync) ─────────────────────────
+
+  /**
+   * Poll the lipsync sidecar for results of dispatched jobs whose callback
+   * never arrived. Required when the worker (e.g. remote mac mini via CF
+   * tunnel) has no route back to the OpenZigs callback URL.
+   *
+   * For each dispatched lipsync job older than the grace period, hit
+   * `GET /status/{id}` on the sidecar. If `status: complete`, fetch the
+   * file via `GET /gallery/{filename}` and feed it into handleJobCompletion
+   * (same code path as the real callback). If `status: failed`, propagate
+   * the error.
+   *
+   * Safe alongside the normal callback flow: jobs already marked complete
+   * are not in the `dispatched` list, so we never double-process.
+   */
+  private async reconcileLipSyncJobs(): Promise<void> {
+    const graceMs = 30_000; // give the callback 30s before polling kicks in
+    const cutoff = Date.now() - graceMs;
+    const dispatched = this.repo.listJobs({
+      status: "dispatched",
+      type: "lipsync",
+      limit: 10,
+    });
+    if (dispatched.length === 0) return;
+
+    let nodeConfig: WorkerNodeConfig;
+    try {
+      nodeConfig = await this.getLipSyncNodeConfig();
+    } catch {
+      return; // sidecar not configured
+    }
+    const headers: Record<string, string> = {};
+    Object.assign(headers, buildNodeAuthHeaders(nodeConfig));
+
+    for (const job of dispatched) {
+      if (!job.dispatchedAt || job.dispatchedAt.getTime() > cutoff) continue;
+
+      try {
+        const statusRes = await fetch(`${nodeConfig.url}/status/${job.id}`, {
+          headers,
+          signal: AbortSignal.timeout(10_000),
+        });
+        if (statusRes.status === 404) continue; // sidecar evicted or restarted
+        if (!statusRes.ok) continue;
+
+        const info = (await statusRes.json()) as {
+          status?: string;
+          result_url?: string;
+          error?: string;
+        };
+
+        if (info.status === "failed") {
+          logger.info(
+            `[QueueMaster] Reconciler picked up failed lipsync job ${job.id} (callback never arrived)`,
+          );
+          await this.handleJobCompletion(job.id, {
+            error: info.error ?? "Lipsync worker reported failure",
+          });
+          this.lipSyncStatus = { ...this.lipSyncStatus, is_busy: false };
+          continue;
+        }
+
+        if (info.status === "complete" && info.result_url) {
+          // result_url is "/gallery/lipsync_<uuid>.mp4" on the sidecar
+          const match = info.result_url.match(
+            /\/gallery\/(lipsync_[a-fA-F0-9-]{36}\.mp4)$/,
+          );
+          if (!match) {
+            logger.warn(
+              `[QueueMaster] Reconciler: unexpected result_url for ${job.id}: ${info.result_url}`,
+            );
+            continue;
+          }
+          const filename = match[1];
+
+          const fileRes = await fetch(`${nodeConfig.url}/gallery/${filename}`, {
+            headers,
+            signal: AbortSignal.timeout(60_000),
+          });
+          if (!fileRes.ok) {
+            // Sidecar may be running an older build without /gallery — skip
+            // this tick and let the watchdog eventually time the job out.
+            logger.warn(
+              `[QueueMaster] Reconciler: /gallery/${filename} returned ${fileRes.status} for job ${job.id} — sidecar may need redeploy`,
+            );
+            continue;
+          }
+
+          const buf = Buffer.from(await fileRes.arrayBuffer());
+          logger.info(
+            `[QueueMaster] Reconciler recovered lipsync job ${job.id} (${buf.length} bytes) — callback never arrived`,
+          );
+          await this.handleJobCompletion(job.id, {
+            media_base64: buf.toString("base64"),
+            media_type: "video/mp4",
+          });
+          this.lipSyncStatus = { ...this.lipSyncStatus, is_busy: false };
+        }
+      } catch (err) {
+        // Worker unreachable — silently skip; next tick will retry.
+        logger.debug(
+          `[QueueMaster] Reconciler poll failed for ${job.id}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
+  }
 
   private async processLipSyncJobs(): Promise<void> {
     if (this.lipSyncStatus.is_busy) {
