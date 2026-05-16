@@ -476,11 +476,78 @@ lipsync_setup() {
     warn "torch reports MPS unavailable — will fall back to CPU (slow)"
   fi
 
-  # Pre-fetch model
-  info "Pre-fetching ByteDance/LatentSync-1.5 model (~3 GB, cached in HF_HOME)..."
-  HF_TOKEN="${HF_TOKEN:-}" "$venv/bin/python" -c \
-    "from huggingface_hub import snapshot_download; snapshot_download('ByteDance/LatentSync-1.5')" \
-    2>&1 | tail -5 || warn "Model pre-fetch failed — will download on first /generate"
+  # ── Model setup ─────────────────────────────────────────────────────────────
+  # The sidecar's subprocess fallback needs:
+  #   $LATENTSYNC_DIR/inference.py          ← from GitHub source clone
+  #   $LATENTSYNC_DIR/configs/latentsync_unet_v1.5.yaml  ← versioned symlink
+  #   $LATENTSYNC_DIR/checkpoints/latentsync_unet_v1.5.pt ← versioned symlink
+  local latentsync_dir="${LATENTSYNC_DIR:-$HOME/.openzigs/models/latentsync}"
+
+  # 1. Clone LatentSync source (inference.py, configs/, etc.)
+  if [[ ! -f "$latentsync_dir/inference.py" ]]; then
+    info "Cloning LatentSync source → $latentsync_dir ..."
+    if command -v git >/dev/null 2>&1; then
+      if [[ -d "$latentsync_dir/.git" ]]; then
+        git -C "$latentsync_dir" pull --ff-only --quiet 2>/dev/null || true
+      else
+        rm -rf "$latentsync_dir"
+        git clone --depth 1 https://github.com/bytedance/LatentSync "$latentsync_dir" 2>&1 | tail -3 \
+          || warn "git clone failed — jobs will error until LatentSync source is available"
+      fi
+    else
+      warn "git not found — install git and re-run 'lipsync setup'"
+    fi
+  else
+    info "LatentSync source already present at $latentsync_dir"
+  fi
+
+  # 2. Download checkpoint weights to expected path
+  # HF repo names it latentsync_unet.pt; the inference script (configs/unet/stage2.yaml) also
+  # expects checkpoints/latentsync_unet.pt — no versioned rename needed.
+  mkdir -p "$latentsync_dir/checkpoints"
+  local ckpt="$latentsync_dir/checkpoints/latentsync_unet.pt"
+  if [[ ! -e "$ckpt" ]]; then
+    info "Downloading LatentSync-1.5 checkpoint weights..."
+    HF_TOKEN="${HF_TOKEN:-}" "$venv/bin/python" - <<'PYEOF'
+import os, sys
+from pathlib import Path
+latentsync_dir = os.environ.get("LATENTSYNC_DIR", str(Path.home() / ".openzigs" / "models" / "latentsync"))
+dst = Path(latentsync_dir) / "checkpoints"
+dst.mkdir(parents=True, exist_ok=True)
+try:
+    from huggingface_hub import hf_hub_download
+    hf_hub_download("ByteDance/LatentSync-1.5", filename="latentsync_unet.pt",
+                    local_dir=str(dst), local_dir_use_symlinks=True)
+    hf_hub_download("ByteDance/LatentSync-1.5", filename="stable_syncnet.pt",
+                    local_dir=str(dst), local_dir_use_symlinks=True)
+    print("Checkpoints ready.")
+except Exception as e:
+    print(f"WARNING: {e}", file=sys.stderr)
+    sys.exit(1)
+PYEOF
+    [[ $? -ne 0 ]] && warn "Checkpoint download failed — jobs will fail until checkpoints/ are populated"
+  else
+    info "Checkpoint already present at $ckpt"
+  fi
+
+  # 3. Download auxiliary files (whisper encoder, syncnet scorer)
+  HF_TOKEN="${HF_TOKEN:-}" "$venv/bin/python" - <<'PYEOF'
+import os
+from pathlib import Path
+latentsync_dir = os.environ.get("LATENTSYNC_DIR", str(Path.home() / ".openzigs" / "models" / "latentsync"))
+d = Path(latentsync_dir)
+try:
+    from huggingface_hub import hf_hub_download
+    for fname in ["whisper/tiny.pt", "auxiliary/syncnet_v2.model"]:
+        dest = d / fname
+        if not dest.exists():
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            hf_hub_download("ByteDance/LatentSync-1.5", filename=fname,
+                            local_dir=str(d), local_dir_use_symlinks=True)
+            print(f"Downloaded: {dest}")
+except Exception as e:
+    print(f"Warning: auxiliary download failed ({e}) — some metrics may be unavailable")
+PYEOF
 
   check_lipsync_plist
   ok "Lipsync-worker ready. Start with: $0 lipsync start"
