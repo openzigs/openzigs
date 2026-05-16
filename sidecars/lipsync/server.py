@@ -424,8 +424,15 @@ def _run_latentsync_subprocess(
     if enable_deepcache:
         cmd.append("--enable_deepcache")
 
-    # Run with cwd=latentsync_dir so relative paths inside configs resolve correctly
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=600, cwd=latentsync_dir)  # noqa: S603
+    # Run with cwd=latentsync_dir so relative paths inside configs resolve correctly.
+    # PYTHONPATH must include latentsync_dir so `import latentsync` resolves the
+    # latentsync/ package that ships inside the HuggingFace snapshot.
+    existing_pythonpath = os.environ.get("PYTHONPATH", "")
+    subprocess_env = {
+        **os.environ,
+        "PYTHONPATH": f"{latentsync_dir}:{existing_pythonpath}" if existing_pythonpath else latentsync_dir,
+    }
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=600, cwd=latentsync_dir, env=subprocess_env)  # noqa: S603
     if result.returncode != 0:
         raise RuntimeError(f"LatentSync inference failed: {result.stderr[-1000:]}")
 
