@@ -398,6 +398,54 @@ def _ensure_whisper_checkpoint(latentsync_dir: str) -> None:
         raise RuntimeError(f"Failed to download Whisper tiny.pt: {exc}") from exc
 
 
+def _patch_latentsync_mps_sources(latentsync_dir: str) -> None:
+    """Patch downloaded LatentSync sources for macOS ARM runtime gaps."""
+    util_py = os.path.join(latentsync_dir, "latentsync", "utils", "util.py")
+    if not os.path.exists(util_py):
+        return
+
+    with open(util_py) as f:
+        src = f.read()
+
+    if "OPENZIGS_MPS_AUDIO_FALLBACK" in src:
+        return
+
+    old = '''def read_audio(audio_path: str, audio_sample_rate: int = 16000):
+    if audio_path is None:
+        raise ValueError("Audio path is required.")
+    ar = AudioReader(audio_path, sample_rate=audio_sample_rate, mono=True)
+
+    # To access the audio samples
+    audio_samples = torch.from_numpy(ar[:].asnumpy())
+    audio_samples = audio_samples.squeeze(0)
+
+    return audio_samples
+'''
+    new = '''def read_audio(audio_path: str, audio_sample_rate: int = 16000):
+    # OPENZIGS_MPS_AUDIO_FALLBACK
+    if audio_path is None:
+        raise ValueError("Audio path is required.")
+    try:
+        ar = AudioReader(audio_path, sample_rate=audio_sample_rate, mono=True)
+        audio_samples = torch.from_numpy(ar[:].asnumpy())
+    except Exception:
+        import librosa
+
+        audio, _ = librosa.load(audio_path, sr=audio_sample_rate, mono=True)
+        audio_samples = torch.from_numpy(audio.astype(np.float32, copy=False))
+    audio_samples = audio_samples.squeeze(0)
+
+    return audio_samples
+'''
+    if old not in src:
+        logger.warning("LatentSync read_audio patch target not found in %s", util_py)
+        return
+
+    with open(util_py, "w") as f:
+        f.write(src.replace(old, new))
+    logger.info("Patched LatentSync read_audio() with librosa fallback for MPS")
+
+
 def _run_latentsync_subprocess(
     video_path: str,
     audio_path: str,
@@ -451,6 +499,10 @@ def _run_latentsync_subprocess(
     ]
     if enable_deepcache:
         cmd.append("--enable_deepcache")
+
+    # Patch downloaded LatentSync source for macOS ARM gaps before importing it
+    # in the subprocess.
+    _patch_latentsync_mps_sources(latentsync_dir)
 
     # Ensure Whisper tiny.pt is present — inference.py's Audio2Feature requires it at
     # checkpoints/whisper/tiny.pt relative to latentsync_dir.
