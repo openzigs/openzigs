@@ -12,12 +12,14 @@ vi.mock("node:fs/promises", () => ({
     readFile: vi.fn().mockRejectedValue(new Error("no config")),
     writeFile: vi.fn().mockResolvedValue(undefined),
     mkdir: vi.fn().mockResolvedValue(undefined),
+    access: vi.fn().mockResolvedValue(undefined),
   },
 }));
 
 const mockFetch = vi.fn();
 vi.stubGlobal("fetch", mockFetch);
 const mockReadFile = vi.mocked(fs.readFile);
+const mockAccess = vi.mocked(fs.access);
 
 function makeJob(overrides: Partial<MediaJob> = {}): MediaJob {
   return {
@@ -83,6 +85,8 @@ describe("QueueMaster", () => {
     mockFetch.mockReset();
     mockReadFile.mockReset();
     mockReadFile.mockRejectedValue(new Error("no config"));
+    mockAccess.mockReset();
+    mockAccess.mockResolvedValue(undefined);
     vi.useFakeTimers();
     repo = makeRepo();
     config = makeConfig();
@@ -2021,6 +2025,73 @@ describe("QueueMaster", () => {
       expect(body.voice).toBe("af_heart");
       // reference_audio should be decoded to a temp file path
       expect(body.ref_audio_path).toBeDefined();
+    });
+
+    it("sends F5-TTS profile clips with ref_audio_path", async () => {
+      const ttsJob = makeJob({
+        id: "tts-f5-clips",
+        type: "tts",
+        requiredModel: "f5-tts",
+        targetNode: "m2-pro",
+        payload: {
+          prompt: "Clone voice",
+          f5tts_clips: [
+            {
+              emotion: "Regular",
+              ref_audio_path: "/Users/test/.openzigs/ref.webm",
+              ref_text: "Reference transcript",
+            },
+          ],
+        },
+      });
+
+      repo.getPendingJobs.mockReturnValue([]);
+      repo.getPendingJobsForModel.mockImplementation(
+        (_node: string, model: string) =>
+          model === "f5-tts" ? [ttsJob] : [],
+      );
+      repo.listJobs.mockReturnValue([]);
+      repo.getJob.mockReturnValue(ttsJob);
+
+      const fakeWav = new Uint8Array([0x52, 0x49, 0x46, 0x46]);
+
+      mockFetch
+        // m2-pro health (processM2Pro)
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({ is_busy: false, loaded_model: null }),
+        })
+        // Audio sidecar health (processTtsJobs)
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({ status: "ready" }),
+        })
+        // Audio sidecar /f5tts
+        .mockResolvedValueOnce({
+          ok: true,
+          arrayBuffer: () => Promise.resolve(fakeWav.buffer),
+        })
+        // Remaining sidecar checks + re-tick
+        .mockRejectedValue(new Error("unreachable"));
+
+      await qm.tick();
+
+      expect(mockAccess).toHaveBeenCalledWith("/Users/test/.openzigs/ref.webm");
+
+      const f5ttsCall = mockFetch.mock.calls.find(
+        (c) => typeof c[0] === "string" && (c[0] as string).includes("/f5tts"),
+      );
+      expect(f5ttsCall).toBeDefined();
+      const body = JSON.parse(f5ttsCall![1]?.body as string);
+      expect(body.text).toBe("Clone voice");
+      expect(body.clips).toEqual([
+        {
+          emotion: "Regular",
+          ref_audio_path: "/Users/test/.openzigs/ref.webm",
+          ref_text: "Reference transcript",
+        },
+      ]);
+      expect(body.clips[0].ref_audio).toBeUndefined();
     });
   });
 

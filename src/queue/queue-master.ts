@@ -1485,9 +1485,9 @@ export class QueueMaster extends EventEmitter {
     };
     Object.assign(headers, buildNodeAuthHeaders(nodeConfig));
 
-    // F5-TTS voice cloning: dispatch to /f5tts with pre-resolved clips
-    // Pipeline stores clips as { emotion, ref_audio_path, ref_text } (DB rows).
-    // The sidecar expects { ref_audio (base64), ref_text, gen_text, emotion }.
+    // F5-TTS voice cloning: dispatch to /f5tts with pre-resolved clips.
+    // Pipeline stores clips as { emotion, ref_audio_path, ref_text } (DB rows),
+    // which matches the audio sidecar's F5TTSClip schema.
     if (job.payload.f5tts_clips && job.payload.f5tts_clips.length > 0) {
       const resolvedClips = await Promise.all(
         (
@@ -1495,21 +1495,13 @@ export class QueueMaster extends EventEmitter {
             emotion?: string;
             ref_audio_path: string;
             ref_text: string;
-            ref_audio?: string;
-            gen_text?: string;
           }>
         ).map(async (clip) => {
-          let refAudioB64 = clip.ref_audio ?? "";
-          if (!refAudioB64 && clip.ref_audio_path) {
-            const audioBytes = await fs.readFile(clip.ref_audio_path);
-            refAudioB64 = audioBytes.toString("base64");
-          }
+          await fs.access(clip.ref_audio_path);
           return {
-            ref_audio: refAudioB64,
-            ref_text: clip.ref_text,
-            gen_text: clip.gen_text ?? job.payload.prompt ?? "",
             emotion: clip.emotion ?? "Regular",
-            remove_silence: true,
+            ref_audio_path: clip.ref_audio_path,
+            ref_text: clip.ref_text,
           };
         }),
       );
