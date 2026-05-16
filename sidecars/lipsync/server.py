@@ -515,6 +515,8 @@ def _run_latentsync_subprocess(
     subprocess_env = {
         **os.environ,
         "PYTHONPATH": f"{latentsync_dir}:{existing_pythonpath}" if existing_pythonpath else latentsync_dir,
+        # Several linalg ops (svd, det) are not yet native on MPS; allow CPU fallback.
+        "PYTORCH_ENABLE_MPS_FALLBACK": "1",
     }
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=600, cwd=latentsync_dir, env=subprocess_env)  # noqa: S603
     if result.returncode != 0:

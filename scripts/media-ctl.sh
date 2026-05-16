@@ -611,6 +611,42 @@ patch("latentsync/pipelines/lipsync_pipeline.py",
     'ImageProcessor(height, device=str(device), mask_image=mask_image)',
     "ImageProcessor device")
 
+# util.py — read_audio librosa fallback (decord.AudioReader unavailable on macOS ARM)
+util_path = os.path.join(base, "latentsync", "utils", "util.py")
+if os.path.exists(util_path):
+    src = open(util_path).read()
+    if "OPENZIGS_MPS_AUDIO_FALLBACK" not in src:
+        old_fn = (
+            "def read_audio(audio_path: str, audio_sample_rate: int = 16000):\n"
+            "    if audio_path is None:\n"
+            "        raise ValueError(\"Audio path is required.\")\n"
+            "    ar = AudioReader(audio_path, sample_rate=audio_sample_rate, mono=True)\n"
+            "\n"
+            "    # To access the audio samples\n"
+            "    audio_samples = torch.from_numpy(ar[:].asnumpy())\n"
+            "    audio_samples = audio_samples.squeeze(0)\n"
+            "\n"
+            "    return audio_samples"
+        )
+        new_fn = (
+            "def read_audio(audio_path: str, audio_sample_rate: int = 16000):\n"
+            "    # OPENZIGS_MPS_AUDIO_FALLBACK\u2014decord not available on macOS ARM; use librosa\n"
+            "    if audio_path is None:\n"
+            "        raise ValueError(\"Audio path is required.\")\n"
+            "    try:\n"
+            "        ar = AudioReader(audio_path, sample_rate=audio_sample_rate, mono=True)\n"
+            "        audio_samples = torch.from_numpy(ar[:].asnumpy())\n"
+            "    except Exception:\n"
+            "        import librosa as _librosa\n"
+            "        audio, _ = _librosa.load(audio_path, sr=audio_sample_rate, mono=True)\n"
+            "        audio_samples = torch.from_numpy(audio.astype(np.float32, copy=False))\n"
+            "    audio_samples = audio_samples.squeeze(0)\n"
+            "    return audio_samples"
+        )
+        if old_fn in src:
+            open(util_path, "w").write(src.replace(old_fn, new_fn))
+            print("  patched: latentsync/utils/util.py (read_audio librosa fallback)")
+
 print("  MPS patches complete.")
 PATCHEOF
   else
