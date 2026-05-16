@@ -8,7 +8,7 @@ HTTP API:
   GET  /status/{job_id} — Poll job status and progress
   POST /unload-model    — Unload model from memory
 
-Port: 5008 (default)
+Port: 5012 (default — canonical lip-sync port across MPS and CUDA, issue #1104)
 """
 
 import asyncio
@@ -102,6 +102,33 @@ AUTH_TOKEN: Optional[str] = os.environ.get("LIPSYNC_SECRET_TOKEN")
 MODEL_IDLE_TIMEOUT = float(os.environ.get("LIPSYNC_MODEL_IDLE_TIMEOUT", "300"))
 MEMORY_LIMIT_GB = float(os.environ.get("LIPSYNC_MEMORY_LIMIT_GB", "24"))
 DEFAULT_MODEL = os.environ.get("LIPSYNC_DEFAULT_MODEL", "v1.5")
+
+
+def _detect_host_ram_gb() -> float:
+    """Issue #1106: detect total system RAM in GB so /generate can refuse
+    LatentSync v1.6 on hosts that cannot fit it (~18 GB resident).
+
+    OPENZIGS_FORCE_RAM_GB overrides the detected value for tests and for
+    operators who want to force the gate one way or the other on a node
+    with non-standard memory accounting.
+    """
+    forced = os.environ.get("OPENZIGS_FORCE_RAM_GB")
+    if forced:
+        try:
+            return float(forced)
+        except ValueError:
+            logger.warning("OPENZIGS_FORCE_RAM_GB=%r is not numeric — ignoring", forced)
+    try:
+        import psutil  # type: ignore[import-not-found]
+
+        return psutil.virtual_memory().total / (1024 ** 3)
+    except Exception as exc:  # pragma: no cover — psutil missing only in sandbox tests
+        logger.warning("Unable to detect host RAM via psutil (%s) — assuming 0", exc)
+        return 0.0
+
+
+HOST_RAM_GB: float = _detect_host_ram_gb()
+logger.info("Detected host RAM: %.1f GB (gate threshold for v1.6 = %.1f GB)", HOST_RAM_GB, MEMORY_LIMIT_GB)
 
 # Callback URLs are server-configured only (not user-supplied) to prevent SSRF.
 CALLBACK_URL: str = os.environ.get("CALLBACK_URL", "http://localhost:3000/api/queue/complete")
@@ -546,6 +573,24 @@ async def process_lipsync_job(req: LipSyncRequest) -> None:
 async def generate(req: LipSyncRequest):
     if worker_state["is_busy"]:
         raise HTTPException(status_code=409, detail="Worker is busy")
+    # Issue #1106: refuse v1.6 on hosts that cannot fit it (~18 GB resident).
+    # 16 GB MacBooks must downgrade to v1.5 (~8 GB) or run remotely on a
+    # 32 GB / GPU node. We surface 507 (Insufficient Storage) so the queue
+    # master can route to a remote worker instead of dispatching here.
+    if req.model_version == "v1.6" and HOST_RAM_GB < MEMORY_LIMIT_GB:
+        return JSONResponse(
+            status_code=507,
+            content={
+                "error": "insufficient_unified_memory",
+                "message": (
+                    f"LatentSync v1.6 requires ~{MEMORY_LIMIT_GB:.0f} GB of unified memory; "
+                    f"this host has {HOST_RAM_GB:.1f} GB. Re-submit with model_version=\"v1.5\" "
+                    f"or route the job to a 32 GB / GPU worker."
+                ),
+                "host_ram_gb": round(HOST_RAM_GB, 2),
+                "required_gb": MEMORY_LIMIT_GB,
+            },
+        )
     asyncio.create_task(process_lipsync_job(req))
     return {"job_id": req.job_id, "status": "accepted"}
 
@@ -592,7 +637,7 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(description="LatentSync Lip Sync Sidecar")
-    parser.add_argument("--port", type=int, default=5008, help="Port to listen on")
+    parser.add_argument("--port", type=int, default=5012, help="Port to listen on")
     parser.add_argument("--host", type=str, default="127.0.0.1", help="Host to bind to")
     args = parser.parse_args()
     uvicorn.run(app, host=args.host, port=args.port)

@@ -87,6 +87,7 @@ INSTALL_MUSIC=0
 INSTALL_MUSIC_STUDIO=0
 INSTALL_WORKER=0
 INSTALL_GPTSOVITS=0
+INSTALL_LIPSYNC=0
 
 show_sidecar_menu() {
   echo ""
@@ -116,6 +117,9 @@ show_sidecar_menu() {
   echo "  6 | Voice Cloning            |  --  | ~4 GB    | GPT-SoVITS Engine B: high-fidelity custom"
   echo "    | (GPT-SoVITS)             |      |          | voice models from short audio clips"
   echo "  --+--------------------------+------+----------+----------------------------------------------"
+  echo "  7 | Lip Sync (LatentSync)    | 5012 | ~3 GB    | LatentSync v1.5 (8 GB resident) on MPS;"
+  echo "    |                          |      |          | v1.6 requires ≥24 GB RAM — use remote node."
+  echo "  --+--------------------------+------+----------+----------------------------------------------"
   echo ""
   echo -e "  ${YELLOW}Total disk if all selected: ~52+ GB of model downloads.${RESET}"
   echo -e "  ${YELLOW}Models stored in ~/.cache/huggingface and ~/.openzigs/.${RESET}"
@@ -132,6 +136,7 @@ show_sidecar_menu() {
       INSTALL_MUSIC_STUDIO=1
       INSTALL_WORKER=1
       INSTALL_GPTSOVITS=1
+      INSTALL_LIPSYNC=1
       ;;
     [Ss]*)
       echo ""
@@ -147,6 +152,7 @@ show_sidecar_menu() {
           4) INSTALL_MUSIC_STUDIO=1 ;;
           5) INSTALL_WORKER=1 ;;
           6) INSTALL_GPTSOVITS=1 ;;
+          7) INSTALL_LIPSYNC=1 ;;
           *) echo -e "  ${YELLOW}Warning: Unknown option '$n' — skipped.${RESET}" ;;
         esac
       done
@@ -161,9 +167,11 @@ show_sidecar_menu() {
   [ "$INSTALL_MUSIC_STUDIO" -eq 1 ] && echo -e "    ${GREEN}✓${RESET} Music Studio (Voice2Voice + Remix Lab)"
   [ "$INSTALL_WORKER" -eq 1 ]       && echo -e "    ${GREEN}✓${RESET} Video Generation (LTX-Video)"
   [ "$INSTALL_GPTSOVITS" -eq 1 ]    && echo -e "    ${GREEN}✓${RESET} Voice Cloning (GPT-SoVITS)"
+  [ "$INSTALL_LIPSYNC" -eq 1 ]      && echo -e "    ${GREEN}✓${RESET} Lip Sync (LatentSync, MPS)"
 
   local any_selected=$(( INSTALL_AUDIO + INSTALL_IMAGE_GEN + INSTALL_MUSIC + \
-                         INSTALL_MUSIC_STUDIO + INSTALL_WORKER + INSTALL_GPTSOVITS ))
+                         INSTALL_MUSIC_STUDIO + INSTALL_WORKER + INSTALL_GPTSOVITS + \
+                         INSTALL_LIPSYNC ))
   [ "$any_selected" -eq 0 ] && echo -e "    ${YELLOW}None — core text/tool agent only${RESET}"
 }
 
@@ -514,6 +522,94 @@ install_sidecar_gptsovits() {
   echo "    Or use: bash scripts/dev-clean.sh  (auto-starts all sidecars)"
 }
 
+# ── Sidecar: Lip Sync (LatentSync, MPS) ──────────────────────────────────────
+# Issue #1103 — first-class Apple Silicon installer for LatentSync.
+install_sidecar_lipsync() {
+  local BASE_DIR="$1"
+  local LIP_DIR="$BASE_DIR/sidecars/lipsync"
+
+  if [ ! -f "$LIP_DIR/server.py" ]; then
+    echo -e "  ${RED}✗ Lip-sync sidecar source not found at $LIP_DIR${RESET}"
+    return 1
+  fi
+
+  # Apple Silicon only — refuse on Intel Macs and non-Darwin hosts.
+  local OS_NAME ARCH_NAME
+  OS_NAME="$(uname -s)"
+  ARCH_NAME="$(uname -m)"
+  if [ "$OS_NAME" != "Darwin" ] || [ "$ARCH_NAME" != "arm64" ]; then
+    echo -e "  ${YELLOW}⚠ Lip Sync MPS sidecar requires macOS / Apple Silicon (got ${OS_NAME}/${ARCH_NAME}). Skipping.${RESET}"
+    echo "    On Linux + NVIDIA, install via sidecars/setup-cuda-sidecars.sh instead."
+    return 0
+  fi
+
+  echo ""
+  echo -e "${BOLD}=== Installing Lip Sync (LatentSync) — port 5012 ===${RESET}"
+  echo "  Model:   ByteDance/LatentSync-1.5 (~3 GB on first run, cached in HF_HOME)"
+  echo "  Runtime: PyTorch MPS (torch==2.5.1)"
+  echo "  Memory:  ~8 GB resident for v1.5; v1.6 (~18 GB) needs a 32 GB host."
+  echo ""
+
+  # Soft RAM warning — install proceeds either way; the sidecar enforces the
+  # gate at runtime (issue #1106).
+  local TOTAL_RAM_BYTES TOTAL_RAM_GB
+  TOTAL_RAM_BYTES="$(sysctl -n hw.memsize 2>/dev/null || echo 0)"
+  TOTAL_RAM_GB=$(( TOTAL_RAM_BYTES / 1024 / 1024 / 1024 ))
+  if [ "$TOTAL_RAM_GB" -gt 0 ] && [ "$TOTAL_RAM_GB" -lt 24 ]; then
+    echo -e "  ${YELLOW}⚠ Detected ${TOTAL_RAM_GB} GB unified memory.${RESET}"
+    echo "    LatentSync v1.6 will be refused at /generate (HTTP 507) on this host."
+    echo "    v1.5 will run locally; route v1.6 jobs to a remote 32 GB / GPU node."
+    echo ""
+  fi
+
+  if [ "${OPENZIGS_INSTALL_DRY_RUN:-0}" = "1" ]; then
+    echo -e "  ${YELLOW}OPENZIGS_INSTALL_DRY_RUN=1 — skipping venv + pip install.${RESET}"
+    echo "    Would create:  $LIP_DIR/.venv-mps"
+    echo "    Would install: requirements-mps.txt"
+    echo "    Would prefetch: ByteDance/LatentSync-1.5 -> \${HF_HOME:-~/.cache/huggingface}"
+    return 0
+  fi
+
+  local VENV_DIR="$LIP_DIR/.venv-mps"
+  local PY=""
+  for candidate in python3.12 python3.11 python3.10 python3; do
+    if command -v "$candidate" >/dev/null 2>&1; then
+      PY="$candidate"
+      break
+    fi
+  done
+  if [ -z "$PY" ]; then
+    echo -e "  ${RED}✗ Python 3.10+ not found. Install: brew install python@3.11${RESET}"
+    return 1
+  fi
+
+  if [ ! -d "$VENV_DIR" ]; then
+    echo "  Creating venv with $PY..."
+    "$PY" -m venv "$VENV_DIR"
+  fi
+
+  echo "  Installing dependencies (first run can take several minutes)..."
+  "$VENV_DIR/bin/python" -m pip install --upgrade pip --quiet 2>/dev/null
+  "$VENV_DIR/bin/python" -m pip install -r "$LIP_DIR/requirements-mps.txt" --quiet 2>&1 | tail -10
+
+  # MPS smoke test — fast, surfaces a clear error if torch can't see Metal.
+  echo "  Verifying MPS availability..."
+  if ! "$VENV_DIR/bin/python" -c "import torch; assert torch.backends.mps.is_available(), 'MPS unavailable'" 2>/dev/null; then
+    echo -e "  ${YELLOW}⚠ torch reports MPS unavailable. Sidecar will fall back to CPU (slow).${RESET}"
+  fi
+
+  # Pre-fetch v1.5 weights so the first /generate doesn't time out.
+  local HF_CACHE="${HF_HOME:-$HOME/.cache/huggingface}"
+  echo "  Pre-fetching ByteDance/LatentSync-1.5 to $HF_CACHE ..."
+  HF_HOME="$HF_CACHE" "$VENV_DIR/bin/python" -c \
+    "from huggingface_hub import snapshot_download; snapshot_download('ByteDance/LatentSync-1.5')" \
+    2>&1 | tail -3 || \
+    echo -e "  ${YELLOW}⚠ Model pre-fetch failed — will download on first /generate instead.${RESET}"
+
+  echo -e "  ${GREEN}✓ Lip Sync sidecar ready${RESET}"
+  echo "    Start: $VENV_DIR/bin/python $LIP_DIR/server.py --port 5012"
+}
+
 # ── Update GPT-SoVITS runtime deps (for re-runs on existing installs) ─────────
 update_gptsovits_runtime_deps() {
   local SOVITS_VENV="$HOME/.openzigs/sidecars/gptsovits/.venv"
@@ -703,6 +799,7 @@ if [ -d "$install_dir" ]; then
     [ "$INSTALL_MUSIC_STUDIO" -eq 1 ] && install_sidecar_music_studio "$install_dir"
     [ "$INSTALL_WORKER" -eq 1 ]       && install_sidecar_worker       "$install_dir"
     [ "$INSTALL_GPTSOVITS" -eq 1 ]    && install_sidecar_gptsovits    "$install_dir"
+    [ "$INSTALL_LIPSYNC" -eq 1 ]      && install_sidecar_lipsync      "$install_dir"
     update_gptsovits_runtime_deps
     print_summary "$install_dir"
     exit 0
@@ -753,6 +850,7 @@ docker compose ps --format "table {{.Name}}\t{{.Status}}\t{{.Ports}}"
 [ "$INSTALL_MUSIC_STUDIO" -eq 1 ] && install_sidecar_music_studio "$install_dir"
 [ "$INSTALL_WORKER" -eq 1 ]       && install_sidecar_worker       "$install_dir"
 [ "$INSTALL_GPTSOVITS" -eq 1 ]    && install_sidecar_gptsovits    "$install_dir"
+[ "$INSTALL_LIPSYNC" -eq 1 ]      && install_sidecar_lipsync      "$install_dir"
 update_gptsovits_runtime_deps
 
 print_summary "$install_dir"

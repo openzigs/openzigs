@@ -169,6 +169,14 @@ export class QueueMaster extends EventEmitter {
    * Polls each sidecar's /status (or /health for FluxQ) endpoint.
    */
   async getNodeStatuses(): Promise<NodeStatus[]> {
+    // Issue #1108: resolve the lip-sync URL once up-front so the rejection
+    // fallback below uses the *configured* URL (remote CF tunnel or local)
+    // instead of a hardcoded localhost:5010 — which would silently mask a
+    // typo in a remote-CF deployment.
+    const lipsyncConfig = await this.getLipSyncNodeConfig().catch(
+      () => null as WorkerNodeConfig | null,
+    );
+
     const [imageGen, m2Pro, music, lipsync] = await Promise.allSettled([
       this.pollNodeStatus("image-gen"),
       this.pollNodeStatus("m2-pro"),
@@ -211,7 +219,7 @@ export class QueueMaster extends EventEmitter {
             reachable: false,
             is_busy: false,
             loaded_model: null,
-            url: "http://localhost:5010",
+            url: lipsyncConfig?.url ?? "",
           },
     ];
   }
@@ -379,6 +387,10 @@ export class QueueMaster extends EventEmitter {
    * Both models cannot coexist (~20 GB LTX + ~18 GB LatentSync > 32 GB).
    * Unloads the competing sidecar with retries before dispatching.
    *
+   * Issue #1102: after a successful HTTP unload, this method polls the
+   * sidecar's /health until `loaded_model === null` (or a 30 s timeout
+   * elapses) so callers cannot race ahead while VRAM is still draining.
+   *
    * @param target - Which sidecar we're about to dispatch to
    */
   async ensureSidecarMemory(target: "ltx" | "lipsync"): Promise<void> {
@@ -392,12 +404,20 @@ export class QueueMaster extends EventEmitter {
         logger.info(
           `[QueueMaster] Memory coordination: unloading LTX (${this.m2ProStatus.loaded_model}) before lipsync dispatch`,
         );
+        let httpUnloadOk = true;
         try {
           await this.unloadWithRetry("m2-pro", 3, 2_000);
         } catch (err) {
+          httpUnloadOk = false;
           logger.warn(
             `[QueueMaster] Memory coordination: LTX unload failed (${err instanceof Error ? err.message : err}) — proceeding with lipsync dispatch anyway`,
           );
+        }
+        // Issue #1102: confirm via fresh /health poll that the model is
+        // actually released. Throws a clear timeout error after 30 s so the
+        // caller can abort the lipsync dispatch instead of OOM-ing the GPU.
+        if (httpUnloadOk) {
+          await this.confirmUnloaded("m2-pro", 30_000);
         }
       } else if (target === "ltx" && this.lipSyncStatus.loaded_model) {
         // Best-effort: unload LatentSync before loading LTX
@@ -414,6 +434,36 @@ export class QueueMaster extends EventEmitter {
       }
     } finally {
       this.memoryTransitionActive = false;
+    }
+  }
+
+  /**
+   * Issue #1102: poll the given node's /health until `loaded_model === null`
+   * or `timeoutMs` elapses. Throws on timeout. Backoff is fixed at 1 s.
+   * Returns immediately when the cached status is already idle so the
+   * happy path costs at most one fresh poll.
+   */
+  private async confirmUnloaded(
+    node: TargetNode,
+    timeoutMs: number,
+  ): Promise<void> {
+    const start = Date.now();
+    for (;;) {
+      // Always do at least one fresh poll so a stale cache cannot mask
+      // a sidecar that ack'd HTTP unload but hasn't released the model.
+      try {
+        await this.pollNodeStatus(node);
+      } catch {
+        // Treat poll failure as "not yet confirmed" — let the timeout decide.
+      }
+      const status = node === "m2-pro" ? this.m2ProStatus : this.imageGenStatus;
+      if (status.loaded_model === null) return;
+      if (Date.now() - start >= timeoutMs) {
+        throw new Error(
+          `[QueueMaster] Timed out waiting for ${node} to release loaded model after ${timeoutMs}ms — aborting dispatch`,
+        );
+      }
+      await new Promise((r) => setTimeout(r, 1_000));
     }
   }
 
@@ -1719,7 +1769,7 @@ export class QueueMaster extends EventEmitter {
         this.lipSyncUnreachableCount % 10 === 0
       ) {
         logger.warn(
-          `[QueueMaster] Lip-sync sidecar unreachable — skipping lipsync jobs. Start with: cd sidecars/lipsync && .venv/bin/python server.py --port 5008`,
+          `[QueueMaster] Lip-sync sidecar unreachable — skipping lipsync jobs. Start with: cd sidecars/lipsync && .venv/bin/python server.py --port 5012`,
         );
       }
       return;

@@ -384,15 +384,16 @@ all AI media features are now available on Windows machines with NVIDIA GPUs.
 | **Music Generation (ACE-Step)** | ❌ | ✅ | ✅ | WSL CUDA sidecar port 5009 |
 | **Music Studio (Demucs/Seed-VC)** | ❌ | ✅ | ✅ | WSL CUDA sidecar port 5010 |
 | **Video Generation (LTX)** | ❌ | ✅ | ✅ | WSL CUDA sidecar port 5007 |
-| **Lip Sync (LatentSync)** | ❌ | ✅ | ✅ | WSL CUDA sidecar port 5010 |
+| **Lip Sync (LatentSync)** | ✅ MPS (v1.5 only on 16 GB) | ✅ | ✅ | Sidecar port **5012** (canonical, MPS + CUDA) |
 | **Voice Cloning (F5-TTS)** | ❌ | ✅ | ✅ | Part of audio sidecar |
 | **Director Mode (Video)** | ⚠️ | ✅ | ✅ | Render requires sidecars |
 | **Gallery (Media Creation)** | ⚠️ | ✅ | ✅ | Generation requires sidecars |
 
 **Legend**: ✅ Full support | ⚠️ Partial (UI works, generation unavailable) | ❌ Not available
 
-> **Note**: LipSync and Music Studio share port 5010 — only one can run at a time.
-> Use `media-ctl.ps1` to switch between them.
+> **Note**: As of issue #1104, Lip Sync runs on the dedicated port **5012** on both MPS and CUDA. Music Studio keeps port 5010. The previous 5010 collision is gone — but on a 16/24 GB host, lip-sync (LatentSync) and the LTX video worker still cannot coexist in unified memory; the queue master unloads LTX before dispatching lip-sync (issue #1102).
+>
+> **Apple Silicon**: install via `bash install.sh` and pick option 7 (Lip Sync). Requires macOS arm64. v1.6 (~18 GB) is refused with HTTP 507 on hosts with <24 GB RAM — submit `model_version="v1.5"` or route the job to a remote 32 GB / GPU node. See [REMOTE_NODES_SETUP § 14](REMOTE_NODES_SETUP.md#14-running-lip-sync-latentsync-on-apple-silicon).
 
 ### Windows Sidecar Management (WSL+CUDA)
 
@@ -408,8 +409,8 @@ If you have an NVIDIA GPU and WSL2 Ubuntu, you can run all AI sidecars via the `
 .\scripts\media-ctl.ps1 ltx logs             # LTX video gen (port 5007)
 .\scripts\media-ctl.ps1 imgproc health       # Image processing (port 5008)
 .\scripts\media-ctl.ps1 music restart        # ACE-Step music (port 5009)
-.\scripts\media-ctl.ps1 lipsync restart      # LatentSync (port 5010)
-.\scripts\media-ctl.ps1 studio restart       # Music Studio (port 5010, replaces lipsync)
+.\scripts\media-ctl.ps1 lipsync restart      # LatentSync (port 5012)
+.\scripts\media-ctl.ps1 studio restart       # Music Studio (port 5010)
 
 # Bulk operations
 .\scripts\media-ctl.ps1 restart-all          # Restart all sidecars

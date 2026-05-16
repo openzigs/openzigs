@@ -4,12 +4,12 @@ Issue #798: CUDA variant of the lip-sync sidecar for Windows and Linux.
 
 Differences from server.py (MPS):
   - Uses CUDA for GPU acceleration
-  - Default port 5010
+  - Default port 5012 (canonical, issue #1104)
   - xformers memory-efficient attention
   - Half-precision (float16) inference
 
 HTTP API: Same as MPS variant.
-Port: 5010 (default)
+Port: 5012 (default — canonical lip-sync port, issue #1104)
 """
 
 import asyncio
@@ -669,7 +669,7 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(description="LatentSync Lip Sync Sidecar (CUDA)")
-    parser.add_argument("--port", type=int, default=5010, help="Port to listen on")
+    parser.add_argument("--port", type=int, default=5012, help="Port to listen on")
     parser.add_argument("--host", type=str, default="127.0.0.1", help="Host to bind to")
     args = parser.parse_args()
     uvicorn.run(app, host=args.host, port=args.port)
