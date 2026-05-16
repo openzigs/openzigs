@@ -608,6 +608,24 @@ install_sidecar_lipsync() {
     2>&1 | tail -3 || \
     echo -e "  ${YELLOW}⚠ Model download failed — run manually: huggingface-cli download ByteDance/LatentSync-1.5 --local-dir ~/.openzigs/models/latentsync${RESET}"
 
+  # Download Whisper tiny checkpoint required by LatentSync's inference.py audio encoder.
+  # inference.py calls Audio2Feature(model_path="checkpoints/whisper/tiny.pt") relative to latentsync_dir.
+  local WHISPER_CKPT_DIR="$LATENTSYNC_MODEL_DIR/checkpoints/whisper"
+  if [[ ! -f "$WHISPER_CKPT_DIR/tiny.pt" ]]; then
+    echo "  Downloading Whisper tiny.pt for LatentSync audio encoder ..."
+    mkdir -p "$WHISPER_CKPT_DIR"
+    "$VENV_DIR/bin/python" -c "
+import urllib.request, pathlib, sys
+url = 'https://openaipublic.azureedge.net/main/whisper/models/65147644a518d12f04e32d6f3b26facc3f8dd46e5390956a9424a650c0ce22b9/tiny.pt'
+dest = pathlib.Path('$WHISPER_CKPT_DIR/tiny.pt')
+print(f'  Downloading {url} ...')
+urllib.request.urlretrieve(url, dest)
+print(f'  Saved to {dest} ({dest.stat().st_size // 1024} KB)')
+" 2>&1 || echo -e "  ${YELLOW}⚠ Whisper download failed — download manually: curl -L <url> -o $WHISPER_CKPT_DIR/tiny.pt${RESET}"
+  else
+    echo "  Whisper tiny.pt already present — skipping."
+  fi
+
   echo -e "  ${GREEN}✓ Lip Sync sidecar ready${RESET}"
   echo "    Start: $VENV_DIR/bin/python $LIP_DIR/server.py --port 5012"
 }

@@ -370,6 +370,34 @@ def report_progress(
             logger.warning("Failed to POST progress for %s: %s", job_id, exc)
 
 
+def _ensure_whisper_checkpoint(latentsync_dir: str) -> None:
+    """Download Whisper tiny.pt if missing.
+
+    LatentSync's inference.py calls Audio2Feature(model_path="checkpoints/whisper/tiny.pt")
+    relative to latentsync_dir. If the file is absent, inference fails immediately.
+    """
+    whisper_pt = os.path.join(latentsync_dir, "checkpoints", "whisper", "tiny.pt")
+    if os.path.exists(whisper_pt):
+        return
+    os.makedirs(os.path.dirname(whisper_pt), exist_ok=True)
+    url = (
+        "https://openaipublic.azureedge.net/main/whisper/models/"
+        "65147644a518d12f04e32d6f3b26facc3f8dd46e5390956a9424a650c0ce22b9/tiny.pt"
+    )
+    logger.info("Downloading Whisper tiny.pt to %s ...", whisper_pt)
+    tmp_path = whisper_pt + ".tmp"
+    try:
+        req = Request(url, headers={"User-Agent": "openzigs-lipsync/1.0"})
+        with urlopen(req, timeout=120) as resp, open(tmp_path, "wb") as f:  # noqa: S310
+            f.write(resp.read())
+        os.rename(tmp_path, whisper_pt)
+        logger.info("Whisper tiny.pt downloaded (%d KB)", os.path.getsize(whisper_pt) // 1024)
+    except Exception as exc:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
+        raise RuntimeError(f"Failed to download Whisper tiny.pt: {exc}") from exc
+
+
 def _run_latentsync_subprocess(
     video_path: str,
     audio_path: str,
@@ -423,6 +451,10 @@ def _run_latentsync_subprocess(
     ]
     if enable_deepcache:
         cmd.append("--enable_deepcache")
+
+    # Ensure Whisper tiny.pt is present — inference.py's Audio2Feature requires it at
+    # checkpoints/whisper/tiny.pt relative to latentsync_dir.
+    _ensure_whisper_checkpoint(latentsync_dir)
 
     # Run with cwd=latentsync_dir so relative paths inside configs resolve correctly.
     # PYTHONPATH must include latentsync_dir so `import latentsync` resolves the

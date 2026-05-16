@@ -568,13 +568,14 @@ export const createQueueRouter = ({
         return;
       }
 
-      // Remix jobs don't require a prompt — only a payload object
-      const isRemixJob = type.startsWith("remix_");
+      // Remix and lipsync jobs don't require a prompt — only a payload object
+      const isNoPromptType =
+        type.startsWith("remix_") || type === "lipsync" || type === "sadtalker";
       if (!payload || typeof payload !== "object") {
         res.status(400).json({ error: "payload is required" });
         return;
       }
-      if (!isRemixJob && !payload.prompt) {
+      if (!isNoPromptType && !payload.prompt) {
         res.status(400).json({ error: "payload.prompt is required" });
         return;
       }
@@ -832,15 +833,17 @@ export const createQueueRouter = ({
       const nodeConfig = await resolveNodeConfig("lip-sync", {
         skipValidation: true,
       });
-      const candidates: Array<{ url: string; headers: Record<string, string> }> =
-        [
-          { url: nodeConfig.url, headers: buildNodeAuthHeaders(nodeConfig) },
-          // Always fall back to localhost so the endpoint works even if the
-          // resolver returns the CF URL but the local sidecar is also running.
-          ...(nodeConfig.url !== "http://127.0.0.1:5012"
-            ? [{ url: "http://127.0.0.1:5012", headers: {} }]
-            : []),
-        ];
+      const candidates: Array<{
+        url: string;
+        headers: Record<string, string>;
+      }> = [
+        { url: nodeConfig.url, headers: buildNodeAuthHeaders(nodeConfig) },
+        // Always fall back to localhost so the endpoint works even if the
+        // resolver returns the CF URL but the local sidecar is also running.
+        ...(nodeConfig.url !== "http://127.0.0.1:5012"
+          ? [{ url: "http://127.0.0.1:5012", headers: {} }]
+          : []),
+      ];
       for (const candidate of candidates) {
         try {
           const resp = await fetch(`${candidate.url}/health`, {
