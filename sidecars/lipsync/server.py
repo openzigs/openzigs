@@ -8,7 +8,7 @@ HTTP API:
   GET  /status/{job_id} — Poll job status and progress
   POST /unload-model    — Unload model from memory
 
-Port: 5008 (default)
+Port: 5012 (default — canonical lip-sync port across MPS and CUDA, issue #1104)
 """
 
 import asyncio
@@ -18,6 +18,7 @@ import json
 import logging
 import os
 import re
+import sys
 import tempfile
 import time
 import traceback
@@ -30,9 +31,16 @@ from urllib.request import Request, urlopen
 from urllib.error import URLError
 
 from fastapi import FastAPI, HTTPException, Depends, Header
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
 from pydantic import BaseModel, Field, field_validator
 import uvicorn
+
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv()
+except Exception:
+    pass
 
 logging.basicConfig(
     level=logging.INFO,
@@ -80,10 +88,14 @@ def safe_join(base_dir: str, user_path: str) -> str:
 def _post_to_callback(endpoint_url: str, data: bytes, timeout: int = 30) -> None:
     """POST data to a server-configured callback URL (not user-supplied)."""
     # Issue #1089 — sign callbacks with HMAC + timestamp.
+    # Look in the script's own directory first (standalone/deployed) then fall
+    # back to the repo's sidecars/_shared/ for in-tree runs.
     import sys as _sys
-    _shared = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "_shared")
-    if _shared not in _sys.path:
-        _sys.path.insert(0, _shared)
+    _own_dir = os.path.dirname(os.path.abspath(__file__))
+    _shared = os.path.join(_own_dir, "..", "_shared")
+    for _p in (_own_dir, _shared):
+        if _p not in _sys.path:
+            _sys.path.insert(0, _p)
     from signed_callback import signed_headers as _sh  # type: ignore[import-not-found]
     _cb_secret = os.getenv("CALLBACK_SECRET") or None
     headers = _sh(_cb_secret, data, "lip-sync", legacy_bearer=True)
@@ -102,6 +114,33 @@ AUTH_TOKEN: Optional[str] = os.environ.get("LIPSYNC_SECRET_TOKEN")
 MODEL_IDLE_TIMEOUT = float(os.environ.get("LIPSYNC_MODEL_IDLE_TIMEOUT", "300"))
 MEMORY_LIMIT_GB = float(os.environ.get("LIPSYNC_MEMORY_LIMIT_GB", "24"))
 DEFAULT_MODEL = os.environ.get("LIPSYNC_DEFAULT_MODEL", "v1.5")
+
+
+def _detect_host_ram_gb() -> float:
+    """Issue #1106: detect total system RAM in GB so /generate can refuse
+    LatentSync v1.6 on hosts that cannot fit it (~18 GB resident).
+
+    OPENZIGS_FORCE_RAM_GB overrides the detected value for tests and for
+    operators who want to force the gate one way or the other on a node
+    with non-standard memory accounting.
+    """
+    forced = os.environ.get("OPENZIGS_FORCE_RAM_GB")
+    if forced:
+        try:
+            return float(forced)
+        except ValueError:
+            logger.warning("OPENZIGS_FORCE_RAM_GB=%r is not numeric — ignoring", forced)
+    try:
+        import psutil  # type: ignore[import-not-found]
+
+        return psutil.virtual_memory().total / (1024 ** 3)
+    except Exception as exc:  # pragma: no cover — psutil missing only in sandbox tests
+        logger.warning("Unable to detect host RAM via psutil (%s) — assuming 0", exc)
+        return 0.0
+
+
+HOST_RAM_GB: float = _detect_host_ram_gb()
+logger.info("Detected host RAM: %.1f GB (gate threshold for v1.6 = %.1f GB)", HOST_RAM_GB, MEMORY_LIMIT_GB)
 
 # Callback URLs are server-configured only (not user-supplied) to prevent SSRF.
 CALLBACK_URL: str = os.environ.get("CALLBACK_URL", "http://localhost:3000/api/queue/complete")
@@ -225,8 +264,11 @@ def _load_pipeline(model_version: str = "v1.5"):
     ckpt_path = os.path.join(latentsync_dir, "checkpoints", ckpt_name)
 
     if not os.path.exists(config_path) or not os.path.exists(ckpt_path):
+        # Subprocess path uses scripts/inference.py + configs/unet/stage2.yaml
+        subprocess_script = os.path.join(latentsync_dir, "scripts", "inference.py")
         logger.warning(
-            "Model files not found at %s — will use subprocess fallback", latentsync_dir
+            "Model files not found at %s (pip API) — checking subprocess path %s",
+            latentsync_dir, subprocess_script,
         )
         _pipeline = None
         worker_state["loaded_model"] = "subprocess"
@@ -328,6 +370,82 @@ def report_progress(
             logger.warning("Failed to POST progress for %s: %s", job_id, exc)
 
 
+def _ensure_whisper_checkpoint(latentsync_dir: str) -> None:
+    """Download Whisper tiny.pt if missing.
+
+    LatentSync's inference.py calls Audio2Feature(model_path="checkpoints/whisper/tiny.pt")
+    relative to latentsync_dir. If the file is absent, inference fails immediately.
+    """
+    whisper_pt = os.path.join(latentsync_dir, "checkpoints", "whisper", "tiny.pt")
+    if os.path.exists(whisper_pt):
+        return
+    os.makedirs(os.path.dirname(whisper_pt), exist_ok=True)
+    url = (
+        "https://openaipublic.azureedge.net/main/whisper/models/"
+        "65147644a518d12f04e32d6f3b26facc3f8dd46e5390956a9424a650c0ce22b9/tiny.pt"
+    )
+    logger.info("Downloading Whisper tiny.pt to %s ...", whisper_pt)
+    tmp_path = whisper_pt + ".tmp"
+    try:
+        req = Request(url, headers={"User-Agent": "openzigs-lipsync/1.0"})
+        with urlopen(req, timeout=120) as resp, open(tmp_path, "wb") as f:  # noqa: S310
+            f.write(resp.read())
+        os.rename(tmp_path, whisper_pt)
+        logger.info("Whisper tiny.pt downloaded (%d KB)", os.path.getsize(whisper_pt) // 1024)
+    except Exception as exc:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
+        raise RuntimeError(f"Failed to download Whisper tiny.pt: {exc}") from exc
+
+
+def _patch_latentsync_mps_sources(latentsync_dir: str) -> None:
+    """Patch downloaded LatentSync sources for macOS ARM runtime gaps."""
+    util_py = os.path.join(latentsync_dir, "latentsync", "utils", "util.py")
+    if not os.path.exists(util_py):
+        return
+
+    with open(util_py) as f:
+        src = f.read()
+
+    if "OPENZIGS_MPS_AUDIO_FALLBACK" in src:
+        return
+
+    old = '''def read_audio(audio_path: str, audio_sample_rate: int = 16000):
+    if audio_path is None:
+        raise ValueError("Audio path is required.")
+    ar = AudioReader(audio_path, sample_rate=audio_sample_rate, mono=True)
+
+    # To access the audio samples
+    audio_samples = torch.from_numpy(ar[:].asnumpy())
+    audio_samples = audio_samples.squeeze(0)
+
+    return audio_samples
+'''
+    new = '''def read_audio(audio_path: str, audio_sample_rate: int = 16000):
+    # OPENZIGS_MPS_AUDIO_FALLBACK
+    if audio_path is None:
+        raise ValueError("Audio path is required.")
+    try:
+        ar = AudioReader(audio_path, sample_rate=audio_sample_rate, mono=True)
+        audio_samples = torch.from_numpy(ar[:].asnumpy())
+    except Exception:
+        import librosa
+
+        audio, _ = librosa.load(audio_path, sr=audio_sample_rate, mono=True)
+        audio_samples = torch.from_numpy(audio.astype(np.float32, copy=False))
+    audio_samples = audio_samples.squeeze(0)
+
+    return audio_samples
+'''
+    if old not in src:
+        logger.warning("LatentSync read_audio patch target not found in %s", util_py)
+        return
+
+    with open(util_py, "w") as f:
+        f.write(src.replace(old, new))
+    logger.info("Patched LatentSync read_audio() with librosa fallback for MPS")
+
+
 def _run_latentsync_subprocess(
     video_path: str,
     audio_path: str,
@@ -335,15 +453,16 @@ def _run_latentsync_subprocess(
     model_version: str = "v1.5",
     inference_steps: int = 20,
     guidance_scale: float = 1.5,
+    enable_deepcache: bool = True,
 ) -> None:
-    """Run LatentSync inference via subprocess (fallback when Python API unavailable)."""
-    # Inline validation with string literals to break CodeQL taint chain.
-    if model_version == "v1.5":
-        safe_version, config_name, ckpt_name = "v1.5", "latentsync_unet_v1.5.yaml", "latentsync_unet_v1.5.pt"
-    elif model_version == "v1.6":
-        safe_version, config_name, ckpt_name = "v1.6", "latentsync_unet_v1.6.yaml", "latentsync_unet_v1.6.pt"
-    else:
-        raise ValueError(f"Unsupported model_version: {model_version!r}")
+    """Run LatentSync inference via subprocess (fallback when Python API unavailable).
+
+    The ByteDance/LatentSync GitHub repo (cloned to LATENTSYNC_DIR) uses:
+      scripts/inference.py          — entry point (not inference.py at root)
+      --unet_config_path            — UNet config YAML
+      --inference_ckpt_path         — checkpoint .pt file
+      --video_out_path              — output video (not --output_path)
+    """
     safe_steps = int(inference_steps)
     safe_scale = float(guidance_scale)
     if not (1 <= safe_steps <= 100):
@@ -357,29 +476,52 @@ def _run_latentsync_subprocess(
             str(Path.home() / ".openzigs" / "models" / "latentsync"),
         )
     )
-    inference_script = os.path.join(latentsync_dir, "inference.py")
+    # inference.py lives in scripts/ subdirectory in the GitHub source clone
+    inference_script = os.path.join(latentsync_dir, "scripts", "inference.py")
     if not os.path.exists(inference_script):
-        raise FileNotFoundError(f"LatentSync inference.py not found at {inference_script}")
+        raise FileNotFoundError(f"LatentSync scripts/inference.py not found at {inference_script}")
 
-    config_path = os.path.join(latentsync_dir, "configs", config_name)
-    ckpt_path = os.path.join(latentsync_dir, "checkpoints", ckpt_name)
+    # stage2.yaml is the correct inference config for all supported model versions
+    config_path = os.path.join(latentsync_dir, "configs", "unet", "stage2.yaml")
+    ckpt_path = os.path.join(latentsync_dir, "checkpoints", "latentsync_unet.pt")
 
     # All arguments are validated and path-safe; no shell=True
     cmd = [
-        "python",
+        sys.executable,
         inference_script,
-        "--config_path", config_path,
-        "--checkpoint_path", ckpt_path,
+        "--unet_config_path", config_path,
+        "--inference_ckpt_path", ckpt_path,
         "--video_path", video_path,
         "--audio_path", audio_path,
-        "--output_path", output_path,
+        "--video_out_path", output_path,
         "--inference_steps", str(safe_steps),
         "--guidance_scale", str(safe_scale),
     ]
+    if enable_deepcache:
+        cmd.append("--enable_deepcache")
 
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)  # noqa: S603
+    # Patch downloaded LatentSync source for macOS ARM gaps before importing it
+    # in the subprocess.
+    _patch_latentsync_mps_sources(latentsync_dir)
+
+    # Ensure Whisper tiny.pt is present — inference.py's Audio2Feature requires it at
+    # checkpoints/whisper/tiny.pt relative to latentsync_dir.
+    _ensure_whisper_checkpoint(latentsync_dir)
+
+    # Run with cwd=latentsync_dir so relative paths inside configs resolve correctly.
+    # PYTHONPATH must include latentsync_dir so `import latentsync` resolves the
+    # latentsync/ package that ships inside the HuggingFace snapshot.
+    existing_pythonpath = os.environ.get("PYTHONPATH", "")
+    subprocess_env = {
+        **os.environ,
+        "PYTHONPATH": f"{latentsync_dir}:{existing_pythonpath}" if existing_pythonpath else latentsync_dir,
+        # Several linalg ops (svd, det) are not yet native on MPS; allow CPU fallback.
+        "PYTORCH_ENABLE_MPS_FALLBACK": "1",
+    }
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=600, cwd=latentsync_dir, env=subprocess_env)  # noqa: S603
     if result.returncode != 0:
-        raise RuntimeError(f"LatentSync inference failed: {result.stderr[-1000:]}")
+        combined = (result.stdout + "\n" + result.stderr).strip()
+        raise RuntimeError(f"LatentSync inference failed: {combined[-3000:]}")
 
 
 async def process_lipsync_job(req: LipSyncRequest) -> None:
@@ -466,6 +608,7 @@ async def process_lipsync_job(req: LipSyncRequest) -> None:
                 model_version=req.model_version,
                 inference_steps=req.inference_steps,
                 guidance_scale=req.guidance_scale,
+                enable_deepcache=req.enable_deepcache,
             )
 
         report_progress(job_id, "finalize", 0.9, "Finalizing output")
@@ -520,13 +663,14 @@ async def process_lipsync_job(req: LipSyncRequest) -> None:
         logger.error("Job %s failed: %s\n%s", job_id, exc, tb)
         job_progress[job_id] = {
             "status": "failed",
-            "error": str(exc)[:500],
+            "error": str(exc)[:3000],
+            "traceback": tb[:3000],
             "completed_at": time.time(),
         }
         if CALLBACK_URL:
             try:
                 err_payload = json.dumps(
-                    {"job_id": job_id, "status": "failed", "error": str(exc)[:500]}
+                    {"job_id": job_id, "status": "failed", "error": str(exc)[:3000]}
                 ).encode()
                 _post_to_callback(CALLBACK_URL, data=err_payload)
             except Exception:
@@ -546,11 +690,29 @@ async def process_lipsync_job(req: LipSyncRequest) -> None:
 async def generate(req: LipSyncRequest):
     if worker_state["is_busy"]:
         raise HTTPException(status_code=409, detail="Worker is busy")
+    # Issue #1106: refuse v1.6 on hosts that cannot fit it (~18 GB resident).
+    # 16 GB MacBooks must downgrade to v1.5 (~8 GB) or run remotely on a
+    # 32 GB / GPU node. We surface 507 (Insufficient Storage) so the queue
+    # master can route to a remote worker instead of dispatching here.
+    if req.model_version == "v1.6" and HOST_RAM_GB < MEMORY_LIMIT_GB:
+        return JSONResponse(
+            status_code=507,
+            content={
+                "error": "insufficient_unified_memory",
+                "message": (
+                    f"LatentSync v1.6 requires ~{MEMORY_LIMIT_GB:.0f} GB of unified memory; "
+                    f"this host has {HOST_RAM_GB:.1f} GB. Re-submit with model_version=\"v1.5\" "
+                    f"or route the job to a 32 GB / GPU worker."
+                ),
+                "host_ram_gb": round(HOST_RAM_GB, 2),
+                "required_gb": MEMORY_LIMIT_GB,
+            },
+        )
     asyncio.create_task(process_lipsync_job(req))
     return {"job_id": req.job_id, "status": "accepted"}
 
 
-@app.get("/health")
+@app.get("/health", dependencies=[Depends(verify_auth)])
 async def health():
     import psutil
 
@@ -567,12 +729,72 @@ async def health():
     }
 
 
+@app.get("/capabilities", dependencies=[Depends(verify_auth)])
+async def capabilities():
+    """Apple Silicon (MPS/PyTorch) capability report for the admin Models page."""
+    total_gb = 0.0
+    free_gb = 0.0
+    try:
+        import psutil
+        vm = psutil.virtual_memory()
+        total_gb = round(vm.total / (1024 ** 3), 1)
+        free_gb = round(vm.available / (1024 ** 3), 1)
+    except Exception:
+        pass
+    return {
+        "cuda_available": False,
+        "device_count": 1,
+        "pooled_vram_gb": total_gb,
+        "per_device": [
+            {
+                "index": 0,
+                "name": "Apple Silicon GPU (Metal / MPS)",
+                "total_gb": int(total_gb),
+                "free_gb": int(free_gb),
+            }
+        ],
+        "pooling": {
+            "mode": "unified",
+            "active": True,
+            "device": DEVICE,
+        },
+        "max_ram_gb_v1_5": 8,
+        "max_ram_gb_v1_6": 18,
+        "available_models": ["v1.5", "v1.6"],
+        "host_ram_gb": HOST_RAM_GB,
+        "env": {
+            "WORKER": "mac-mini",
+            "BACKEND": "mps",
+            "DEFAULT_MODEL": DEFAULT_MODEL,
+        },
+    }
+
+
 @app.get("/status/{job_id}")
 async def status(job_id: str):
     info = job_progress.get(job_id)
     if not info:
         raise HTTPException(status_code=404, detail="Job not found")
     return {"job_id": job_id, **info}
+
+
+_GALLERY_FILENAME_RE = re.compile(r"^lipsync_[a-fA-F0-9\-]{36}\.mp4$")
+
+
+@app.get("/gallery/{filename}", dependencies=[Depends(verify_auth)])
+async def gallery(filename: str):
+    # Fallback retrieval for remote workers when the callback POST cannot
+    # reach the OpenZigs server (e.g. mac mini behind CF tunnel, no LAN route).
+    # Strict filename allowlist prevents path traversal.
+    if not _GALLERY_FILENAME_RE.match(filename):
+        raise HTTPException(status_code=400, detail="Invalid filename")
+    try:
+        full_path = safe_join(GALLERY_DIR, filename)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+    if not os.path.exists(full_path):
+        raise HTTPException(status_code=404, detail="File not found")
+    return FileResponse(full_path, media_type="video/mp4", filename=filename)
 
 
 @app.post("/unload-model", dependencies=[Depends(verify_auth)])
@@ -592,7 +814,7 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(description="LatentSync Lip Sync Sidecar")
-    parser.add_argument("--port", type=int, default=5008, help="Port to listen on")
+    parser.add_argument("--port", type=int, default=5012, help="Port to listen on")
     parser.add_argument("--host", type=str, default="127.0.0.1", help="Host to bind to")
     args = parser.parse_args()
     uvicorn.run(app, host=args.host, port=args.port)

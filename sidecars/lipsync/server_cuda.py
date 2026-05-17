@@ -4,12 +4,12 @@ Issue #798: CUDA variant of the lip-sync sidecar for Windows and Linux.
 
 Differences from server.py (MPS):
   - Uses CUDA for GPU acceleration
-  - Default port 5010
+  - Default port 5012 (canonical, issue #1104)
   - xformers memory-efficient attention
   - Half-precision (float16) inference
 
 HTTP API: Same as MPS variant.
-Port: 5010 (default)
+Port: 5012 (default — canonical lip-sync port, issue #1104)
 """
 
 import asyncio
@@ -32,7 +32,7 @@ from urllib.request import Request, urlopen
 from urllib.error import URLError
 
 from fastapi import FastAPI, HTTPException, Depends, Header
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
 from pydantic import BaseModel, Field, field_validator
 import uvicorn
 
@@ -628,6 +628,24 @@ async def status(job_id: str):
     return {"job_id": job_id, **info}
 
 
+_GALLERY_FILENAME_RE = re.compile(r"^lipsync_[a-fA-F0-9\-]{36}\.mp4$")
+
+
+@app.get("/gallery/{filename}", dependencies=[Depends(verify_auth)])
+async def gallery(filename: str):
+    # Fallback retrieval for remote workers when the callback POST cannot
+    # reach the OpenZigs server (e.g. mac mini behind CF tunnel, no LAN route).
+    if not _GALLERY_FILENAME_RE.match(filename):
+        raise HTTPException(status_code=400, detail="Invalid filename")
+    try:
+        full_path = safe_join(GALLERY_DIR, filename)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+    if not os.path.exists(full_path):
+        raise HTTPException(status_code=404, detail="File not found")
+    return FileResponse(full_path, media_type="video/mp4", filename=filename)
+
+
 @app.get("/gpu-info")
 async def gpu_info_endpoint():
     """Report which CUDA device this sidecar is bound to (Issue #884)."""
@@ -669,7 +687,7 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(description="LatentSync Lip Sync Sidecar (CUDA)")
-    parser.add_argument("--port", type=int, default=5010, help="Port to listen on")
+    parser.add_argument("--port", type=int, default=5012, help="Port to listen on")
     parser.add_argument("--host", type=str, default="127.0.0.1", help="Host to bind to")
     args = parser.parse_args()
     uvicorn.run(app, host=args.host, port=args.port)

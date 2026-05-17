@@ -82,7 +82,7 @@ echo "Audio sidecar setup complete (Kokoro + F5-TTS voice cloning)."
 
 # ── Lip Sync (LatentSync) ───────────────────────────────────
 echo ""
-echo "=== Setting up Lip Sync (LatentSync) on port 5010 ==="
+echo "=== Setting up Lip Sync (LatentSync) on port 5012 ==="
 LIP_DIR="$SIDECARS_DIR/lipsync"
 mkdir -p "$LIP_DIR"
 
@@ -189,5 +189,5 @@ echo "  Image Gen (Flux):   http://localhost:5005"
 echo "  Audio (STT/TTS):    http://localhost:5006"
 echo "  Video Worker (LTX): http://localhost:5007"
 echo "  Music (ACE-Step):   http://localhost:5009"
-echo "  Lip Sync:           http://localhost:5010"
+echo "  Lip Sync:           http://localhost:5012"
 echo "  SadTalker:          http://localhost:5011"

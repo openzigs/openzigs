@@ -1,8 +1,12 @@
-# LatentSync Lip Sync Sidecar — MPS Requirements (macOS)
+# LatentSync Lip Sync Sidecar — MPS Requirements (macOS / Apple Silicon)
 # Install: pip install -r requirements-mps.txt
-torch>=2.1.0
-torchvision>=0.16.0
-torchaudio>=2.1.0
+#
+# Issue #1103 — pinned to torch 2.5.x because LatentSync's UNet attention paths
+# regressed on torch 2.6 nightlies under MPS (silent black frames). Re-test
+# before bumping.
+torch==2.5.1
+torchvision==0.20.1
+torchaudio==2.5.1
 diffusers>=0.25.0
 transformers>=4.36.0
 accelerate>=0.25.0
@@ -22,4 +26,25 @@ pydantic>=2.0.0
 huggingface-hub>=0.20.0
 omegaconf>=2.3.0
 einops>=0.7.0
-decord>=0.6.0
+# decord is not available on macOS ARM64 via PyPI — the sidecar patches LatentSync
+# source to stub it out. The pipeline uses imageio/OpenCV for video I/O on MPS.
+# decord>=0.6.0
+# Issue #1103 — face / landmark detection used by LatentSync's preprocessor.
+mediapipe>=0.10.9
+# ── Additional packages required by LatentSync's inference pipeline ──────────
+imageio>=2.31.0
+imageio-ffmpeg>=0.5.0
+scenedetect>=0.6.0
+ffmpeg-python>=0.2.0
+lpips>=0.1.4
+face-alignment>=1.4.1
+kornia>=0.7.0
+insightface>=0.7.3
+# onnxruntime-gpu is Linux/Windows only; macOS MPS uses the CPU provider
+onnxruntime>=1.17.0
+DeepCache>=0.1.1
+python_speech_features>=0.6
+# librosa: read_audio fallback when decord is unavailable (macOS ARM)
+librosa>=0.10.0
+# socksio: required by httpx when a SOCKS proxy is configured in the environment
+socksio>=1.0.0

@@ -169,6 +169,14 @@ export class QueueMaster extends EventEmitter {
    * Polls each sidecar's /status (or /health for FluxQ) endpoint.
    */
   async getNodeStatuses(): Promise<NodeStatus[]> {
+    // Issue #1108: resolve the lip-sync URL once up-front so the rejection
+    // fallback below uses the *configured* URL (remote CF tunnel or local)
+    // instead of a hardcoded localhost:5010 — which would silently mask a
+    // typo in a remote-CF deployment.
+    const lipsyncConfig = await this.getLipSyncNodeConfig().catch(
+      () => null as WorkerNodeConfig | null,
+    );
+
     const [imageGen, m2Pro, music, lipsync] = await Promise.allSettled([
       this.pollNodeStatus("image-gen"),
       this.pollNodeStatus("m2-pro"),
@@ -211,7 +219,7 @@ export class QueueMaster extends EventEmitter {
             reachable: false,
             is_busy: false,
             loaded_model: null,
-            url: "http://localhost:5010",
+            url: lipsyncConfig?.url ?? "",
           },
     ];
   }
@@ -379,6 +387,10 @@ export class QueueMaster extends EventEmitter {
    * Both models cannot coexist (~20 GB LTX + ~18 GB LatentSync > 32 GB).
    * Unloads the competing sidecar with retries before dispatching.
    *
+   * Issue #1102: after a successful HTTP unload, this method polls the
+   * sidecar's /health until `loaded_model === null` (or a 30 s timeout
+   * elapses) so callers cannot race ahead while VRAM is still draining.
+   *
    * @param target - Which sidecar we're about to dispatch to
    */
   async ensureSidecarMemory(target: "ltx" | "lipsync"): Promise<void> {
@@ -392,12 +404,20 @@ export class QueueMaster extends EventEmitter {
         logger.info(
           `[QueueMaster] Memory coordination: unloading LTX (${this.m2ProStatus.loaded_model}) before lipsync dispatch`,
         );
+        let httpUnloadOk = true;
         try {
           await this.unloadWithRetry("m2-pro", 3, 2_000);
         } catch (err) {
+          httpUnloadOk = false;
           logger.warn(
             `[QueueMaster] Memory coordination: LTX unload failed (${err instanceof Error ? err.message : err}) — proceeding with lipsync dispatch anyway`,
           );
+        }
+        // Issue #1102: confirm via fresh /health poll that the model is
+        // actually released. Throws a clear timeout error after 30 s so the
+        // caller can abort the lipsync dispatch instead of OOM-ing the GPU.
+        if (httpUnloadOk) {
+          await this.confirmUnloaded("m2-pro", 30_000);
         }
       } else if (target === "ltx" && this.lipSyncStatus.loaded_model) {
         // Best-effort: unload LatentSync before loading LTX
@@ -414,6 +434,36 @@ export class QueueMaster extends EventEmitter {
       }
     } finally {
       this.memoryTransitionActive = false;
+    }
+  }
+
+  /**
+   * Issue #1102: poll the given node's /health until `loaded_model === null`
+   * or `timeoutMs` elapses. Throws on timeout. Backoff is fixed at 1 s.
+   * Returns immediately when the cached status is already idle so the
+   * happy path costs at most one fresh poll.
+   */
+  private async confirmUnloaded(
+    node: TargetNode,
+    timeoutMs: number,
+  ): Promise<void> {
+    const start = Date.now();
+    for (;;) {
+      // Always do at least one fresh poll so a stale cache cannot mask
+      // a sidecar that ack'd HTTP unload but hasn't released the model.
+      try {
+        await this.pollNodeStatus(node);
+      } catch {
+        // Treat poll failure as "not yet confirmed" — let the timeout decide.
+      }
+      const status = node === "m2-pro" ? this.m2ProStatus : this.imageGenStatus;
+      if (status.loaded_model === null) return;
+      if (Date.now() - start >= timeoutMs) {
+        throw new Error(
+          `[QueueMaster] Timed out waiting for ${node} to release loaded model after ${timeoutMs}ms — aborting dispatch`,
+        );
+      }
+      await new Promise((r) => setTimeout(r, 1_000));
     }
   }
 
@@ -647,6 +697,7 @@ export class QueueMaster extends EventEmitter {
       await this.processTtsJobs();
       await this.processMusicJobs();
       await this.processMusicStudioJobs();
+      await this.reconcileLipSyncJobs();
       await this.processLipSyncJobs();
       await this.processSadTalkerJobs();
     } catch (err) {
@@ -1435,9 +1486,9 @@ export class QueueMaster extends EventEmitter {
     };
     Object.assign(headers, buildNodeAuthHeaders(nodeConfig));
 
-    // F5-TTS voice cloning: dispatch to /f5tts with pre-resolved clips
-    // Pipeline stores clips as { emotion, ref_audio_path, ref_text } (DB rows).
-    // The sidecar expects { ref_audio (base64), ref_text, gen_text, emotion }.
+    // F5-TTS voice cloning: dispatch to /f5tts with pre-resolved clips.
+    // Pipeline stores clips as { emotion, ref_audio_path, ref_text } (DB rows),
+    // which matches the audio sidecar's F5TTSClip schema.
     if (job.payload.f5tts_clips && job.payload.f5tts_clips.length > 0) {
       const resolvedClips = await Promise.all(
         (
@@ -1445,21 +1496,13 @@ export class QueueMaster extends EventEmitter {
             emotion?: string;
             ref_audio_path: string;
             ref_text: string;
-            ref_audio?: string;
-            gen_text?: string;
           }>
         ).map(async (clip) => {
-          let refAudioB64 = clip.ref_audio ?? "";
-          if (!refAudioB64 && clip.ref_audio_path) {
-            const audioBytes = await fs.readFile(clip.ref_audio_path);
-            refAudioB64 = audioBytes.toString("base64");
-          }
+          await fs.access(clip.ref_audio_path);
           return {
-            ref_audio: refAudioB64,
-            ref_text: clip.ref_text,
-            gen_text: clip.gen_text ?? job.payload.prompt ?? "",
             emotion: clip.emotion ?? "Regular",
-            remove_silence: true,
+            ref_audio_path: clip.ref_audio_path,
+            ref_text: clip.ref_text,
           };
         }),
       );
@@ -1688,6 +1731,112 @@ export class QueueMaster extends EventEmitter {
 
   // ── Lip Sync Sidecar (LatentSync) ─────────────────────────
 
+  /**
+   * Poll the lipsync sidecar for results of dispatched jobs whose callback
+   * never arrived. Required when the worker (e.g. remote mac mini via CF
+   * tunnel) has no route back to the OpenZigs callback URL.
+   *
+   * For each dispatched lipsync job older than the grace period, hit
+   * `GET /status/{id}` on the sidecar. If `status: complete`, fetch the
+   * file via `GET /gallery/{filename}` and feed it into handleJobCompletion
+   * (same code path as the real callback). If `status: failed`, propagate
+   * the error.
+   *
+   * Safe alongside the normal callback flow: jobs already marked complete
+   * are not in the `dispatched` list, so we never double-process.
+   */
+  private async reconcileLipSyncJobs(): Promise<void> {
+    const graceMs = 30_000; // give the callback 30s before polling kicks in
+    const cutoff = Date.now() - graceMs;
+    const dispatched = this.repo.listJobs({
+      status: "dispatched",
+      type: "lipsync",
+      limit: 10,
+    });
+    if (dispatched.length === 0) return;
+
+    let nodeConfig: WorkerNodeConfig;
+    try {
+      nodeConfig = await this.getLipSyncNodeConfig();
+    } catch {
+      return; // sidecar not configured
+    }
+    const headers: Record<string, string> = {};
+    Object.assign(headers, buildNodeAuthHeaders(nodeConfig));
+
+    for (const job of dispatched) {
+      if (!job.dispatchedAt || job.dispatchedAt.getTime() > cutoff) continue;
+
+      try {
+        const statusRes = await fetch(`${nodeConfig.url}/status/${job.id}`, {
+          headers,
+          signal: AbortSignal.timeout(10_000),
+        });
+        if (statusRes.status === 404) continue; // sidecar evicted or restarted
+        if (!statusRes.ok) continue;
+
+        const info = (await statusRes.json()) as {
+          status?: string;
+          result_url?: string;
+          error?: string;
+        };
+
+        if (info.status === "failed") {
+          logger.info(
+            `[QueueMaster] Reconciler picked up failed lipsync job ${job.id} (callback never arrived)`,
+          );
+          await this.handleJobCompletion(job.id, {
+            error: info.error ?? "Lipsync worker reported failure",
+          });
+          this.lipSyncStatus = { ...this.lipSyncStatus, is_busy: false };
+          continue;
+        }
+
+        if (info.status === "complete" && info.result_url) {
+          // result_url is "/gallery/lipsync_<uuid>.mp4" on the sidecar
+          const match = info.result_url.match(
+            /\/gallery\/(lipsync_[a-fA-F0-9-]{36}\.mp4)$/,
+          );
+          if (!match) {
+            logger.warn(
+              `[QueueMaster] Reconciler: unexpected result_url for ${job.id}: ${info.result_url}`,
+            );
+            continue;
+          }
+          const filename = match[1];
+
+          const fileRes = await fetch(`${nodeConfig.url}/gallery/${filename}`, {
+            headers,
+            signal: AbortSignal.timeout(60_000),
+          });
+          if (!fileRes.ok) {
+            // Sidecar may be running an older build without /gallery — skip
+            // this tick and let the watchdog eventually time the job out.
+            logger.warn(
+              `[QueueMaster] Reconciler: /gallery/${filename} returned ${fileRes.status} for job ${job.id} — sidecar may need redeploy`,
+            );
+            continue;
+          }
+
+          const buf = Buffer.from(await fileRes.arrayBuffer());
+          logger.info(
+            `[QueueMaster] Reconciler recovered lipsync job ${job.id} (${buf.length} bytes) — callback never arrived`,
+          );
+          await this.handleJobCompletion(job.id, {
+            media_base64: buf.toString("base64"),
+            media_type: "video/mp4",
+          });
+          this.lipSyncStatus = { ...this.lipSyncStatus, is_busy: false };
+        }
+      } catch (err) {
+        // Worker unreachable — silently skip; next tick will retry.
+        logger.debug(
+          `[QueueMaster] Reconciler poll failed for ${job.id}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
+  }
+
   private async processLipSyncJobs(): Promise<void> {
     if (this.lipSyncStatus.is_busy) {
       logger.debug("[QueueMaster] Lip-sync sidecar busy, skipping");
@@ -1719,7 +1868,7 @@ export class QueueMaster extends EventEmitter {
         this.lipSyncUnreachableCount % 10 === 0
       ) {
         logger.warn(
-          `[QueueMaster] Lip-sync sidecar unreachable — skipping lipsync jobs. Start with: cd sidecars/lipsync && .venv/bin/python server.py --port 5008`,
+          `[QueueMaster] Lip-sync sidecar unreachable — skipping lipsync jobs. Start with: cd sidecars/lipsync && .venv/bin/python server.py --port 5012`,
         );
       }
       return;

@@ -95,7 +95,10 @@ ingress:
   - hostname: rvc.example.com
     service: http://127.0.0.1:5010
   - hostname: lip.example.com
-    service: http://127.0.0.1:5010
+    # Lip Sync canonical port is 5012 across MPS and CUDA (issue #1104).
+    # Older deployments may still listen on 5008 (MPS) or 5010 (CUDA);
+    # update those sidecars before pointing the tunnel here.
+    service: http://127.0.0.1:5012
   - service: http_status:404
 ```
 
@@ -269,3 +272,37 @@ to test a single node.
   logs once per hour per node.
 - Set `auth.allowLegacyBearer: false` once all sidecars are on the signed
   helper to enforce HMAC-only.
+
+## 14. Running Lip Sync (LatentSync) on Apple Silicon
+
+LatentSync is the only sidecar where the **host RAM matters as much as the
+GPU**. On a Mac mini / MacBook Pro you have one unified memory pool shared
+between the OS, your browser, Ollama, the Next.js dev server, and any
+LatentSync model that's resident.
+
+### Canonical port
+
+| Sidecar variant | Script | Port |
+| --- | --- | --- |
+| MPS (Apple Silicon) | `sidecars/lipsync/server.py` | **5012** |
+| CUDA (Linux/WSL) | `sidecars/lipsync/server_cuda.py` | **5012** |
+
+The previous 5008 (MPS) / 5010 (CUDA) split has been retired (issue #1104).
+Update existing Cloudflare Tunnel ingress entries (Section 5) to point at
+`http://127.0.0.1:5012`.
+
+### v1.5 vs v1.6 RAM matrix
+
+| Host RAM | LatentSync v1.5 (~8 GB) | LatentSync v1.6 (~18 GB) | Recommendation |
+| --- | --- | --- | --- |
+| 8 GB Mac | ❌ | ❌ | Run lip-sync **remotely**; do not install the sidecar locally. |
+| 16 GB Mac (M1 / M2 / M3) | ⚠ Only with LTX + Ollama stopped | ❌ | The sidecar will return | 16 GB Mac (M1 / M2 / M3) | ⚠ Only with LTX + Oll24 | 16 GB Mac (M1 / M2 / M3) | ⚠ Only with LTX + Ollama stopped | ❌ | T b| 16 GB Mac (M1 / M2 / M3) | ⚠ Only with LTX + Ollama stopped | ❌ | Tor| 16 GB Mac (M1 / M2 / M3) | ⚠ Only with LTX + Ollama stopped | �ua| 16 GB Mac (M1 / M2 / M3) | ⚠ Ont_r| 16 GB Mac (M1 /rs/| 16 GB Mac (M1 / M2 / M3) | ⚠ Oe
+| 16 GB Mac (M1 / _g| 16 GB Mac (M1 / _g| 16 GB Mac (M1 / _g| 16 GB Mac (M1 / 
+to a remote 32 GB / GPU worker instead.
+
+### Coexistence with the LTX video ### Coexistence with the LTX video ### Coexistence with the LTX video ###  3### Coexistence with the LTX video ### Coexistence with the LTX videoloads### Coexistence with and t### Coexistence with tuntil `### Co_model === null`** before
+dispatching the lipsync job (issue #1102). The stardispatching the lipsyncart-mac-sidecars.sh` will warn if both daemons are deployed; set
+`SKIP_WORKER=1` or `SKIP_LIP`SKIP_WORKER=1` or `SKIP_LIP`SKIP_WORKER=1` or `SKIP_LIP`SKIP_WORKER=1` or `SKIP_LIP`SKIP_WORKER=1` or `SKIP_LIP`SKIP_WORKER=1` or `SKIP_LIP`SKIP_WORKER=1` or `SKIP_LIP`SKIP_WORKER=1` or `SKIP_LIP`SKIP_WORKER=1` or `SKIP_LIP`SKIP_WORKER=1` or `SKIP_LIP`SKIP_WORKER=1` or `SKIP_LIP`SKIP_WORKER=1` or `SKIP_LIP`SKIP_WORKER=1` or `SKIP_LIP`SKIP_WORKER=1` or `SKIP_LIP`SKIP_WORKER=1` or `SKIP_LIP`SKIP_WORKER=1` or `SKIP_LIP`SKIP_WORKER=1` or `SKIP_LIP`SKIP_WORKER=1`t-`SKIP_WORKER=1` or `SKIP_LIP`SKIP_WORKER=1` or `SKIP_LIP`SKIP_WORKER=1` or `Sen`SKIP_WORKER=1` or `SKIP_LIP`SKIP_WORK   tests in `src/queue/queue-master.test.ts`, issue #1107).
+
+If the remote URL is not reachable, `/api/queue/sidecars/lipsync/health`
+returns the **resolved** URL — never a hardcoded `localhost:5010` (issue #1108).

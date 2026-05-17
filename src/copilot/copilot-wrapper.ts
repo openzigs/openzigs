@@ -1217,7 +1217,7 @@ export class CopilotWrapperService
       );
     }
 
-    const effectiveModel =
+    let effectiveModel =
       options?.model ?? (await getUserSelectedModel()) ?? this.model;
     const perCallToolCallback = options?.onToolCall;
 
@@ -1231,6 +1231,21 @@ export class CopilotWrapperService
         privacyMode: options?.privacyMode,
       },
     );
+
+    // After routing, the active provider may be a local/Ollama endpoint.
+    // Channel-level model overrides (e.g. Telegram's model: "gpt-5-mini") are
+    // cloud model names and cause HTTP 404 when forwarded to Ollama, which only
+    // recognises models it has pulled locally.  Override with the local model:
+    //   - local-copilot providers carry an explicit `model` field
+    //   - ollama providers: re-read the user-selected local model from config
+    if (this.providerConfig?.type === "local-copilot") {
+      effectiveModel =
+        this.providerConfig.model ??
+        (await getUserSelectedModel()) ??
+        this.model;
+    } else if (this.providerConfig?.type === "ollama") {
+      effectiveModel = (await getUserSelectedModel()) ?? this.model;
+    }
 
     // When availableTools is specified (skill scoping or explicit client filter),
     // draw from ALL registered tools (not just enabled ones) so that tools
@@ -1687,8 +1702,18 @@ export class CopilotWrapperService
     // Non-reasoning models (gpt-4.1, claude-sonnet-4, etc.) reject this parameter.
     const rawReasoningEffort =
       extra?.reasoningEffort ?? this.defaultReasoningEffort;
+    // Local providers (ollama, local-copilot) don't support the SDK-level
+    // reasoningEffort option even if the model nominally supports thinking.
+    // Sending it causes the SDK to parse the model's colon-delimited tag as
+    // an option key prefix (e.g. "e2b-mlx-bf16:defaultReasoningEffort"),
+    // which throws "Unknown model option key".
+    const isLocalProvider =
+      this.providerConfig?.type === "ollama" ||
+      this.providerConfig?.type === "local-copilot";
     const effectiveReasoningEffort =
-      rawReasoningEffort && this.modelSupportsReasoning(model)
+      rawReasoningEffort &&
+      !isLocalProvider &&
+      this.modelSupportsReasoning(model)
         ? rawReasoningEffort
         : undefined;
 

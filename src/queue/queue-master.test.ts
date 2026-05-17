@@ -12,12 +12,14 @@ vi.mock("node:fs/promises", () => ({
     readFile: vi.fn().mockRejectedValue(new Error("no config")),
     writeFile: vi.fn().mockResolvedValue(undefined),
     mkdir: vi.fn().mockResolvedValue(undefined),
+    access: vi.fn().mockResolvedValue(undefined),
   },
 }));
 
 const mockFetch = vi.fn();
 vi.stubGlobal("fetch", mockFetch);
 const mockReadFile = vi.mocked(fs.readFile);
+const mockAccess = vi.mocked(fs.access);
 
 function makeJob(overrides: Partial<MediaJob> = {}): MediaJob {
   return {
@@ -83,6 +85,8 @@ describe("QueueMaster", () => {
     mockFetch.mockReset();
     mockReadFile.mockReset();
     mockReadFile.mockRejectedValue(new Error("no config"));
+    mockAccess.mockReset();
+    mockAccess.mockResolvedValue(undefined);
     vi.useFakeTimers();
     repo = makeRepo();
     config = makeConfig();
@@ -338,7 +342,7 @@ describe("QueueMaster", () => {
         String(call[0]).includes("/generate-async"),
       );
       expect(dispatchCall).toBeDefined();
-      expect((dispatchCall![1]?.headers as Record<string, string>)).toEqual(
+      expect(dispatchCall![1]?.headers as Record<string, string>).toEqual(
         expect.objectContaining({
           Authorization: "Bearer worker-bearer",
           "CF-Access-Client-Id": "cf-client-id",
@@ -1537,6 +1541,11 @@ describe("QueueMaster", () => {
             previous_model: "ltx-video-0.9.1",
           }),
       });
+      // Issue #1102: confirmUnloaded poll — m2-pro reports idle
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ is_busy: false, loaded_model: null }),
+      });
 
       await qm.ensureSidecarMemory("lipsync");
 
@@ -1661,6 +1670,11 @@ describe("QueueMaster", () => {
             ),
           ),
       );
+      // Issue #1102: confirmUnloaded poll after the slow unload settles
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ is_busy: false, loaded_model: null }),
+      });
 
       // Start first transition (won't complete immediately)
       const first = qm.ensureSidecarMemory("lipsync");
@@ -2011,6 +2025,348 @@ describe("QueueMaster", () => {
       expect(body.voice).toBe("af_heart");
       // reference_audio should be decoded to a temp file path
       expect(body.ref_audio_path).toBeDefined();
+    });
+
+    it("sends F5-TTS profile clips with ref_audio_path", async () => {
+      const ttsJob = makeJob({
+        id: "tts-f5-clips",
+        type: "tts",
+        requiredModel: "f5-tts",
+        targetNode: "m2-pro",
+        payload: {
+          prompt: "Clone voice",
+          f5tts_clips: [
+            {
+              emotion: "Regular",
+              ref_audio_path: "/Users/test/.openzigs/ref.webm",
+              ref_text: "Reference transcript",
+            },
+          ],
+        },
+      });
+
+      repo.getPendingJobs.mockReturnValue([]);
+      repo.getPendingJobsForModel.mockImplementation(
+        (_node: string, model: string) =>
+          model === "f5-tts" ? [ttsJob] : [],
+      );
+      repo.listJobs.mockReturnValue([]);
+      repo.getJob.mockReturnValue(ttsJob);
+
+      const fakeWav = new Uint8Array([0x52, 0x49, 0x46, 0x46]);
+
+      mockFetch
+        // m2-pro health (processM2Pro)
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({ is_busy: false, loaded_model: null }),
+        })
+        // Audio sidecar health (processTtsJobs)
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({ status: "ready" }),
+        })
+        // Audio sidecar /f5tts
+        .mockResolvedValueOnce({
+          ok: true,
+          arrayBuffer: () => Promise.resolve(fakeWav.buffer),
+        })
+        // Remaining sidecar checks + re-tick
+        .mockRejectedValue(new Error("unreachable"));
+
+      await qm.tick();
+
+      expect(mockAccess).toHaveBeenCalledWith("/Users/test/.openzigs/ref.webm");
+
+      const f5ttsCall = mockFetch.mock.calls.find(
+        (c) => typeof c[0] === "string" && (c[0] as string).includes("/f5tts"),
+      );
+      expect(f5ttsCall).toBeDefined();
+      const body = JSON.parse(f5ttsCall![1]?.body as string);
+      expect(body.text).toBe("Clone voice");
+      expect(body.clips).toEqual([
+        {
+          emotion: "Regular",
+          ref_audio_path: "/Users/test/.openzigs/ref.webm",
+          ref_text: "Reference transcript",
+        },
+      ]);
+      expect(body.clips[0].ref_audio).toBeUndefined();
+    });
+  });
+
+  // ── Issue #1102: confirmUnloaded poll behaviour ─────────────────────
+
+  describe("ensureSidecarMemory confirm-unload (#1102)", () => {
+    it("does not resolve before m2-pro reports loaded_model === null", async () => {
+      // Seed m2-pro as loaded
+      mockFetch
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({ is_busy: false, loaded_model: null }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              is_busy: false,
+              loaded_model: "ltx-video-0.9.1",
+            }),
+        })
+        .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({}) })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({ busy: false, loaded_model: null }),
+        });
+
+      await qm.getNodeStatuses();
+
+      // Successful HTTP unload (clears cached state to null)
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            status: "unloaded",
+            previous_model: "ltx-video-0.9.1",
+          }),
+      });
+      // First confirm poll: sidecar still reports the model loaded
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            is_busy: false,
+            loaded_model: "ltx-video-0.9.1",
+          }),
+      });
+      // Second confirm poll: still loaded
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            is_busy: false,
+            loaded_model: "ltx-video-0.9.1",
+          }),
+      });
+      // Third confirm poll: finally idle
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ is_busy: false, loaded_model: null }),
+      });
+
+      let settled = false;
+      const promise = qm.ensureSidecarMemory("lipsync").then(() => {
+        settled = true;
+      });
+
+      // Allow microtasks to flush so first poll runs
+      await vi.advanceTimersByTimeAsync(0);
+      expect(settled).toBe(false);
+
+      // Advance past the 1s backoff -> second poll runs
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(settled).toBe(false);
+
+      // Advance past the 1s backoff -> third poll runs (returns null)
+      await vi.advanceTimersByTimeAsync(1_000);
+      await promise;
+      expect(settled).toBe(true);
+    });
+
+    it("rejects with a timeout error when m2-pro never releases the model", async () => {
+      mockFetch
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({ is_busy: false, loaded_model: null }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              is_busy: false,
+              loaded_model: "ltx-video-0.9.1",
+            }),
+        })
+        .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({}) })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({ busy: false, loaded_model: null }),
+        });
+
+      await qm.getNodeStatuses();
+
+      // Successful HTTP unload
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            status: "unloaded",
+            previous_model: "ltx-video-0.9.1",
+          }),
+      });
+      // Every subsequent /health poll keeps reporting the model loaded
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            is_busy: false,
+            loaded_model: "ltx-video-0.9.1",
+          }),
+      });
+
+      const promise = qm.ensureSidecarMemory("lipsync");
+      // Suppress unhandled-rejection warning while we drive the timer.
+      promise.catch(() => {});
+
+      // Drive the 30s timeout: 30 polls of 1s backoff is plenty.
+      await vi.advanceTimersByTimeAsync(31_000);
+
+      await expect(promise).rejects.toThrow(/Timed out waiting for m2-pro/);
+    });
+  });
+
+  // ── Issue #1107: dispatchLipSyncJob CF Access headers ─────────────
+
+  describe("dispatchLipSyncJob remote dispatch (#1107)", () => {
+    it("forwards CF Access service-token headers to the remote sidecar", async () => {
+      mockReadFile.mockResolvedValue(
+        JSON.stringify({
+          lipSync: {
+            networkNodeUrl: "https://203.0.113.42:5012",
+            networkNodeToken: "lipsync-bearer",
+            cfAccessClientId: "cf-id-lipsync",
+            cfAccessClientSecret: "cf-secret-lipsync",
+          },
+        }),
+      );
+
+      mockFetch.mockResolvedValueOnce({ status: 202, ok: true });
+
+      const job = makeJob({
+        id: "ls-1",
+        type: "lipsync",
+        requiredModel: "latentsync-v1.5",
+        targetNode: "lipsync" as never,
+        payload: {
+          prompt: "",
+          video_data: "dmlkZW8=",
+          audio_data: "YXVkaW8=",
+          model_version: "v1.5",
+        },
+      });
+
+      await (
+        qm as unknown as { dispatchLipSyncJob: (j: MediaJob) => Promise<void> }
+      ).dispatchLipSyncJob(job);
+
+      const dispatchCall = mockFetch.mock.calls.find((c) =>
+        String(c[0]).endsWith("/generate"),
+      );
+      expect(dispatchCall).toBeDefined();
+      expect(String(dispatchCall![0])).toBe(
+        "https://203.0.113.42:5012/generate",
+      );
+      expect(dispatchCall![1]?.headers as Record<string, string>).toEqual(
+        expect.objectContaining({
+          Authorization: "Bearer lipsync-bearer",
+          "CF-Access-Client-Id": "cf-id-lipsync",
+          "CF-Access-Client-Secret": "cf-secret-lipsync",
+        }),
+      );
+    });
+
+    it("omits CF Access headers when the lipsync node is local", async () => {
+      // No user config => resolver falls through to localhost default
+      mockFetch.mockResolvedValueOnce({ status: 202, ok: true });
+
+      const job = makeJob({
+        id: "ls-2",
+        type: "lipsync",
+        requiredModel: "latentsync-v1.5",
+        targetNode: "lipsync" as never,
+        payload: {
+          prompt: "",
+          video_data: "dmlkZW8=",
+          audio_data: "YXVkaW8=",
+        },
+      });
+
+      await (
+        qm as unknown as { dispatchLipSyncJob: (j: MediaJob) => Promise<void> }
+      ).dispatchLipSyncJob(job);
+
+      const dispatchCall = mockFetch.mock.calls.find((c) =>
+        String(c[0]).endsWith("/generate"),
+      );
+      expect(dispatchCall).toBeDefined();
+      // Issue #1104: canonical local lipsync port is 5012
+      expect(String(dispatchCall![0])).toBe("http://localhost:5012/generate");
+      const headers = dispatchCall![1]?.headers as Record<string, string>;
+      expect(headers["CF-Access-Client-Id"]).toBeUndefined();
+      expect(headers["CF-Access-Client-Secret"]).toBeUndefined();
+      expect(headers.Authorization).toBeUndefined();
+    });
+
+    it("never dispatches lipsync jobs to localhost:5010 when remote is configured (#1108)", async () => {
+      mockReadFile.mockResolvedValue(
+        JSON.stringify({
+          lipSync: {
+            networkNodeUrl: "https://203.0.113.42:5012",
+          },
+        }),
+      );
+
+      mockFetch.mockResolvedValueOnce({ status: 202, ok: true });
+
+      const job = makeJob({
+        id: "ls-3",
+        type: "lipsync",
+        requiredModel: "latentsync-v1.5",
+        targetNode: "lipsync" as never,
+        payload: { prompt: "", video_data: "dmlkZW8=", audio_data: "YXVkaW8=" },
+      });
+
+      await (
+        qm as unknown as { dispatchLipSyncJob: (j: MediaJob) => Promise<void> }
+      ).dispatchLipSyncJob(job);
+
+      for (const call of mockFetch.mock.calls) {
+        expect(String(call[0])).not.toContain("localhost:5010");
+        expect(String(call[0])).not.toContain("127.0.0.1:5010");
+      }
+    });
+  });
+
+  // ── Issue #1108: getNodeStatuses fallback URL ─────────────────────
+
+  describe("getNodeStatuses lipsync fallback URL (#1108)", () => {
+    it("uses the resolved remote URL (not localhost:5010) when poll fails", async () => {
+      mockReadFile.mockResolvedValue(
+        JSON.stringify({
+          lipSync: {
+            networkNodeUrl: "https://203.0.113.42:5012",
+          },
+        }),
+      );
+      // image-gen, m2-pro, music polls succeed; lipsync /health rejects
+      mockFetch
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({ is_busy: false, loaded_model: null }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({ is_busy: false, loaded_model: null }),
+        })
+        .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({}) })
+        .mockRejectedValueOnce(new Error("connection refused"));
+
+      const statuses = await qm.getNodeStatuses();
+      const lipsync = statuses.find((s) => s.node === "lipsync");
+      expect(lipsync).toBeDefined();
+      expect(lipsync!.reachable).toBe(false);
+      expect(lipsync!.url).toBe("https://203.0.113.42:5012");
+      expect(lipsync!.url).not.toContain("localhost:5010");
     });
   });
 });

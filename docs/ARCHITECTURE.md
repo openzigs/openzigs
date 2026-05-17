@@ -5888,13 +5888,11 @@ Both the FluxQ image sidecar (port 5005) and LTX video worker (port 5007) share 
 | `ltx` | worker | 5007 | LTX video generation |
 | `imgproc` | image-processing | 5008 | Real-ESRGAN upscale + rembg |
 | `music` | music | 5009 | ACE-Step music generation |
-| `lipsync` | lipsync | 5010 | LatentSync lip sync |
 | `studio` | music-studio | 5010 | Music Studio voice2voice |
+| `lipsync` | lipsync | 5012 | LatentSync lip sync (MPS + CUDA) |
 
 Commands: `status`, `logs`, `restart`, `stop`, `sync`, `health`, `generate`
 Bulk: `restart-all`, `stop-all`, `sync-all`
-
-> **Port conflict**: `lipsync` and `studio` share port 5010 — only one at a time.
 
 ### VideoGenService (`src/video/generators/video-gen-service.ts`)
 
@@ -6088,7 +6086,7 @@ graph LR
     LTX -->|complete| QM
     QM -->|unload LTX, load LatentSync| MEM[Memory Coordination]
     MEM --> QM
-    QM -->|Stage 3: Lip Sync| LS[LatentSync Sidecar<br/>:5008 MPS / :5010 CUDA]
+    QM -->|Stage 3: Lip Sync| LS[LatentSync Sidecar<br/>:5012 MPS or CUDA]
     LS -->|complete| QM
     QM -->|pipeline:progress| UI
 ```
@@ -6097,12 +6095,13 @@ graph LR
 
 | Property | MPS (macOS) | CUDA (Windows/WSL) |
 |---|---|---|
-| **Port** | 5008 | 5010 |
+| **Port** | 5012 | 5012 |
 | **Framework** | FastAPI + Uvicorn | FastAPI + Uvicorn |
 | **Precision** | FP32 (MPS requires full precision) | FP16 |
-| **Model Version** | v1.6 (18GB M2 Pro) | v1.5 (8GB VRAM) |
+| **Model Version** | v1.6 (≥24 GB unified memory) / v1.5 (default, ≥16 GB) | v1.5 (8GB VRAM) |
 | **Fork** | jadnohra/LatentSync (MPS patches) | bytedance/LatentSync (upstream) |
 | **Auth** | Bearer token (`LIPSYNC_API_TOKEN`) | Bearer token |
+| **RAM gate** | HTTP 507 on hosts <24 GB unified when requesting v1.6 | n/a |
 
 **Endpoints**:
 
@@ -6160,9 +6159,9 @@ Pipeline state is managed in-memory by `talking-head-pipeline.ts` with a `Map<st
 | 5005 | FluxQ (Image Gen) | Flux Schnell/Dev image generation |
 | 5006 | F5-TTS Audio | Text-to-speech synthesis |
 | 5007 | LTX Video Worker | LTX-2 video generation |
-| 5008 | LatentSync (MPS) | Lip sync — Apple Silicon |
 | 5009 | ACE-Step Music Gen | Music generation |
-| 5010 | Music Studio / LatentSync (CUDA) | Voice2Voice pipeline / Lip sync — NVIDIA |
+| 5010 | Music Studio | Voice2Voice pipeline |
+| 5012 | LatentSync (MPS or CUDA) | Lip sync — Apple Silicon and NVIDIA share this port |
 
 ### Setup
 
@@ -6288,10 +6287,10 @@ wget -O gfpgan/weights/GFPGANv1.4.pth \
 | 5005 | FluxQ (Image Gen) | Flux Schnell/Dev image generation |
 | 5006 | F5-TTS Audio | Text-to-speech synthesis |
 | 5007 | LTX Video Worker | LTX-2 video generation |
-| 5008 | LatentSync (MPS) | Lip sync — Apple Silicon |
 | 5009 | ACE-Step Music Gen | Music generation |
-| 5010 | Music Studio / LatentSync (CUDA) | Voice2Voice pipeline / Lip sync — NVIDIA |
+| 5010 | Music Studio | Voice2Voice pipeline |
 | 5011 | SadTalker | Talking head generation — NVIDIA |
+| 5012 | LatentSync (MPS or CUDA) | Lip sync — Apple Silicon and NVIDIA share this port |
 
 ---
 

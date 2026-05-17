@@ -110,8 +110,10 @@ export const NODE_SPEC: Record<ResolvableNodeType, NodeNamespaceSpec> = {
   },
   "lip-sync": {
     configKey: "lipSync",
-    localDefaultUrl: "http://localhost:5010",
-    defaultPort: 5010,
+    // Issue #1104: canonical lip-sync port is 5012 (escapes Music Studio @ 5010
+    // collision on Mac, replaces the previous 5008/5010 split between MPS and CUDA).
+    localDefaultUrl: "http://localhost:5012",
+    defaultPort: 5012,
   },
   audio: {
     configKey: "audioSidecar",

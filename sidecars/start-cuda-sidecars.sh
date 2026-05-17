@@ -126,7 +126,10 @@ else
 fi
 
 # Kill any existing sidecar processes
-for port in 5005 5006 5007 5009 5010 5011; do
+# NOTE (issue #1104): port 5012 is the canonical lip-sync port. v2a (when run
+# separately) also defaults to 5012 — lipsync and v2a are mutually exclusive
+# on the same host, the same way lipsync and music-studio used to be on 5010.
+for port in 5005 5006 5007 5009 5010 5011 5012; do
     pid=$(lsof -ti :$port 2>/dev/null || true)
     if [ -n "$pid" ]; then
         echo "Killing existing process on port $port (PID: $pid)"
@@ -192,18 +195,18 @@ else
     echo "Could not detect WSL host IP — using localhost for callbacks"
 fi
 
-# ── Lip Sync / LatentSync (port 5010) ───────────────────────
+# ── Lip Sync / LatentSync (port 5012) ───────────────────────
 if [ "${SKIP_LIPSYNC:-0}" = "1" ]; then
     echo "Skipping Lip Sync sidecar (SKIP_LIPSYNC=1)"
     LIP_PID=""
 elif [ -d "$SIDECARS_DIR/lipsync" ]; then
-    echo "Starting Lip Sync sidecar (port 5010, GPU $LIPSYNC_GPU_INDEX)..."
-    setsid bash -c "cd '$SIDECARS_DIR/lipsync' && source venv/bin/activate && CUDA_VISIBLE_DEVICES='$LIPSYNC_GPU_INDEX' CALLBACK_SECRET='${CALLBACK_SECRET:-}' CALLBACK_URL='${CALLBACK_BASE_URL}/complete' PROGRESS_URL='${CALLBACK_BASE_URL}/progress' exec python server_cuda.py --port 5010 >> '$LOG_DIR/lipsync-cuda.log' 2>&1" &
+    echo "Starting Lip Sync sidecar (port 5012, GPU $LIPSYNC_GPU_INDEX)..."
+    setsid bash -c "cd '$SIDECARS_DIR/lipsync' && source venv/bin/activate && CUDA_VISIBLE_DEVICES='$LIPSYNC_GPU_INDEX' CALLBACK_SECRET='${CALLBACK_SECRET:-}' CALLBACK_URL='${CALLBACK_BASE_URL}/complete' PROGRESS_URL='${CALLBACK_BASE_URL}/progress' exec python server_cuda.py --port 5012 >> '$LOG_DIR/lipsync-cuda.log' 2>&1" &
     LIP_PID=$!
     echo "$LIP_PID" > "$PID_DIR/lipsync.pid"
     echo "  PID: $LIP_PID"
 else
-    echo "Lip Sync sidecar not deployed (skipping port 5010)"
+    echo "Lip Sync sidecar not deployed (skipping port 5012)"
     LIP_PID=""
 fi
 
@@ -230,7 +233,7 @@ echo ""
 echo "Waiting for sidecars to become ready..."
 sleep 8
 
-for entry in "5005:Image Gen" "5006:Audio" "5007:Video Worker" "5009:Music (ACE-Step)" "5010:Lip Sync (LatentSync)" "5011:SadTalker"; do
+for entry in "5005:Image Gen" "5006:Audio" "5007:Video Worker" "5009:Music (ACE-Step)" "5012:Lip Sync (LatentSync)" "5011:SadTalker"; do
     port="${entry%%:*}"
     name="${entry##*:}"
     if curl -sf "http://localhost:$port/health" > /dev/null 2>&1; then

@@ -37,6 +37,10 @@ import {
   VALID_VIDEO_DURATIONS,
 } from "../queue/types.js";
 import {
+  resolveNodeConfig,
+  buildNodeAuthHeaders,
+} from "../queue/node-config-resolver.js";
+import {
   isMultiSegmentDuration,
   isValidVideoDuration,
   decomposeMultiSegmentJob,
@@ -564,13 +568,14 @@ export const createQueueRouter = ({
         return;
       }
 
-      // Remix jobs don't require a prompt — only a payload object
-      const isRemixJob = type.startsWith("remix_");
+      // Remix and lipsync jobs don't require a prompt — only a payload object
+      const isNoPromptType =
+        type.startsWith("remix_") || type === "lipsync" || type === "sadtalker";
       if (!payload || typeof payload !== "object") {
         res.status(400).json({ error: "payload is required" });
         return;
       }
-      if (!isRemixJob && !payload.prompt) {
+      if (!isNoPromptType && !payload.prompt) {
         res.status(400).json({ error: "payload.prompt is required" });
         return;
       }
@@ -823,20 +828,35 @@ export const createQueueRouter = ({
   // ── GET /sidecars/lipsync/health — Check if lipsync sidecar is reachable ──
   router.get("/sidecars/lipsync/health", async (_req, res) => {
     try {
-      // Try known lipsync sidecar URLs: MPS (5008) then CUDA (5010)
-      const candidates = ["http://127.0.0.1:5008", "http://127.0.0.1:5010"];
-      for (const url of candidates) {
+      // Resolve the configured node URL (CF tunnel or localhost fallback).
+      // Issue #1104: canonical local port is 5012; remote URL comes from config.
+      const nodeConfig = await resolveNodeConfig("lip-sync", {
+        skipValidation: true,
+      });
+      const candidates: Array<{
+        url: string;
+        headers: Record<string, string>;
+      }> = [
+        { url: nodeConfig.url, headers: buildNodeAuthHeaders(nodeConfig) },
+        // Always fall back to localhost so the endpoint works even if the
+        // resolver returns the CF URL but the local sidecar is also running.
+        ...(nodeConfig.url !== "http://127.0.0.1:5012"
+          ? [{ url: "http://127.0.0.1:5012", headers: {} }]
+          : []),
+      ];
+      for (const candidate of candidates) {
         try {
-          const resp = await fetch(`${url}/health`, {
-            signal: AbortSignal.timeout(3000),
+          const resp = await fetch(`${candidate.url}/health`, {
+            headers: candidate.headers,
+            signal: AbortSignal.timeout(5000),
           });
           if (resp.ok) {
             const data = (await resp.json()) as Record<string, unknown>;
-            res.json({ status: "ok", url, ...data });
+            res.json({ status: "ok", url: candidate.url, ...data });
             return;
           }
         } catch {
-          // try next
+          // try next candidate
         }
       }
       res.json({ status: "unreachable" });
