@@ -82,7 +82,7 @@ jobs:
 
       - name: Test UI
         working-directory: ui
-        run: pnpm test -- --coverage
+        run: pnpm test --coverage
 
       - name: Upload UI coverage
         uses: actions/upload-artifact@v4

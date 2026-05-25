@@ -26,7 +26,7 @@
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "coverage:backend": "vitest run --coverage",
-    "coverage:ui": "pnpm --filter openzigs-ui test -- --coverage",
+    "coverage:ui": "pnpm --filter openzigs-ui test --coverage",
     "coverage:report": "pnpm coverage:backend && pnpm coverage:ui && node scripts/merge-coverage.mjs",
     "coverage:check": "node scripts/check-coverage.mjs",
     "lint": "eslint src --ext .ts",
