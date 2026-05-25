@@ -8,14 +8,8 @@
 
 import { nanoid } from "nanoid";
 import { logger } from "../logging/logger.js";
-import type {
-  MediaJobPayload,
-  MediaJobType,
-} from "./types.js";
-import {
-  targetNodeForJobType,
-  defaultModelForJobType,
-} from "./types.js";
+import type { MediaJobPayload, MediaJobType } from "./types.js";
+import { targetNodeForJobType, defaultModelForJobType } from "./types.js";
 
 // ── Pipeline Types ───────────────────────────────────────────
 
@@ -27,7 +21,11 @@ export interface TalkingHeadPipelineConfig {
   /** Reference audio for voice cloning (base64 or path) */
   referenceAudio?: string;
   /** F5-TTS clips for voice cloning (pre-resolved from profile) */
-  f5ttsClips?: Array<{ emotion: string; ref_audio_path: string; ref_text: string }>;
+  f5ttsClips?: Array<{
+    emotion: string;
+    ref_audio_path: string;
+    ref_text: string;
+  }>;
   /** Prompt for video generation */
   videoPrompt?: string;
   /** Reference image for video (base64) */
@@ -95,7 +93,10 @@ export interface PipelineState {
   /** Map of stage → completed job ID */
   completedStages: Record<string, string>;
   /** Map of stage → result data (base64 media, file paths, etc.) */
-  stageResults: Record<string, { media_base64?: string; media_type?: string; file_path?: string }>;
+  stageResults: Record<
+    string,
+    { media_base64?: string; media_type?: string; file_path?: string }
+  >;
   /** Whether the lipsync stage should be skipped (sidecar unavailable) */
   skipLipsync: boolean;
   /** Audio duration in seconds (computed after TTS stage completes) */
@@ -110,14 +111,23 @@ const activePipelines = new Map<string, PipelineState>();
  * Create a new talking-head pipeline. Returns the pipeline ID and the
  * first job configuration (TTS) to be enqueued.
  */
-export function createTalkingHeadPipeline(
-  config: TalkingHeadPipelineConfig,
-): { pipelineId: string; stages: readonly string[]; firstJob: { type: MediaJobType; payload: MediaJobPayload; model: string; targetNode: string } } {
+export function createTalkingHeadPipeline(config: TalkingHeadPipelineConfig): {
+  pipelineId: string;
+  stages: readonly string[];
+  firstJob: {
+    type: MediaJobType;
+    payload: MediaJobPayload;
+    model: string;
+    targetNode: string;
+  };
+} {
   const pipelineId = `thp-${nanoid(12)}`;
 
   // Pick pipeline variant: SadTalker (2-stage) or classic (3-stage)
   const useSadTalker = config.useSadTalker !== false && !!config.referenceImage;
-  const stages = useSadTalker ? PIPELINE_STAGES_SADTALKER : PIPELINE_STAGES_CLASSIC;
+  const stages = useSadTalker
+    ? PIPELINE_STAGES_SADTALKER
+    : PIPELINE_STAGES_CLASSIC;
 
   const state: PipelineState = {
     pipelineId,
@@ -146,8 +156,21 @@ export function createTalkingHeadPipeline(
 export function handleStageCompletion(
   pipelineId: string,
   jobId: string,
-  stageResult: { media_base64?: string; media_type?: string; file_path?: string },
-): { nextJob: { type: MediaJobType; payload: MediaJobPayload; model: string; targetNode: string } | null; done: boolean; pipelineId: string } {
+  stageResult: {
+    media_base64?: string;
+    media_type?: string;
+    file_path?: string;
+  },
+): {
+  nextJob: {
+    type: MediaJobType;
+    payload: MediaJobPayload;
+    model: string;
+    targetNode: string;
+  } | null;
+  done: boolean;
+  pipelineId: string;
+} {
   const state = activePipelines.get(pipelineId);
   if (!state) {
     logger.warn(`[TalkingHeadPipeline] Unknown pipeline: ${pipelineId}`);
@@ -204,9 +227,7 @@ export function handleStageFailure(
   error: string,
 ): { stage: string; error: string } {
   const state = activePipelines.get(pipelineId);
-  const stage = state
-    ? state.stages[state.currentStage]
-    : "unknown";
+  const stage = state ? state.stages[state.currentStage] : "unknown";
   activePipelines.delete(pipelineId);
   logger.warn(
     `[TalkingHeadPipeline] Pipeline ${pipelineId} failed at stage "${stage}": ${error}`,
@@ -217,7 +238,9 @@ export function handleStageFailure(
 /**
  * Get the current pipeline state (for progress reporting).
  */
-export function getPipelineState(pipelineId: string): PipelineState | undefined {
+export function getPipelineState(
+  pipelineId: string,
+): PipelineState | undefined {
   return activePipelines.get(pipelineId);
 }
 
@@ -228,16 +251,25 @@ export function getPipelineState(pipelineId: string): PipelineState | undefined 
 export function getFinalStageResult(
   _pipelineId: string,
   state: PipelineState,
-): { media_base64?: string; media_type?: string; file_path?: string } | undefined {
+):
+  | { media_base64?: string; media_type?: string; file_path?: string }
+  | undefined {
   // Return the final stage result: sadtalker > lipsync > video
-  return state.stageResults["sadtalker"] ?? state.stageResults["lipsync"] ?? state.stageResults["video"];
+  return (
+    state.stageResults["sadtalker"] ??
+    state.stageResults["lipsync"] ??
+    state.stageResults["video"]
+  );
 }
 
 /**
  * Set audio duration on the pipeline state (called after TTS stage completes).
  * Used to determine how many video segments to generate.
  */
-export function setAudioDuration(pipelineId: string, durationSec: number): void {
+export function setAudioDuration(
+  pipelineId: string,
+  durationSec: number,
+): void {
   const state = activePipelines.get(pipelineId);
   if (state) {
     state.audioDurationSec = durationSec;
@@ -268,7 +300,8 @@ export function computeWavDuration(base64Wav: string): number | undefined {
     const sampleRate = buf.readUInt32LE(24);
     const bitsPerSample = buf.readUInt16LE(34);
 
-    if (sampleRate === 0 || channels === 0 || bitsPerSample === 0) return undefined;
+    if (sampleRate === 0 || channels === 0 || bitsPerSample === 0)
+      return undefined;
 
     // Find the 'data' chunk to get actual audio data size
     let offset = 12; // after "RIFF" + size + "WAVE"
@@ -309,7 +342,12 @@ export function estimateSpeechDuration(text: string): number {
 function buildStageJob(
   state: PipelineState,
   stage: PipelineStage,
-): { type: MediaJobType; payload: MediaJobPayload; model: string; targetNode: string } {
+): {
+  type: MediaJobType;
+  payload: MediaJobPayload;
+  model: string;
+  targetNode: string;
+} {
   const { config, pipelineId } = state;
 
   switch (stage) {
@@ -334,19 +372,21 @@ function buildStageJob(
     case "video": {
       // Use img2video when a reference image is provided so the worker
       // conditions on the init_image; otherwise fall back to txt2video.
-      const type: MediaJobType = config.referenceImage ? "img2video" : "txt2video";
+      const type: MediaJobType = config.referenceImage
+        ? "img2video"
+        : "txt2video";
       // Use audio duration when available (audio-first pipeline),
       // otherwise fall back to config max. Round up to nearest 4s for clean segmentation.
-      const rawDuration = state.audioDurationSec
-        ?? config.maxDurationSec
-        ?? 10;
+      const rawDuration = state.audioDurationSec ?? config.maxDurationSec ?? 10;
       const cappedDuration = Math.min(rawDuration, 30);
       // Round up to nearest 4s boundary for multi-segment alignment
       const videoDuration = Math.ceil(cappedDuration / 4) * 4;
       return {
         type,
         payload: {
-          prompt: config.videoPrompt ?? `A person speaking: "${config.text.slice(0, 100)}"`,
+          prompt:
+            config.videoPrompt ??
+            `A person speaking: "${config.text.slice(0, 100)}"`,
           init_image: config.referenceImage,
           image_strength: config.referenceImage ? 0.85 : undefined,
           model: config.videoModel ?? defaultModelForJobType("txt2video"),
