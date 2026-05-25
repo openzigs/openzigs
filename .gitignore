@@ -82,8 +82,10 @@ credentials.json
 config/user.json
 
 # Coverage
-coverage/
+coverage/*
+!coverage/thresholds.json
 coverage-out/
+ui/coverage/
 
 # Build artifacts
 build/
