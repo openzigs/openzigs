@@ -548,7 +548,7 @@ async def gpu_info():
         # _select_device() raises RuntimeError when CUDA is missing despite
         # is_available() initially returning true (e.g. driver gone away).
         logger.warning("[v2a] gpu-info: device selection failed: %s", exc)
-        return {"cuda_available": False, "error": str(exc)}
+        return {"cuda_available": False, "error": "device_selection_failed"}
     except Exception as exc:
         logger.exception("[v2a] gpu-info query failed: %s", exc)
         return {"cuda_available": True, "error": "gpu_info_unavailable"}

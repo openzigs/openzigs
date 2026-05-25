@@ -665,7 +665,8 @@ async def gpu_info_endpoint():
             "cuda_visible": os.environ.get("CUDA_VISIBLE_DEVICES", ""),
         }
     except Exception as e:
-        return {"available": False, "error": str(e)}
+        logger.exception("[lipsync] gpu-info query failed: %s", e)
+        return {"available": False, "error": "gpu_info_unavailable"}
 
 
 @app.post("/unload-model", dependencies=[Depends(verify_auth)])
