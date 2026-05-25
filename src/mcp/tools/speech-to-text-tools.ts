@@ -10,6 +10,7 @@ import os from "node:os";
 import fs from "node:fs";
 import type { ToolDefinition } from "../tool-registry.js";
 import { logger } from "../../logging/logger.js";
+import { normalizeSidecarError } from "../../sidecars/error-normalizer.js";
 
 const GALLERY_DIR = path.join(os.homedir(), ".openzigs", "gallery");
 
@@ -140,9 +141,13 @@ export const createSpeechToTextTools = ({
           });
 
           if (!response.ok) {
-            const errText = await response.text().catch(() => "Unknown error");
+            const errText = await response.text().catch(() => "");
+            const { userMessage } = normalizeSidecarError(
+              errText,
+              response.status,
+            );
             return {
-              text: `Transcription sidecar error (${response.status}): ${errText}`,
+              text: `Transcription sidecar error (${response.status}): ${userMessage}`,
               isError: true,
             };
           }

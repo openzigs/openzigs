@@ -163,6 +163,16 @@ if DEVICE == "cuda":
 
 app = FastAPI(title="LatentSync Lip Sync Sidecar (CUDA)", version="1.0.0")
 
+# Epic #1115 — standardised sidecar error envelope.
+import logging as _logging1115  # noqa: E402
+import os as _os1115  # noqa: E402
+import sys as _sys1115  # noqa: E402
+_OZ_SHARED_DIR_1115 = _os1115.path.join(_os1115.path.dirname(_os1115.path.abspath(__file__)), "..", "_shared")
+if _OZ_SHARED_DIR_1115 not in _sys1115.path:
+    _sys1115.path.insert(0, _OZ_SHARED_DIR_1115)
+from errors import register_error_handlers as _register_error_handlers_1115  # type: ignore[import-not-found]  # noqa: E402
+_register_error_handlers_1115(app, logger=_logging1115.getLogger(__name__))
+
 worker_state = {
     "is_busy": False,
     "current_job_id": None,

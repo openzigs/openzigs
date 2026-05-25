@@ -418,6 +418,17 @@ The Express server (`src/server.ts`) no longer serves any static files or HTML r
 
 ---
 
+## Sidecar Error Normalizer (Epic #1115)
+
+Sidecars (FastAPI Python services and the GPT-SoVITS proxy) return errors in wildly different shapes — `{detail: "..."}`, `{error: {code, message}}`, FastAPI `RequestValidationError` arrays, raw tracebacks, HTML 502 pages from the reverse proxy. Two paired modules normalize this:
+
+- **TypeScript proxies** (`src/sidecars/error-normalizer.ts`): `normalizeSidecarError(rawBody, status?)` walks any response shape (depth-capped at 6, message-capped at 500 chars) and returns `{ userMessage, code?, hint?, raw, status? }`. Tracebacks are reduced to their last line; HTML pages are replaced with a generic message; no stack traces leak. `sidecarFetch()` wraps `fetch` so proxies can `throw new SidecarProxyError(...)` and let `src/api/*` convert it to a uniform JSON response. Backed by 17 fixtures in `src/sidecars/__fixtures__/error-fixtures.ts`.
+- **Python sidecars** (`sidecars/_shared/errors.py`): `SidecarError(code, message, hint?, status?)` exception + `register_error_handlers(app, logger)` installs 4 FastAPI exception handlers (`SidecarError`, `HTTPException`, `RequestValidationError`, generic `Exception`). All emit the same envelope: `{"error": {"code", "message", "hint"?}}`. The generic 500 handler returns `internal_error` and never includes traceback text. Wired into every FastAPI sidecar entry point via `sys.path.insert(0, ../_shared)` + `from errors import register_error_handlers`.
+
+The UI consumes these via `showSidecarErrorToast(message, { sidecarName, status, apiBase, apiToken })` in `ui/components/toast.tsx`, which attaches a **Restart sidecar** CTA on HTTP 502/503/504 that POSTs to `/api/admin/ai-sidecars/:name/restart` (which delegates to `DockerSidecarManager.restartSidecar`).
+
+---
+
 ## Cloudflare Tunnel (Sidecar Pattern)
 
 The Cloudflare Tunnel has moved to a **sidecar architecture**. Instead of the Node.js app spawning and managing a `cloudflared` process internally, the tunnel runs as an independent Docker Compose service:

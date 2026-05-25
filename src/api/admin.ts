@@ -12,6 +12,7 @@ import {
   nativeMcpServersSchema,
 } from "../config/index.js";
 import { logger } from "../logging/logger.js";
+import { normalizeSidecarError } from "../sidecars/error-normalizer.js";
 import { ALWAYS_ON_TOOLS } from "../mcp/constants.js";
 import type { ToolRegistry, RiskLevel } from "../mcp/tool-registry.js";
 import type { CopilotWrapper } from "../copilot/index.js";
@@ -2106,6 +2107,31 @@ export const createAdminRouter = ({
       return res.json({ ok: true, status });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      return res.status(500).json({ error: message });
+    }
+  });
+
+  // ── AI Python sidecar restart (Epic #1115) ──
+  // Restart a managed Docker AI sidecar (audio, image-gen, lipsync, etc.) by name.
+  // Used by the UI "Restart sidecar" CTA attached to gateway-error toasts.
+  router.post("/ai-sidecars/:name/restart", async (req, res) => {
+    const { name } = req.params;
+    if (!sidecarManager) {
+      return res
+        .status(503)
+        .json({ error: "AI sidecar manager not available" });
+    }
+    try {
+      const status = await sidecarManager.restartSidecar(name);
+      if (!status) {
+        return res.status(404).json({ error: `Unknown sidecar: ${name}` });
+      }
+      return res.json({ ok: true, status });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      logger.error(
+        `[Admin API] AI sidecar restart failed for ${name}: ${message}`,
+      );
       return res.status(500).json({ error: message });
     }
   });
@@ -5254,9 +5280,12 @@ export const createAdminRouter = ({
         signal: AbortSignal.timeout(5000),
       });
       if (!response.ok) {
-        return res
-          .status(502)
-          .json({ error: `Sidecar returned HTTP ${response.status}` });
+        const errText = await response.text().catch(() => "");
+        const { userMessage, code, hint } = normalizeSidecarError(
+          errText,
+          response.status,
+        );
+        return res.status(502).json({ error: userMessage, code, hint });
       }
       const data = (await response.json()) as Record<string, unknown>;
       return res.json(data);

@@ -25,6 +25,7 @@ import { Router, raw } from "express";
 import { nanoid } from "nanoid";
 import Database from "better-sqlite3";
 import { logger } from "../logging/logger.js";
+import { normalizeSidecarError } from "../sidecars/error-normalizer.js";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -67,56 +68,19 @@ const DEFAULT_SIDECAR_URL = "http://127.0.0.1:5006";
 const SOVITS_REF_AUDIO_MIN_SECONDS = 3;
 const SOVITS_REF_AUDIO_MAX_SECONDS = 8;
 
-function parseJsonIfPossible(value: string): unknown {
-  try {
-    return JSON.parse(value);
-  } catch {
-    return value;
-  }
-}
-
-function extractErrorMessage(value: unknown): string | null {
-  if (typeof value === "string") {
-    const trimmed = value.trim();
-    if (!trimmed) return null;
-    const parsed = parseJsonIfPossible(trimmed);
-    if (parsed !== value) {
-      return extractErrorMessage(parsed);
-    }
-    return trimmed;
-  }
-
-  if (!value || typeof value !== "object") {
-    return null;
-  }
-
-  const record = value as Record<string, unknown>;
-  const keys = ["error", "detail", "message", "Exception", "exception"];
-  for (const key of keys) {
-    const nested = extractErrorMessage(record[key]);
-    if (nested) {
-      return nested;
-    }
-  }
-
-  return null;
-}
-
 function formatSidecarErrorMessage(rawBody: string): string {
-  const parsed = parseJsonIfPossible(rawBody);
-  const extracted = extractErrorMessage(parsed);
-  if (!extracted) {
-    return rawBody.trim() || "Unknown sidecar error";
-  }
-
-  if (extracted.includes("3-10 second range")) {
+  const { userMessage } = normalizeSidecarError(rawBody);
+  // GPT-SoVITS rejects clips outside its 3–10s window with that exact phrase;
+  // surface a friendlier message because the proxy already auto-trims.
+  if (userMessage.includes("3-10 second range")) {
     return "Reference audio was auto-trimmed but still rejected. Try a shorter clip.";
   }
-
-  return extracted;
+  return userMessage;
 }
 
-async function probeAudioDurationSeconds(filePath: string): Promise<number | null> {
+async function probeAudioDurationSeconds(
+  filePath: string,
+): Promise<number | null> {
   return await new Promise<number | null>((resolve) => {
     const proc = spawn("ffprobe", [
       "-v",
@@ -140,13 +104,17 @@ async function probeAudioDurationSeconds(filePath: string): Promise<number | nul
     });
 
     proc.on("error", (err) => {
-      logger.warn(`[Audio API] ffprobe unavailable for duration check: ${err.message}`);
+      logger.warn(
+        `[Audio API] ffprobe unavailable for duration check: ${err.message}`,
+      );
       resolve(null);
     });
 
     proc.on("close", (code) => {
       if (code !== 0) {
-        logger.warn(`[Audio API] ffprobe failed for ${filePath}: ${stderr.trim() || `exit code ${code}`}`);
+        logger.warn(
+          `[Audio API] ffprobe failed for ${filePath}: ${stderr.trim() || `exit code ${code}`}`,
+        );
         resolve(null);
         return;
       }
@@ -172,7 +140,10 @@ async function sidecarFetch(
   const url = `${sidecarUrl.replace(/\/$/, "")}${endpoint}`;
   try {
     const res = await fetch(url, {
-      headers: { "Content-Type": "application/json", ...((options.headers as Record<string, string>) ?? {}) },
+      headers: {
+        "Content-Type": "application/json",
+        ...((options.headers as Record<string, string>) ?? {}),
+      },
       ...options,
     });
 
@@ -183,7 +154,9 @@ async function sidecarFetch(
       } catch {
         /* ignore */
       }
-      throw new Error(`Sidecar ${endpoint} returned HTTP ${res.status}: ${errBody}`);
+      throw new Error(
+        `Sidecar ${endpoint} returned HTTP ${res.status}: ${errBody}`,
+      );
     }
     return res.json() as Promise<unknown>;
   } catch (err) {
@@ -198,14 +171,22 @@ async function sidecarFetch(
 
 // ── Router Factory ──────────────────────────────────────────────────────────
 
-export const createAudioRouter = ({ db, sidecarUrl }: AudioRouterOptions): Router => {
+export const createAudioRouter = ({
+  db,
+  sidecarUrl,
+}: AudioRouterOptions): Router => {
   const router = Router();
 
   // Resolve sidecar base URL (strip trailing slash)
   const baseUrl = (sidecarUrl ?? DEFAULT_SIDECAR_URL).replace(/\/$/, "");
 
   // Upload directory for reference audio files
-  const uploadDir = path.join(os.homedir(), ".openzigs", "director", "ref-audio");
+  const uploadDir = path.join(
+    os.homedir(),
+    ".openzigs",
+    "director",
+    "ref-audio",
+  );
 
   // ── Engine Status & Switching ─────────────────────────────────────────────
 
@@ -245,11 +226,15 @@ export const createAudioRouter = ({ db, sidecarUrl }: AudioRouterOptions): Route
       if (engine === "f5tts") {
         try {
           const profiles = db
-            .prepare(`SELECT * FROM voice_profiles WHERE engine_type = 'f5tts' ORDER BY created_at ASC LIMIT 1`)
+            .prepare(
+              `SELECT * FROM voice_profiles WHERE engine_type = 'f5tts' ORDER BY created_at ASC LIMIT 1`,
+            )
             .all() as VoiceProfile[];
           if (profiles.length > 0) {
             const clips = db
-              .prepare(`SELECT * FROM f5tts_clips WHERE profile_id = ? ORDER BY sort_order ASC`)
+              .prepare(
+                `SELECT * FROM f5tts_clips WHERE profile_id = ? ORDER BY sort_order ASC`,
+              )
               .all(profiles[0].id) as F5TTSClipRow[];
             if (clips.length > 0) {
               const clipPayload = clips.map((c) => ({
@@ -261,12 +246,17 @@ export const createAudioRouter = ({ db, sidecarUrl }: AudioRouterOptions): Route
                 method: "POST",
                 body: JSON.stringify({ clips: clipPayload }),
               });
-              logger.info(`[Audio API] Pushed ${clips.length} f5tts clip(s) to sidecar`);
+              logger.info(
+                `[Audio API] Pushed ${clips.length} f5tts clip(s) to sidecar`,
+              );
             }
           }
         } catch (clipErr) {
-          const msg = clipErr instanceof Error ? clipErr.message : String(clipErr);
-          logger.warn(`[Audio API] Failed to push f5tts clips on switch: ${msg}`);
+          const msg =
+            clipErr instanceof Error ? clipErr.message : String(clipErr);
+          logger.warn(
+            `[Audio API] Failed to push f5tts clips on switch: ${msg}`,
+          );
         }
       }
 
@@ -302,9 +292,7 @@ export const createAudioRouter = ({ db, sidecarUrl }: AudioRouterOptions): Route
   router.get("/profiles", (_req, res) => {
     try {
       const rows = db
-        .prepare(
-          `SELECT * FROM voice_profiles ORDER BY created_at DESC`,
-        )
+        .prepare(`SELECT * FROM voice_profiles ORDER BY created_at DESC`)
         .all() as VoiceProfile[];
       res.json({ profiles: rows, total: rows.length });
     } catch (err) {
@@ -317,7 +305,7 @@ export const createAudioRouter = ({ db, sidecarUrl }: AudioRouterOptions): Route
   /**
    * POST /profiles — create a new voice profile.
    * Body: { name, ref_audio_path, ref_text?, language?, top_p?, temperature?,
-    *          text_split_method?, speed_factor?, repetition_penalty?, top_k?, sample_steps? }
+   *          text_split_method?, speed_factor?, repetition_penalty?, top_k?, sample_steps? }
    */
   router.post("/profiles", (req, res) => {
     const {
@@ -369,10 +357,20 @@ export const createAudioRouter = ({ db, sidecarUrl }: AudioRouterOptions): Route
             @top_p, @temperature, @text_split_method, @speed_factor,
             @repetition_penalty, @top_k, @sample_steps, @created_at, @updated_at)`,
       ).run({
-        id, name: name.trim(), ref_audio_path, ref_text, language,
-        top_p, temperature, text_split_method, speed_factor,
-        repetition_penalty, top_k, sample_steps,
-        created_at: now, updated_at: now,
+        id,
+        name: name.trim(),
+        ref_audio_path,
+        ref_text,
+        language,
+        top_p,
+        temperature,
+        text_split_method,
+        speed_factor,
+        repetition_penalty,
+        top_k,
+        sample_steps,
+        created_at: now,
+        updated_at: now,
       });
 
       const profile = db
@@ -384,7 +382,9 @@ export const createAudioRouter = ({ db, sidecarUrl }: AudioRouterOptions): Route
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       if (msg.includes("UNIQUE")) {
-        res.status(409).json({ error: `A profile named "${name}" already exists` });
+        res
+          .status(409)
+          .json({ error: `A profile named "${name}" already exists` });
         return;
       }
       logger.error(`[Audio API] POST /profiles failed: ${msg}`);
@@ -426,7 +426,9 @@ export const createAudioRouter = ({ db, sidecarUrl }: AudioRouterOptions): Route
         return;
       }
 
-      const updates = req.body as Partial<Omit<VoiceProfile, "id" | "created_at" | "updated_at">>;
+      const updates = req.body as Partial<
+        Omit<VoiceProfile, "id" | "created_at" | "updated_at">
+      >;
       const merged: VoiceProfile = {
         ...existing,
         ...updates,
@@ -497,8 +499,9 @@ export const createAudioRouter = ({ db, sidecarUrl }: AudioRouterOptions): Route
         return;
       }
 
-      const testText: string = (req.body as { text?: string }).text?.trim()
-        || "Hello, this is a voice cloning test.";
+      const testText: string =
+        (req.body as { text?: string }).text?.trim() ||
+        "Hello, this is a voice cloning test.";
 
       // Duration validation removed — sidecar auto-trims long clips
 
@@ -526,7 +529,8 @@ export const createAudioRouter = ({ db, sidecarUrl }: AudioRouterOptions): Route
       if (!audioRes.ok) {
         const errBody = await audioRes.text();
         const sidecarMessage = formatSidecarErrorMessage(errBody);
-        const mappedStatus = audioRes.status >= 400 && audioRes.status < 500 ? 400 : 502;
+        const mappedStatus =
+          audioRes.status >= 400 && audioRes.status < 500 ? 400 : 502;
         res.status(mappedStatus).json({ error: sidecarMessage });
         return;
       }
@@ -558,7 +562,9 @@ export const createAudioRouter = ({ db, sidecarUrl }: AudioRouterOptions): Route
       try {
         const body = req.body as Buffer;
         if (!Buffer.isBuffer(body) || body.length === 0) {
-          res.status(400).json({ error: "request body must contain audio bytes" });
+          res
+            .status(400)
+            .json({ error: "request body must contain audio bytes" });
           return;
         }
 
@@ -570,7 +576,9 @@ export const createAudioRouter = ({ db, sidecarUrl }: AudioRouterOptions): Route
           decodedName = rawName;
         }
 
-        const safeName = path.basename(decodedName).replace(/[^a-zA-Z0-9._-]/g, "_");
+        const safeName = path
+          .basename(decodedName)
+          .replace(/[^a-zA-Z0-9._-]/g, "_");
         const fileName = safeName || "reference.wav";
         const uniqueName = `${Date.now()}-${fileName}`;
 
@@ -580,8 +588,9 @@ export const createAudioRouter = ({ db, sidecarUrl }: AudioRouterOptions): Route
 
         const durationSeconds = await probeAudioDurationSeconds(filePath);
         if (
-          durationSeconds !== null
-          && (durationSeconds < SOVITS_REF_AUDIO_MIN_SECONDS || durationSeconds > SOVITS_REF_AUDIO_MAX_SECONDS)
+          durationSeconds !== null &&
+          (durationSeconds < SOVITS_REF_AUDIO_MIN_SECONDS ||
+            durationSeconds > SOVITS_REF_AUDIO_MAX_SECONDS)
         ) {
           await fs.unlink(filePath).catch(() => undefined);
           const rounded = Math.round(durationSeconds * 10) / 10;
@@ -591,7 +600,9 @@ export const createAudioRouter = ({ db, sidecarUrl }: AudioRouterOptions): Route
           return;
         }
 
-        logger.info(`[Audio API] Uploaded ref audio: ${filePath} (${body.length} bytes)`);
+        logger.info(
+          `[Audio API] Uploaded ref audio: ${filePath} (${body.length} bytes)`,
+        );
         res.json({
           success: true,
           filePath,
@@ -615,17 +626,24 @@ export const createAudioRouter = ({ db, sidecarUrl }: AudioRouterOptions): Route
   router.get("/f5tts/profiles", (_req, res) => {
     try {
       const rows = db
-        .prepare(`SELECT * FROM voice_profiles WHERE engine_type = 'f5tts' ORDER BY created_at DESC`)
+        .prepare(
+          `SELECT * FROM voice_profiles WHERE engine_type = 'f5tts' ORDER BY created_at DESC`,
+        )
         .all() as VoiceProfile[];
 
       const profilesWithClips = rows.map((profile) => {
         const clips = db
-          .prepare(`SELECT * FROM f5tts_clips WHERE profile_id = ? ORDER BY sort_order ASC`)
+          .prepare(
+            `SELECT * FROM f5tts_clips WHERE profile_id = ? ORDER BY sort_order ASC`,
+          )
           .all(profile.id) as F5TTSClipRow[];
         return { ...profile, clips };
       });
 
-      res.json({ profiles: profilesWithClips, total: profilesWithClips.length });
+      res.json({
+        profiles: profilesWithClips,
+        total: profilesWithClips.length,
+      });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       logger.error(`[Audio API] GET /f5tts/profiles failed: ${msg}`);
@@ -665,7 +683,9 @@ export const createAudioRouter = ({ db, sidecarUrl }: AudioRouterOptions): Route
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       if (msg.includes("UNIQUE")) {
-        res.status(409).json({ error: `A profile named "${name}" already exists` });
+        res
+          .status(409)
+          .json({ error: `A profile named "${name}" already exists` });
         return;
       }
       logger.error(`[Audio API] POST /f5tts/profiles failed: ${msg}`);
@@ -679,16 +699,22 @@ export const createAudioRouter = ({ db, sidecarUrl }: AudioRouterOptions): Route
   router.get("/f5tts/profiles/:id", (req, res) => {
     try {
       const profile = db
-        .prepare(`SELECT * FROM voice_profiles WHERE id = ? AND engine_type = 'f5tts'`)
+        .prepare(
+          `SELECT * FROM voice_profiles WHERE id = ? AND engine_type = 'f5tts'`,
+        )
         .get(req.params.id) as VoiceProfile | undefined;
 
       if (!profile) {
-        res.status(404).json({ error: `F5-TTS profile not found: ${req.params.id}` });
+        res
+          .status(404)
+          .json({ error: `F5-TTS profile not found: ${req.params.id}` });
         return;
       }
 
       const clips = db
-        .prepare(`SELECT * FROM f5tts_clips WHERE profile_id = ? ORDER BY sort_order ASC`)
+        .prepare(
+          `SELECT * FROM f5tts_clips WHERE profile_id = ? ORDER BY sort_order ASC`,
+        )
         .all(profile.id) as F5TTSClipRow[];
 
       res.json({ ...profile, clips });
@@ -704,11 +730,15 @@ export const createAudioRouter = ({ db, sidecarUrl }: AudioRouterOptions): Route
   router.delete("/f5tts/profiles/:id", (req, res) => {
     try {
       const existing = db
-        .prepare(`SELECT id FROM voice_profiles WHERE id = ? AND engine_type = 'f5tts'`)
+        .prepare(
+          `SELECT id FROM voice_profiles WHERE id = ? AND engine_type = 'f5tts'`,
+        )
         .get(req.params.id);
 
       if (!existing) {
-        res.status(404).json({ error: `F5-TTS profile not found: ${req.params.id}` });
+        res
+          .status(404)
+          .json({ error: `F5-TTS profile not found: ${req.params.id}` });
         return;
       }
 
@@ -727,7 +757,11 @@ export const createAudioRouter = ({ db, sidecarUrl }: AudioRouterOptions): Route
    * Body: { emotion, ref_audio_path, ref_text? }
    */
   router.post("/f5tts/profiles/:id/clips", (req, res) => {
-    const { emotion, ref_audio_path, ref_text = "" } = req.body as {
+    const {
+      emotion,
+      ref_audio_path,
+      ref_text = "",
+    } = req.body as {
       emotion?: string;
       ref_audio_path?: string;
       ref_text?: string;
@@ -744,28 +778,38 @@ export const createAudioRouter = ({ db, sidecarUrl }: AudioRouterOptions): Route
 
     try {
       const profile = db
-        .prepare(`SELECT id FROM voice_profiles WHERE id = ? AND engine_type = 'f5tts'`)
+        .prepare(
+          `SELECT id FROM voice_profiles WHERE id = ? AND engine_type = 'f5tts'`,
+        )
         .get(req.params.id);
 
       if (!profile) {
-        res.status(404).json({ error: `F5-TTS profile not found: ${req.params.id}` });
+        res
+          .status(404)
+          .json({ error: `F5-TTS profile not found: ${req.params.id}` });
         return;
       }
 
       // Check if this emotion already exists for this profile
       const existing = db
-        .prepare(`SELECT id FROM f5tts_clips WHERE profile_id = ? AND emotion = ?`)
+        .prepare(
+          `SELECT id FROM f5tts_clips WHERE profile_id = ? AND emotion = ?`,
+        )
         .get(req.params.id, emotion.trim());
 
       if (existing) {
-        res.status(409).json({ error: `A clip with emotion "${emotion}" already exists for this profile` });
+        res.status(409).json({
+          error: `A clip with emotion "${emotion}" already exists for this profile`,
+        });
         return;
       }
 
       const clipId = nanoid();
       const now = new Date().toISOString();
       const maxOrder = db
-        .prepare(`SELECT COALESCE(MAX(sort_order), -1) as max_order FROM f5tts_clips WHERE profile_id = ?`)
+        .prepare(
+          `SELECT COALESCE(MAX(sort_order), -1) as max_order FROM f5tts_clips WHERE profile_id = ?`,
+        )
         .get(req.params.id) as { max_order: number };
 
       db.prepare(
@@ -782,14 +826,18 @@ export const createAudioRouter = ({ db, sidecarUrl }: AudioRouterOptions): Route
       });
 
       // Update profile timestamp
-      db.prepare(`UPDATE voice_profiles SET updated_at = ? WHERE id = ?`)
-        .run(now, req.params.id);
+      db.prepare(`UPDATE voice_profiles SET updated_at = ? WHERE id = ?`).run(
+        now,
+        req.params.id,
+      );
 
       const clip = db
         .prepare(`SELECT * FROM f5tts_clips WHERE id = ?`)
         .get(clipId) as F5TTSClipRow;
 
-      logger.info(`[Audio API] Added F5-TTS clip: ${clipId} (${emotion}) to profile ${req.params.id}`);
+      logger.info(
+        `[Audio API] Added F5-TTS clip: ${clipId} (${emotion}) to profile ${req.params.id}`,
+      );
       res.status(201).json(clip);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -839,7 +887,9 @@ export const createAudioRouter = ({ db, sidecarUrl }: AudioRouterOptions): Route
       try {
         await fs.access(filePath);
       } catch {
-        res.status(404).json({ error: "Reference audio file not found on disk." });
+        res
+          .status(404)
+          .json({ error: "Reference audio file not found on disk." });
         return;
       }
 
@@ -868,34 +918,46 @@ export const createAudioRouter = ({ db, sidecarUrl }: AudioRouterOptions): Route
   router.post("/f5tts/profiles/:id/test", async (req, res) => {
     try {
       const profile = db
-        .prepare(`SELECT * FROM voice_profiles WHERE id = ? AND engine_type = 'f5tts'`)
+        .prepare(
+          `SELECT * FROM voice_profiles WHERE id = ? AND engine_type = 'f5tts'`,
+        )
         .get(req.params.id) as VoiceProfile | undefined;
 
       if (!profile) {
-        res.status(404).json({ error: `F5-TTS profile not found: ${req.params.id}` });
+        res
+          .status(404)
+          .json({ error: `F5-TTS profile not found: ${req.params.id}` });
         return;
       }
 
       const clips = db
-        .prepare(`SELECT * FROM f5tts_clips WHERE profile_id = ? ORDER BY sort_order ASC`)
+        .prepare(
+          `SELECT * FROM f5tts_clips WHERE profile_id = ? ORDER BY sort_order ASC`,
+        )
         .all(req.params.id) as F5TTSClipRow[];
 
       if (clips.length === 0) {
-        res.status(400).json({ error: "Profile has no clips. Add at least one 'Regular' clip." });
+        res.status(400).json({
+          error: "Profile has no clips. Add at least one 'Regular' clip.",
+        });
         return;
       }
 
       const hasRegular = clips.some((c) => c.emotion === "Regular");
       if (!hasRegular) {
-        res.status(400).json({ error: "Profile must have a 'Regular' emotion clip." });
+        res
+          .status(400)
+          .json({ error: "Profile must have a 'Regular' emotion clip." });
         return;
       }
 
-      const testText: string = (req.body as { text?: string; speed?: number }).text?.trim()
-        || "Hello, this is a voice cloning test with F5 TTS.";
-      const testSpeed: number = Math.max(0.25, Math.min(2.0,
-        Number((req.body as { speed?: number }).speed) || 1.0,
-      ));
+      const testText: string =
+        (req.body as { text?: string; speed?: number }).text?.trim() ||
+        "Hello, this is a voice cloning test with F5 TTS.";
+      const testSpeed: number = Math.max(
+        0.25,
+        Math.min(2.0, Number((req.body as { speed?: number }).speed) || 1.0),
+      );
 
       // The sidecar expects { ref_audio (base64), ref_text, gen_text, emotion }.
       // Read each clip's audio file from disk and base64-encode it.
@@ -929,7 +991,8 @@ export const createAudioRouter = ({ db, sidecarUrl }: AudioRouterOptions): Route
       if (!audioRes.ok) {
         const errBody = await audioRes.text();
         const sidecarMessage = formatSidecarErrorMessage(errBody);
-        const mappedStatus = audioRes.status >= 400 && audioRes.status < 500 ? 400 : 502;
+        const mappedStatus =
+          audioRes.status >= 400 && audioRes.status < 500 ? 400 : 502;
         res.status(mappedStatus).json({ error: sidecarMessage });
         return;
       }
@@ -962,7 +1025,9 @@ export const createAudioRouter = ({ db, sidecarUrl }: AudioRouterOptions): Route
       try {
         const body = req.body as Buffer;
         if (!Buffer.isBuffer(body) || body.length === 0) {
-          res.status(400).json({ error: "request body must contain audio bytes" });
+          res
+            .status(400)
+            .json({ error: "request body must contain audio bytes" });
           return;
         }
 
@@ -974,11 +1039,18 @@ export const createAudioRouter = ({ db, sidecarUrl }: AudioRouterOptions): Route
           decodedName = rawName;
         }
 
-        const safeName = path.basename(decodedName).replace(/[^a-zA-Z0-9._-]/g, "_");
+        const safeName = path
+          .basename(decodedName)
+          .replace(/[^a-zA-Z0-9._-]/g, "_");
         const fileName = safeName || "reference.wav";
         const uniqueName = `${Date.now()}-${fileName}`;
 
-        const f5ttsUploadDir = path.join(os.homedir(), ".openzigs", "director", "f5tts-ref-audio");
+        const f5ttsUploadDir = path.join(
+          os.homedir(),
+          ".openzigs",
+          "director",
+          "f5tts-ref-audio",
+        );
         await fs.mkdir(f5ttsUploadDir, { recursive: true });
         const filePath = path.join(f5ttsUploadDir, uniqueName);
         await fs.writeFile(filePath, body);
@@ -995,7 +1067,9 @@ export const createAudioRouter = ({ db, sidecarUrl }: AudioRouterOptions): Route
           return;
         }
 
-        logger.info(`[Audio API] Uploaded F5-TTS ref audio: ${filePath} (${body.length} bytes)`);
+        logger.info(
+          `[Audio API] Uploaded F5-TTS ref audio: ${filePath} (${body.length} bytes)`,
+        );
         res.json({
           success: true,
           filePath,
