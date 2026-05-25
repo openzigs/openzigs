@@ -16,7 +16,7 @@ without opening any inbound firewall ports.
 7. [Run the tunnel under launchd / systemd](#7-run-the-tunnel-under-launchd--systemd)
 8. [`CALLBACK_SECRET` and signed callbacks](#8-callback_secret-and-signed-callbacks)
 9. [Admin UI walkthrough](#9-admin-ui-walkthrough)
-10. [Cloudflare Access (optional, recommended)](#10-cloudflare-access-optional-recommended)
+10. [Cloudflare Access service tokens](#10-cloudflare-access-service-tokens)
 11. [Verify with the smoke test](#11-verify-with-the-smoke-test)
 12. [Troubleshooting](#12-troubleshooting)
 13. [Backwards compatibility](#13-backwards-compatibility)
@@ -180,6 +180,10 @@ Sidecars use `sidecars/_shared/signed_callback.py` to compute headers
 automatically — no per-sidecar code changes are needed if you upgraded to the
 shipped version.
 
+For Cloudflare Access edge-layer authentication in addition to these
+callback credentials, see
+[§10 — Cloudflare Access service tokens](#10-cloudflare-access-service-tokens).
+
 ## 9. Admin UI walkthrough
 
 1. Navigate to `Admin → Remote Media Worker Nodes`.
@@ -196,7 +200,7 @@ shipped version.
    (loopback/link-local/metadata-IP blocked) before it is persisted to
    `~/.openzigs/config.json`.
 
-## 10. Cloudflare Access (optional, recommended)
+## 10. Cloudflare Access service tokens
 
 Use Cloudflare Access when your tunnel hostnames are public but should only be
 callable by your primary OpenZigs server. Access service tokens authenticate the
@@ -239,6 +243,22 @@ To configure Access:
 If the CF Access fields are blank, OpenZigs sends no `CF-Access-Client-*`
 headers. This keeps existing tunnel-only and Bearer-only deployments backwards
 compatible.
+
+### Rotation
+
+To rotate a service token without downtime:
+
+1. In Cloudflare Zero Trust, open **Access → Service Auth → Service Tokens** and
+   click **Create Service Token** to mint a replacement. Copy the new
+   **Client ID** and **Client Secret** — the secret is shown only once.
+2. Open the Access application policy that protects the worker hostname, add the
+   new token to the **Include** condition (leave the old one in place for now),
+   and click **Save**.
+3. In OpenZigs, navigate to **Admin → Remote Media Worker Nodes**, expand the
+   node row, paste the new Client ID and Client Secret, and click **Save**.
+4. Click **Test Connection** to verify the new token is accepted at the edge.
+5. Return to Cloudflare Zero Trust and remove the old service token from the
+   Access policy, then delete it from **Service Tokens**.
 
 ## 11. Verify with the smoke test
 
@@ -296,7 +316,7 @@ Update existing Cloudflare Tunnel ingress entries (Section 5) to point at
 | Host RAM | LatentSync v1.5 (~8 GB) | LatentSync v1.6 (~18 GB) | Recommendation |
 | --- | --- | --- | --- |
 | 8 GB Mac | ❌ | ❌ | Run lip-sync **remotely**; do not install the sidecar locally. |
-| 16 GB Mac (M1 / M2 / M3) | ⚠ Only with LTX + Ollama stopped | ❌ | The sidecar will return | 16 GB Mac (M1 / M2 / M3) | ⚠ Only with LTX + Oll24 | 16 GB Mac (M1 / M2 / M3) | ⚠ Only with LTX + Ollama stopped | ❌ | T b| 16 GB Mac (M1 / M2 / M3) | ⚠ Only with LTX + Ollama stopped | ❌ | Tor| 16 GB Mac (M1 / M2 / M3) | ⚠ Only with LTX + Ollama stopped | �ua| 16 GB Mac (M1 / M2 / M3) | ⚠ Ont_r| 16 GB Mac (M1 /rs/| 16 GB Mac (M1 / M2 / M3) | ⚠ Oe
+| 16 GB Mac (M1 / M2 / M3) | ⚠ Only with LTX + Ollama stopped | ❌ | The sidecar will return | 16 GB Mac (M1 / M2 / M3) | ⚠ Only with LTX + Oll24 | 16 GB Mac (M1 / M2 / M3) | ⚠ Only with LTX + Ollama stopped | ❌ | T b| 16 GB Mac (M1 / M2 / M3) | ⚠ Only with LTX + Ollama stopped | ❌ | Tor| 16 GB Mac (M1 / M2 / M3) | ⚠ Only with LTX + Ollama stopped | �ua| 16 GB Mac (M1 / M2 / M3) | ⚠ Ont_r| 16 GB Mac (M1 /rs/| 16 GB Mac (M1 / M2 / M3) | ⚠ Oe
 | 16 GB Mac (M1 / _g| 16 GB Mac (M1 / _g| 16 GB Mac (M1 / _g| 16 GB Mac (M1 / 
 to a remote 32 GB / GPU worker instead.
 
