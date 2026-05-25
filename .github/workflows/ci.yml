@@ -43,7 +43,14 @@ jobs:
         run: pnpm typecheck
 
       - name: Test
-        run: pnpm test
+        run: pnpm coverage:backend
+
+      - name: Upload backend coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-backend
+          path: coverage/backend/coverage-final.json
+          if-no-files-found: error
 
   ui:
     runs-on: ubuntu-latest
@@ -75,8 +82,62 @@ jobs:
 
       - name: Test UI
         working-directory: ui
-        run: pnpm test
+        run: pnpm test --coverage
+
+      - name: Upload UI coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-ui
+          path: ui/coverage/coverage-final.json
+          if-no-files-found: error
 
       - name: Build UI
         working-directory: ui
         run: pnpm build
+
+  coverage:
+    needs: [api, ui]
+    runs-on: ubuntu-latest
+    env:
+      NPM_CONFIG_PRODUCTION: "false"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --prod=false
+
+      - name: Download backend coverage
+        uses: actions/download-artifact@v4
+        with:
+          name: coverage-backend
+          path: coverage/backend
+
+      - name: Download UI coverage
+        uses: actions/download-artifact@v4
+        with:
+          name: coverage-ui
+          path: ui/coverage
+
+      - name: Merge coverage
+        run: node scripts/merge-coverage.mjs
+
+      - name: Upload unified coverage summary
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-summary
+          path: |
+            coverage/coverage-final.json
+            coverage/coverage-summary.json
+          if-no-files-found: error
+
+      - name: Enforce coverage thresholds
+        run: node scripts/check-coverage.mjs

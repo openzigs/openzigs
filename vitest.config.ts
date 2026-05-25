@@ -5,6 +5,9 @@ export default defineConfig({
     environment: "node",
     include: ["src/**/*.test.ts", "desktop/src/**/*.test.ts"],
     coverage: {
+      provider: "v8",
+      reportsDirectory: "coverage/backend",
+      reporter: ["text", "json", "json-summary"],
       include: ["src/**/*.ts", "desktop/src/**/*.ts"],
       exclude: [
         "src/**/*.test.ts",
@@ -19,8 +22,11 @@ export default defineConfig({
         "src/mcp/tools/pinterest-seo-tools.ts",
         "desktop/src/**/*.test.ts",
         "desktop/src/**/*.d.ts",
+        "dist/**",
+        "node_modules/**",
+        "coverage/**",
+        "ui/**",
       ],
-      reporter: ["text", "json-summary"],
     },
   },
 });

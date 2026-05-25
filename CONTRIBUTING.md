@@ -223,6 +223,20 @@ pnpm test src/path/to/file.test.ts
 cd ui && pnpm test
 ```
 
+### Coverage
+
+A unified line-coverage report combines the backend (`src/`), desktop (`desktop/src/`), and UI (`ui/`) Vitest runs.
+
+```bash
+# Run all suites with coverage and emit the merged report
+pnpm coverage:report
+
+# Enforce per-area thresholds against coverage/coverage-summary.json
+pnpm coverage:check
+```
+
+`coverage:report` writes per-workspace artifacts (`coverage/backend/coverage-final.json`, `ui/coverage/coverage-final.json`) and a merged `coverage/coverage-final.json` + `coverage/coverage-summary.json`. Per-area thresholds live in [`coverage/thresholds.json`](coverage/thresholds.json) and are enforced in CI by the `coverage` job. Lower a threshold only when you've intentionally removed tests; raise it after meaningfully growing coverage.
+
 ### Writing Tests
 
 - Use Vitest for backend tests
