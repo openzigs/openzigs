@@ -64,9 +64,19 @@ vi.mock("../video/templates/template-registry.js", () => ({
 vi.mock("../video/assets/asset-manager.js", () => ({
   AssetManager: vi.fn().mockImplementation(() => ({
     initialize: vi.fn().mockResolvedValue(undefined),
-    search: vi.fn().mockResolvedValue({ results: [{ id: "r1", name: "Track 1" }], total: 1 }),
-    download: vi.fn().mockResolvedValue({ filePath: "/tmp/test-download.mp3", asset: { id: "a1", name: "Downloaded Track" } }),
-    getLocalAssets: vi.fn().mockReturnValue([{ id: "local1", name: "My Song", filePath: "/lib/song.mp3" }]),
+    search: vi.fn().mockResolvedValue({
+      results: [{ id: "r1", name: "Track 1" }],
+      total: 1,
+    }),
+    download: vi.fn().mockResolvedValue({
+      filePath: "/tmp/test-download.mp3",
+      asset: { id: "a1", name: "Downloaded Track" },
+    }),
+    getLocalAssets: vi
+      .fn()
+      .mockReturnValue([
+        { id: "local1", name: "My Song", filePath: "/lib/song.mp3" },
+      ]),
     remove: vi.fn().mockResolvedValue(true),
   })),
 }));
@@ -141,18 +151,21 @@ function createMockCopilot() {
 }
 
 function createMockRenderOrchestrator() {
-  const jobs = new Map<string, {
-    id: string;
-    status: string;
-    progress: number;
-    manifest: { projectTitle: string; templateId: string };
-    outputPath: string | null;
-    error: string | null;
-    createdAt: Date;
-    updatedAt: Date;
-    durationSec: number | null;
-    fileSizeBytes: number | null;
-  }>();
+  const jobs = new Map<
+    string,
+    {
+      id: string;
+      status: string;
+      progress: number;
+      manifest: { projectTitle: string; templateId: string };
+      outputPath: string | null;
+      error: string | null;
+      createdAt: Date;
+      updatedAt: Date;
+      durationSec: number | null;
+      fileSizeBytes: number | null;
+    }
+  >();
 
   return {
     submit: vi.fn().mockResolvedValue("job-001"),
@@ -283,11 +296,13 @@ describe("Director API router", () => {
   describe("POST /drafts", () => {
     it("creates a draft with valid manifest", async () => {
       const { app } = buildApp();
-      const res = await request(app).post("/director/drafts").send({
-        title: "My Video",
-        manifest: { projectTitle: "Test", timeline: [] },
-        productionMode: "presentation",
-      });
+      const res = await request(app)
+        .post("/director/drafts")
+        .send({
+          title: "My Video",
+          manifest: { projectTitle: "Test", timeline: [] },
+          productionMode: "presentation",
+        });
       expect(res.status).toBe(200);
       expect(res.body.id).toBe("test-nano-id-1");
       expect(res.body.title).toBe("My Video");
@@ -305,19 +320,23 @@ describe("Director API router", () => {
 
     it("rejects missing productionMode", async () => {
       const { app } = buildApp();
-      const res = await request(app).post("/director/drafts").send({
-        manifest: { timeline: [] },
-      });
+      const res = await request(app)
+        .post("/director/drafts")
+        .send({
+          manifest: { timeline: [] },
+        });
       expect(res.status).toBe(400);
       expect(res.body.error).toContain("productionMode");
     });
 
     it("defaults title to 'Untitled Draft'", async () => {
       const { app } = buildApp();
-      const res = await request(app).post("/director/drafts").send({
-        manifest: { timeline: [] },
-        productionMode: "highlight",
-      });
+      const res = await request(app)
+        .post("/director/drafts")
+        .send({
+          manifest: { timeline: [] },
+          productionMode: "highlight",
+        });
       expect(res.status).toBe(200);
       expect(res.body.title).toBe("Untitled Draft");
     });
@@ -334,10 +353,20 @@ describe("Director API router", () => {
     it("returns created drafts", async () => {
       const { app } = buildApp();
       // Insert a draft directly
-      testDb.prepare(
-        `INSERT INTO director_drafts (id, title, manifest, production_mode, created_at, updated_at, status)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`
-      ).run("d1", "Draft One", '{"timeline":[]}', "presentation", "2025-01-01T00:00:00Z", "2025-01-01T00:00:00Z", "draft");
+      testDb
+        .prepare(
+          `INSERT INTO director_drafts (id, title, manifest, production_mode, created_at, updated_at, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          "d1",
+          "Draft One",
+          '{"timeline":[]}',
+          "presentation",
+          "2025-01-01T00:00:00Z",
+          "2025-01-01T00:00:00Z",
+          "draft",
+        );
 
       const res = await request(app).get("/director/drafts");
       expect(res.status).toBe(200);
@@ -357,11 +386,24 @@ describe("Director API router", () => {
 
     it("returns draft with parsed manifest", async () => {
       const { app } = buildApp();
-      const manifest = { projectTitle: "Test", timeline: [{ type: "image_scene" }] };
-      testDb.prepare(
-        `INSERT INTO director_drafts (id, title, manifest, production_mode, created_at, updated_at, status)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`
-      ).run("d2", "Draft Two", JSON.stringify(manifest), "script", "2025-01-01T00:00:00Z", "2025-01-01T00:00:00Z", "draft");
+      const manifest = {
+        projectTitle: "Test",
+        timeline: [{ type: "image_scene" }],
+      };
+      testDb
+        .prepare(
+          `INSERT INTO director_drafts (id, title, manifest, production_mode, created_at, updated_at, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          "d2",
+          "Draft Two",
+          JSON.stringify(manifest),
+          "script",
+          "2025-01-01T00:00:00Z",
+          "2025-01-01T00:00:00Z",
+          "draft",
+        );
 
       const res = await request(app).get("/director/drafts/d2");
       expect(res.status).toBe(200);
@@ -372,29 +414,45 @@ describe("Director API router", () => {
 
   describe("PUT /drafts/:id", () => {
     beforeEach(() => {
-      testDb.prepare(
-        `INSERT INTO director_drafts (id, title, manifest, production_mode, created_at, updated_at, status)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`
-      ).run("d-put", "Original", '{}', "highlight", "2025-01-01T00:00:00Z", "2025-01-01T00:00:00Z", "draft");
+      testDb
+        .prepare(
+          `INSERT INTO director_drafts (id, title, manifest, production_mode, created_at, updated_at, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          "d-put",
+          "Original",
+          "{}",
+          "highlight",
+          "2025-01-01T00:00:00Z",
+          "2025-01-01T00:00:00Z",
+          "draft",
+        );
     });
 
     it("returns 404 for missing draft", async () => {
       const { app } = buildApp();
-      const res = await request(app).put("/director/drafts/missing").send({ title: "X" });
+      const res = await request(app)
+        .put("/director/drafts/missing")
+        .send({ title: "X" });
       expect(res.status).toBe(404);
     });
 
     it("updates title and manifest", async () => {
       const { app } = buildApp();
-      const res = await request(app).put("/director/drafts/d-put").send({
-        title: "Updated",
-        manifest: { newKey: true },
-      });
+      const res = await request(app)
+        .put("/director/drafts/d-put")
+        .send({
+          title: "Updated",
+          manifest: { newKey: true },
+        });
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
 
       // Verify
-      const row = testDb.prepare("SELECT title, manifest FROM director_drafts WHERE id = ?").get("d-put") as { title: string; manifest: string };
+      const row = testDb
+        .prepare("SELECT title, manifest FROM director_drafts WHERE id = ?")
+        .get("d-put") as { title: string; manifest: string };
       expect(row.title).toBe("Updated");
       expect(JSON.parse(row.manifest)).toEqual({ newKey: true });
     });
@@ -416,16 +474,28 @@ describe("Director API router", () => {
 
     it("deletes existing draft", async () => {
       const { app } = buildApp();
-      testDb.prepare(
-        `INSERT INTO director_drafts (id, title, manifest, production_mode, created_at, updated_at, status)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`
-      ).run("d-del", "ToDelete", '{}', "highlight", "2025-01-01T00:00:00Z", "2025-01-01T00:00:00Z", "draft");
+      testDb
+        .prepare(
+          `INSERT INTO director_drafts (id, title, manifest, production_mode, created_at, updated_at, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          "d-del",
+          "ToDelete",
+          "{}",
+          "highlight",
+          "2025-01-01T00:00:00Z",
+          "2025-01-01T00:00:00Z",
+          "draft",
+        );
 
       const res = await request(app).delete("/director/drafts/d-del");
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
 
-      const row = testDb.prepare("SELECT id FROM director_drafts WHERE id = ?").get("d-del");
+      const row = testDb
+        .prepare("SELECT id FROM director_drafts WHERE id = ?")
+        .get("d-del");
       expect(row).toBeUndefined();
     });
   });
@@ -435,16 +505,28 @@ describe("Director API router", () => {
   describe("POST /drafts/:id/versions", () => {
     it("returns 404 for missing draft", async () => {
       const { app } = buildApp();
-      const res = await request(app).post("/director/drafts/missing/versions").send({});
+      const res = await request(app)
+        .post("/director/drafts/missing/versions")
+        .send({});
       expect(res.status).toBe(404);
     });
 
     it("creates a version snapshot", async () => {
       const { app } = buildApp();
-      testDb.prepare(
-        `INSERT INTO director_drafts (id, title, manifest, production_mode, created_at, updated_at, status)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`
-      ).run("d-ver", "Versioned", '{"v":1}', "presentation", "2025-01-01T00:00:00Z", "2025-01-01T00:00:00Z", "draft");
+      testDb
+        .prepare(
+          `INSERT INTO director_drafts (id, title, manifest, production_mode, created_at, updated_at, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          "d-ver",
+          "Versioned",
+          '{"v":1}',
+          "presentation",
+          "2025-01-01T00:00:00Z",
+          "2025-01-01T00:00:00Z",
+          "draft",
+        );
 
       const res = await request(app)
         .post("/director/drafts/d-ver/versions")
@@ -464,14 +546,26 @@ describe("Director API router", () => {
 
     it("lists saved versions", async () => {
       const { app } = buildApp();
-      testDb.prepare(
-        `INSERT INTO director_drafts (id, title, manifest, production_mode, created_at, updated_at, status)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`
-      ).run("d-v2", "V", '{}', "highlight", "2025-01-01T00:00:00Z", "2025-01-01T00:00:00Z", "draft");
-      testDb.prepare(
-        `INSERT INTO director_draft_versions (id, draft_id, label, manifest, created_at)
-         VALUES (?, ?, ?, ?, ?)`
-      ).run("v1", "d-v2", "v1", '{"old":true}', "2025-01-01T01:00:00Z");
+      testDb
+        .prepare(
+          `INSERT INTO director_drafts (id, title, manifest, production_mode, created_at, updated_at, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          "d-v2",
+          "V",
+          "{}",
+          "highlight",
+          "2025-01-01T00:00:00Z",
+          "2025-01-01T00:00:00Z",
+          "draft",
+        );
+      testDb
+        .prepare(
+          `INSERT INTO director_draft_versions (id, draft_id, label, manifest, created_at)
+         VALUES (?, ?, ?, ?, ?)`,
+        )
+        .run("v1", "d-v2", "v1", '{"old":true}', "2025-01-01T01:00:00Z");
 
       const res = await request(app).get("/director/drafts/d-v2/versions");
       expect(res.status).toBe(200);
@@ -491,14 +585,26 @@ describe("Director API router", () => {
 
     it("restores a version", async () => {
       const { app } = buildApp();
-      testDb.prepare(
-        `INSERT INTO director_drafts (id, title, manifest, production_mode, created_at, updated_at, status)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`
-      ).run("d-rest", "D", '{"v":2}', "presentation", "2025-01-01T00:00:00Z", "2025-01-01T00:00:00Z", "draft");
-      testDb.prepare(
-        `INSERT INTO director_draft_versions (id, draft_id, label, manifest, created_at)
-         VALUES (?, ?, ?, ?, ?)`
-      ).run("v-old", "d-rest", "old", '{"v":1}', "2025-01-01T00:00:00Z");
+      testDb
+        .prepare(
+          `INSERT INTO director_drafts (id, title, manifest, production_mode, created_at, updated_at, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          "d-rest",
+          "D",
+          '{"v":2}',
+          "presentation",
+          "2025-01-01T00:00:00Z",
+          "2025-01-01T00:00:00Z",
+          "draft",
+        );
+      testDb
+        .prepare(
+          `INSERT INTO director_draft_versions (id, draft_id, label, manifest, created_at)
+         VALUES (?, ?, ?, ?, ?)`,
+        )
+        .run("v-old", "d-rest", "old", '{"v":1}', "2025-01-01T00:00:00Z");
 
       const res = await request(app)
         .post("/director/drafts/d-rest/versions/v-old/restore")
@@ -508,7 +614,9 @@ describe("Director API router", () => {
       expect(res.body.manifest).toEqual({ v: 1 });
 
       // Verify DB
-      const row = testDb.prepare("SELECT manifest FROM director_drafts WHERE id = ?").get("d-rest") as { manifest: string };
+      const row = testDb
+        .prepare("SELECT manifest FROM director_drafts WHERE id = ?")
+        .get("d-rest") as { manifest: string };
       expect(JSON.parse(row.manifest)).toEqual({ v: 1 });
     });
   });
@@ -518,10 +626,20 @@ describe("Director API router", () => {
   describe("GET /drafts/:id/renders", () => {
     it("returns empty list with no renders", async () => {
       const { app } = buildApp();
-      testDb.prepare(
-        `INSERT INTO director_drafts (id, title, manifest, production_mode, created_at, updated_at, status)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`
-      ).run("d-ren", "D", '{}', "presentation", "2025-01-01T00:00:00Z", "2025-01-01T00:00:00Z", "draft");
+      testDb
+        .prepare(
+          `INSERT INTO director_drafts (id, title, manifest, production_mode, created_at, updated_at, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          "d-ren",
+          "D",
+          "{}",
+          "presentation",
+          "2025-01-01T00:00:00Z",
+          "2025-01-01T00:00:00Z",
+          "draft",
+        );
 
       const res = await request(app).get("/director/drafts/d-ren/renders");
       expect(res.status).toBe(200);
@@ -530,14 +648,34 @@ describe("Director API router", () => {
 
     it("lists renders for a draft", async () => {
       const { app } = buildApp();
-      testDb.prepare(
-        `INSERT INTO director_drafts (id, title, manifest, production_mode, created_at, updated_at, status)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`
-      ).run("d-r2", "D", '{}', "presentation", "2025-01-01T00:00:00Z", "2025-01-01T00:00:00Z", "draft");
-      testDb.prepare(
-        `INSERT INTO director_renders (id, draft_id, job_id, quality, status, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`
-      ).run("r1", "d-r2", "j1", "high", "complete", "2025-01-01T00:00:00Z", "2025-01-01T00:00:00Z");
+      testDb
+        .prepare(
+          `INSERT INTO director_drafts (id, title, manifest, production_mode, created_at, updated_at, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          "d-r2",
+          "D",
+          "{}",
+          "presentation",
+          "2025-01-01T00:00:00Z",
+          "2025-01-01T00:00:00Z",
+          "draft",
+        );
+      testDb
+        .prepare(
+          `INSERT INTO director_renders (id, draft_id, job_id, quality, status, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          "r1",
+          "d-r2",
+          "j1",
+          "high",
+          "complete",
+          "2025-01-01T00:00:00Z",
+          "2025-01-01T00:00:00Z",
+        );
 
       const res = await request(app).get("/director/drafts/d-r2/renders");
       expect(res.status).toBe(200);
@@ -571,7 +709,10 @@ describe("Director API router", () => {
         fileSizeBytes: null,
       });
 
-      const { app } = buildApp({ renderOrchestrator: mockOrch as unknown as DirectorRouterOptions["renderOrchestrator"] });
+      const { app } = buildApp({
+        renderOrchestrator:
+          mockOrch as unknown as DirectorRouterOptions["renderOrchestrator"],
+      });
       const res = await request(app).get("/director/jobs");
       expect(res.status).toBe(200);
       expect(res.body.jobs).toHaveLength(1);
@@ -589,7 +730,10 @@ describe("Director API router", () => {
 
     it("returns 404 for unknown job", async () => {
       const mockOrch = createMockRenderOrchestrator();
-      const { app } = buildApp({ renderOrchestrator: mockOrch as unknown as DirectorRouterOptions["renderOrchestrator"] });
+      const { app } = buildApp({
+        renderOrchestrator:
+          mockOrch as unknown as DirectorRouterOptions["renderOrchestrator"],
+      });
       const res = await request(app).get("/director/jobs/unknown");
       expect(res.status).toBe(404);
     });
@@ -609,7 +753,10 @@ describe("Director API router", () => {
         fileSizeBytes: 1024000,
       });
 
-      const { app } = buildApp({ renderOrchestrator: mockOrch as unknown as DirectorRouterOptions["renderOrchestrator"] });
+      const { app } = buildApp({
+        renderOrchestrator:
+          mockOrch as unknown as DirectorRouterOptions["renderOrchestrator"],
+      });
       const res = await request(app).get("/director/jobs/j2");
       expect(res.status).toBe(200);
       expect(res.body.status).toBe("complete");
@@ -626,7 +773,10 @@ describe("Director API router", () => {
 
     it("aborts a job", async () => {
       const mockOrch = createMockRenderOrchestrator();
-      const { app } = buildApp({ renderOrchestrator: mockOrch as unknown as DirectorRouterOptions["renderOrchestrator"] });
+      const { app } = buildApp({
+        renderOrchestrator:
+          mockOrch as unknown as DirectorRouterOptions["renderOrchestrator"],
+      });
       const res = await request(app).post("/director/jobs/j1/abort");
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
@@ -639,13 +789,18 @@ describe("Director API router", () => {
   describe("POST /render", () => {
     it("returns 503 without renderOrchestrator", async () => {
       const { app } = buildApp();
-      const res = await request(app).post("/director/render").send({ manifest: {} });
+      const res = await request(app)
+        .post("/director/render")
+        .send({ manifest: {} });
       expect(res.status).toBe(503);
     });
 
     it("rejects missing manifest", async () => {
       const mockOrch = createMockRenderOrchestrator();
-      const { app } = buildApp({ renderOrchestrator: mockOrch as unknown as DirectorRouterOptions["renderOrchestrator"] });
+      const { app } = buildApp({
+        renderOrchestrator:
+          mockOrch as unknown as DirectorRouterOptions["renderOrchestrator"],
+      });
       const res = await request(app).post("/director/render").send({});
       expect(res.status).toBe(400);
       expect(res.body.error).toContain("manifest");
@@ -666,11 +821,16 @@ describe("Director API router", () => {
         fileSizeBytes: null,
       });
 
-      const { app } = buildApp({ renderOrchestrator: mockOrch as unknown as DirectorRouterOptions["renderOrchestrator"] });
-      const res = await request(app).post("/director/render").send({
-        manifest: { projectTitle: "Render Test", timeline: [] },
-        quality: "high",
+      const { app } = buildApp({
+        renderOrchestrator:
+          mockOrch as unknown as DirectorRouterOptions["renderOrchestrator"],
       });
+      const res = await request(app)
+        .post("/director/render")
+        .send({
+          manifest: { projectTitle: "Render Test", timeline: [] },
+          quality: "high",
+        });
       expect(res.status).toBe(200);
       expect(res.body.jobId).toBe("job-001");
       expect(res.body.crf).toBe(18);
@@ -691,21 +851,38 @@ describe("Director API router", () => {
         fileSizeBytes: null,
       });
 
-      const { app } = buildApp({ renderOrchestrator: mockOrch as unknown as DirectorRouterOptions["renderOrchestrator"] });
+      const { app } = buildApp({
+        renderOrchestrator:
+          mockOrch as unknown as DirectorRouterOptions["renderOrchestrator"],
+      });
 
       // Create draft first
-      testDb.prepare(
-        `INSERT INTO director_drafts (id, title, manifest, production_mode, created_at, updated_at, status)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`
-      ).run("d-rq", "D", '{}', "presentation", "2025-01-01T00:00:00Z", "2025-01-01T00:00:00Z", "draft");
+      testDb
+        .prepare(
+          `INSERT INTO director_drafts (id, title, manifest, production_mode, created_at, updated_at, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          "d-rq",
+          "D",
+          "{}",
+          "presentation",
+          "2025-01-01T00:00:00Z",
+          "2025-01-01T00:00:00Z",
+          "draft",
+        );
 
-      const res = await request(app).post("/director/render").send({
-        manifest: { projectTitle: "T", timeline: [] },
-        draftId: "d-rq",
-      });
+      const res = await request(app)
+        .post("/director/render")
+        .send({
+          manifest: { projectTitle: "T", timeline: [] },
+          draftId: "d-rq",
+        });
       expect(res.status).toBe(200);
 
-      const rows = testDb.prepare("SELECT * FROM director_renders WHERE draft_id = ?").all("d-rq") as Array<{ draft_id: string }>;
+      const rows = testDb
+        .prepare("SELECT * FROM director_renders WHERE draft_id = ?")
+        .all("d-rq") as Array<{ draft_id: string }>;
       expect(rows).toHaveLength(1);
     });
   });
@@ -715,14 +892,18 @@ describe("Director API router", () => {
   describe("POST /produce", () => {
     it("rejects invalid mode", async () => {
       const { app } = buildApp();
-      const res = await request(app).post("/director/produce").send({ mode: "invalid" });
+      const res = await request(app)
+        .post("/director/produce")
+        .send({ mode: "invalid" });
       expect(res.status).toBe(400);
       expect(res.body.error).toContain("mode");
     });
 
     it("rejects highlight mode without clips", async () => {
       const { app } = buildApp();
-      const res = await request(app).post("/director/produce").send({ mode: "highlight" });
+      const res = await request(app)
+        .post("/director/produce")
+        .send({ mode: "highlight" });
       expect(res.status).toBe(400);
       expect(res.body.error).toContain("clips");
     });
@@ -886,7 +1067,9 @@ describe("Director API router", () => {
   describe("POST /assets/placement", () => {
     it("rejects missing script", async () => {
       const { app } = buildApp();
-      const res = await request(app).post("/director/assets/placement").send({});
+      const res = await request(app)
+        .post("/director/assets/placement")
+        .send({});
       expect(res.status).toBe(400);
       expect(res.body.error).toContain("script");
     });
@@ -904,18 +1087,23 @@ describe("Director API router", () => {
 
     it("rejects invalid videoDurationSec", async () => {
       const { app } = buildApp();
-      const res = await request(app).post("/director/assets/placement").send({
-        script: "Hello world",
-        assets: [{ id: "1", path: "/a.png" }],
-        videoDurationSec: -5,
-      });
+      const res = await request(app)
+        .post("/director/assets/placement")
+        .send({
+          script: "Hello world",
+          assets: [{ id: "1", path: "/a.png" }],
+          videoDurationSec: -5,
+        });
       expect(res.status).toBe(400);
       expect(res.body.error).toContain("videoDurationSec");
     });
 
     it("rejects more than 20 assets", async () => {
       const { app } = buildApp();
-      const assets = Array.from({ length: 21 }, (_, i) => ({ id: String(i), path: `/${i}.png` }));
+      const assets = Array.from({ length: 21 }, (_, i) => ({
+        id: String(i),
+        path: `/${i}.png`,
+      }));
       const res = await request(app).post("/director/assets/placement").send({
         script: "Hello world",
         assets,
@@ -1053,17 +1241,29 @@ describe("Director API router", () => {
   describe("GET /files/:fileName", () => {
     it("returns 404 for non-existent file", async () => {
       const { app } = buildApp();
-      const res = await request(app).get("/director/files/nonexistent-file-xyz.mp4");
+      const res = await request(app).get(
+        "/director/files/nonexistent-file-xyz.mp4",
+      );
       expect(res.status).toBe(404);
     });
   });
 
   describe("PUT /drafts - additional fields", () => {
     beforeEach(() => {
-      testDb.prepare(
-        `INSERT INTO director_drafts (id, title, manifest, production_mode, created_at, updated_at, status)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`
-      ).run("d-extra", "ExtraDraft", '{"old":true}', "presentation", "2025-01-01T00:00:00Z", "2025-01-01T00:00:00Z", "draft");
+      testDb
+        .prepare(
+          `INSERT INTO director_drafts (id, title, manifest, production_mode, created_at, updated_at, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          "d-extra",
+          "ExtraDraft",
+          '{"old":true}',
+          "presentation",
+          "2025-01-01T00:00:00Z",
+          "2025-01-01T00:00:00Z",
+          "draft",
+        );
     });
 
     it("updates status field", async () => {
@@ -1072,7 +1272,9 @@ describe("Director API router", () => {
         .put("/director/drafts/d-extra")
         .send({ status: "published" });
       expect(res.status).toBe(200);
-      const row = testDb.prepare("SELECT status FROM director_drafts WHERE id = ?").get("d-extra") as { status: string };
+      const row = testDb
+        .prepare("SELECT status FROM director_drafts WHERE id = ?")
+        .get("d-extra") as { status: string };
       expect(row.status).toBe("published");
     });
 
@@ -1082,7 +1284,9 @@ describe("Director API router", () => {
         .put("/director/drafts/d-extra")
         .send({ thumbnail: "/tmp/thumb.jpg" });
       expect(res.status).toBe(200);
-      const row = testDb.prepare("SELECT thumbnail FROM director_drafts WHERE id = ?").get("d-extra") as { thumbnail: string };
+      const row = testDb
+        .prepare("SELECT thumbnail FROM director_drafts WHERE id = ?")
+        .get("d-extra") as { thumbnail: string };
       expect(row.thumbnail).toBe("/tmp/thumb.jpg");
     });
   });
@@ -1090,24 +1294,50 @@ describe("Director API router", () => {
   describe("DELETE /drafts - cascade", () => {
     it("cascades delete to versions and renders", async () => {
       const { app } = buildApp();
-      testDb.prepare(
-        `INSERT INTO director_drafts (id, title, manifest, production_mode, created_at, updated_at, status)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`
-      ).run("d-casc", "Cascade", '{}', "highlight", "2025-01-01T00:00:00Z", "2025-01-01T00:00:00Z", "draft");
-      testDb.prepare(
-        `INSERT INTO director_draft_versions (id, draft_id, label, manifest, created_at)
-         VALUES (?, ?, ?, ?, ?)`
-      ).run("v-casc", "d-casc", "v1", '{}', "2025-01-01T00:00:00Z");
-      testDb.prepare(
-        `INSERT INTO director_renders (id, draft_id, job_id, quality, status, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`
-      ).run("r-casc", "d-casc", "j1", "standard", "queued", "2025-01-01T00:00:00Z", "2025-01-01T00:00:00Z");
+      testDb
+        .prepare(
+          `INSERT INTO director_drafts (id, title, manifest, production_mode, created_at, updated_at, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          "d-casc",
+          "Cascade",
+          "{}",
+          "highlight",
+          "2025-01-01T00:00:00Z",
+          "2025-01-01T00:00:00Z",
+          "draft",
+        );
+      testDb
+        .prepare(
+          `INSERT INTO director_draft_versions (id, draft_id, label, manifest, created_at)
+         VALUES (?, ?, ?, ?, ?)`,
+        )
+        .run("v-casc", "d-casc", "v1", "{}", "2025-01-01T00:00:00Z");
+      testDb
+        .prepare(
+          `INSERT INTO director_renders (id, draft_id, job_id, quality, status, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          "r-casc",
+          "d-casc",
+          "j1",
+          "standard",
+          "queued",
+          "2025-01-01T00:00:00Z",
+          "2025-01-01T00:00:00Z",
+        );
 
       const res = await request(app).delete("/director/drafts/d-casc");
       expect(res.status).toBe(200);
-      const versions = testDb.prepare("SELECT * FROM director_draft_versions WHERE draft_id = ?").all("d-casc");
+      const versions = testDb
+        .prepare("SELECT * FROM director_draft_versions WHERE draft_id = ?")
+        .all("d-casc");
       expect(versions).toHaveLength(0);
-      const renders = testDb.prepare("SELECT * FROM director_renders WHERE draft_id = ?").all("d-casc");
+      const renders = testDb
+        .prepare("SELECT * FROM director_renders WHERE draft_id = ?")
+        .all("d-casc");
       expect(renders).toHaveLength(0);
     });
   });
@@ -1115,10 +1345,20 @@ describe("Director API router", () => {
   describe("POST /drafts/:id/versions - auto label", () => {
     it("uses auto-generated label when none provided", async () => {
       const { app } = buildApp();
-      testDb.prepare(
-        `INSERT INTO director_drafts (id, title, manifest, production_mode, created_at, updated_at, status)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`
-      ).run("d-auto", "AutoLabel", '{"v":1}', "presentation", "2025-01-01T00:00:00Z", "2025-01-01T00:00:00Z", "draft");
+      testDb
+        .prepare(
+          `INSERT INTO director_drafts (id, title, manifest, production_mode, created_at, updated_at, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          "d-auto",
+          "AutoLabel",
+          '{"v":1}',
+          "presentation",
+          "2025-01-01T00:00:00Z",
+          "2025-01-01T00:00:00Z",
+          "draft",
+        );
 
       const res = await request(app)
         .post("/director/drafts/d-auto/versions")
@@ -1189,14 +1429,12 @@ describe("Director API router", () => {
   describe("POST /assets/download - success", () => {
     it("downloads asset with valid parameters", async () => {
       const { app } = buildApp();
-      const res = await request(app)
-        .post("/director/assets/download")
-        .send({
-          id: "track-1",
-          name: "Test Track",
-          source: "pixabay",
-          previewUrl: "https://example.com/track.mp3",
-        });
+      const res = await request(app).post("/director/assets/download").send({
+        id: "track-1",
+        name: "Test Track",
+        source: "pixabay",
+        previewUrl: "https://example.com/track.mp3",
+      });
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
       expect(res.body.filePath).toBeDefined();
@@ -1287,12 +1525,10 @@ describe("Director API router", () => {
 
     it("returns 404 for non-existent file in allowed dir", async () => {
       const { app } = buildApp();
-      const res = await request(app)
-        .post("/director/enhance")
-        .send({
-          imagePath: "/tmp/openzigs-test-output/nonexistent-image-test-xyz.jpg",
-          prompt: "enhance this",
-        });
+      const res = await request(app).post("/director/enhance").send({
+        imagePath: "/tmp/openzigs-test-output/nonexistent-image-test-xyz.jpg",
+        prompt: "enhance this",
+      });
       expect(res.status).toBe(404);
       expect(res.body.error).toContain("not found");
     });
@@ -1303,24 +1539,20 @@ describe("Director API router", () => {
   describe("POST /thumbnail - security", () => {
     it("rejects manifestPath outside allowed dirs", async () => {
       const { app } = buildApp();
-      const res = await request(app)
-        .post("/director/thumbnail")
-        .send({
-          manifestPath: "/etc/passwd",
-          outputDir: "/tmp/openzigs-test-output",
-        });
+      const res = await request(app).post("/director/thumbnail").send({
+        manifestPath: "/etc/passwd",
+        outputDir: "/tmp/openzigs-test-output",
+      });
       expect(res.status).toBe(403);
       expect(res.body.error).toContain("manifestPath");
     });
 
     it("rejects outputDir outside allowed dirs", async () => {
       const { app } = buildApp();
-      const res = await request(app)
-        .post("/director/thumbnail")
-        .send({
-          manifestPath: "/tmp/openzigs-test-output/manifest.json",
-          outputDir: "/etc",
-        });
+      const res = await request(app).post("/director/thumbnail").send({
+        manifestPath: "/tmp/openzigs-test-output/manifest.json",
+        outputDir: "/etc",
+      });
       expect(res.status).toBe(403);
       expect(res.body.error).toContain("outputDir");
     });
@@ -1360,13 +1592,22 @@ describe("Director API router", () => {
   // ── Assets ingest ──────────────────────────────────────
 
   describe("POST /assets/ingest - file validation", () => {
-    it("returns 404 for non-existent file", async () => {
+    it("returns 404 for non-existent file within allowed roots", async () => {
+      const { app } = buildApp();
+      const res = await request(app).post("/director/assets/ingest").send({
+        filePath: "/tmp/openzigs-test-output/nonexistent-video-ingest-test.mp4",
+      });
+      expect(res.status).toBe(404);
+      expect(res.body.error).toContain("not found");
+    });
+
+    it("returns 403 for file path outside allowed roots", async () => {
       const { app } = buildApp();
       const res = await request(app)
         .post("/director/assets/ingest")
-        .send({ filePath: "/tmp/nonexistent-video-ingest-test.mp4" });
-      expect(res.status).toBe(404);
-      expect(res.body.error).toContain("not found");
+        .send({ filePath: "/etc/passwd" });
+      expect(res.status).toBe(403);
+      expect(res.body.error).toContain("Access denied");
     });
   });
 
@@ -1382,14 +1623,35 @@ describe("Director API router", () => {
 
     it("returns renders with draft and render data", async () => {
       const { app } = buildApp();
-      testDb.prepare(
-        `INSERT INTO director_drafts (id, title, manifest, production_mode, created_at, updated_at, status)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`
-      ).run("d-rlist", "Render List Draft", '{}', "presentation", "2025-01-01T00:00:00Z", "2025-01-01T00:00:00Z", "draft");
-      testDb.prepare(
-        `INSERT INTO director_renders (id, draft_id, job_id, quality, status, output_path, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-      ).run("r-list1", "d-rlist", "j-list1", "high", "complete", "/tmp/output.mp4", "2025-01-01T00:00:00Z", "2025-01-01T00:00:00Z");
+      testDb
+        .prepare(
+          `INSERT INTO director_drafts (id, title, manifest, production_mode, created_at, updated_at, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          "d-rlist",
+          "Render List Draft",
+          "{}",
+          "presentation",
+          "2025-01-01T00:00:00Z",
+          "2025-01-01T00:00:00Z",
+          "draft",
+        );
+      testDb
+        .prepare(
+          `INSERT INTO director_renders (id, draft_id, job_id, quality, status, output_path, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          "r-list1",
+          "d-rlist",
+          "j-list1",
+          "high",
+          "complete",
+          "/tmp/output.mp4",
+          "2025-01-01T00:00:00Z",
+          "2025-01-01T00:00:00Z",
+        );
 
       const res = await request(app).get("/director/renders");
       expect(res.status).toBe(200);
@@ -1414,15 +1676,38 @@ describe("Director API router", () => {
         fileSizeBytes: null,
       });
 
-      const { app } = buildApp({ renderOrchestrator: mockOrch as unknown as DirectorRouterOptions["renderOrchestrator"] });
-      testDb.prepare(
-        `INSERT INTO director_drafts (id, title, manifest, production_mode, created_at, updated_at, status)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`
-      ).run("d-live", "Live Draft", '{}', "presentation", "2025-01-01T00:00:00Z", "2025-01-01T00:00:00Z", "draft");
-      testDb.prepare(
-        `INSERT INTO director_renders (id, draft_id, job_id, quality, status, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`
-      ).run("r-live", "d-live", "j-live", "standard", "queued", "2025-01-01T00:00:00Z", "2025-01-01T00:00:00Z");
+      const { app } = buildApp({
+        renderOrchestrator:
+          mockOrch as unknown as DirectorRouterOptions["renderOrchestrator"],
+      });
+      testDb
+        .prepare(
+          `INSERT INTO director_drafts (id, title, manifest, production_mode, created_at, updated_at, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          "d-live",
+          "Live Draft",
+          "{}",
+          "presentation",
+          "2025-01-01T00:00:00Z",
+          "2025-01-01T00:00:00Z",
+          "draft",
+        );
+      testDb
+        .prepare(
+          `INSERT INTO director_renders (id, draft_id, job_id, quality, status, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          "r-live",
+          "d-live",
+          "j-live",
+          "standard",
+          "queued",
+          "2025-01-01T00:00:00Z",
+          "2025-01-01T00:00:00Z",
+        );
 
       const res = await request(app).get("/director/renders");
       expect(res.status).toBe(200);
@@ -1435,21 +1720,44 @@ describe("Director API router", () => {
   describe("GET /renders/:jobId/download", () => {
     it("returns 404 when no render record found", async () => {
       const { app } = buildApp();
-      const res = await request(app).get("/director/renders/unknown-job/download");
+      const res = await request(app).get(
+        "/director/renders/unknown-job/download",
+      );
       expect(res.status).toBe(404);
       expect(res.body.error).toContain("not found");
     });
 
     it("returns 404 when output_path is null", async () => {
       const { app } = buildApp();
-      testDb.prepare(
-        `INSERT INTO director_drafts (id, title, manifest, production_mode, created_at, updated_at, status)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`
-      ).run("d-dl", "Download", '{}', "presentation", "2025-01-01T00:00:00Z", "2025-01-01T00:00:00Z", "draft");
-      testDb.prepare(
-        `INSERT INTO director_renders (id, draft_id, job_id, quality, status, output_path, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-      ).run("r-dl", "d-dl", "j-dl", "standard", "queued", null, "2025-01-01T00:00:00Z", "2025-01-01T00:00:00Z");
+      testDb
+        .prepare(
+          `INSERT INTO director_drafts (id, title, manifest, production_mode, created_at, updated_at, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          "d-dl",
+          "Download",
+          "{}",
+          "presentation",
+          "2025-01-01T00:00:00Z",
+          "2025-01-01T00:00:00Z",
+          "draft",
+        );
+      testDb
+        .prepare(
+          `INSERT INTO director_renders (id, draft_id, job_id, quality, status, output_path, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          "r-dl",
+          "d-dl",
+          "j-dl",
+          "standard",
+          "queued",
+          null,
+          "2025-01-01T00:00:00Z",
+          "2025-01-01T00:00:00Z",
+        );
 
       const res = await request(app).get("/director/renders/j-dl/download");
       expect(res.status).toBe(404);
@@ -1457,14 +1765,35 @@ describe("Director API router", () => {
 
     it("returns 404 when render file does not exist on disk", async () => {
       const { app } = buildApp();
-      testDb.prepare(
-        `INSERT INTO director_drafts (id, title, manifest, production_mode, created_at, updated_at, status)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`
-      ).run("d-dl2", "Download2", '{}', "presentation", "2025-01-01T00:00:00Z", "2025-01-01T00:00:00Z", "draft");
-      testDb.prepare(
-        `INSERT INTO director_renders (id, draft_id, job_id, quality, status, output_path, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-      ).run("r-dl2", "d-dl2", "j-dl2", "standard", "complete", "/tmp/nonexistent-render-xyz.mp4", "2025-01-01T00:00:00Z", "2025-01-01T00:00:00Z");
+      testDb
+        .prepare(
+          `INSERT INTO director_drafts (id, title, manifest, production_mode, created_at, updated_at, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          "d-dl2",
+          "Download2",
+          "{}",
+          "presentation",
+          "2025-01-01T00:00:00Z",
+          "2025-01-01T00:00:00Z",
+          "draft",
+        );
+      testDb
+        .prepare(
+          `INSERT INTO director_renders (id, draft_id, job_id, quality, status, output_path, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          "r-dl2",
+          "d-dl2",
+          "j-dl2",
+          "standard",
+          "complete",
+          "/tmp/nonexistent-render-xyz.mp4",
+          "2025-01-01T00:00:00Z",
+          "2025-01-01T00:00:00Z",
+        );
 
       const res = await request(app).get("/director/renders/j-dl2/download");
       expect(res.status).toBe(404);
@@ -1515,12 +1844,22 @@ describe("Director API router", () => {
   describe("POST /scenes/:sceneIndex/rewrite-script - additional", () => {
     it("returns 400 for scene index out of range", async () => {
       const { app } = buildApp();
-      testDb.prepare(
-        `INSERT INTO director_drafts (id, title, manifest, production_mode, created_at, updated_at, status)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`
-      ).run("d-rewrite", "RewriteDraft", JSON.stringify({
-        timeline: [{ type: "image_scene", scriptText: "Hello world" }],
-      }), "presentation", "2025-01-01T00:00:00Z", "2025-01-01T00:00:00Z", "draft");
+      testDb
+        .prepare(
+          `INSERT INTO director_drafts (id, title, manifest, production_mode, created_at, updated_at, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          "d-rewrite",
+          "RewriteDraft",
+          JSON.stringify({
+            timeline: [{ type: "image_scene", scriptText: "Hello world" }],
+          }),
+          "presentation",
+          "2025-01-01T00:00:00Z",
+          "2025-01-01T00:00:00Z",
+          "draft",
+        );
 
       const res = await request(app)
         .post("/director/scenes/99/rewrite-script")
@@ -1535,44 +1874,64 @@ describe("Director API router", () => {
   describe("POST /render - quality presets", () => {
     it("draft quality maps to crf 32", async () => {
       const mockOrch = createMockRenderOrchestrator();
-      const { app } = buildApp({ renderOrchestrator: mockOrch as unknown as DirectorRouterOptions["renderOrchestrator"] });
-      const res = await request(app).post("/director/render").send({
-        manifest: { projectTitle: "T", timeline: [] },
-        quality: "draft",
+      const { app } = buildApp({
+        renderOrchestrator:
+          mockOrch as unknown as DirectorRouterOptions["renderOrchestrator"],
       });
+      const res = await request(app)
+        .post("/director/render")
+        .send({
+          manifest: { projectTitle: "T", timeline: [] },
+          quality: "draft",
+        });
       expect(res.status).toBe(200);
       expect(res.body.crf).toBe(32);
     });
 
     it("lossless quality maps to crf 0", async () => {
       const mockOrch = createMockRenderOrchestrator();
-      const { app } = buildApp({ renderOrchestrator: mockOrch as unknown as DirectorRouterOptions["renderOrchestrator"] });
-      const res = await request(app).post("/director/render").send({
-        manifest: { projectTitle: "T", timeline: [] },
-        quality: "lossless",
+      const { app } = buildApp({
+        renderOrchestrator:
+          mockOrch as unknown as DirectorRouterOptions["renderOrchestrator"],
       });
+      const res = await request(app)
+        .post("/director/render")
+        .send({
+          manifest: { projectTitle: "T", timeline: [] },
+          quality: "lossless",
+        });
       expect(res.status).toBe(200);
       expect(res.body.crf).toBe(0);
     });
 
     it("explicit crf overrides quality preset", async () => {
       const mockOrch = createMockRenderOrchestrator();
-      const { app } = buildApp({ renderOrchestrator: mockOrch as unknown as DirectorRouterOptions["renderOrchestrator"] });
-      const res = await request(app).post("/director/render").send({
-        manifest: { projectTitle: "T", timeline: [] },
-        quality: "high",
-        crf: 10,
+      const { app } = buildApp({
+        renderOrchestrator:
+          mockOrch as unknown as DirectorRouterOptions["renderOrchestrator"],
       });
+      const res = await request(app)
+        .post("/director/render")
+        .send({
+          manifest: { projectTitle: "T", timeline: [] },
+          quality: "high",
+          crf: 10,
+        });
       expect(res.status).toBe(200);
       expect(res.body.crf).toBe(10);
     });
 
     it("does not record render history without draftId", async () => {
       const mockOrch = createMockRenderOrchestrator();
-      const { app } = buildApp({ renderOrchestrator: mockOrch as unknown as DirectorRouterOptions["renderOrchestrator"] });
-      const res = await request(app).post("/director/render").send({
-        manifest: { projectTitle: "T", timeline: [] },
+      const { app } = buildApp({
+        renderOrchestrator:
+          mockOrch as unknown as DirectorRouterOptions["renderOrchestrator"],
       });
+      const res = await request(app)
+        .post("/director/render")
+        .send({
+          manifest: { projectTitle: "T", timeline: [] },
+        });
       expect(res.status).toBe(200);
       const rows = testDb.prepare("SELECT * FROM director_renders").all();
       expect(rows).toHaveLength(0);
@@ -1584,25 +1943,30 @@ describe("Director API router", () => {
   describe("POST /drafts - additional", () => {
     it("creates draft with thumbnail field", async () => {
       const { app } = buildApp();
-      const res = await request(app).post("/director/drafts").send({
-        title: "With Thumb",
-        manifest: { timeline: [] },
-        productionMode: "presentation",
-        thumbnail: "/tmp/thumb.jpg",
-      });
+      const res = await request(app)
+        .post("/director/drafts")
+        .send({
+          title: "With Thumb",
+          manifest: { timeline: [] },
+          productionMode: "presentation",
+          thumbnail: "/tmp/thumb.jpg",
+        });
       expect(res.status).toBe(200);
-      const row = testDb.prepare("SELECT thumbnail FROM director_drafts WHERE id = ?")
+      const row = testDb
+        .prepare("SELECT thumbnail FROM director_drafts WHERE id = ?")
         .get(res.body.id) as { thumbnail: string };
       expect(row.thumbnail).toBe("/tmp/thumb.jpg");
     });
 
     it("defaults title for whitespace-only input", async () => {
       const { app } = buildApp();
-      const res = await request(app).post("/director/drafts").send({
-        title: "   ",
-        manifest: { timeline: [] },
-        productionMode: "presentation",
-      });
+      const res = await request(app)
+        .post("/director/drafts")
+        .send({
+          title: "   ",
+          manifest: { timeline: [] },
+          productionMode: "presentation",
+        });
       expect(res.status).toBe(200);
       expect(res.body.title).toBe("Untitled Draft");
     });
@@ -1612,10 +1976,20 @@ describe("Director API router", () => {
 
   describe("PUT /drafts/:id - additional", () => {
     beforeEach(() => {
-      testDb.prepare(
-        `INSERT INTO director_drafts (id, title, manifest, production_mode, created_at, updated_at, status)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`
-      ).run("d-put2", "Original2", '{"old":true}', "highlight", "2025-01-01T00:00:00Z", "2025-01-01T00:00:00Z", "draft");
+      testDb
+        .prepare(
+          `INSERT INTO director_drafts (id, title, manifest, production_mode, created_at, updated_at, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          "d-put2",
+          "Original2",
+          '{"old":true}',
+          "highlight",
+          "2025-01-01T00:00:00Z",
+          "2025-01-01T00:00:00Z",
+          "draft",
+        );
     });
 
     it("updates only manifest", async () => {
@@ -1624,7 +1998,8 @@ describe("Director API router", () => {
         .put("/director/drafts/d-put2")
         .send({ manifest: { updated: true } });
       expect(res.status).toBe(200);
-      const row = testDb.prepare("SELECT title, manifest FROM director_drafts WHERE id = ?")
+      const row = testDb
+        .prepare("SELECT title, manifest FROM director_drafts WHERE id = ?")
         .get("d-put2") as { title: string; manifest: string };
       expect(row.title).toBe("Original2");
       expect(JSON.parse(row.manifest)).toEqual({ updated: true });
@@ -1641,8 +2016,16 @@ describe("Director API router", () => {
           thumbnail: "/thumb.jpg",
         });
       expect(res.status).toBe(200);
-      const row = testDb.prepare("SELECT title, manifest, status, thumbnail FROM director_drafts WHERE id = ?")
-        .get("d-put2") as { title: string; manifest: string; status: string; thumbnail: string };
+      const row = testDb
+        .prepare(
+          "SELECT title, manifest, status, thumbnail FROM director_drafts WHERE id = ?",
+        )
+        .get("d-put2") as {
+        title: string;
+        manifest: string;
+        status: string;
+        thumbnail: string;
+      };
       expect(row.title).toBe("New Title");
       expect(JSON.parse(row.manifest)).toEqual({ new: "manifest" });
       expect(row.status).toBe("published");
@@ -1655,10 +2038,20 @@ describe("Director API router", () => {
   describe("GET /drafts/:id - corrupt manifest", () => {
     it("returns null manifest for corrupt JSON", async () => {
       const { app } = buildApp();
-      testDb.prepare(
-        `INSERT INTO director_drafts (id, title, manifest, production_mode, created_at, updated_at, status)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`
-      ).run("d-bad", "Bad Manifest", "{{not json}}", "presentation", "2025-01-01T00:00:00Z", "2025-01-01T00:00:00Z", "draft");
+      testDb
+        .prepare(
+          `INSERT INTO director_drafts (id, title, manifest, production_mode, created_at, updated_at, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          "d-bad",
+          "Bad Manifest",
+          "{{not json}}",
+          "presentation",
+          "2025-01-01T00:00:00Z",
+          "2025-01-01T00:00:00Z",
+          "draft",
+        );
 
       const res = await request(app).get("/director/drafts/d-bad");
       expect(res.status).toBe(200);
@@ -1672,14 +2065,34 @@ describe("Director API router", () => {
   describe("GET /drafts - sorting", () => {
     it("returns drafts sorted by updated_at desc", async () => {
       const { app } = buildApp();
-      testDb.prepare(
-        `INSERT INTO director_drafts (id, title, manifest, production_mode, created_at, updated_at, status)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`
-      ).run("d-old", "Old", '{}', "highlight", "2025-01-01T00:00:00Z", "2025-01-01T00:00:00Z", "draft");
-      testDb.prepare(
-        `INSERT INTO director_drafts (id, title, manifest, production_mode, created_at, updated_at, status)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`
-      ).run("d-new", "New", '{}', "presentation", "2025-01-02T00:00:00Z", "2025-01-02T00:00:00Z", "draft");
+      testDb
+        .prepare(
+          `INSERT INTO director_drafts (id, title, manifest, production_mode, created_at, updated_at, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          "d-old",
+          "Old",
+          "{}",
+          "highlight",
+          "2025-01-01T00:00:00Z",
+          "2025-01-01T00:00:00Z",
+          "draft",
+        );
+      testDb
+        .prepare(
+          `INSERT INTO director_drafts (id, title, manifest, production_mode, created_at, updated_at, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          "d-new",
+          "New",
+          "{}",
+          "presentation",
+          "2025-01-02T00:00:00Z",
+          "2025-01-02T00:00:00Z",
+          "draft",
+        );
 
       const res = await request(app).get("/director/drafts");
       expect(res.status).toBe(200);
@@ -1694,17 +2107,28 @@ describe("Director API router", () => {
   describe("POST /drafts/:id/versions - multiple", () => {
     it("creates multiple versions for same draft", async () => {
       const { app } = buildApp();
-      testDb.prepare(
-        `INSERT INTO director_drafts (id, title, manifest, production_mode, created_at, updated_at, status)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`
-      ).run("d-mv", "MultiVersion", '{"v":1}', "presentation", "2025-01-01T00:00:00Z", "2025-01-01T00:00:00Z", "draft");
+      testDb
+        .prepare(
+          `INSERT INTO director_drafts (id, title, manifest, production_mode, created_at, updated_at, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          "d-mv",
+          "MultiVersion",
+          '{"v":1}',
+          "presentation",
+          "2025-01-01T00:00:00Z",
+          "2025-01-01T00:00:00Z",
+          "draft",
+        );
 
       const res1 = await request(app)
         .post("/director/drafts/d-mv/versions")
         .send({ label: "Version 1" });
       expect(res1.status).toBe(201);
 
-      testDb.prepare("UPDATE director_drafts SET manifest = ? WHERE id = ?")
+      testDb
+        .prepare("UPDATE director_drafts SET manifest = ? WHERE id = ?")
         .run('{"v":2}', "d-mv");
 
       const res2 = await request(app)
@@ -1735,15 +2159,38 @@ describe("Director API router", () => {
         fileSizeBytes: null,
       });
 
-      const { app } = buildApp({ renderOrchestrator: mockOrch as unknown as DirectorRouterOptions["renderOrchestrator"] });
-      testDb.prepare(
-        `INSERT INTO director_drafts (id, title, manifest, production_mode, created_at, updated_at, status)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`
-      ).run("d-enrich", "Enrich", '{}', "presentation", "2025-01-01T00:00:00Z", "2025-01-01T00:00:00Z", "draft");
-      testDb.prepare(
-        `INSERT INTO director_renders (id, draft_id, job_id, quality, status, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`
-      ).run("r-en", "d-enrich", "j-enrich", "standard", "queued", "2025-01-01T00:00:00Z", "2025-01-01T00:00:00Z");
+      const { app } = buildApp({
+        renderOrchestrator:
+          mockOrch as unknown as DirectorRouterOptions["renderOrchestrator"],
+      });
+      testDb
+        .prepare(
+          `INSERT INTO director_drafts (id, title, manifest, production_mode, created_at, updated_at, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          "d-enrich",
+          "Enrich",
+          "{}",
+          "presentation",
+          "2025-01-01T00:00:00Z",
+          "2025-01-01T00:00:00Z",
+          "draft",
+        );
+      testDb
+        .prepare(
+          `INSERT INTO director_renders (id, draft_id, job_id, quality, status, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          "r-en",
+          "d-enrich",
+          "j-enrich",
+          "standard",
+          "queued",
+          "2025-01-01T00:00:00Z",
+          "2025-01-01T00:00:00Z",
+        );
 
       const res = await request(app).get("/director/drafts/d-enrich/renders");
       expect(res.status).toBe(200);
@@ -1845,9 +2292,10 @@ describe("Director API router", () => {
 
     it("accepts hero-reel as a valid mode", async () => {
       const { app } = buildApp();
-      const res = await request(app)
-        .post("/director/produce")
-        .send({ mode: "hero-reel", heroReelOverview: "Create an energetic brand montage" });
+      const res = await request(app).post("/director/produce").send({
+        mode: "hero-reel",
+        heroReelOverview: "Create an energetic brand montage",
+      });
       // 202 means the job was accepted (pipeline runs in background)
       expect(res.status).toBe(202);
       expect(res.body.produceJobId).toBeDefined();
@@ -1872,11 +2320,16 @@ describe("Director API router", () => {
   describe("POST /render - codec", () => {
     it("passes custom codec in response", async () => {
       const mockOrch = createMockRenderOrchestrator();
-      const { app } = buildApp({ renderOrchestrator: mockOrch as unknown as DirectorRouterOptions["renderOrchestrator"] });
-      const res = await request(app).post("/director/render").send({
-        manifest: { projectTitle: "T", timeline: [] },
-        codec: "h265",
+      const { app } = buildApp({
+        renderOrchestrator:
+          mockOrch as unknown as DirectorRouterOptions["renderOrchestrator"],
       });
+      const res = await request(app)
+        .post("/director/render")
+        .send({
+          manifest: { projectTitle: "T", timeline: [] },
+          codec: "h265",
+        });
       expect(res.status).toBe(200);
       expect(res.body.codec).toBe("h265");
     });
@@ -1887,11 +2340,13 @@ describe("Director API router", () => {
   describe("POST /assets/placement - additional validation", () => {
     it("rejects whitespace-only script", async () => {
       const { app } = buildApp();
-      const res = await request(app).post("/director/assets/placement").send({
-        script: "   ",
-        assets: [{ id: "1", path: "/a.png" }],
-        videoDurationSec: 30,
-      });
+      const res = await request(app)
+        .post("/director/assets/placement")
+        .send({
+          script: "   ",
+          assets: [{ id: "1", path: "/a.png" }],
+          videoDurationSec: 30,
+        });
       expect(res.status).toBe(400);
       expect(res.body.error).toContain("script");
     });
@@ -1909,11 +2364,13 @@ describe("Director API router", () => {
 
     it("rejects zero videoDurationSec", async () => {
       const { app } = buildApp();
-      const res = await request(app).post("/director/assets/placement").send({
-        script: "Hello world",
-        assets: [{ id: "1", path: "/a.png" }],
-        videoDurationSec: 0,
-      });
+      const res = await request(app)
+        .post("/director/assets/placement")
+        .send({
+          script: "Hello world",
+          assets: [{ id: "1", path: "/a.png" }],
+          videoDurationSec: 0,
+        });
       expect(res.status).toBe(400);
       expect(res.body.error).toContain("videoDurationSec");
     });
@@ -1932,7 +2389,9 @@ describe("Director API router", () => {
     it("returns job after produce is started", async () => {
       const { app } = buildApp();
       // Trigger a produce to create a job entry (presentation without inputFile => 400)
-      await request(app).post("/director/produce").send({ mode: "presentation", inputFile: "/tmp/fake-input.md" });
+      await request(app)
+        .post("/director/produce")
+        .send({ mode: "presentation", inputFile: "/tmp/fake-input.md" });
       const res = await request(app).get("/director/produce/jobs");
       expect(res.status).toBe(200);
       expect(res.body.jobs.length).toBeGreaterThanOrEqual(1);
@@ -1953,7 +2412,9 @@ describe("Director API router", () => {
 
     it("returns status for produce job", async () => {
       const { app } = buildApp();
-      const createRes = await request(app).post("/director/produce").send({ mode: "presentation", inputFile: "/tmp/fake.md" });
+      const createRes = await request(app)
+        .post("/director/produce")
+        .send({ mode: "presentation", inputFile: "/tmp/fake.md" });
       expect(createRes.status).toBe(202);
       const jobId = createRes.body.produceJobId;
 
@@ -1969,23 +2430,31 @@ describe("Director API router", () => {
   describe("POST /produce/:id/cancel", () => {
     it("returns 404 for unknown produce job", async () => {
       const { app } = buildApp();
-      const res = await request(app).post("/director/produce/unknown-id/cancel");
+      const res = await request(app).post(
+        "/director/produce/unknown-id/cancel",
+      );
       expect(res.status).toBe(404);
     });
 
     it("cancels a running produce job or reports already done", async () => {
       const { app } = buildApp();
-      const createRes = await request(app).post("/director/produce").send({ mode: "presentation", inputFile: "/tmp/fake.md" });
+      const createRes = await request(app)
+        .post("/director/produce")
+        .send({ mode: "presentation", inputFile: "/tmp/fake.md" });
       const jobId = createRes.body.produceJobId;
 
-      const cancelRes = await request(app).post(`/director/produce/${jobId}/cancel`);
+      const cancelRes = await request(app).post(
+        `/director/produce/${jobId}/cancel`,
+      );
       // Race condition: the async pipeline may finish before cancel arrives
       expect([200, 409]).toContain(cancelRes.status);
     });
 
     it("returns 409 when cancelling already-cancelled job", async () => {
       const { app } = buildApp();
-      const createRes = await request(app).post("/director/produce").send({ mode: "presentation", inputFile: "/tmp/fake.md" });
+      const createRes = await request(app)
+        .post("/director/produce")
+        .send({ mode: "presentation", inputFile: "/tmp/fake.md" });
       const jobId = createRes.body.produceJobId;
       await request(app).post(`/director/produce/${jobId}/cancel`);
 
@@ -1999,29 +2468,44 @@ describe("Director API router", () => {
   describe("POST /enhance-instructions", () => {
     it("returns 400 for missing raw_instructions", async () => {
       const { app } = buildApp();
-      const res = await request(app).post("/director/enhance-instructions").send({});
+      const res = await request(app)
+        .post("/director/enhance-instructions")
+        .send({});
       expect(res.status).toBe(400);
       expect(res.body.error).toContain("raw_instructions");
     });
 
     it("returns 400 for empty raw_instructions", async () => {
       const { app } = buildApp();
-      const res = await request(app).post("/director/enhance-instructions").send({ raw_instructions: "   " });
+      const res = await request(app)
+        .post("/director/enhance-instructions")
+        .send({ raw_instructions: "   " });
       expect(res.status).toBe(400);
     });
 
     it("enhances instructions via copilot", async () => {
       const mockCopilot = createMockCopilot();
-      const responseJson = JSON.stringify({ thinking: "Added visual details", enhanced_instructions: "Enhanced cinematic instructions" });
-      (mockCopilot.chat as ReturnType<typeof vi.fn>).mockImplementation(async function* () {
-        yield responseJson;
+      const responseJson = JSON.stringify({
+        thinking: "Added visual details",
+        enhanced_instructions: "Enhanced cinematic instructions",
       });
-      (mockCopilot as unknown as { destroySession: ReturnType<typeof vi.fn> }).destroySession = vi.fn().mockResolvedValue(undefined);
+      (mockCopilot.chat as ReturnType<typeof vi.fn>).mockImplementation(
+        async function* () {
+          yield responseJson;
+        },
+      );
+      (
+        mockCopilot as unknown as { destroySession: ReturnType<typeof vi.fn> }
+      ).destroySession = vi.fn().mockResolvedValue(undefined);
 
       const { app } = buildApp({ copilot: mockCopilot });
-      const res = await request(app).post("/director/enhance-instructions").send({ raw_instructions: "dark tech style" });
+      const res = await request(app)
+        .post("/director/enhance-instructions")
+        .send({ raw_instructions: "dark tech style" });
       expect(res.status).toBe(200);
-      expect(res.body.enhanced_instructions).toBe("Enhanced cinematic instructions");
+      expect(res.body.enhanced_instructions).toBe(
+        "Enhanced cinematic instructions",
+      );
       expect(res.body.thinking).toBe("Added visual details");
     });
   });
@@ -2031,27 +2515,44 @@ describe("Director API router", () => {
   describe("POST /voice/analyze-params", () => {
     it("returns 400 for missing text", async () => {
       const { app } = buildApp();
-      const res = await request(app).post("/director/voice/analyze-params").send({});
+      const res = await request(app)
+        .post("/director/voice/analyze-params")
+        .send({});
       expect(res.status).toBe(400);
       expect(res.body.error).toContain("text");
     });
 
     it("returns 400 for empty text", async () => {
       const { app } = buildApp();
-      const res = await request(app).post("/director/voice/analyze-params").send({ text: "" });
+      const res = await request(app)
+        .post("/director/voice/analyze-params")
+        .send({ text: "" });
       expect(res.status).toBe(400);
     });
 
     it("returns analyzed params via copilot", async () => {
       const mockCopilot = createMockCopilot();
-      const responseJson = JSON.stringify({ speed: 0.9, steps: 16, method: "rk4", cfgStrength: 2.5, swayCoef: -0.5, reasoning: "Technical text" });
-      (mockCopilot.chat as ReturnType<typeof vi.fn>).mockImplementation(async function* () {
-        yield responseJson;
+      const responseJson = JSON.stringify({
+        speed: 0.9,
+        steps: 16,
+        method: "rk4",
+        cfgStrength: 2.5,
+        swayCoef: -0.5,
+        reasoning: "Technical text",
       });
-      (mockCopilot as unknown as { destroySession: ReturnType<typeof vi.fn> }).destroySession = vi.fn().mockResolvedValue(undefined);
+      (mockCopilot.chat as ReturnType<typeof vi.fn>).mockImplementation(
+        async function* () {
+          yield responseJson;
+        },
+      );
+      (
+        mockCopilot as unknown as { destroySession: ReturnType<typeof vi.fn> }
+      ).destroySession = vi.fn().mockResolvedValue(undefined);
 
       const { app } = buildApp({ copilot: mockCopilot });
-      const res = await request(app).post("/director/voice/analyze-params").send({ text: "The N.P.M. package ecosystem grew by 40%." });
+      const res = await request(app)
+        .post("/director/voice/analyze-params")
+        .send({ text: "The N.P.M. package ecosystem grew by 40%." });
       expect(res.status).toBe(200);
       expect(res.body.speed).toBe(0.9);
       expect(res.body.steps).toBe(16);
@@ -2061,14 +2562,27 @@ describe("Director API router", () => {
 
     it("clamps out-of-range values", async () => {
       const mockCopilot = createMockCopilot();
-      const responseJson = JSON.stringify({ speed: 99, steps: 100, method: "invalid", cfgStrength: 99, swayCoef: 99, reasoning: "test" });
-      (mockCopilot.chat as ReturnType<typeof vi.fn>).mockImplementation(async function* () {
-        yield responseJson;
+      const responseJson = JSON.stringify({
+        speed: 99,
+        steps: 100,
+        method: "invalid",
+        cfgStrength: 99,
+        swayCoef: 99,
+        reasoning: "test",
       });
-      (mockCopilot as unknown as { destroySession: ReturnType<typeof vi.fn> }).destroySession = vi.fn().mockResolvedValue(undefined);
+      (mockCopilot.chat as ReturnType<typeof vi.fn>).mockImplementation(
+        async function* () {
+          yield responseJson;
+        },
+      );
+      (
+        mockCopilot as unknown as { destroySession: ReturnType<typeof vi.fn> }
+      ).destroySession = vi.fn().mockResolvedValue(undefined);
 
       const { app } = buildApp({ copilot: mockCopilot });
-      const res = await request(app).post("/director/voice/analyze-params").send({ text: "Hello world" });
+      const res = await request(app)
+        .post("/director/voice/analyze-params")
+        .send({ text: "Hello world" });
       expect(res.status).toBe(200);
       expect(res.body.speed).toBeLessThanOrEqual(2.0);
       expect(res.body.steps).toBeLessThanOrEqual(32);
@@ -2083,27 +2597,40 @@ describe("Director API router", () => {
   describe("POST /voice/add-directives", () => {
     it("returns 400 for missing text", async () => {
       const { app } = buildApp();
-      const res = await request(app).post("/director/voice/add-directives").send({});
+      const res = await request(app)
+        .post("/director/voice/add-directives")
+        .send({});
       expect(res.status).toBe(400);
       expect(res.body.error).toContain("text");
     });
 
     it("returns 400 for empty text", async () => {
       const { app } = buildApp();
-      const res = await request(app).post("/director/voice/add-directives").send({ text: "  " });
+      const res = await request(app)
+        .post("/director/voice/add-directives")
+        .send({ text: "  " });
       expect(res.status).toBe(400);
     });
 
     it("adds directives via copilot", async () => {
       const mockCopilot = createMockCopilot();
-      const responseJson = JSON.stringify({ enhanced: "[PAUSE: 0.5s] Hello *world*.", reasoning: "Added pause and emphasis" });
-      (mockCopilot.chat as ReturnType<typeof vi.fn>).mockImplementation(async function* () {
-        yield responseJson;
+      const responseJson = JSON.stringify({
+        enhanced: "[PAUSE: 0.5s] Hello *world*.",
+        reasoning: "Added pause and emphasis",
       });
-      (mockCopilot as unknown as { destroySession: ReturnType<typeof vi.fn> }).destroySession = vi.fn().mockResolvedValue(undefined);
+      (mockCopilot.chat as ReturnType<typeof vi.fn>).mockImplementation(
+        async function* () {
+          yield responseJson;
+        },
+      );
+      (
+        mockCopilot as unknown as { destroySession: ReturnType<typeof vi.fn> }
+      ).destroySession = vi.fn().mockResolvedValue(undefined);
 
       const { app } = buildApp({ copilot: mockCopilot });
-      const res = await request(app).post("/director/voice/add-directives").send({ text: "Hello world." });
+      const res = await request(app)
+        .post("/director/voice/add-directives")
+        .send({ text: "Hello world." });
       expect(res.status).toBe(200);
       expect(res.body.enhanced).toContain("[PAUSE");
       expect(res.body.reasoning).toBeTruthy();
@@ -2115,27 +2642,40 @@ describe("Director API router", () => {
   describe("POST /scenes/:sceneIndex/enhance-prompt", () => {
     it("returns 400 for missing prompt", async () => {
       const { app } = buildApp();
-      const res = await request(app).post("/director/scenes/0/enhance-prompt").send({});
+      const res = await request(app)
+        .post("/director/scenes/0/enhance-prompt")
+        .send({});
       expect(res.status).toBe(400);
       expect(res.body.error).toContain("prompt");
     });
 
     it("returns 400 for empty prompt", async () => {
       const { app } = buildApp();
-      const res = await request(app).post("/director/scenes/0/enhance-prompt").send({ prompt: "  " });
+      const res = await request(app)
+        .post("/director/scenes/0/enhance-prompt")
+        .send({ prompt: "  " });
       expect(res.status).toBe(400);
     });
 
     it("enhances prompt via copilot", async () => {
       const mockCopilot = createMockCopilot();
-      const responseJson = JSON.stringify({ thinking: "Added lighting details", enhanced_prompt: "Cinematic wide shot with golden hour lighting" });
-      (mockCopilot.chat as ReturnType<typeof vi.fn>).mockImplementation(async function* () {
-        yield responseJson;
+      const responseJson = JSON.stringify({
+        thinking: "Added lighting details",
+        enhanced_prompt: "Cinematic wide shot with golden hour lighting",
       });
-      (mockCopilot as unknown as { destroySession: ReturnType<typeof vi.fn> }).destroySession = vi.fn().mockResolvedValue(undefined);
+      (mockCopilot.chat as ReturnType<typeof vi.fn>).mockImplementation(
+        async function* () {
+          yield responseJson;
+        },
+      );
+      (
+        mockCopilot as unknown as { destroySession: ReturnType<typeof vi.fn> }
+      ).destroySession = vi.fn().mockResolvedValue(undefined);
 
       const { app } = buildApp({ copilot: mockCopilot });
-      const res = await request(app).post("/director/scenes/0/enhance-prompt").send({ prompt: "a sunset scene" });
+      const res = await request(app)
+        .post("/director/scenes/0/enhance-prompt")
+        .send({ prompt: "a sunset scene" });
       expect(res.status).toBe(200);
       expect(res.body.enhanced_prompt).toContain("Cinematic");
       expect(res.body.thinking).toBeTruthy();
@@ -2147,34 +2687,44 @@ describe("Director API router", () => {
   describe("POST /scenes/:sceneIndex/img2img", () => {
     it("returns 400 for invalid scene index", async () => {
       const { app } = buildApp();
-      const res = await request(app).post("/director/scenes/abc/img2img").send({ prompt: "enhance", draftId: "d1" });
+      const res = await request(app)
+        .post("/director/scenes/abc/img2img")
+        .send({ prompt: "enhance", draftId: "d1" });
       expect(res.status).toBe(400);
       expect(res.body.error).toContain("Invalid scene index");
     });
 
     it("returns 400 for negative scene index", async () => {
       const { app } = buildApp();
-      const res = await request(app).post("/director/scenes/-1/img2img").send({ prompt: "enhance", draftId: "d1" });
+      const res = await request(app)
+        .post("/director/scenes/-1/img2img")
+        .send({ prompt: "enhance", draftId: "d1" });
       expect(res.status).toBe(400);
     });
 
     it("returns 400 for missing prompt", async () => {
       const { app } = buildApp();
-      const res = await request(app).post("/director/scenes/0/img2img").send({ draftId: "d1" });
+      const res = await request(app)
+        .post("/director/scenes/0/img2img")
+        .send({ draftId: "d1" });
       expect(res.status).toBe(400);
       expect(res.body.error).toContain("prompt");
     });
 
     it("returns 400 for missing draftId", async () => {
       const { app } = buildApp();
-      const res = await request(app).post("/director/scenes/0/img2img").send({ prompt: "enhance it" });
+      const res = await request(app)
+        .post("/director/scenes/0/img2img")
+        .send({ prompt: "enhance it" });
       expect(res.status).toBe(400);
       expect(res.body.error).toContain("draftId");
     });
 
     it("returns 404 for non-existent draft", async () => {
       const { app } = buildApp();
-      const res = await request(app).post("/director/scenes/0/img2img").send({ prompt: "enhance it", draftId: "nonexistent" });
+      const res = await request(app)
+        .post("/director/scenes/0/img2img")
+        .send({ prompt: "enhance it", draftId: "nonexistent" });
       expect(res.status).toBe(404);
       expect(res.body.error).toContain("Draft not found");
     });
@@ -2183,10 +2733,22 @@ describe("Director API router", () => {
       const { app } = buildApp();
       // Create a draft without timeline
       const now = new Date().toISOString();
-      testDb.prepare(`INSERT INTO director_drafts (id, title, manifest, production_mode, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`)
-        .run("d-img2img-1", "Test", JSON.stringify({ projectTitle: "Test" }), "presentation", now, now);
+      testDb
+        .prepare(
+          `INSERT INTO director_drafts (id, title, manifest, production_mode, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          "d-img2img-1",
+          "Test",
+          JSON.stringify({ projectTitle: "Test" }),
+          "presentation",
+          now,
+          now,
+        );
 
-      const res = await request(app).post("/director/scenes/0/img2img").send({ prompt: "enhance it", draftId: "d-img2img-1" });
+      const res = await request(app)
+        .post("/director/scenes/0/img2img")
+        .send({ prompt: "enhance it", draftId: "d-img2img-1" });
       expect(res.status).toBe(400);
       expect(res.body.error).toContain("no timeline");
     });
@@ -2197,14 +2759,18 @@ describe("Director API router", () => {
   describe("POST /scenes/:sceneIndex/replace-from-gallery", () => {
     it("returns 400 for invalid scene index", async () => {
       const { app } = buildApp();
-      const res = await request(app).post("/director/scenes/abc/replace-from-gallery").send({ assetId: "a1" });
+      const res = await request(app)
+        .post("/director/scenes/abc/replace-from-gallery")
+        .send({ assetId: "a1" });
       expect(res.status).toBe(400);
       expect(res.body.error).toContain("Invalid scene index");
     });
 
     it("returns 400 for missing assetId", async () => {
       const { app } = buildApp();
-      const res = await request(app).post("/director/scenes/0/replace-from-gallery").send({});
+      const res = await request(app)
+        .post("/director/scenes/0/replace-from-gallery")
+        .send({});
       expect(res.status).toBe(400);
       expect(res.body.error).toContain("assetId");
     });
@@ -2212,8 +2778,12 @@ describe("Director API router", () => {
     it("returns 404 when asset not found in DB", async () => {
       const { app } = buildApp();
       // Need media_assets table
-      testDb.exec(`CREATE TABLE IF NOT EXISTS media_assets (id TEXT PRIMARY KEY, file_path TEXT, name TEXT)`);
-      const res = await request(app).post("/director/scenes/0/replace-from-gallery").send({ assetId: "no-such-asset" });
+      testDb.exec(
+        `CREATE TABLE IF NOT EXISTS media_assets (id TEXT PRIMARY KEY, file_path TEXT, name TEXT)`,
+      );
+      const res = await request(app)
+        .post("/director/scenes/0/replace-from-gallery")
+        .send({ assetId: "no-such-asset" });
       expect(res.status).toBe(404);
       expect(res.body.error).toContain("Asset not found");
     });
@@ -2224,27 +2794,35 @@ describe("Director API router", () => {
   describe("POST /scenes/:sceneIndex/re-record", () => {
     it("returns 400 for invalid scene index", async () => {
       const { app } = buildApp();
-      const res = await request(app).post("/director/scenes/abc/re-record").send({ text: "Hello" });
+      const res = await request(app)
+        .post("/director/scenes/abc/re-record")
+        .send({ text: "Hello" });
       expect(res.status).toBe(400);
       expect(res.body.error).toContain("Invalid scene index");
     });
 
     it("returns 400 for missing text", async () => {
       const { app } = buildApp();
-      const res = await request(app).post("/director/scenes/0/re-record").send({});
+      const res = await request(app)
+        .post("/director/scenes/0/re-record")
+        .send({});
       expect(res.status).toBe(400);
       expect(res.body.error).toContain("text");
     });
 
     it("returns 400 for empty text", async () => {
       const { app } = buildApp();
-      const res = await request(app).post("/director/scenes/0/re-record").send({ text: "  " });
+      const res = await request(app)
+        .post("/director/scenes/0/re-record")
+        .send({ text: "  " });
       expect(res.status).toBe(400);
     });
 
     it("returns 503 when no voice service", async () => {
       const { app } = buildApp({ voiceService: undefined });
-      const res = await request(app).post("/director/scenes/0/re-record").send({ text: "Hello world" });
+      const res = await request(app)
+        .post("/director/scenes/0/re-record")
+        .send({ text: "Hello world" });
       expect(res.status).toBe(503);
       expect(res.body.error).toContain("Voice service");
     });
@@ -2275,7 +2853,9 @@ describe("Director API router", () => {
       expect(res.status).toBe(200);
       expect(res.body.engines).toBeDefined();
       expect(res.body.engines.length).toBeGreaterThanOrEqual(1);
-      const kokoroEngine = res.body.engines.find((e: { id: string }) => e.id === "kokoro");
+      const kokoroEngine = res.body.engines.find(
+        (e: { id: string }) => e.id === "kokoro",
+      );
       expect(kokoroEngine).toBeDefined();
       expect(kokoroEngine.name).toContain("Kokoro");
     });
@@ -2286,27 +2866,39 @@ describe("Director API router", () => {
   describe("POST /enhance-overview", () => {
     it("returns 400 for missing overview", async () => {
       const { app } = buildApp();
-      const res = await request(app).post("/director/enhance-overview").send({});
+      const res = await request(app)
+        .post("/director/enhance-overview")
+        .send({});
       expect(res.status).toBe(400);
       expect(res.body.error).toContain("overview");
     });
 
     it("returns 400 for empty overview", async () => {
       const { app } = buildApp();
-      const res = await request(app).post("/director/enhance-overview").send({ overview: "  " });
+      const res = await request(app)
+        .post("/director/enhance-overview")
+        .send({ overview: "  " });
       expect(res.status).toBe(400);
     });
 
     it("enhances overview via copilot", async () => {
       const mockCopilot = createMockCopilot();
-      const responseJson = JSON.stringify({ enhanced_overview: "Sleek dark tech aesthetic with rapid cuts" });
-      (mockCopilot.chat as ReturnType<typeof vi.fn>).mockImplementation(async function* () {
-        yield responseJson;
+      const responseJson = JSON.stringify({
+        enhanced_overview: "Sleek dark tech aesthetic with rapid cuts",
       });
-      (mockCopilot as unknown as { destroySession: ReturnType<typeof vi.fn> }).destroySession = vi.fn().mockResolvedValue(undefined);
+      (mockCopilot.chat as ReturnType<typeof vi.fn>).mockImplementation(
+        async function* () {
+          yield responseJson;
+        },
+      );
+      (
+        mockCopilot as unknown as { destroySession: ReturnType<typeof vi.fn> }
+      ).destroySession = vi.fn().mockResolvedValue(undefined);
 
       const { app } = buildApp({ copilot: mockCopilot });
-      const res = await request(app).post("/director/enhance-overview").send({ overview: "tech reel" });
+      const res = await request(app)
+        .post("/director/enhance-overview")
+        .send({ overview: "tech reel" });
       expect(res.status).toBe(200);
       expect(res.body.enhanced_overview).toContain("dark tech");
     });
@@ -2317,20 +2909,26 @@ describe("Director API router", () => {
   describe("POST /hero-reel/process-inspiration", () => {
     it("returns 400 for missing filePath", async () => {
       const { app } = buildApp();
-      const res = await request(app).post("/director/hero-reel/process-inspiration").send({});
+      const res = await request(app)
+        .post("/director/hero-reel/process-inspiration")
+        .send({});
       expect(res.status).toBe(400);
       expect(res.body.error).toContain("filePath");
     });
 
     it("returns 400 for empty filePath", async () => {
       const { app } = buildApp();
-      const res = await request(app).post("/director/hero-reel/process-inspiration").send({ filePath: "  " });
+      const res = await request(app)
+        .post("/director/hero-reel/process-inspiration")
+        .send({ filePath: "  " });
       expect(res.status).toBe(400);
     });
 
     it("returns 404 for non-existent file", async () => {
       const { app } = buildApp();
-      const res = await request(app).post("/director/hero-reel/process-inspiration").send({ filePath: "/tmp/nonexistent-file-xyz.md" });
+      const res = await request(app)
+        .post("/director/hero-reel/process-inspiration")
+        .send({ filePath: "/tmp/nonexistent-file-xyz.md" });
       expect(res.status).toBe(404);
       expect(res.body.error).toContain("not found");
     });
@@ -2348,9 +2946,15 @@ describe("Director API router", () => {
         CREATE TABLE IF NOT EXISTS gallery_collection_items (collection_id TEXT NOT NULL, asset_path TEXT NOT NULL, PRIMARY KEY (collection_id, asset_path));
         CREATE TABLE IF NOT EXISTS gallery_tags (asset_path TEXT NOT NULL, tag TEXT NOT NULL, PRIMARY KEY (asset_path, tag));
       `);
-      testDb.prepare(`INSERT INTO gallery_tags (asset_path, tag) VALUES (?, ?)`).run("/img/a.png", "landscape");
-      testDb.prepare(`INSERT INTO gallery_tags (asset_path, tag) VALUES (?, ?)`).run("/img/b.png", "landscape");
-      testDb.prepare(`INSERT INTO gallery_tags (asset_path, tag) VALUES (?, ?)`).run("/img/a.png", "sunset");
+      testDb
+        .prepare(`INSERT INTO gallery_tags (asset_path, tag) VALUES (?, ?)`)
+        .run("/img/a.png", "landscape");
+      testDb
+        .prepare(`INSERT INTO gallery_tags (asset_path, tag) VALUES (?, ?)`)
+        .run("/img/b.png", "landscape");
+      testDb
+        .prepare(`INSERT INTO gallery_tags (asset_path, tag) VALUES (?, ?)`)
+        .run("/img/a.png", "sunset");
 
       const res = await request(app).get("/director/gallery/tags");
       expect(res.status).toBe(200);
@@ -2359,7 +2963,9 @@ describe("Director API router", () => {
       expect(res.body.tags[0]).toHaveProperty("tag");
       expect(res.body.tags[0]).toHaveProperty("count");
       // "landscape" has count 2, "sunset" has count 1
-      const landscape = res.body.tags.find((t: { tag: string }) => t.tag === "landscape");
+      const landscape = res.body.tags.find(
+        (t: { tag: string }) => t.tag === "landscape",
+      );
       expect(landscape).toBeDefined();
       expect(landscape.count).toBe(2);
     });
@@ -2371,9 +2977,13 @@ describe("Director API router", () => {
         CREATE TABLE IF NOT EXISTS gallery_collection_items (collection_id TEXT NOT NULL, asset_path TEXT NOT NULL, PRIMARY KEY (collection_id, asset_path));
         CREATE TABLE IF NOT EXISTS gallery_tags (asset_path TEXT NOT NULL, tag TEXT NOT NULL, PRIMARY KEY (asset_path, tag));
       `);
-      testDb.prepare(`INSERT INTO gallery_tags (asset_path, tag) VALUES (?, ?)`).run("/img/x.png", "nature");
+      testDb
+        .prepare(`INSERT INTO gallery_tags (asset_path, tag) VALUES (?, ?)`)
+        .run("/img/x.png", "nature");
 
-      const res = await request(app).get("/director/gallery/tags?assetPath=/img/x.png");
+      const res = await request(app).get(
+        "/director/gallery/tags?assetPath=/img/x.png",
+      );
       expect(res.status).toBe(200);
       expect(res.body.tags).toEqual(["nature"]);
     });
@@ -2391,14 +3001,18 @@ describe("Director API router", () => {
 
     it("returns 400 for empty draftIds array", async () => {
       const { app } = buildApp();
-      const res = await request(app).post("/director/render/batch").send({ draftIds: [] });
+      const res = await request(app)
+        .post("/director/render/batch")
+        .send({ draftIds: [] });
       expect(res.status).toBe(400);
     });
 
     it("reports not-found for missing drafts", async () => {
       const mockOrch = createMockRenderOrchestrator();
       const { app } = buildApp({ renderOrchestrator: mockOrch as never });
-      const res = await request(app).post("/director/render/batch").send({ draftIds: ["nonexistent"] });
+      const res = await request(app)
+        .post("/director/render/batch")
+        .send({ draftIds: ["nonexistent"] });
       expect(res.status).toBe(200);
       expect(res.body.failed).toBe(1);
       expect(res.body.results[0].error).toContain("not found");
@@ -2410,12 +3024,28 @@ describe("Director API router", () => {
 
       // Seed a draft
       const now = new Date().toISOString();
-      const manifest = JSON.stringify({ projectTitle: "Test", timeline: [], composition: {} });
-      testDb.prepare(
-        `INSERT INTO director_drafts (id, title, manifest, production_mode, created_at, updated_at, status) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      ).run("draft-1", "Test Draft", manifest, "presentation", now, now, "draft");
+      const manifest = JSON.stringify({
+        projectTitle: "Test",
+        timeline: [],
+        composition: {},
+      });
+      testDb
+        .prepare(
+          `INSERT INTO director_drafts (id, title, manifest, production_mode, created_at, updated_at, status) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          "draft-1",
+          "Test Draft",
+          manifest,
+          "presentation",
+          now,
+          now,
+          "draft",
+        );
 
-      const res = await request(app).post("/director/render/batch").send({ draftIds: ["draft-1"] });
+      const res = await request(app)
+        .post("/director/render/batch")
+        .send({ draftIds: ["draft-1"] });
       expect(res.status).toBe(200);
       expect(res.body.queued).toBe(1);
       expect(res.body.failed).toBe(0);
@@ -2428,12 +3058,28 @@ describe("Director API router", () => {
       const { app } = buildApp({ renderOrchestrator: mockOrch as never });
 
       const now = new Date().toISOString();
-      const manifest = JSON.stringify({ projectTitle: "Test", timeline: [], composition: {} });
-      testDb.prepare(
-        `INSERT INTO director_drafts (id, title, manifest, production_mode, created_at, updated_at, status) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      ).run("draft-ok", "Good Draft", manifest, "presentation", now, now, "draft");
+      const manifest = JSON.stringify({
+        projectTitle: "Test",
+        timeline: [],
+        composition: {},
+      });
+      testDb
+        .prepare(
+          `INSERT INTO director_drafts (id, title, manifest, production_mode, created_at, updated_at, status) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          "draft-ok",
+          "Good Draft",
+          manifest,
+          "presentation",
+          now,
+          now,
+          "draft",
+        );
 
-      const res = await request(app).post("/director/render/batch").send({ draftIds: ["draft-ok", "missing-draft"] });
+      const res = await request(app)
+        .post("/director/render/batch")
+        .send({ draftIds: ["draft-ok", "missing-draft"] });
       expect(res.status).toBe(200);
       expect(res.body.total).toBe(2);
       expect(res.body.queued).toBe(1);
@@ -2446,19 +3092,37 @@ describe("Director API router", () => {
   describe("POST /drafts/:draftId/shorts/propose", () => {
     it("returns 404 for non-existent draft", async () => {
       const { app } = buildApp();
-      const res = await request(app).post("/director/drafts/no-such-draft/shorts/propose").send({ maxShorts: 3 });
+      const res = await request(app)
+        .post("/director/drafts/no-such-draft/shorts/propose")
+        .send({ maxShorts: 3 });
       expect(res.status).toBe(404);
     });
 
     it("returns 400 for draft with empty timeline", async () => {
       const { app } = buildApp();
       const now = new Date().toISOString();
-      const manifest = JSON.stringify({ projectTitle: "Empty", timeline: [], composition: {} });
-      testDb.prepare(
-        `INSERT INTO director_drafts (id, title, manifest, production_mode, created_at, updated_at, status) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      ).run("empty-draft", "Empty", manifest, "presentation", now, now, "draft");
+      const manifest = JSON.stringify({
+        projectTitle: "Empty",
+        timeline: [],
+        composition: {},
+      });
+      testDb
+        .prepare(
+          `INSERT INTO director_drafts (id, title, manifest, production_mode, created_at, updated_at, status) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          "empty-draft",
+          "Empty",
+          manifest,
+          "presentation",
+          now,
+          now,
+          "draft",
+        );
 
-      const res = await request(app).post("/director/drafts/empty-draft/shorts/propose").send({});
+      const res = await request(app)
+        .post("/director/drafts/empty-draft/shorts/propose")
+        .send({});
       expect(res.status).toBe(400);
       expect(res.body.error).toContain("timeline");
     });
@@ -2478,7 +3142,9 @@ describe("Director API router", () => {
         },
       ]);
       (mockCopilot.chat as ReturnType<typeof vi.fn>).mockReturnValue(
-        (async function* () { yield llmResponse; })(),
+        (async function* () {
+          yield llmResponse;
+        })(),
       );
       const { app } = buildApp({ copilot: mockCopilot });
 
@@ -2492,11 +3158,23 @@ describe("Director API router", () => {
         ],
         composition: {},
       });
-      testDb.prepare(
-        `INSERT INTO director_drafts (id, title, manifest, production_mode, created_at, updated_at, status) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      ).run("video-draft", "My Video", manifest, "presentation", now, now, "draft");
+      testDb
+        .prepare(
+          `INSERT INTO director_drafts (id, title, manifest, production_mode, created_at, updated_at, status) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          "video-draft",
+          "My Video",
+          manifest,
+          "presentation",
+          now,
+          now,
+          "draft",
+        );
 
-      const res = await request(app).post("/director/drafts/video-draft/shorts/propose").send({ maxShorts: 3 });
+      const res = await request(app)
+        .post("/director/drafts/video-draft/shorts/propose")
+        .send({ maxShorts: 3 });
       expect(res.status).toBe(200);
       expect(Array.isArray(res.body.proposals)).toBe(true);
       expect(res.body.proposals.length).toBe(1);
@@ -2518,20 +3196,34 @@ describe("Director API router", () => {
   describe("POST /drafts/:draftId/shorts/render", () => {
     it("returns 404 for non-existent parent draft", async () => {
       const { app } = buildApp();
-      const res = await request(app).post("/director/drafts/missing/shorts/render").send({
-        segments: [{ startTime: 0, endTime: 30, title: "Test Short" }],
-      });
+      const res = await request(app)
+        .post("/director/drafts/missing/shorts/render")
+        .send({
+          segments: [{ startTime: 0, endTime: 30, title: "Test Short" }],
+        });
       expect(res.status).toBe(404);
     });
 
     it("returns 400 for empty segments", async () => {
       const { app } = buildApp();
       const now = new Date().toISOString();
-      testDb.prepare(
-        `INSERT INTO director_drafts (id, title, manifest, production_mode, created_at, updated_at, status) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      ).run("parent-d", "Parent", JSON.stringify({ timeline: [] }), "presentation", now, now, "draft");
+      testDb
+        .prepare(
+          `INSERT INTO director_drafts (id, title, manifest, production_mode, created_at, updated_at, status) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          "parent-d",
+          "Parent",
+          JSON.stringify({ timeline: [] }),
+          "presentation",
+          now,
+          now,
+          "draft",
+        );
 
-      const res = await request(app).post("/director/drafts/parent-d/shorts/render").send({ segments: [] });
+      const res = await request(app)
+        .post("/director/drafts/parent-d/shorts/render")
+        .send({ segments: [] });
       expect(res.status).toBe(400);
     });
 
@@ -2540,24 +3232,50 @@ describe("Director API router", () => {
       const { app } = buildApp({ renderOrchestrator: mockOrch as never });
 
       const now = new Date().toISOString();
-      const manifest = JSON.stringify({ projectTitle: "Long Video", timeline: [{ title: "s1" }], composition: { width: 1920, height: 1080 } });
-      testDb.prepare(
-        `INSERT INTO director_drafts (id, title, manifest, production_mode, created_at, updated_at, status) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      ).run("parent-draft", "Long Video", manifest, "presentation", now, now, "draft");
-
-      const res = await request(app).post("/director/drafts/parent-draft/shorts/render").send({
-        segments: [
-          { startTime: 0, endTime: 30, title: "Short 1", hookText: "Hook", ctaText: "CTA" },
-          { startTime: 45, endTime: 60, title: "Short 2" },
-        ],
+      const manifest = JSON.stringify({
+        projectTitle: "Long Video",
+        timeline: [{ title: "s1" }],
+        composition: { width: 1920, height: 1080 },
       });
+      testDb
+        .prepare(
+          `INSERT INTO director_drafts (id, title, manifest, production_mode, created_at, updated_at, status) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          "parent-draft",
+          "Long Video",
+          manifest,
+          "presentation",
+          now,
+          now,
+          "draft",
+        );
+
+      const res = await request(app)
+        .post("/director/drafts/parent-draft/shorts/render")
+        .send({
+          segments: [
+            {
+              startTime: 0,
+              endTime: 30,
+              title: "Short 1",
+              hookText: "Hook",
+              ctaText: "CTA",
+            },
+            { startTime: 45, endTime: 60, title: "Short 2" },
+          ],
+        });
       expect(res.status).toBe(200);
       expect(Array.isArray(res.body.jobIds)).toBe(true);
       expect(res.body.jobIds.length).toBe(2);
       expect(mockOrch.submit).toHaveBeenCalledTimes(2);
 
       // Verify Short drafts were created in DB
-      const drafts = testDb.prepare(`SELECT * FROM director_drafts WHERE production_mode = 'shorts'`).all();
+      const drafts = testDb
+        .prepare(
+          `SELECT * FROM director_drafts WHERE production_mode = 'shorts'`,
+        )
+        .all();
       expect(drafts.length).toBe(2);
     });
   });
@@ -2588,26 +3306,41 @@ describe("Director API router", () => {
         );
       `);
       const now = new Date().toISOString();
-      testDb.prepare(
-        `INSERT OR IGNORE INTO brand_kits (id, name, primary_color, secondary_color, accent_color, font_family, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      ).run("bk-1", "Test Kit", "#000000", "#ffffff", "#0066ff", "Inter", now, now);
+      testDb
+        .prepare(
+          `INSERT OR IGNORE INTO brand_kits (id, name, primary_color, secondary_color, accent_color, font_family, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          "bk-1",
+          "Test Kit",
+          "#000000",
+          "#ffffff",
+          "#0066ff",
+          "Inter",
+          now,
+          now,
+        );
     }
 
     it("returns 404 for non-existent brand kit", async () => {
       const { app } = buildApp();
       ensureBrandKitsTable();
-      const res = await request(app).put("/director/brand-kits/nonexistent").send({ name: "New Name" });
+      const res = await request(app)
+        .put("/director/brand-kits/nonexistent")
+        .send({ name: "New Name" });
       expect(res.status).toBe(404);
     });
 
     it("rejects invalid fields", async () => {
       const { app } = buildApp();
       ensureBrandKitsTable();
-      const res = await request(app).put("/director/brand-kits/bk-1").send({
-        name: "Valid",
-        maliciousField: "DROP TABLE brand_kits",
-        __proto__: { admin: true },
-      });
+      const res = await request(app)
+        .put("/director/brand-kits/bk-1")
+        .send({
+          name: "Valid",
+          maliciousField: "DROP TABLE brand_kits",
+          __proto__: { admin: true },
+        });
       expect(res.status).toBe(400);
     });
 
@@ -2631,26 +3364,38 @@ describe("Director API router", () => {
       const mockOrch = createMockRenderOrchestrator();
       const callOrder: number[] = [];
       let callCount = 0;
-      (mockOrch.submit as ReturnType<typeof vi.fn>).mockImplementation(async () => {
-        const myOrder = ++callCount;
-        // Small delay to detect parallelism
-        await new Promise((r) => setTimeout(r, 10));
-        callOrder.push(myOrder);
-        return `job-${myOrder}`;
-      });
+      (mockOrch.submit as ReturnType<typeof vi.fn>).mockImplementation(
+        async () => {
+          const myOrder = ++callCount;
+          // Small delay to detect parallelism
+          await new Promise((r) => setTimeout(r, 10));
+          callOrder.push(myOrder);
+          return `job-${myOrder}`;
+        },
+      );
       const { app } = buildApp({ renderOrchestrator: mockOrch as never });
 
       const now = new Date().toISOString();
-      const manifest = JSON.stringify({ projectTitle: "Test", timeline: [], composition: {} });
-      testDb.prepare(
-        `INSERT INTO director_drafts (id, title, manifest, production_mode, created_at, updated_at, status) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      ).run("seq-1", "Draft 1", manifest, "presentation", now, now, "draft");
-      testDb.prepare(
-        `INSERT INTO director_drafts (id, title, manifest, production_mode, created_at, updated_at, status) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      ).run("seq-2", "Draft 2", manifest, "presentation", now, now, "draft");
-      testDb.prepare(
-        `INSERT INTO director_drafts (id, title, manifest, production_mode, created_at, updated_at, status) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      ).run("seq-3", "Draft 3", manifest, "presentation", now, now, "draft");
+      const manifest = JSON.stringify({
+        projectTitle: "Test",
+        timeline: [],
+        composition: {},
+      });
+      testDb
+        .prepare(
+          `INSERT INTO director_drafts (id, title, manifest, production_mode, created_at, updated_at, status) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run("seq-1", "Draft 1", manifest, "presentation", now, now, "draft");
+      testDb
+        .prepare(
+          `INSERT INTO director_drafts (id, title, manifest, production_mode, created_at, updated_at, status) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run("seq-2", "Draft 2", manifest, "presentation", now, now, "draft");
+      testDb
+        .prepare(
+          `INSERT INTO director_drafts (id, title, manifest, production_mode, created_at, updated_at, status) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run("seq-3", "Draft 3", manifest, "presentation", now, now, "draft");
 
       const res = await request(app)
         .post("/director/render/batch")
@@ -2677,9 +3422,19 @@ describe("Director API router", () => {
     it("returns 400 when manifest has no timeline scenes", async () => {
       const { app } = buildApp();
       const now = new Date().toISOString();
-      testDb.prepare(
-        `INSERT INTO director_drafts (id, title, manifest, production_mode, created_at, updated_at, status) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      ).run("empty-tl", "No Timeline", JSON.stringify({ projectTitle: "Test", timeline: [] }), "presentation", now, now, "draft");
+      testDb
+        .prepare(
+          `INSERT INTO director_drafts (id, title, manifest, production_mode, created_at, updated_at, status) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          "empty-tl",
+          "No Timeline",
+          JSON.stringify({ projectTitle: "Test", timeline: [] }),
+          "presentation",
+          now,
+          now,
+          "draft",
+        );
 
       const res = await request(app)
         .post("/director/drafts/empty-tl/shorts/propose")
@@ -2691,25 +3446,53 @@ describe("Director API router", () => {
     it("returns proposals from LLM analysis", async () => {
       const mockCopilot = createMockCopilot();
       const proposals = JSON.stringify([
-        { startSceneIndex: 0, endSceneIndex: 1, title: "Hook", hookText: "Watch this", ctaText: "Subscribe", reason: "Great opening", score: 90 },
+        {
+          startSceneIndex: 0,
+          endSceneIndex: 1,
+          title: "Hook",
+          hookText: "Watch this",
+          ctaText: "Subscribe",
+          reason: "Great opening",
+          score: 90,
+        },
       ]);
-      (mockCopilot.chat as ReturnType<typeof vi.fn>).mockImplementation(async function* () {
-        yield proposals;
-      });
+      (mockCopilot.chat as ReturnType<typeof vi.fn>).mockImplementation(
+        async function* () {
+          yield proposals;
+        },
+      );
 
       const { app } = buildApp({ copilot: mockCopilot });
       const now = new Date().toISOString();
       const manifest = JSON.stringify({
         projectTitle: "Test",
         timeline: [
-          { title: "Intro", scriptText: "Welcome to the video", duration: 5000 },
-          { title: "Scene 1", scriptText: "Here is the main content", duration: 10000 },
+          {
+            title: "Intro",
+            scriptText: "Welcome to the video",
+            duration: 5000,
+          },
+          {
+            title: "Scene 1",
+            scriptText: "Here is the main content",
+            duration: 10000,
+          },
           { title: "Outro", scriptText: "Thanks for watching", duration: 3000 },
         ],
       });
-      testDb.prepare(
-        `INSERT INTO director_drafts (id, title, manifest, production_mode, created_at, updated_at, status) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      ).run("propose-1", "My Video", manifest, "presentation", now, now, "draft");
+      testDb
+        .prepare(
+          `INSERT INTO director_drafts (id, title, manifest, production_mode, created_at, updated_at, status) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          "propose-1",
+          "My Video",
+          manifest,
+          "presentation",
+          now,
+          now,
+          "draft",
+        );
 
       const res = await request(app)
         .post("/director/drafts/propose-1/shorts/propose")
@@ -2731,16 +3514,32 @@ describe("Director API router", () => {
       const { app } = buildApp();
       const res = await request(app)
         .post("/director/drafts/nonexistent/shorts/render")
-        .send({ segments: [{ startTime: 0, endTime: 10, title: "Test Short" }] });
+        .send({
+          segments: [{ startTime: 0, endTime: 10, title: "Test Short" }],
+        });
       expect(res.status).toBe(404);
     });
 
     it("returns 400 for empty segments array", async () => {
       const { app } = buildApp();
       const now = new Date().toISOString();
-      testDb.prepare(
-        `INSERT INTO director_drafts (id, title, manifest, production_mode, created_at, updated_at, status) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      ).run("render-parent", "Parent", JSON.stringify({ projectTitle: "Test", timeline: [], composition: {} }), "presentation", now, now, "draft");
+      testDb
+        .prepare(
+          `INSERT INTO director_drafts (id, title, manifest, production_mode, created_at, updated_at, status) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          "render-parent",
+          "Parent",
+          JSON.stringify({
+            projectTitle: "Test",
+            timeline: [],
+            composition: {},
+          }),
+          "presentation",
+          now,
+          now,
+          "draft",
+        );
 
       const res = await request(app)
         .post("/director/drafts/render-parent/shorts/render")
@@ -2753,16 +3552,36 @@ describe("Director API router", () => {
       const mockOrch = createMockRenderOrchestrator();
       const { app } = buildApp({ renderOrchestrator: mockOrch as never });
       const now = new Date().toISOString();
-      const manifest = JSON.stringify({ projectTitle: "Parent Video", timeline: [{ title: "Scene" }], composition: { width: 1920, height: 1080 } });
-      testDb.prepare(
-        `INSERT INTO director_drafts (id, title, manifest, production_mode, created_at, updated_at, status) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      ).run("short-parent", "Parent", manifest, "presentation", now, now, "draft");
+      const manifest = JSON.stringify({
+        projectTitle: "Parent Video",
+        timeline: [{ title: "Scene" }],
+        composition: { width: 1920, height: 1080 },
+      });
+      testDb
+        .prepare(
+          `INSERT INTO director_drafts (id, title, manifest, production_mode, created_at, updated_at, status) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          "short-parent",
+          "Parent",
+          manifest,
+          "presentation",
+          now,
+          now,
+          "draft",
+        );
 
       const res = await request(app)
         .post("/director/drafts/short-parent/shorts/render")
         .send({
           segments: [
-            { startTime: 0, endTime: 15, title: "My Short", hookText: "Watch this!", ctaText: "Subscribe" },
+            {
+              startTime: 0,
+              endTime: 15,
+              title: "My Short",
+              hookText: "Watch this!",
+              ctaText: "Subscribe",
+            },
           ],
         });
       expect(res.status).toBe(200);
@@ -2771,21 +3590,43 @@ describe("Director API router", () => {
       expect(mockOrch.submit).toHaveBeenCalledTimes(1);
 
       // Verify a child draft was created with shorts metadata
-      const childDraft = testDb.prepare(`SELECT * FROM director_drafts WHERE id != 'short-parent'`).get() as Record<string, unknown> | undefined;
+      const childDraft = testDb
+        .prepare(`SELECT * FROM director_drafts WHERE id != 'short-parent'`)
+        .get() as Record<string, unknown> | undefined;
       expect(childDraft).toBeDefined();
-      const childManifest = JSON.parse(childDraft!.manifest as string) as Record<string, unknown>;
+      const childManifest = JSON.parse(
+        childDraft!.manifest as string,
+      ) as Record<string, unknown>;
       expect(childManifest.shortsMetadata).toBeDefined();
       expect(childManifest.templateId).toBe("ContentCreator");
-      expect((childManifest.composition as Record<string, unknown>).width).toBe(1080);
-      expect((childManifest.composition as Record<string, unknown>).height).toBe(1920);
+      expect((childManifest.composition as Record<string, unknown>).width).toBe(
+        1080,
+      );
+      expect(
+        (childManifest.composition as Record<string, unknown>).height,
+      ).toBe(1920);
     });
 
     it("validates segment schema with Zod", async () => {
       const { app } = buildApp();
       const now = new Date().toISOString();
-      testDb.prepare(
-        `INSERT INTO director_drafts (id, title, manifest, production_mode, created_at, updated_at, status) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      ).run("zod-parent", "Parent", JSON.stringify({ projectTitle: "Test", timeline: [], composition: {} }), "presentation", now, now, "draft");
+      testDb
+        .prepare(
+          `INSERT INTO director_drafts (id, title, manifest, production_mode, created_at, updated_at, status) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          "zod-parent",
+          "Parent",
+          JSON.stringify({
+            projectTitle: "Test",
+            timeline: [],
+            composition: {},
+          }),
+          "presentation",
+          now,
+          now,
+          "draft",
+        );
 
       // Missing required 'title' field
       const res = await request(app)

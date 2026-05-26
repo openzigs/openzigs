@@ -725,8 +725,33 @@ Respond with ONLY a valid JSON array. No explanation. Example:
       }
 
       const fsMod = await import("node:fs");
-      if (!fsMod.existsSync(srcPath)) {
-        res.status(404).json({ error: `File not found: ${srcPath}` });
+      const pathMod = await import("node:path");
+      const osMod = await import("node:os");
+
+      // Resolve tilde
+      const resolvedSrcPath = srcPath.startsWith("~")
+        ? pathMod.join(osMod.homedir(), srcPath.slice(1))
+        : pathMod.resolve(srcPath);
+
+      // Path traversal guard: only allow files under home directory or outputDir
+      const homeDir = osMod.homedir();
+      const allowedRoots = [homeDir, pathMod.resolve(ctx.config.outputDir)];
+      const normalizedResolved = pathMod.resolve(resolvedSrcPath);
+      if (
+        !allowedRoots.some(
+          (root) =>
+            normalizedResolved.startsWith(root + pathMod.sep) ||
+            normalizedResolved === root,
+        )
+      ) {
+        res.status(403).json({
+          error: "Access denied: file path is outside allowed directories",
+        });
+        return;
+      }
+
+      if (!fsMod.existsSync(resolvedSrcPath)) {
+        res.status(404).json({ error: `File not found: ${resolvedSrcPath}` });
         return;
       }
 
@@ -737,7 +762,7 @@ Respond with ONLY a valid JSON array. No explanation. Example:
 
       const progressLog: Array<{ phase: string; message: string }> = [];
       const result = await ingest(
-        { clips: [srcPath], mode: "highlight" },
+        { clips: [resolvedSrcPath], mode: "highlight" },
         {
           copilot: useVision ? ctx.copilot : undefined,
           visionAnalysis: useVision
@@ -759,7 +784,7 @@ Respond with ONLY a valid JSON array. No explanation. Example:
       }
 
       logger.info(
-        `[Director API] Asset ingested: ${srcPath} — ${clip.keyframes.length} keyframes, ${clip.transcript.length} transcript segments`,
+        `[Director API] Asset ingested: ${resolvedSrcPath} — ${clip.keyframes.length} keyframes, ${clip.transcript.length} transcript segments`,
       );
 
       res.json({
