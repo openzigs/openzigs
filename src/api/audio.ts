@@ -25,7 +25,10 @@ import { Router, raw } from "express";
 import { nanoid } from "nanoid";
 import Database from "better-sqlite3";
 import { logger } from "../logging/logger.js";
-import { normalizeSidecarError } from "../sidecars/error-normalizer.js";
+import {
+  normalizeSidecarError,
+  SidecarProxyError,
+} from "../sidecars/error-normalizer.js";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -130,7 +133,14 @@ async function probeAudioDurationSeconds(
 
 /**
  * Make a JSON request to the audio sidecar.
- * Throws on non-2xx responses with a parsed error message.
+ *
+ * On non-2xx responses, throws a {@link SidecarProxyError} carrying the
+ * normalized envelope (status + sanitized userMessage + optional code/hint)
+ * so route handlers can render `err.toJSON()` to the client and log the
+ * raw body server-side without leaking it across the trust boundary.
+ *
+ * On network failure (sidecar unreachable), throws a plain `Error` that the
+ * caller maps to HTTP 503.
  */
 async function sidecarFetch(
   sidecarUrl: string,
@@ -138,27 +148,15 @@ async function sidecarFetch(
   options: RequestInit = {},
 ): Promise<unknown> {
   const url = `${sidecarUrl.replace(/\/$/, "")}${endpoint}`;
+  let res: Response;
   try {
-    const res = await fetch(url, {
+    res = await fetch(url, {
       headers: {
         "Content-Type": "application/json",
         ...((options.headers as Record<string, string>) ?? {}),
       },
       ...options,
     });
-
-    if (!res.ok) {
-      let errBody = "";
-      try {
-        errBody = await res.text();
-      } catch {
-        /* ignore */
-      }
-      throw new Error(
-        `Sidecar ${endpoint} returned HTTP ${res.status}: ${errBody}`,
-      );
-    }
-    return res.json() as Promise<unknown>;
   } catch (err) {
     if (err instanceof TypeError && String(err).includes("fetch")) {
       throw new Error(
@@ -167,6 +165,49 @@ async function sidecarFetch(
     }
     throw err;
   }
+
+  if (!res.ok) {
+    let errBody = "";
+    try {
+      errBody = await res.text();
+    } catch {
+      /* ignore */
+    }
+    throw new SidecarProxyError(normalizeSidecarError(errBody, res.status));
+  }
+  return res.json() as Promise<unknown>;
+}
+
+/**
+ * Render a sidecar-origin error to the client using the normalized envelope
+ * when possible, otherwise log full detail server-side and return a generic
+ * message. Never leaks raw upstream `err.message` content (which may include
+ * file paths, env vars, or stack traces) to the response body.
+ */
+function respondWithSidecarError(
+  res: import("express").Response,
+  err: unknown,
+  logTag: string,
+  fallbackStatus: 502 | 503 = 502,
+): void {
+  if (err instanceof SidecarProxyError) {
+    logger.warn(
+      `[Audio API] ${logTag} sidecar error (HTTP ${err.status}): ${err.raw ?? err.message}`,
+    );
+    // Surface 4xx (client/validation) statuses verbatim; collapse upstream 5xx
+    // to our gateway-level fallback (502/503) so health-style endpoints don't
+    // leak the sidecar's exact internal error code.
+    const outStatus =
+      err.status >= 400 && err.status < 500 ? err.status : fallbackStatus;
+    res.status(outStatus).json(err.toJSON());
+    return;
+  }
+  const msg = err instanceof Error ? err.message : String(err);
+  logger.error(`[Audio API] ${logTag} failed: ${msg}`);
+  res.status(fallbackStatus).json({
+    error: "Audio sidecar is unavailable. Check server logs.",
+    code: "sidecar_unavailable",
+  });
 }
 
 // ── Router Factory ──────────────────────────────────────────────────────────
@@ -198,9 +239,7 @@ export const createAudioRouter = ({
       const data = await sidecarFetch(baseUrl, "/health");
       res.json(data);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      logger.warn(`[Audio API] GET /engine/status failed: ${msg}`);
-      res.status(503).json({ error: msg });
+      respondWithSidecarError(res, err, "GET /engine/status", 503);
     }
   });
 
@@ -262,9 +301,7 @@ export const createAudioRouter = ({
 
       res.json(data);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      logger.warn(`[Audio API] POST /engine/switch failed: ${msg}`);
-      res.status(502).json({ error: msg });
+      respondWithSidecarError(res, err, "POST /engine/switch", 502);
     }
   });
 
@@ -278,9 +315,7 @@ export const createAudioRouter = ({
       const data = await sidecarFetch(baseUrl, "/voices");
       res.json(data);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      logger.warn(`[Audio API] GET /voices failed: ${msg}`);
-      res.status(503).json({ error: msg });
+      respondWithSidecarError(res, err, "GET /voices", 503);
     }
   });
 
@@ -538,9 +573,7 @@ export const createAudioRouter = ({
       const audioBuffer = Buffer.from(await audioRes.arrayBuffer());
       res.set("Content-Type", "audio/wav").send(audioBuffer);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      logger.error(`[Audio API] POST /profiles/:id/test failed: ${msg}`);
-      res.status(502).json({ error: msg });
+      respondWithSidecarError(res, err, "POST /profiles/:id/test", 502);
     }
   });
 
@@ -1000,9 +1033,7 @@ export const createAudioRouter = ({
       const audioBuffer = Buffer.from(await audioRes.arrayBuffer());
       res.set("Content-Type", "audio/wav").send(audioBuffer);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      logger.error(`[Audio API] POST /f5tts/profiles/:id/test failed: ${msg}`);
-      res.status(502).json({ error: msg });
+      respondWithSidecarError(res, err, "POST /f5tts/profiles/:id/test", 502);
     }
   });
 

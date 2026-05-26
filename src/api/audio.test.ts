@@ -84,7 +84,10 @@ function buildApp(db?: Database.Database) {
   const app = express();
   app.use(express.json());
   const testDb = db ?? createTestDb();
-  const router = createAudioRouter({ db: testDb, sidecarUrl: "http://127.0.0.1:59999" });
+  const router = createAudioRouter({
+    db: testDb,
+    sidecarUrl: "http://127.0.0.1:59999",
+  });
   app.use("/audio", router);
   return { app, db: testDb };
 }
@@ -107,7 +110,9 @@ describe("Audio API router", () => {
 
   describe("GET /engine/status", () => {
     it("returns 503 when sidecar is unreachable", async () => {
-      globalThis.fetch = vi.fn().mockRejectedValue(new TypeError("fetch failed"));
+      globalThis.fetch = vi
+        .fn()
+        .mockRejectedValue(new TypeError("fetch failed"));
       const { app } = buildApp();
       const res = await request(app).get("/audio/engine/status");
       expect(res.status).toBe(503);
@@ -130,7 +135,9 @@ describe("Audio API router", () => {
   describe("POST /engine/switch", () => {
     it("rejects invalid engine", async () => {
       const { app } = buildApp();
-      const res = await request(app).post("/audio/engine/switch").send({ engine: "bad" });
+      const res = await request(app)
+        .post("/audio/engine/switch")
+        .send({ engine: "bad" });
       expect(res.status).toBe(400);
     });
 
@@ -146,13 +153,17 @@ describe("Audio API router", () => {
         json: () => Promise.resolve({ engine: "kokoro" }),
       });
       const { app } = buildApp();
-      const res = await request(app).post("/audio/engine/switch").send({ engine: "kokoro" });
+      const res = await request(app)
+        .post("/audio/engine/switch")
+        .send({ engine: "kokoro" });
       expect(res.status).toBe(200);
     });
 
     it("returns 400 for invalid engine", async () => {
       const { app } = buildApp();
-      const res = await request(app).post("/audio/engine/switch").send({ engine: "sovits" });
+      const res = await request(app)
+        .post("/audio/engine/switch")
+        .send({ engine: "sovits" });
       expect(res.status).toBe(400);
     });
   });
@@ -253,14 +264,18 @@ describe("Audio API router", () => {
         `INSERT INTO voice_profiles (id, name, ref_audio_path, created_at, updated_at) 
          VALUES ('p1', 'Voice1', '/a.wav', datetime('now'), datetime('now'))`,
       ).run();
-      const res = await request(app).put("/audio/profiles/p1").send({ name: "Updated" });
+      const res = await request(app)
+        .put("/audio/profiles/p1")
+        .send({ name: "Updated" });
       expect(res.status).toBe(200);
       expect(res.body.name).toBe("Updated");
     });
 
     it("returns 404 for missing profile", async () => {
       const { app } = buildApp();
-      const res = await request(app).put("/audio/profiles/missing").send({ name: "X" });
+      const res = await request(app)
+        .put("/audio/profiles/missing")
+        .send({ name: "X" });
       expect(res.status).toBe(404);
     });
 
@@ -270,7 +285,9 @@ describe("Audio API router", () => {
         `INSERT INTO voice_profiles (id, name, ref_audio_path, created_at, updated_at) 
          VALUES ('p1', 'Voice1', '/a.wav', datetime('now'), datetime('now'))`,
       ).run();
-      const res = await request(app).put("/audio/profiles/p1").send({ name: "" });
+      const res = await request(app)
+        .put("/audio/profiles/p1")
+        .send({ name: "" });
       expect(res.status).toBe(400);
     });
   });
@@ -324,7 +341,9 @@ describe("Audio API router", () => {
   describe("POST /f5tts/profiles", () => {
     it("creates an F5-TTS profile", async () => {
       const { app } = buildApp();
-      const res = await request(app).post("/audio/f5tts/profiles").send({ name: "F5 Voice" });
+      const res = await request(app)
+        .post("/audio/f5tts/profiles")
+        .send({ name: "F5 Voice" });
       expect(res.status).toBe(201);
       expect(res.body.name).toBe("F5 Voice");
       expect(res.body.clips).toEqual([]);
@@ -342,7 +361,9 @@ describe("Audio API router", () => {
         `INSERT INTO voice_profiles (id, name, engine_type, created_at, updated_at)
          VALUES ('fp1', 'Dupe', 'f5tts', datetime('now'), datetime('now'))`,
       ).run();
-      const res = await request(app).post("/audio/f5tts/profiles").send({ name: "Dupe" });
+      const res = await request(app)
+        .post("/audio/f5tts/profiles")
+        .send({ name: "Dupe" });
       expect(res.status).toBe(409);
     });
   });
@@ -352,7 +373,10 @@ describe("Audio API router", () => {
       const { app, db } = buildApp();
       db.prepare(
         `INSERT INTO voice_profiles (id, name, engine_type, created_at, updated_at and) 
-         VALUES ('fp1', 'F5 Voice', 'f5tts', datetime('now'), datetime('now'))`.replace(" and", ""),
+         VALUES ('fp1', 'F5 Voice', 'f5tts', datetime('now'), datetime('now'))`.replace(
+          " and",
+          "",
+        ),
       ).run();
       const res = await request(app).get("/audio/f5tts/profiles/fp1");
       expect(res.status).toBe(200);
@@ -394,11 +418,13 @@ describe("Audio API router", () => {
         `INSERT INTO voice_profiles (id, name, engine_type, created_at, updated_at)
          VALUES ('fp1', 'F5', 'f5tts', datetime('now'), datetime('now'))`,
       ).run();
-      const res = await request(app).post("/audio/f5tts/profiles/fp1/clips").send({
-        emotion: "Regular",
-        ref_audio_path: "/ref.wav",
-        ref_text: "hello",
-      });
+      const res = await request(app)
+        .post("/audio/f5tts/profiles/fp1/clips")
+        .send({
+          emotion: "Regular",
+          ref_audio_path: "/ref.wav",
+          ref_text: "hello",
+        });
       expect(res.status).toBe(201);
       expect(res.body.emotion).toBe("Regular");
     });
@@ -409,9 +435,11 @@ describe("Audio API router", () => {
         `INSERT INTO voice_profiles (id, name, engine_type, created_at, updated_at)
          VALUES ('fp1', 'F5', 'f5tts', datetime('now'), datetime('now'))`,
       ).run();
-      const res = await request(app).post("/audio/f5tts/profiles/fp1/clips").send({
-        ref_audio_path: "/ref.wav",
-      });
+      const res = await request(app)
+        .post("/audio/f5tts/profiles/fp1/clips")
+        .send({
+          ref_audio_path: "/ref.wav",
+        });
       expect(res.status).toBe(400);
     });
 
@@ -421,18 +449,22 @@ describe("Audio API router", () => {
         `INSERT INTO voice_profiles (id, name, engine_type, created_at, updated_at)
          VALUES ('fp1', 'F5', 'f5tts', datetime('now'), datetime('now'))`,
       ).run();
-      const res = await request(app).post("/audio/f5tts/profiles/fp1/clips").send({
-        emotion: "Regular",
-      });
+      const res = await request(app)
+        .post("/audio/f5tts/profiles/fp1/clips")
+        .send({
+          emotion: "Regular",
+        });
       expect(res.status).toBe(400);
     });
 
     it("returns 404 for non-existent profile", async () => {
       const { app } = buildApp();
-      const res = await request(app).post("/audio/f5tts/profiles/none/clips").send({
-        emotion: "Regular",
-        ref_audio_path: "/ref.wav",
-      });
+      const res = await request(app)
+        .post("/audio/f5tts/profiles/none/clips")
+        .send({
+          emotion: "Regular",
+          ref_audio_path: "/ref.wav",
+        });
       expect(res.status).toBe(404);
     });
 
@@ -446,10 +478,12 @@ describe("Audio API router", () => {
         `INSERT INTO f5tts_clips (id, profile_id, emotion, ref_audio_path, sort_order, created_at)
          VALUES ('c1', 'fp1', 'Regular', '/r.wav', 0, datetime('now'))`,
       ).run();
-      const res = await request(app).post("/audio/f5tts/profiles/fp1/clips").send({
-        emotion: "Regular",
-        ref_audio_path: "/r2.wav",
-      });
+      const res = await request(app)
+        .post("/audio/f5tts/profiles/fp1/clips")
+        .send({
+          emotion: "Regular",
+          ref_audio_path: "/r2.wav",
+        });
       expect(res.status).toBe(409);
     });
   });
@@ -482,7 +516,9 @@ describe("Audio API router", () => {
   describe("POST /profiles/:id/test", () => {
     it("returns 404 for missing profile", async () => {
       const { app } = buildApp();
-      const res = await request(app).post("/audio/profiles/missing/test").send({});
+      const res = await request(app)
+        .post("/audio/profiles/missing/test")
+        .send({});
       expect(res.status).toBe(404);
     });
   });
@@ -492,7 +528,9 @@ describe("Audio API router", () => {
   describe("POST /f5tts/profiles/:id/test", () => {
     it("returns 404 for missing profile", async () => {
       const { app } = buildApp();
-      const res = await request(app).post("/audio/f5tts/profiles/missing/test").send({});
+      const res = await request(app)
+        .post("/audio/f5tts/profiles/missing/test")
+        .send({});
       expect(res.status).toBe(404);
     });
 
@@ -502,7 +540,9 @@ describe("Audio API router", () => {
         `INSERT INTO voice_profiles (id, name, engine_type, created_at, updated_at)
          VALUES ('fp1', 'F5', 'f5tts', datetime('now'), datetime('now'))`,
       ).run();
-      const res = await request(app).post("/audio/f5tts/profiles/fp1/test").send({});
+      const res = await request(app)
+        .post("/audio/f5tts/profiles/fp1/test")
+        .send({});
       expect(res.status).toBe(400);
       expect(res.body.error).toContain("no clips");
     });
@@ -517,7 +557,9 @@ describe("Audio API router", () => {
         `INSERT INTO f5tts_clips (id, profile_id, emotion, ref_audio_path, sort_order, created_at)
          VALUES ('c1', 'fp1', 'Happy', '/r.wav', 0, datetime('now'))`,
       ).run();
-      const res = await request(app).post("/audio/f5tts/profiles/fp1/test").send({});
+      const res = await request(app)
+        .post("/audio/f5tts/profiles/fp1/test")
+        .send({});
       expect(res.status).toBe(400);
       expect(res.body.error).toContain("Regular");
     });
@@ -537,7 +579,9 @@ describe("Audio API router", () => {
         `INSERT INTO f5tts_clips (id, profile_id, emotion, ref_audio_path, ref_text, sort_order, created_at)
          VALUES ('c1', 'fp1', 'Regular', '/r.wav', 'hello', 0, datetime('now'))`,
       ).run();
-      const res = await request(app).post("/audio/f5tts/profiles/fp1/test").send({ text: "Hi" });
+      const res = await request(app)
+        .post("/audio/f5tts/profiles/fp1/test")
+        .send({ text: "Hi" });
       expect(res.status).toBe(200);
       expect(res.headers["content-type"]).toContain("audio/wav");
     });
@@ -557,7 +601,9 @@ describe("Audio API router", () => {
         `INSERT INTO f5tts_clips (id, profile_id, emotion, ref_audio_path, ref_text, sort_order, created_at)
          VALUES ('c1', 'fp1', 'Regular', '/r.wav', 'hello', 0, datetime('now'))`,
       ).run();
-      const res = await request(app).post("/audio/f5tts/profiles/fp1/test").send({});
+      const res = await request(app)
+        .post("/audio/f5tts/profiles/fp1/test")
+        .send({});
       expect(res.status).toBe(502);
     });
   });
@@ -566,9 +612,13 @@ describe("Audio API router", () => {
 
   describe("POST /engine/switch (network error)", () => {
     it("returns 503 when sidecar is unreachable", async () => {
-      globalThis.fetch = vi.fn().mockRejectedValue(new TypeError("fetch failed"));
+      globalThis.fetch = vi
+        .fn()
+        .mockRejectedValue(new TypeError("fetch failed"));
       const { app } = buildApp();
-      const res = await request(app).post("/audio/engine/switch").send({ engine: "kokoro" });
+      const res = await request(app)
+        .post("/audio/engine/switch")
+        .send({ engine: "kokoro" });
       // The route catches fetch errors and returns 502 or 503
       expect([502, 503]).toContain(res.status);
     });
@@ -578,7 +628,9 @@ describe("Audio API router", () => {
 
   describe("GET /voices (error path)", () => {
     it("returns 503 when sidecar is unreachable", async () => {
-      globalThis.fetch = vi.fn().mockRejectedValue(new TypeError("fetch failed"));
+      globalThis.fetch = vi
+        .fn()
+        .mockRejectedValue(new TypeError("fetch failed"));
       const { app } = buildApp();
       const res = await request(app).get("/audio/voices");
       expect(res.status).toBe(503);
@@ -638,7 +690,9 @@ describe("Audio API router", () => {
         `INSERT INTO voice_profiles (id, name, ref_audio_path, ref_text, created_at, updated_at)
          VALUES ('p1', 'Voice1', '/a.wav', 'hello', datetime('now'), datetime('now'))`,
       ).run();
-      const res = await request(app).post("/audio/profiles/p1/test").send({ text: "Test phrase" });
+      const res = await request(app)
+        .post("/audio/profiles/p1/test")
+        .send({ text: "Test phrase" });
       expect(res.status).toBe(200);
       expect(res.headers["content-type"]).toContain("audio/wav");
     });
@@ -703,7 +757,9 @@ describe("Audio API router", () => {
         json: () => Promise.resolve({ engine: "f5tts" }),
       });
 
-      const res = await request(app).post("/audio/engine/switch").send({ engine: "f5tts" });
+      const res = await request(app)
+        .post("/audio/engine/switch")
+        .send({ engine: "f5tts" });
       expect(res.status).toBe(200);
       // Should have called sidecar twice: /switch_engine + /f5tts/set-active-clips
       expect(globalThis.fetch).toHaveBeenCalledTimes(2);
@@ -724,13 +780,18 @@ describe("Audio API router", () => {
       globalThis.fetch = vi.fn().mockImplementation(() => {
         callCount++;
         if (callCount === 1) {
-          return Promise.resolve({ ok: true, json: () => Promise.resolve({ engine: "f5tts" }) });
+          return Promise.resolve({
+            ok: true,
+            json: () => Promise.resolve({ engine: "f5tts" }),
+          });
         }
         // Second call (set-active-clips) fails
         return Promise.reject(new Error("clip push failed"));
       });
 
-      const res = await request(app).post("/audio/engine/switch").send({ engine: "f5tts" });
+      const res = await request(app)
+        .post("/audio/engine/switch")
+        .send({ engine: "f5tts" });
       // Should still return 200 — clip push failure is non-fatal
       expect(res.status).toBe(200);
     });
@@ -742,7 +803,9 @@ describe("Audio API router", () => {
       });
 
       const { app } = buildApp();
-      const res = await request(app).post("/audio/engine/switch").send({ engine: "f5tts" });
+      const res = await request(app)
+        .post("/audio/engine/switch")
+        .send({ engine: "f5tts" });
       expect(res.status).toBe(200);
       // Only one call: /switch_engine (no clips to push)
       expect(globalThis.fetch).toHaveBeenCalledTimes(1);
@@ -760,7 +823,9 @@ describe("Audio API router", () => {
         json: () => Promise.resolve({ engine: "f5tts" }),
       });
 
-      const res = await request(app).post("/audio/engine/switch").send({ engine: "f5tts" });
+      const res = await request(app)
+        .post("/audio/engine/switch")
+        .send({ engine: "f5tts" });
       expect(res.status).toBe(200);
       expect(globalThis.fetch).toHaveBeenCalledTimes(1);
     });
@@ -814,7 +879,9 @@ describe("Audio API router", () => {
         `INSERT INTO voice_profiles (id, name, ref_audio_path, created_at, updated_at)
          VALUES ('p1', 'Voice1', '/a.wav', '2025-01-01T00:00:00Z', '2025-01-01T00:00:00Z')`,
       ).run();
-      const res = await request(app).put("/audio/profiles/p1").send({ name: "Updated" });
+      const res = await request(app)
+        .put("/audio/profiles/p1")
+        .send({ name: "Updated" });
       expect(res.status).toBe(200);
       expect(res.body.id).toBe("p1");
       expect(res.body.created_at).toBe("2025-01-01T00:00:00Z");
@@ -854,13 +921,16 @@ describe("Audio API router", () => {
       const res = await request(app).post("/audio/profiles/p1/test").send({});
       expect(res.status).toBe(200);
       // Verify default text was sent to sidecar
-      const fetchCall = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+      const fetchCall = (globalThis.fetch as ReturnType<typeof vi.fn>).mock
+        .calls[0];
       const body = JSON.parse(fetchCall[1].body);
       expect(body.text).toBe("Hello, this is a voice cloning test.");
     });
 
     it("returns 502 when sidecar is unreachable", async () => {
-      globalThis.fetch = vi.fn().mockRejectedValue(new Error("Connection refused"));
+      globalThis.fetch = vi
+        .fn()
+        .mockRejectedValue(new Error("Connection refused"));
       const { app, db } = buildApp();
       db.prepare(
         `INSERT INTO voice_profiles (id, name, ref_audio_path, ref_text, created_at, updated_at)
@@ -904,7 +974,8 @@ describe("Audio API router", () => {
       globalThis.fetch = vi.fn().mockResolvedValue({
         ok: false,
         status: 400,
-        text: () => Promise.resolve('{"detail":"Audio must be in 3-10 second range"}'),
+        text: () =>
+          Promise.resolve('{"detail":"Audio must be in 3-10 second range"}'),
       });
       const { app, db } = buildApp();
       db.prepare(
@@ -935,14 +1006,19 @@ describe("Audio API router", () => {
         `INSERT INTO f5tts_clips (id, profile_id, emotion, ref_audio_path, ref_text, sort_order, created_at)
          VALUES ('c1', 'fp1', 'Regular', '/r.wav', 'hello', 0, datetime('now'))`,
       ).run();
-      const res = await request(app).post("/audio/f5tts/profiles/fp1/test").send({ speed: 99 });
+      const res = await request(app)
+        .post("/audio/f5tts/profiles/fp1/test")
+        .send({ speed: 99 });
       expect(res.status).toBe(200);
-      const fetchCall = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+      const fetchCall = (globalThis.fetch as ReturnType<typeof vi.fn>).mock
+        .calls[0];
       const body = JSON.parse(fetchCall[1].body);
       // Speed should be clamped to 2.0
       expect(body.speed).toBe(2.0);
       // Should use default text
-      expect(body.text).toBe("Hello, this is a voice cloning test with F5 TTS.");
+      expect(body.text).toBe(
+        "Hello, this is a voice cloning test with F5 TTS.",
+      );
     });
 
     it("clamps speed below minimum to 0.25", async () => {
@@ -960,15 +1036,20 @@ describe("Audio API router", () => {
         `INSERT INTO f5tts_clips (id, profile_id, emotion, ref_audio_path, ref_text, sort_order, created_at)
          VALUES ('c1', 'fp1', 'Regular', '/r.wav', 'hello', 0, datetime('now'))`,
       ).run();
-      const res = await request(app).post("/audio/f5tts/profiles/fp1/test").send({ speed: 0.01 });
+      const res = await request(app)
+        .post("/audio/f5tts/profiles/fp1/test")
+        .send({ speed: 0.01 });
       expect(res.status).toBe(200);
-      const fetchCall = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+      const fetchCall = (globalThis.fetch as ReturnType<typeof vi.fn>).mock
+        .calls[0];
       const body = JSON.parse(fetchCall[1].body);
       expect(body.speed).toBe(0.25);
     });
 
     it("returns 502 when sidecar is unreachable", async () => {
-      globalThis.fetch = vi.fn().mockRejectedValue(new Error("Connection refused"));
+      globalThis.fetch = vi
+        .fn()
+        .mockRejectedValue(new Error("Connection refused"));
       const { app, db } = buildApp();
       db.prepare(
         `INSERT INTO voice_profiles (id, name, engine_type, created_at, updated_at)
@@ -978,7 +1059,9 @@ describe("Audio API router", () => {
         `INSERT INTO f5tts_clips (id, profile_id, emotion, ref_audio_path, ref_text, sort_order, created_at)
          VALUES ('c1', 'fp1', 'Regular', '/r.wav', 'hello', 0, datetime('now'))`,
       ).run();
-      const res = await request(app).post("/audio/f5tts/profiles/fp1/test").send({});
+      const res = await request(app)
+        .post("/audio/f5tts/profiles/fp1/test")
+        .send({});
       expect(res.status).toBe(502);
     });
 
@@ -997,7 +1080,9 @@ describe("Audio API router", () => {
         `INSERT INTO f5tts_clips (id, profile_id, emotion, ref_audio_path, ref_text, sort_order, created_at)
          VALUES ('c1', 'fp1', 'Regular', '/r.wav', 'hello', 0, datetime('now'))`,
       ).run();
-      const res = await request(app).post("/audio/f5tts/profiles/fp1/test").send({});
+      const res = await request(app)
+        .post("/audio/f5tts/profiles/fp1/test")
+        .send({});
       expect(res.status).toBe(400);
     });
 
@@ -1020,9 +1105,12 @@ describe("Audio API router", () => {
         `INSERT INTO f5tts_clips (id, profile_id, emotion, ref_audio_path, ref_text, sort_order, created_at)
          VALUES ('c2', 'fp1', 'Happy', '/h.wav', 'bye', 1, datetime('now'))`,
       ).run();
-      const res = await request(app).post("/audio/f5tts/profiles/fp1/test").send({ text: "Two clips" });
+      const res = await request(app)
+        .post("/audio/f5tts/profiles/fp1/test")
+        .send({ text: "Two clips" });
       expect(res.status).toBe(200);
-      const fetchCall = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+      const fetchCall = (globalThis.fetch as ReturnType<typeof vi.fn>).mock
+        .calls[0];
       const body = JSON.parse(fetchCall[1].body);
       expect(body.clips).toHaveLength(2);
     });
@@ -1033,13 +1121,17 @@ describe("Audio API router", () => {
   describe("POST /f5tts/profiles (edge cases)", () => {
     it("rejects whitespace-only name", async () => {
       const { app } = buildApp();
-      const res = await request(app).post("/audio/f5tts/profiles").send({ name: "   " });
+      const res = await request(app)
+        .post("/audio/f5tts/profiles")
+        .send({ name: "   " });
       expect(res.status).toBe(400);
     });
 
     it("rejects non-string name", async () => {
       const { app } = buildApp();
-      const res = await request(app).post("/audio/f5tts/profiles").send({ name: 123 });
+      const res = await request(app)
+        .post("/audio/f5tts/profiles")
+        .send({ name: 123 });
       expect(res.status).toBe(400);
     });
   });
@@ -1053,10 +1145,12 @@ describe("Audio API router", () => {
         `INSERT INTO voice_profiles (id, name, engine_type, created_at, updated_at)
          VALUES ('fp1', 'F5', 'f5tts', datetime('now'), datetime('now'))`,
       ).run();
-      const res = await request(app).post("/audio/f5tts/profiles/fp1/clips").send({
-        emotion: "   ",
-        ref_audio_path: "/ref.wav",
-      });
+      const res = await request(app)
+        .post("/audio/f5tts/profiles/fp1/clips")
+        .send({
+          emotion: "   ",
+          ref_audio_path: "/ref.wav",
+        });
       expect(res.status).toBe(400);
     });
 
@@ -1066,10 +1160,12 @@ describe("Audio API router", () => {
         `INSERT INTO voice_profiles (id, name, engine_type, created_at, updated_at)
          VALUES ('fp1', 'F5', 'f5tts', datetime('now'), datetime('now'))`,
       ).run();
-      const res = await request(app).post("/audio/f5tts/profiles/fp1/clips").send({
-        emotion: "Regular",
-        ref_audio_path: 12345,
-      });
+      const res = await request(app)
+        .post("/audio/f5tts/profiles/fp1/clips")
+        .send({
+          emotion: "Regular",
+          ref_audio_path: 12345,
+        });
       expect(res.status).toBe(400);
     });
 
@@ -1080,17 +1176,21 @@ describe("Audio API router", () => {
          VALUES ('fp1', 'F5', 'f5tts', datetime('now'), datetime('now'))`,
       ).run();
 
-      const res1 = await request(app).post("/audio/f5tts/profiles/fp1/clips").send({
-        emotion: "Regular",
-        ref_audio_path: "/r.wav",
-      });
+      const res1 = await request(app)
+        .post("/audio/f5tts/profiles/fp1/clips")
+        .send({
+          emotion: "Regular",
+          ref_audio_path: "/r.wav",
+        });
       expect(res1.status).toBe(201);
       expect(res1.body.sort_order).toBe(0);
 
-      const res2 = await request(app).post("/audio/f5tts/profiles/fp1/clips").send({
-        emotion: "Happy",
-        ref_audio_path: "/h.wav",
-      });
+      const res2 = await request(app)
+        .post("/audio/f5tts/profiles/fp1/clips")
+        .send({
+          emotion: "Happy",
+          ref_audio_path: "/h.wav",
+        });
       expect(res2.status).toBe(201);
       expect(res2.body.sort_order).toBe(1);
     });
@@ -1107,7 +1207,9 @@ describe("Audio API router", () => {
         ref_audio_path: "/r.wav",
       });
 
-      const profile = db.prepare(`SELECT updated_at FROM voice_profiles WHERE id = 'fp1'`).get() as { updated_at: string };
+      const profile = db
+        .prepare(`SELECT updated_at FROM voice_profiles WHERE id = 'fp1'`)
+        .get() as { updated_at: string };
       expect(profile.updated_at).not.toBe("2025-01-01T00:00:00Z");
     });
 
@@ -1118,10 +1220,12 @@ describe("Audio API router", () => {
         `INSERT INTO voice_profiles (id, name, engine_type, created_at, updated_at)
          VALUES ('sp1', 'SoVITS', 'sovits', datetime('now'), datetime('now'))`,
       ).run();
-      const res = await request(app).post("/audio/f5tts/profiles/sp1/clips").send({
-        emotion: "Regular",
-        ref_audio_path: "/r.wav",
-      });
+      const res = await request(app)
+        .post("/audio/f5tts/profiles/sp1/clips")
+        .send({
+          emotion: "Regular",
+          ref_audio_path: "/r.wav",
+        });
       // Should 404 because profile is not f5tts
       expect(res.status).toBe(404);
     });
@@ -1317,7 +1421,8 @@ describe("Audio API router", () => {
          VALUES ('c1', 'fp1', 'Regular', '/audio/ref.wav', 'Hello world', 0, datetime('now'))`,
       ).run();
 
-      globalThis.fetch = vi.fn()
+      globalThis.fetch = vi
+        .fn()
         .mockResolvedValueOnce({
           // /switch_engine response
           ok: true,
@@ -1330,10 +1435,13 @@ describe("Audio API router", () => {
         });
 
       const { app } = buildApp(db);
-      const res = await request(app).post("/audio/engine/switch").send({ engine: "f5tts" });
+      const res = await request(app)
+        .post("/audio/engine/switch")
+        .send({ engine: "f5tts" });
       expect(res.status).toBe(200);
       // Verify clip push was called
-      const fetchCalls = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls;
+      const fetchCalls = (globalThis.fetch as ReturnType<typeof vi.fn>).mock
+        .calls;
       expect(fetchCalls).toHaveLength(2);
       expect(fetchCalls[1][0]).toContain("/f5tts/set-active-clips");
     });
@@ -1347,10 +1455,14 @@ describe("Audio API router", () => {
       });
 
       const { app } = buildApp(db);
-      const res = await request(app).post("/audio/engine/switch").send({ engine: "f5tts" });
+      const res = await request(app)
+        .post("/audio/engine/switch")
+        .send({ engine: "f5tts" });
       expect(res.status).toBe(200);
       // Only the switch call, no clip push
-      expect((globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(1);
+      expect(
+        (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls,
+      ).toHaveLength(1);
     });
   });
 
@@ -1358,7 +1470,9 @@ describe("Audio API router", () => {
 
   describe("GET /voices (error)", () => {
     it("returns 503 when sidecar is down", async () => {
-      globalThis.fetch = vi.fn().mockRejectedValue(new TypeError("fetch failed"));
+      globalThis.fetch = vi
+        .fn()
+        .mockRejectedValue(new TypeError("fetch failed"));
       const { app } = buildApp();
       const res = await request(app).get("/audio/voices");
       expect(res.status).toBe(503);

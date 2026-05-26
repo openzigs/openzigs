@@ -102,6 +102,85 @@ describe("normalizeSidecarError — defensive edge cases", () => {
   });
 });
 
+describe("normalizeSidecarError — sensitive-token redaction (PR #1171)", () => {
+  it("redacts POSIX user home paths (/Users/<name>/...)", () => {
+    const result = normalizeSidecarError(
+      '{"error":"Cannot open /Users/alice/secrets/key.pem"}',
+      500,
+    );
+    expect(result.userMessage).not.toContain("/Users/alice");
+    expect(result.userMessage).toContain("~");
+    // The raw body is still preserved for server-side audit logs.
+    expect(result.raw).toContain("/Users/alice/secrets/key.pem");
+  });
+
+  it("redacts Linux user home paths (/home/<name>/...)", () => {
+    const result = normalizeSidecarError(
+      '{"error":"Permission denied: /home/bob/.ssh/id_rsa"}',
+      500,
+    );
+    expect(result.userMessage).not.toContain("/home/bob");
+    expect(result.userMessage).toContain("~");
+  });
+
+  it("redacts Windows user profile paths (C:\\Users\\<name>\\...)", () => {
+    const result = normalizeSidecarError(
+      '{"error":"File not found: C:\\\\Users\\\\carol\\\\AppData\\\\secret.json"}',
+      500,
+    );
+    expect(result.userMessage).not.toContain("C:\\Users\\carol");
+    expect(result.userMessage).toContain("~");
+  });
+
+  it("redacts bare Windows drive-letter absolute paths", () => {
+    const result = normalizeSidecarError(
+      '{"error":"Missing C:\\\\ProgramData\\\\openzigs\\\\model.bin"}',
+      500,
+    );
+    expect(result.userMessage).not.toContain("C:\\ProgramData");
+    expect(result.userMessage).toContain("<path>");
+  });
+
+  it("redacts env-var-shaped assignments (UPPER_SNAKE_CASE=value)", () => {
+    const result = normalizeSidecarError(
+      '{"error":"Missing config: OPENAI_API_KEY=sk-deadbeef1234"}',
+      500,
+    );
+    expect(result.userMessage).not.toContain("sk-deadbeef1234");
+    expect(result.userMessage).toContain("OPENAI_API_KEY=***");
+  });
+
+  it("redacts multiple env-var assignments in the same message", () => {
+    const result = normalizeSidecarError(
+      '{"error":"Bad env: AWS_SECRET_KEY=abc AND HF_TOKEN=hf_xyz"}',
+      500,
+    );
+    expect(result.userMessage).not.toContain("abc");
+    expect(result.userMessage).not.toContain("hf_xyz");
+    expect(result.userMessage).toContain("AWS_SECRET_KEY=***");
+    expect(result.userMessage).toContain("HF_TOKEN=***");
+  });
+
+  it("redacts paths and env vars inside a Python traceback message", () => {
+    const tb =
+      "Traceback (most recent call last):\n" +
+      '  File "/Users/dave/work/server.py", line 42, in handle\n' +
+      '    raise RuntimeError("boom")\n' +
+      "RuntimeError: failed loading /home/dave/.config/openzigs/cfg.json with HF_TOKEN=hf_xyz";
+    const result = normalizeSidecarError(tb, 500);
+    expect(result.userMessage).not.toContain("/Users/dave");
+    expect(result.userMessage).not.toContain("/home/dave");
+    expect(result.userMessage).not.toContain("hf_xyz");
+    expect(result.userMessage).toContain("HF_TOKEN=***");
+  });
+
+  it("does not touch short identifiers (under 4 chars)", () => {
+    const result = normalizeSidecarError('{"error":"OK=1 bad request"}', 400);
+    // `OK` is only 2 chars — not env-var shaped.
+    expect(result.userMessage).toContain("OK=1");
+  });
+});
+
 describe("SidecarProxyError", () => {
   it("serializes with code + hint when present", () => {
     const err = new SidecarProxyError({

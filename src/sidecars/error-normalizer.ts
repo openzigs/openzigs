@@ -112,30 +112,63 @@ function extractFromValue(value: unknown, depth: number): string | undefined {
 }
 
 /**
+ * Scrub absolute filesystem paths and env-var-shaped tokens from a string
+ * before it crosses the trust boundary back to the client. Mirrors the
+ * `redactPaths` helper in `src/app.ts` and adds env-var assignment redaction
+ * for cases like `KeyError: 'OPENAI_API_KEY'` or `OPENAI_API_KEY=sk-xxxxx`.
+ *
+ * The full original text is still preserved in `NormalizedSidecarError.raw`
+ * for server-side audit logs — this only sanitizes the user-facing message.
+ */
+function scrubSensitive(input: string): string {
+  return (
+    input
+      // POSIX home directories: /Users/<name>/... or /home/<name>/...
+      .replace(/\/Users\/[^/\s'"]+/g, "~")
+      .replace(/\/home\/[^/\s'"]+/g, "~")
+      // Windows user profile paths: C:\Users\<name>\...
+      .replace(/[A-Za-z]:\\Users\\[^\\/\s'"]+/g, "~")
+      // Bare Windows drive-letter absolute paths: C:\foo\bar → <path>
+      .replace(/[A-Za-z]:\\[^\s'"]+/g, "<path>")
+      // Env-var-shaped assignments: OPENAI_API_KEY=sk-xxx → OPENAI_API_KEY=***
+      .replace(/\b([A-Z][A-Z0-9_]{3,})=\S+/g, "$1=***")
+  );
+}
+
+/**
  * Strip Python traceback noise. If the input is a multi-line traceback,
- * return only the final `ExceptionType: message` line, otherwise the input.
+ * return only the final `ExceptionType: message` line. Then scrub any
+ * absolute paths or env-var-shaped tokens so secrets never leak in the
+ * user-facing message.
  */
 function stripTraceback(input: string): string {
-  if (!input.includes("Traceback (most recent call last)")) return input;
-  const lines = input
-    .split(/\r?\n/)
-    .map((l) => l.trim())
-    .filter(Boolean);
-  // Last non-empty line that looks like `Type: message` or just text.
-  const last = lines[lines.length - 1] ?? input;
-  // Drop bare exception class name with no message.
-  if (/^[A-Z][A-Za-z0-9_.]*Error$/.test(last)) return last;
-  // `ExceptionType: actual message` → keep only the message portion.
-  const colon = last.indexOf(": ");
-  if (
-    colon > 0 &&
-    /^[A-Z][A-Za-z0-9_.]*(?:Error|Exception|Warning)$/.test(
-      last.slice(0, colon),
-    )
-  ) {
-    return last.slice(colon + 2);
+  let core = input;
+  if (input.includes("Traceback (most recent call last)")) {
+    const lines = input
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .filter(Boolean);
+    // Last non-empty line that looks like `Type: message` or just text.
+    const last = lines[lines.length - 1] ?? input;
+    // Drop bare exception class name with no message.
+    if (/^[A-Z][A-Za-z0-9_.]*Error$/.test(last)) {
+      core = last;
+    } else {
+      // `ExceptionType: actual message` → keep only the message portion.
+      const colon = last.indexOf(": ");
+      if (
+        colon > 0 &&
+        /^[A-Z][A-Za-z0-9_.]*(?:Error|Exception|Warning)$/.test(
+          last.slice(0, colon),
+        )
+      ) {
+        core = last.slice(colon + 2);
+      } else {
+        core = last;
+      }
+    }
   }
-  return last;
+  return scrubSensitive(core);
 }
 
 function truncate(s: string): string {

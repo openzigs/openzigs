@@ -300,11 +300,9 @@ export function createCreativeRouter({
           } catch (err) {
             const status =
               (err as Error & { statusCode?: number }).statusCode ?? 400;
-            res
-              .status(status)
-              .json({
-                error: err instanceof Error ? err.message : String(err),
-              });
+            res.status(status).json({
+              error: err instanceof Error ? err.message : String(err),
+            });
             return;
           }
         } else if (!isKontext && characterRepo) {

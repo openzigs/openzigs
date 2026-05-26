@@ -1,4 +1,5 @@
 import { Router } from "express";
+import rateLimit from "express-rate-limit";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -2114,27 +2115,52 @@ export const createAdminRouter = ({
   // ── AI Python sidecar restart (Epic #1115) ──
   // Restart a managed Docker AI sidecar (audio, image-gen, lipsync, etc.) by name.
   // Used by the UI "Restart sidecar" CTA attached to gateway-error toasts.
-  router.post("/ai-sidecars/:name/restart", async (req, res) => {
-    const { name } = req.params;
-    if (!sidecarManager) {
-      return res
-        .status(503)
-        .json({ error: "AI sidecar manager not available" });
-    }
-    try {
-      const status = await sidecarManager.restartSidecar(name);
-      if (!status) {
-        return res.status(404).json({ error: `Unknown sidecar: ${name}` });
-      }
-      return res.json({ ok: true, status });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      logger.error(
-        `[Admin API] AI sidecar restart failed for ${name}: ${message}`,
-      );
-      return res.status(500).json({ error: message });
-    }
+  //
+  // Rate-limited (5 req/min/IP) because each invocation triggers a container
+  // restart — without a cap an authenticated client (or compromised token)
+  // could trivially DoS the sidecar fleet by hammering this route.
+  const sidecarRestartLimiter = rateLimit({
+    windowMs: 60_000,
+    max: 5,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: {
+      error: "Too many restart requests. Please wait a minute and retry.",
+      code: "rate_limited",
+    },
   });
+
+  router.post(
+    "/ai-sidecars/:name/restart",
+    sidecarRestartLimiter,
+    async (req, res) => {
+      const { name } = req.params;
+      if (!sidecarManager) {
+        return res
+          .status(503)
+          .json({ error: "AI sidecar manager not available" });
+      }
+      try {
+        const status = await sidecarManager.restartSidecar(name);
+        if (!status) {
+          return res.status(404).json({ error: `Unknown sidecar: ${name}` });
+        }
+        return res.json({ ok: true, status });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        // Log full detail server-side; never echo the raw exception message
+        // (which may contain file paths, docker socket details, etc.) to
+        // the client.
+        logger.error(
+          `[Admin API] AI sidecar restart failed for ${name}: ${message}`,
+        );
+        return res.status(500).json({
+          error: "Failed to restart sidecar. Check server logs.",
+          code: "restart_failed",
+        });
+      }
+    },
+  );
 
   // ── Per-Local-Server Tool Listing ──
   router.get("/local-servers/:name/tools", (_req, res) => {
