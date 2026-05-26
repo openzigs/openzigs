@@ -9,6 +9,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 import { logger } from "../logging/logger.js";
+import { normalizeSidecarError } from "../sidecars/error-normalizer.js";
 import type {
   CharacterRepository,
   CharacterCreate,
@@ -408,12 +409,23 @@ export function createCharacterRouter({
     if (!description) return "subject";
     const lower = description.toLowerCase();
     const KNOWN: [string, string][] = [
-      ["dog", "dog"], ["cat", "cat"], ["horse", "horse"],
-      ["bird", "bird"], ["rabbit", "rabbit"], ["fox", "fox"],
-      ["wolf", "wolf"], ["bear", "bear"], ["lion", "lion"],
-      ["tiger", "tiger"], ["elephant", "elephant"],
-      ["person", "person"], ["man", "man"], ["woman", "woman"],
-      ["child", "child"], ["boy", "boy"], ["girl", "girl"],
+      ["dog", "dog"],
+      ["cat", "cat"],
+      ["horse", "horse"],
+      ["bird", "bird"],
+      ["rabbit", "rabbit"],
+      ["fox", "fox"],
+      ["wolf", "wolf"],
+      ["bear", "bear"],
+      ["lion", "lion"],
+      ["tiger", "tiger"],
+      ["elephant", "elephant"],
+      ["person", "person"],
+      ["man", "man"],
+      ["woman", "woman"],
+      ["child", "child"],
+      ["boy", "boy"],
+      ["girl", "girl"],
     ];
     for (const [keyword, noun] of KNOWN) {
       if (lower.includes(keyword)) return noun;
@@ -633,7 +645,11 @@ export function createCharacterRouter({
       );
       if (!response.ok) {
         const text = await response.text();
-        res.status(502).json({ error: `Sidecar error: ${text}` });
+        const { userMessage, code, hint } = normalizeSidecarError(
+          text,
+          response.status,
+        );
+        res.status(502).json({ error: userMessage, code, hint });
         return;
       }
       const data = await response.json();

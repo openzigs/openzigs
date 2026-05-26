@@ -30,6 +30,7 @@ import logging
 import os
 import pathlib
 import re
+import sys
 import tempfile
 import time
 import threading
@@ -354,6 +355,14 @@ async def _lifespan(app: FastAPI):
 
 
 app = FastAPI(title="OpenZigs v2a Sidecar", version="1.0.0", lifespan=_lifespan)
+
+# Epic #1115 — standardised sidecar error envelope.
+_SHARED_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "_shared")
+if _SHARED_DIR not in sys.path:
+    sys.path.insert(0, _SHARED_DIR)
+from errors import register_error_handlers  # type: ignore[import-not-found]  # noqa: E402
+
+register_error_handlers(app, logger=logger)
 
 
 class GenerateRequest(BaseModel):

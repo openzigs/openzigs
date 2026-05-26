@@ -14,6 +14,7 @@ import os from "node:os";
 import fs from "node:fs";
 import fsPromises from "node:fs/promises";
 import { logger } from "../logging/logger.js";
+import { normalizeSidecarError } from "../sidecars/error-normalizer.js";
 import type { MediaQueueRepository } from "../queue/media-queue-repository.js";
 import type { CopilotWrapperService, SdkAttachment } from "../copilot/index.js";
 import type { CharacterRepository } from "../characters/character-repository.js";
@@ -299,9 +300,9 @@ export function createCreativeRouter({
           } catch (err) {
             const status =
               (err as Error & { statusCode?: number }).statusCode ?? 400;
-            res
-              .status(status)
-              .json({ error: err instanceof Error ? err.message : String(err) });
+            res.status(status).json({
+              error: err instanceof Error ? err.message : String(err),
+            });
             return;
           }
         } else if (!isKontext && characterRepo) {
@@ -785,10 +786,12 @@ FLUX KONTEXT PROMPT RULES — follow these exactly:
       );
 
       if (!response.ok) {
-        const errText = await response.text().catch(() => "Unknown error");
-        res
-          .status(502)
-          .json({ error: `Sidecar error (${response.status}): ${errText}` });
+        const errText = await response.text().catch(() => "");
+        const { userMessage, code, hint } = normalizeSidecarError(
+          errText,
+          response.status,
+        );
+        res.status(502).json({ error: userMessage, code, hint });
         return;
       }
 
@@ -860,10 +863,12 @@ FLUX KONTEXT PROMPT RULES — follow these exactly:
       });
 
       if (!response.ok) {
-        const errText = await response.text().catch(() => "Unknown error");
-        res
-          .status(502)
-          .json({ error: `Sidecar error (${response.status}): ${errText}` });
+        const errText = await response.text().catch(() => "");
+        const { userMessage, code, hint } = normalizeSidecarError(
+          errText,
+          response.status,
+        );
+        res.status(502).json({ error: userMessage, code, hint });
         return;
       }
 
@@ -992,11 +997,9 @@ FLUX KONTEXT PROMPT RULES — follow these exactly:
         return;
       }
       if (!platform || !PLATFORM_LIMITS[platform]) {
-        res
-          .status(400)
-          .json({
-            error: `platform must be one of: ${Object.keys(PLATFORM_LIMITS).join(", ")}`,
-          });
+        res.status(400).json({
+          error: `platform must be one of: ${Object.keys(PLATFORM_LIMITS).join(", ")}`,
+        });
         return;
       }
       const tone = typeof body.tone === "string" ? body.tone : "casual";
@@ -1068,11 +1071,9 @@ FLUX KONTEXT PROMPT RULES — follow these exactly:
         "youtube",
       ];
       if (!platform || !validPlatforms.includes(platform)) {
-        res
-          .status(400)
-          .json({
-            error: `platform must be one of: ${validPlatforms.join(", ")}`,
-          });
+        res.status(400).json({
+          error: `platform must be one of: ${validPlatforms.join(", ")}`,
+        });
         return;
       }
       const count =
