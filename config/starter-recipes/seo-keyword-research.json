@@ -1,0 +1,31 @@
+{
+  "$schema": "openzigs-template-v1",
+  "version": 1,
+  "exportedAt": "2026-08-01T00:00:00.000Z",
+  "exportedFrom": "openzigs-starter",
+  "prompt": {
+    "name": "SEO: Keyword Research",
+    "description": "Discover ranking opportunities and produce an SEO content brief for a target keyword.",
+    "template": "Run keyword research and produce an SEO brief for: {{seed_keyword}}\n\nSite: {{site_url}}",
+    "tags": ["starter", "seo", "research"],
+    "preferredTools": ["web-search", "seo-audit"],
+    "stages": [
+      {
+        "name": "Expand keyword",
+        "prompt": "Generate 25 long-tail variants of the seed keyword grouped by intent.",
+        "tools": ["web-search"]
+      },
+      {
+        "name": "Competitor scan",
+        "prompt": "Identify the top 5 ranking pages for the seed keyword. Summarize what they cover and where they fall short.",
+        "tools": ["web-search", "seo-audit"]
+      },
+      {
+        "name": "Brief",
+        "prompt": "Produce an SEO brief: title options, H2 structure, FAQ block, internal-link suggestions, and target word count.",
+        "tools": []
+      }
+    ]
+  },
+  "placeholders": []
+}
