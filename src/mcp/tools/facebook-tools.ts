@@ -37,18 +37,24 @@ const callLocalServer = async (
     return { text: "Local MCP server manager not configured.", isError: true };
   }
   if (!manager.isRunning("facebook")) {
-    return { text: "Facebook MCP server is not running. Check FACEBOOK_PAGE_TOKEN env var.", isError: true };
+    return {
+      text: "Facebook MCP server is not running. Check FACEBOOK_PAGE_TOKEN env var.",
+      isError: true,
+    };
   }
   return manager.callTool("facebook", toolName, args);
 };
 
-export const createFacebookTools = (options: FacebookToolsOptions): ToolDefinition[] => {
+export const createFacebookTools = (
+  options: FacebookToolsOptions,
+): ToolDefinition[] => {
   const mgr = options.localServerManager;
 
   return [
     {
       name: "fb_get_page_info",
-      description: "Get Facebook Page profile info (name, followers, category, etc.).",
+      description:
+        "Get Facebook Page profile info (name, followers, category, etc.).",
       inputSchema: { type: "object", properties: {} },
       zodSchema: emptySchema,
       category: "social",
@@ -58,7 +64,8 @@ export const createFacebookTools = (options: FacebookToolsOptions): ToolDefiniti
     },
     {
       name: "fb_get_page_posts",
-      description: "Get recent posts from the Facebook Page with engagement metrics.",
+      description:
+        "Get recent posts from the Facebook Page with engagement metrics.",
       inputSchema: {
         type: "object",
         properties: {
@@ -66,7 +73,10 @@ export const createFacebookTools = (options: FacebookToolsOptions): ToolDefiniti
           after: { type: "string", description: "Pagination cursor" },
         },
       },
-      zodSchema: z.object({ limit: z.number().min(1).max(100).optional(), after: z.string().optional() }),
+      zodSchema: z.object({
+        limit: z.number().min(1).max(100).optional(),
+        after: z.string().optional(),
+      }),
       category: "social",
       riskLevel: "low",
       source: "facebook",
@@ -77,14 +87,17 @@ export const createFacebookTools = (options: FacebookToolsOptions): ToolDefiniti
       description: "Get detailed insights for a specific Facebook post.",
       inputSchema: {
         type: "object",
-        properties: { post_id: { type: "string", description: "Facebook post ID" } },
+        properties: {
+          post_id: { type: "string", description: "Facebook post ID" },
+        },
         required: ["post_id"],
       },
       zodSchema: z.object({ post_id: z.string() }),
       category: "social",
       riskLevel: "low",
       source: "facebook",
-      handler: async (args) => callLocalServer(mgr, "fb_get_post_insights", args),
+      handler: async (args) =>
+        callLocalServer(mgr, "fb_get_post_insights", args),
     },
     {
       name: "fb_publish_post",
@@ -108,13 +121,19 @@ export const createFacebookTools = (options: FacebookToolsOptions): ToolDefiniti
       description: "List Facebook Page Messenger conversations.",
       inputSchema: {
         type: "object",
-        properties: { limit: { type: "integer", description: "Number of conversations (max 100)" } },
+        properties: {
+          limit: {
+            type: "integer",
+            description: "Number of conversations (max 100)",
+          },
+        },
       },
       zodSchema: z.object({ limit: z.number().min(1).max(100).optional() }),
       category: "social",
       riskLevel: "low",
       source: "facebook",
-      handler: async (args) => callLocalServer(mgr, "fb_get_conversations", args),
+      handler: async (args) =>
+        callLocalServer(mgr, "fb_get_conversations", args),
     },
     {
       name: "fb_get_conversation_messages",
@@ -131,7 +150,8 @@ export const createFacebookTools = (options: FacebookToolsOptions): ToolDefiniti
       category: "social",
       riskLevel: "low",
       source: "facebook",
-      handler: async (args) => callLocalServer(mgr, "fb_get_conversation_messages", args),
+      handler: async (args) =>
+        callLocalServer(mgr, "fb_get_conversation_messages", args),
     },
     {
       name: "fb_send_message",
@@ -139,8 +159,14 @@ export const createFacebookTools = (options: FacebookToolsOptions): ToolDefiniti
       inputSchema: {
         type: "object",
         properties: {
-          recipient_id: { type: "string", description: "Recipient Page-scoped user ID" },
-          message: { type: "string", description: "Message text (max 2000 chars)" },
+          recipient_id: {
+            type: "string",
+            description: "Recipient Page-scoped user ID",
+          },
+          message: {
+            type: "string",
+            description: "Message text (max 2000 chars)",
+          },
         },
         required: ["recipient_id", "message"],
       },
@@ -152,16 +178,22 @@ export const createFacebookTools = (options: FacebookToolsOptions): ToolDefiniti
     },
     {
       name: "fb_get_page_insights",
-      description: "Get Page-level analytics (impressions, engaged users, fan adds).",
+      description:
+        "Get Page-level analytics (impressions, engaged users, fan adds).",
       inputSchema: {
         type: "object",
-        properties: { period: { type: "string", enum: ["day", "week", "days_28"] } },
+        properties: {
+          period: { type: "string", enum: ["day", "week", "days_28"] },
+        },
       },
-      zodSchema: z.object({ period: z.enum(["day", "week", "days_28"]).optional() }),
+      zodSchema: z.object({
+        period: z.enum(["day", "week", "days_28"]).optional(),
+      }),
       category: "social",
       riskLevel: "low",
       source: "facebook",
-      handler: async (args) => callLocalServer(mgr, "fb_get_page_insights", args),
+      handler: async (args) =>
+        callLocalServer(mgr, "fb_get_page_insights", args),
     },
     {
       name: "fb_get_post_comments",
@@ -174,11 +206,15 @@ export const createFacebookTools = (options: FacebookToolsOptions): ToolDefiniti
         },
         required: ["post_id"],
       },
-      zodSchema: z.object({ post_id: z.string(), limit: z.number().min(1).max(100).optional() }),
+      zodSchema: z.object({
+        post_id: z.string(),
+        limit: z.number().min(1).max(100).optional(),
+      }),
       category: "social",
       riskLevel: "low",
       source: "facebook",
-      handler: async (args) => callLocalServer(mgr, "fb_get_post_comments", args),
+      handler: async (args) =>
+        callLocalServer(mgr, "fb_get_post_comments", args),
     },
     {
       name: "fb_reply_to_comment",
@@ -195,7 +231,8 @@ export const createFacebookTools = (options: FacebookToolsOptions): ToolDefiniti
       category: "social",
       riskLevel: "high",
       source: "facebook",
-      handler: async (args) => callLocalServer(mgr, "fb_reply_to_comment", args),
+      handler: async (args) =>
+        callLocalServer(mgr, "fb_reply_to_comment", args),
     },
   ];
 };
