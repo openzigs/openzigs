@@ -1,117 +1,560 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { fetchJson } from "@/lib/api";
-import { CheckCircle2, AlertCircle, ChevronRight, ChevronLeft, Loader2, SkipForward, ExternalLink } from "lucide-react";
+import {
+  CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
+  ExternalLink,
+  Loader2,
+  RefreshCw,
+} from "lucide-react";
+import { fetchJson, buildUrl } from "@/lib/api";
 
-/* ── Types ─────────────────────────────────────────────────── */
+/* ───── Types ───── */
 
-interface SetupStatus {
-  setupComplete: boolean;
-  hasConfig: boolean;
-  hasEnvFile: boolean;
-  configPath: string;
+type WizardStep =
+  | "welcome"
+  | "prereqs"
+  | "sidecars"
+  | "social"
+  | "byok"
+  | "recipes"
+  | "complete";
+
+const STEPS: WizardStep[] = [
+  "welcome",
+  "prereqs",
+  "sidecars",
+  "social",
+  "byok",
+  "recipes",
+  "complete",
+];
+
+const STEP_LABELS: Record<WizardStep, string> = {
+  welcome: "Welcome",
+  prereqs: "Prerequisites",
+  sidecars: "Sidecars",
+  social: "Social",
+  byok: "API Keys",
+  recipes: "Recipes",
+  complete: "Done",
+};
+
+interface WizardState {
+  currentStep: WizardStep;
+  completedSteps: WizardStep[];
+  data: Record<string, unknown>;
+  updatedAt: string;
 }
 
-interface Prerequisites {
-  node: { ok: boolean; version: string; required: string };
-  docker: { available: boolean; version: string | null };
-  git: { available: boolean; version: string | null };
-  platform: {
-    os: string;
-    arch: string;
-    sidecarsSupported: boolean;
-    chromePath: string | null;
-  };
+interface SidecarStatus {
+  name: string;
+  installed: boolean;
+  hasServer: boolean;
+  hasVenv: boolean;
+  description: string;
 }
 
-type WizardStep = "welcome" | "prereqs" | "auth" | "platform" | "config" | "complete";
+interface SocialPlatform {
+  id: string;
+  label: string;
+  description: string;
+  authMode: "oauth" | "manual_token";
+  authorizeRoute: string | null;
+  docsUrl: string;
+  connected: boolean;
+  connectedAt: string | null;
+}
 
-const STEPS: WizardStep[] = ["welcome", "prereqs", "auth", "platform", "config", "complete"];
+interface RecipeMeta {
+  id: string;
+  name: string;
+  description: string;
+  tags: string[];
+  stageCount: number;
+}
 
-/* ── Main Component ────────────────────────────────────────── */
+interface ByokTestResult {
+  provider: string;
+  ok: boolean;
+  status: number | null;
+  latencyMs: number;
+  message: string;
+}
+
+const BYOK_PROVIDERS = ["openai", "anthropic", "google", "groq"] as const;
+type ByokProvider = (typeof BYOK_PROVIDERS)[number];
+
+/* ───── Helpers ───── */
+
+const post = <T,>(path: string, body?: unknown) =>
+  fetchJson<T>(path, {
+    method: "POST",
+    body: body ? JSON.stringify(body) : undefined,
+  });
+
+/* ───── Page ───── */
 
 export default function SetupPage() {
   const router = useRouter();
-  const [step, setStep] = useState<WizardStep>("welcome");
-  const [prereqs, setPrereqs] = useState<Prerequisites | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [saving, setSaving] = useState(false);
+  const [state, setState] = useState<WizardState | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  const loadState = useCallback(async () => {
+    try {
+      const s = await fetchJson<WizardState>("/api/admin/setup/state");
+      setState(s);
+      setLoadError(null);
+    } catch (err) {
+      setLoadError(err instanceof Error ? err.message : String(err));
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadState();
+  }, [loadState]);
+
+  const goToStep = useCallback(
+    async (next: WizardStep, markCurrentComplete = true) => {
+      if (!state) return;
+      const completed = new Set(state.completedSteps);
+      if (markCurrentComplete) completed.add(state.currentStep);
+      const updated = await post<WizardState>("/api/admin/setup/state", {
+        currentStep: next,
+        completedSteps: Array.from(completed),
+      });
+      setState(updated);
+    },
+    [state],
+  );
+
+  const reset = useCallback(async () => {
+    await post("/api/admin/setup/state/reset");
+    await loadState();
+  }, [loadState]);
+
+  if (loadError) {
+    return (
+      <main className="mx-auto max-w-2xl p-8">
+        <h1 className="text-2xl font-semibold">Setup unavailable</h1>
+        <p className="mt-2 text-red-600">{loadError}</p>
+        <button
+          onClick={() => void loadState()}
+          className="mt-4 inline-flex items-center gap-2 rounded bg-blue-600 px-3 py-2 text-white"
+        >
+          <RefreshCw className="h-4 w-4" /> Retry
+        </button>
+      </main>
+    );
+  }
+
+  if (!state) {
+    return (
+      <main className="flex h-screen items-center justify-center">
+        <Loader2 className="h-6 w-6 animate-spin text-gray-500" />
+      </main>
+    );
+  }
+
+  const idx = STEPS.indexOf(state.currentStep);
+  const prev = idx > 0 ? STEPS[idx - 1] : null;
+  const next = idx < STEPS.length - 1 ? STEPS[idx + 1] : null;
+
+  return (
+    <main className="mx-auto max-w-4xl px-6 py-10">
+      <ProgressBar
+        current={state.currentStep}
+        completed={state.completedSteps}
+      />
+
+      <div className="mt-8 rounded-lg border border-gray-200 bg-white p-8 shadow-sm dark:border-gray-800 dark:bg-gray-900">
+        {state.currentStep === "welcome" && <WelcomeStep />}
+        {state.currentStep === "prereqs" && <PrereqsStep />}
+        {state.currentStep === "sidecars" && <SidecarsStep />}
+        {state.currentStep === "social" && <SocialStep />}
+        {state.currentStep === "byok" && <ByokStep />}
+        {state.currentStep === "recipes" && <RecipesStep />}
+        {state.currentStep === "complete" && (
+          <CompleteStep onReset={reset} onGoToApp={() => router.push("/")} />
+        )}
+      </div>
+
+      <div className="mt-6 flex items-center justify-between">
+        <button
+          disabled={!prev}
+          onClick={() => prev && void goToStep(prev, false)}
+          className="inline-flex items-center gap-2 rounded border border-gray-300 px-4 py-2 text-sm font-medium disabled:opacity-40 dark:border-gray-700"
+        >
+          <ChevronLeft className="h-4 w-4" /> Back
+        </button>
+        <span className="text-xs text-gray-500">
+          Step {idx + 1} of {STEPS.length} · saved{" "}
+          {new Date(state.updatedAt).toLocaleTimeString()}
+        </span>
+        <button
+          disabled={!next}
+          onClick={() => next && void goToStep(next)}
+          className="inline-flex items-center gap-2 rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-40"
+        >
+          {next === "complete" ? "Finish" : "Next"}{" "}
+          <ChevronRight className="h-4 w-4" />
+        </button>
+      </div>
+    </main>
+  );
+}
+
+/* ───── Progress bar ───── */
+
+function ProgressBar({
+  current,
+  completed,
+}: {
+  current: WizardStep;
+  completed: WizardStep[];
+}) {
+  const completedSet = useMemo(() => new Set(completed), [completed]);
+  return (
+    <ol
+      className="flex items-center justify-between"
+      data-testid="wizard-progress"
+    >
+      {STEPS.map((step, i) => {
+        const isCurrent = step === current;
+        const isDone = completedSet.has(step);
+        return (
+          <li
+            key={step}
+            className="flex flex-1 items-center"
+            data-step={step}
+            data-current={isCurrent || undefined}
+            data-completed={isDone || undefined}
+          >
+            <span
+              className={`flex h-8 w-8 items-center justify-center rounded-full text-xs font-semibold ${
+                isCurrent
+                  ? "bg-blue-600 text-white"
+                  : isDone
+                    ? "bg-green-600 text-white"
+                    : "bg-gray-200 text-gray-600 dark:bg-gray-700 dark:text-gray-300"
+              }`}
+            >
+              {isDone ? <CheckCircle2 className="h-4 w-4" /> : i + 1}
+            </span>
+            <span className="ml-2 hidden text-xs font-medium sm:inline">
+              {STEP_LABELS[step]}
+            </span>
+            {i < STEPS.length - 1 && (
+              <span className="mx-2 h-px flex-1 bg-gray-200 dark:bg-gray-800" />
+            )}
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
+/* ───── Steps ───── */
+
+function WelcomeStep() {
+  return (
+    <section data-testid="step-welcome">
+      <h1 className="text-3xl font-semibold">Welcome to OpenZigs</h1>
+      <p className="mt-3 text-gray-600 dark:text-gray-400">
+        We&apos;ll walk you through installing sidecars, connecting your social
+        accounts, registering your AI provider keys, and importing starter
+        recipes. Your progress is saved as you go — you can pick up where you
+        left off.
+      </p>
+      <ul className="mt-6 list-disc space-y-1 pl-6 text-sm text-gray-600 dark:text-gray-400">
+        <li>Prerequisite checks</li>
+        <li>Optional sidecar installation</li>
+        <li>Social platform OAuth + manual tokens</li>
+        <li>BYOK (bring your own API keys)</li>
+        <li>One-click starter recipes</li>
+      </ul>
+    </section>
+  );
+}
+
+function PrereqsStep() {
+  return (
+    <section data-testid="step-prereqs">
+      <h2 className="text-2xl font-semibold">Prerequisites</h2>
+      <p className="mt-2 text-gray-600 dark:text-gray-400">
+        OpenZigs runs best on macOS (Apple Silicon) or Linux with Node ≥ 22.
+        Docker is recommended for sidecars. You can continue regardless — the
+        wizard will note what&apos;s missing.
+      </p>
+    </section>
+  );
+}
+
+function SidecarsStep() {
+  const [sidecars, setSidecars] = useState<SidecarStatus[]>([]);
+  const [supported, setSupported] = useState(true);
+  const [logs, setLogs] = useState<Record<string, string>>({});
+  const [installing, setInstalling] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    const res = await fetchJson<{
+      sidecars: SidecarStatus[];
+      supported: boolean;
+    }>("/api/admin/setup/sidecars");
+    setSidecars(res.sidecars);
+    setSupported(res.supported);
+  }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const install = useCallback(
+    async (name: string) => {
+      setInstalling(name);
+      setLogs((prev) => ({ ...prev, [name]: "" }));
+      try {
+        const res = await fetch(
+          buildUrl(`/api/admin/setup/sidecars/${name}/install`),
+          {
+            method: "POST",
+            headers: {
+              Authorization: process.env.NEXT_PUBLIC_OPENZIGS_TOKEN
+                ? `Bearer ${process.env.NEXT_PUBLIC_OPENZIGS_TOKEN}`
+                : "",
+            },
+          },
+        );
+        const reader = res.body?.getReader();
+        if (!reader) return;
+        const decoder = new TextDecoder();
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          const chunk = decoder.decode(value, { stream: true });
+          setLogs((prev) => ({ ...prev, [name]: (prev[name] ?? "") + chunk }));
+        }
+      } finally {
+        setInstalling(null);
+        void load();
+      }
+    },
+    [load],
+  );
+
+  return (
+    <section data-testid="step-sidecars">
+      <h2 className="text-2xl font-semibold">Sidecars</h2>
+      {!supported && (
+        <p className="mt-2 rounded bg-yellow-50 p-3 text-sm text-yellow-800 dark:bg-yellow-900/40 dark:text-yellow-200">
+          Your platform isn&apos;t supported for automated sidecar install. You
+          can skip this step.
+        </p>
+      )}
+      <ul className="mt-4 space-y-3">
+        {sidecars.map((s) => (
+          <li
+            key={s.name}
+            data-testid={`sidecar-${s.name}`}
+            className="flex items-start justify-between gap-4 rounded border border-gray-200 p-3 dark:border-gray-800"
+          >
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2">
+                <span className="font-medium">{s.name}</span>
+                {s.installed && (
+                  <span
+                    className="rounded bg-green-100 px-2 py-0.5 text-xs font-medium text-green-800 dark:bg-green-900 dark:text-green-200"
+                    data-installed
+                  >
+                    installed
+                  </span>
+                )}
+              </div>
+              <p className="mt-1 text-xs text-gray-600 dark:text-gray-400">
+                {s.description}
+              </p>
+              {logs[s.name] && (
+                <pre className="mt-2 max-h-40 overflow-auto rounded bg-gray-100 p-2 text-xs dark:bg-gray-800">
+                  {logs[s.name]}
+                </pre>
+              )}
+            </div>
+            <button
+              disabled={!supported || installing !== null}
+              onClick={() => void install(s.name)}
+              className="rounded bg-blue-600 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-40"
+              data-testid={`install-${s.name}`}
+            >
+              {installing === s.name
+                ? "Installing…"
+                : s.installed
+                  ? "Reinstall"
+                  : "Install"}
+            </button>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+function SocialStep() {
+  const [platforms, setPlatforms] = useState<SocialPlatform[]>([]);
+  const [tokenInput, setTokenInput] = useState<Record<string, string>>({});
+  const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  // Config state — all fields optional (user can skip)
-  const [githubToken, setGithubToken] = useState("");
-  const [telegramToken, setTelegramToken] = useState("");
-  const [discordToken, setDiscordToken] = useState("");
+  const load = useCallback(async () => {
+    const res = await fetchJson<{ platforms: SocialPlatform[] }>(
+      "/api/admin/setup/social",
+    );
+    setPlatforms(res.platforms);
+  }, []);
 
-  const currentIndex = STEPS.indexOf(step);
-
-  // Check if setup is already complete on mount
   useEffect(() => {
-    fetchJson<SetupStatus>("/api/setup/status")
-      .then((status) => {
-        if (status.setupComplete) {
-          router.push("/");
-        }
-      })
-      .catch(() => {
-        // Setup API not yet available — stay on wizard
-      });
-  }, [router]);
+    void load();
+  }, [load]);
 
-  // Load prerequisites when that step is reached
-  useEffect(() => {
-    if (step === "prereqs" && !prereqs) {
-      setLoading(true);
-      fetchJson<Prerequisites>("/api/setup/prerequisites")
-        .then(setPrereqs)
-        .catch((err) => setError(err instanceof Error ? err.message : String(err)))
-        .finally(() => setLoading(false));
+  const connectOAuth = (p: SocialPlatform) => {
+    if (!p.authorizeRoute) return;
+    window.open(
+      buildUrl(p.authorizeRoute),
+      "_blank",
+      "noopener,width=600,height=700",
+    );
+  };
+
+  const submitToken = async (p: SocialPlatform) => {
+    const token = (tokenInput[p.id] ?? "").trim();
+    if (!token) {
+      setError(`Token required for ${p.label}`);
+      return;
     }
-  }, [step, prereqs]);
-
-  const goNext = useCallback(() => {
-    const next = STEPS[currentIndex + 1];
-    if (next) setStep(next);
-  }, [currentIndex]);
-
-  const goBack = useCallback(() => {
-    const prev = STEPS[currentIndex - 1];
-    if (prev) setStep(prev);
-  }, [currentIndex]);
-
-  const saveConfig = async () => {
-    setSaving(true);
     setError(null);
+    setBusy(p.id);
     try {
-      const configUpdates: Record<string, unknown> = {};
+      await post(`/api/admin/setup/social/${p.id}/manual-token`, { token });
+      setTokenInput((prev) => ({ ...prev, [p.id]: "" }));
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(null);
+    }
+  };
 
-      if (githubToken.trim()) {
-        configUpdates.copilot = { githubToken: githubToken.trim() };
-      }
-      if (telegramToken.trim()) {
-        configUpdates.channels = {
-          ...(configUpdates.channels as Record<string, unknown> ?? {}),
-          telegram: { enabled: true, token: telegramToken.trim() },
-        };
-      }
-      if (discordToken.trim()) {
-        configUpdates.channels = {
-          ...(configUpdates.channels as Record<string, unknown> ?? {}),
-          discord: { enabled: true, token: discordToken.trim() },
-        };
-      }
+  return (
+    <section data-testid="step-social">
+      <h2 className="text-2xl font-semibold">Social platforms</h2>
+      {error && (
+        <p className="mt-2 rounded bg-red-50 p-2 text-sm text-red-700 dark:bg-red-900/40 dark:text-red-200">
+          {error}
+        </p>
+      )}
+      <ul className="mt-4 space-y-3">
+        {platforms.map((p) => (
+          <li
+            key={p.id}
+            data-testid={`social-${p.id}`}
+            data-connected={p.connected || undefined}
+            className="rounded border border-gray-200 p-3 dark:border-gray-800"
+          >
+            <div className="flex items-center justify-between">
+              <div>
+                <span className="font-medium">{p.label}</span>
+                {p.connected && (
+                  <span className="ml-2 rounded bg-green-100 px-2 py-0.5 text-xs text-green-800 dark:bg-green-900 dark:text-green-200">
+                    connected
+                  </span>
+                )}
+                <p className="mt-0.5 text-xs text-gray-600 dark:text-gray-400">
+                  {p.description}
+                </p>
+              </div>
+              <a
+                href={p.docsUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-xs text-blue-600 hover:underline"
+              >
+                Docs <ExternalLink className="inline h-3 w-3" />
+              </a>
+            </div>
 
-      if (Object.keys(configUpdates).length > 0) {
-        await fetchJson("/api/setup/config", {
-          method: "POST",
-          body: JSON.stringify(configUpdates),
-        });
-      }
+            {p.authMode === "oauth" ? (
+              <button
+                onClick={() => connectOAuth(p)}
+                className="mt-3 rounded bg-blue-600 px-3 py-1.5 text-xs font-medium text-white"
+                data-testid={`connect-${p.id}`}
+              >
+                Connect
+              </button>
+            ) : (
+              <div className="mt-3 flex gap-2">
+                <input
+                  type="password"
+                  value={tokenInput[p.id] ?? ""}
+                  onChange={(e) =>
+                    setTokenInput((prev) => ({
+                      ...prev,
+                      [p.id]: e.target.value,
+                    }))
+                  }
+                  placeholder="Paste access token"
+                  className="flex-1 rounded border border-gray-300 px-2 py-1.5 text-sm dark:border-gray-700 dark:bg-gray-800"
+                  data-testid={`token-input-${p.id}`}
+                />
+                <button
+                  disabled={busy === p.id}
+                  onClick={() => void submitToken(p)}
+                  className="rounded bg-blue-600 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-40"
+                  data-testid={`save-token-${p.id}`}
+                >
+                  {busy === p.id ? "Saving…" : "Save"}
+                </button>
+              </div>
+            )}
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
 
-      await fetchJson("/api/setup/complete", { method: "POST" });
-      goNext();
+function ByokStep() {
+  const [provider, setProvider] = useState<ByokProvider>("openai");
+  const [apiKey, setApiKey] = useState("");
+  const [testing, setTesting] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [result, setResult] = useState<ByokTestResult | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const runTest = async () => {
+    setError(null);
+    setTesting(true);
+    try {
+      const r = await post<ByokTestResult>("/api/admin/setup/byok/test", {
+        provider,
+        apiKey,
+      });
+      setResult(r);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  const save = async () => {
+    setError(null);
+    setSaving(true);
+    try {
+      await post("/api/admin/setup/byok/save", { provider, apiKey });
+      setApiKey("");
+      setResult(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -119,473 +562,174 @@ export default function SetupPage() {
     }
   };
 
-  const finishSetup = () => {
-    router.push("/");
+  return (
+    <section data-testid="step-byok">
+      <h2 className="text-2xl font-semibold">Bring your own API keys</h2>
+      <p className="mt-2 text-sm text-gray-600 dark:text-gray-400">
+        Test a provider key before saving it. Keys are stored encrypted at rest.
+      </p>
+      <div className="mt-4 flex flex-col gap-3 sm:flex-row">
+        <select
+          value={provider}
+          onChange={(e) => setProvider(e.target.value as ByokProvider)}
+          className="rounded border border-gray-300 px-2 py-2 text-sm dark:border-gray-700 dark:bg-gray-800"
+          data-testid="byok-provider"
+        >
+          {BYOK_PROVIDERS.map((p) => (
+            <option key={p} value={p}>
+              {p}
+            </option>
+          ))}
+        </select>
+        <input
+          type="password"
+          value={apiKey}
+          onChange={(e) => setApiKey(e.target.value)}
+          placeholder="API key"
+          className="flex-1 rounded border border-gray-300 px-2 py-2 text-sm dark:border-gray-700 dark:bg-gray-800"
+          data-testid="byok-key"
+        />
+        <button
+          disabled={testing || !apiKey}
+          onClick={() => void runTest()}
+          className="rounded bg-gray-700 px-3 py-2 text-sm font-medium text-white disabled:opacity-40"
+          data-testid="byok-test"
+        >
+          {testing ? "Testing…" : "Test"}
+        </button>
+        <button
+          disabled={saving || !result?.ok}
+          onClick={() => void save()}
+          className="rounded bg-blue-600 px-3 py-2 text-sm font-medium text-white disabled:opacity-40"
+          data-testid="byok-save"
+        >
+          {saving ? "Saving…" : "Save"}
+        </button>
+      </div>
+      {result && (
+        <p
+          className={`mt-3 text-sm ${result.ok ? "text-green-700 dark:text-green-300" : "text-red-700 dark:text-red-300"}`}
+          data-testid="byok-result"
+        >
+          {result.message} ({result.latencyMs}ms)
+        </p>
+      )}
+      {error && (
+        <p className="mt-2 text-sm text-red-700 dark:text-red-300">{error}</p>
+      )}
+    </section>
+  );
+}
+
+function RecipesStep() {
+  const [recipes, setRecipes] = useState<RecipeMeta[]>([]);
+  const [importing, setImporting] = useState<string | null>(null);
+  const [imported, setImported] = useState<Set<string>>(new Set());
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    void (async () => {
+      try {
+        const res = await fetchJson<{ recipes: RecipeMeta[] }>(
+          "/api/admin/setup/recipes",
+        );
+        setRecipes(res.recipes);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err));
+      }
+    })();
+  }, []);
+
+  const importRecipe = async (id: string) => {
+    setError(null);
+    setImporting(id);
+    try {
+      await post(`/api/admin/setup/recipes/${id}/import`);
+      setImported((prev) => new Set(prev).add(id));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setImporting(null);
+    }
   };
 
-  /* ── Render ───────────────────────────────────────────── */
-
   return (
-    <div className="min-h-screen bg-zinc-950 text-zinc-100 flex items-center justify-center p-4">
-      <div className="w-full max-w-2xl">
-        {/* Progress bar */}
-        <div className="mb-8">
-          <div className="flex justify-between mb-2">
-            {STEPS.map((s, i) => (
-              <div
-                key={s}
-                className={`h-1.5 flex-1 mx-0.5 rounded-full transition-colors ${
-                  i <= currentIndex ? "bg-emerald-500" : "bg-zinc-800"
-                }`}
-              />
-            ))}
-          </div>
-          <p className="text-xs text-zinc-500 text-center">
-            Step {currentIndex + 1} of {STEPS.length}
-          </p>
-        </div>
-
-        {/* Step content */}
-        <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-8 min-h-[400px] flex flex-col">
-          {step === "welcome" && <WelcomeStep />}
-          {step === "prereqs" && (
-            <PrereqsStep prereqs={prereqs} loading={loading} />
-          )}
-          {step === "auth" && (
-            <AuthStep
-              githubToken={githubToken}
-              onGithubTokenChange={setGithubToken}
-            />
-          )}
-          {step === "platform" && prereqs && (
-            <PlatformStep platform={prereqs.platform} />
-          )}
-          {step === "config" && (
-            <ConfigStep
-              telegramToken={telegramToken}
-              discordToken={discordToken}
-              onTelegramChange={setTelegramToken}
-              onDiscordChange={setDiscordToken}
-            />
-          )}
-          {step === "complete" && <CompleteStep />}
-
-          {error && (
-            <div className="mt-4 p-3 bg-red-900/30 border border-red-700 rounded text-red-300 text-sm">
-              {error}
-            </div>
-          )}
-
-          {/* Navigation */}
-          <div className="mt-auto pt-6 flex justify-between items-center">
-            <div>
-              {currentIndex > 0 && step !== "complete" && (
-                <button
-                  onClick={goBack}
-                  className="flex items-center gap-1 text-zinc-400 hover:text-zinc-200 text-sm transition-colors"
-                >
-                  <ChevronLeft size={16} /> Back
-                </button>
-              )}
-            </div>
-
-            <div className="flex items-center gap-3">
-              {step !== "complete" && step !== "welcome" && step !== "config" && (
-                <button
-                  onClick={goNext}
-                  className="flex items-center gap-1 text-zinc-500 hover:text-zinc-300 text-sm transition-colors"
-                >
-                  <SkipForward size={14} /> Skip
-                </button>
-              )}
-
-              {step === "welcome" && (
-                <button
-                  onClick={goNext}
-                  className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-500 text-white px-6 py-2.5 rounded-lg font-medium transition-colors"
-                >
-                  Get Started <ChevronRight size={16} />
-                </button>
-              )}
-
-              {step === "prereqs" && (
-                <button
-                  onClick={goNext}
-                  className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-500 text-white px-6 py-2.5 rounded-lg font-medium transition-colors"
-                >
-                  Continue <ChevronRight size={16} />
-                </button>
-              )}
-
-              {step === "auth" && (
-                <button
-                  onClick={goNext}
-                  className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-500 text-white px-6 py-2.5 rounded-lg font-medium transition-colors"
-                >
-                  Continue <ChevronRight size={16} />
-                </button>
-              )}
-
-              {step === "platform" && (
-                <button
-                  onClick={goNext}
-                  className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-500 text-white px-6 py-2.5 rounded-lg font-medium transition-colors"
-                >
-                  Continue <ChevronRight size={16} />
-                </button>
-              )}
-
-              {step === "config" && (
-                <button
-                  onClick={saveConfig}
-                  disabled={saving}
-                  className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white px-6 py-2.5 rounded-lg font-medium transition-colors"
-                >
-                  {saving ? (
-                    <><Loader2 size={16} className="animate-spin" /> Saving...</>
-                  ) : (
-                    <>Finish Setup <ChevronRight size={16} /></>
-                  )}
-                </button>
-              )}
-
-              {step === "complete" && (
-                <button
-                  onClick={finishSetup}
-                  className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-500 text-white px-6 py-2.5 rounded-lg font-medium transition-colors"
-                >
-                  Open OpenZigs <ChevronRight size={16} />
-                </button>
-              )}
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-/* ── Step Components ───────────────────────────────────────── */
-
-function WelcomeStep() {
-  return (
-    <div className="flex-1 flex flex-col items-center justify-center text-center">
-      <h1 className="text-3xl font-bold mb-3">Welcome to OpenZigs</h1>
-      <p className="text-zinc-400 max-w-md">
-        Let&apos;s get your local AI agent platform set up. This wizard will check
-        prerequisites, configure authentication, and help you get started.
+    <section data-testid="step-recipes">
+      <h2 className="text-2xl font-semibold">Starter recipes</h2>
+      <p className="mt-2 text-sm text-gray-600 dark:text-gray-400">
+        One-click templates to get you started. You can customize them later.
       </p>
-      <p className="text-zinc-500 text-sm mt-4">
-        You can skip any step and configure everything later in the Admin panel.
-      </p>
-    </div>
-  );
-}
-
-function PrereqsStep({ prereqs, loading }: { prereqs: Prerequisites | null; loading: boolean }) {
-  if (loading || !prereqs) {
-    return (
-      <div className="flex-1 flex items-center justify-center">
-        <Loader2 size={32} className="animate-spin text-zinc-400" />
-        <span className="ml-3 text-zinc-400">Checking prerequisites...</span>
-      </div>
-    );
-  }
-
-  return (
-    <div className="flex-1">
-      <h2 className="text-2xl font-bold mb-2">Prerequisites</h2>
-      <p className="text-zinc-400 mb-6 text-sm">
-        Checking your system for required dependencies.
-      </p>
-
-      <div className="space-y-3">
-        <PrereqRow
-          label="Node.js"
-          ok={prereqs.node.ok}
-          detail={`${prereqs.node.version} (requires ${prereqs.node.required})`}
-        />
-        <PrereqRow
-          label="Docker"
-          ok={prereqs.docker.available}
-          detail={prereqs.docker.version ?? "Not found — optional, needed for sidecars"}
-          optional
-        />
-        <PrereqRow
-          label="Git"
-          ok={prereqs.git.available}
-          detail={prereqs.git.version ?? "Not found — optional, needed for memory"}
-          optional
-        />
-        <PrereqRow
-          label="Chrome/Chromium"
-          ok={!!prereqs.platform.chromePath}
-          detail={prereqs.platform.chromePath ?? "Not found — optional, needed for browser automation"}
-          optional
-        />
-
-        <div className="mt-6 p-4 bg-zinc-800/50 rounded-lg">
-          <h3 className="text-sm font-medium text-zinc-300 mb-1">Platform</h3>
-          <p className="text-sm text-zinc-400">
-            {prereqs.platform.os} / {prereqs.platform.arch}
-            {prereqs.platform.sidecarsSupported && (
-              <span className="ml-2 text-emerald-400">(Apple Silicon — all sidecars supported)</span>
-            )}
-            {!prereqs.platform.sidecarsSupported && (
-              <span className="ml-2 text-amber-400">(Native AI sidecars unavailable — core agent works fully)</span>
-            )}
-          </p>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function PrereqRow({ label, ok, detail, optional }: {
-  label: string;
-  ok: boolean;
-  detail: string;
-  optional?: boolean;
-}) {
-  return (
-    <div className="flex items-start gap-3 p-3 bg-zinc-800/30 rounded-lg">
-      {ok ? (
-        <CheckCircle2 size={20} className="text-emerald-400 mt-0.5 flex-shrink-0" />
-      ) : (
-        <AlertCircle
-          size={20}
-          className={`mt-0.5 flex-shrink-0 ${optional ? "text-amber-400" : "text-red-400"}`}
-        />
+      {error && (
+        <p className="mt-2 rounded bg-red-50 p-2 text-sm text-red-700 dark:bg-red-900/40 dark:text-red-200">
+          {error}
+        </p>
       )}
-      <div>
-        <span className="font-medium text-zinc-200">{label}</span>
-        {optional && !ok && (
-          <span className="ml-2 text-xs text-zinc-500">(optional)</span>
-        )}
-        <p className="text-sm text-zinc-400 mt-0.5">{detail}</p>
-      </div>
-    </div>
-  );
-}
-
-function AuthStep({
-  githubToken,
-  onGithubTokenChange,
-}: {
-  githubToken: string;
-  onGithubTokenChange: (v: string) => void;
-}) {
-  return (
-    <div className="flex-1">
-      <h2 className="text-2xl font-bold mb-2">Authentication</h2>
-      <p className="text-zinc-400 mb-6 text-sm">
-        Configure GitHub Copilot authentication. You can skip this and use device
-        auth flow later, or set it up via{" "}
-        <code className="text-zinc-300 bg-zinc-800 px-1 rounded">.env</code> file.
-      </p>
-
-      <div className="space-y-4">
-        <div>
-          <label
-            htmlFor="github-token"
-            className="block text-sm font-medium text-zinc-300 mb-1"
+      <ul className="mt-4 space-y-3">
+        {recipes.map((r) => (
+          <li
+            key={r.id}
+            data-testid={`recipe-${r.id}`}
+            className="flex items-start justify-between gap-4 rounded border border-gray-200 p-3 dark:border-gray-800"
           >
-            GitHub Token{" "}
-            <span className="text-zinc-500 font-normal">(optional)</span>
-          </label>
-          <input
-            id="github-token"
-            type="password"
-            value={githubToken}
-            onChange={(e) => onGithubTokenChange(e.target.value)}
-            placeholder="ghp_..."
-            className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-4 py-2.5 text-zinc-100 placeholder-zinc-600 focus:outline-none focus:ring-2 focus:ring-emerald-500/50 focus:border-emerald-500"
-          />
-          <p className="text-xs text-zinc-500 mt-1">
-            Leave blank to use device auth flow (recommended for personal use).
-          </p>
-        </div>
-
-        <div className="p-4 bg-blue-900/20 border border-blue-800/50 rounded-lg">
-          <p className="text-sm text-blue-300">
-            <strong>Device Auth Flow:</strong> If no token is provided, OpenZigs
-            will show a device code when you start a chat session. Visit{" "}
-            <a
-              href="https://github.com/login/device"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="underline inline-flex items-center gap-1"
+            <div>
+              <span className="font-medium">{r.name}</span>
+              <span className="ml-2 text-xs text-gray-500">
+                {r.stageCount} stage{r.stageCount === 1 ? "" : "s"}
+              </span>
+              <p className="mt-1 text-xs text-gray-600 dark:text-gray-400">
+                {r.description}
+              </p>
+            </div>
+            <button
+              disabled={importing !== null || imported.has(r.id)}
+              onClick={() => void importRecipe(r.id)}
+              className="rounded bg-blue-600 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-40"
+              data-testid={`import-${r.id}`}
             >
-              github.com/login/device <ExternalLink size={12} />
-            </a>{" "}
-            and enter the code to authenticate.
-          </p>
-        </div>
-      </div>
-    </div>
+              {imported.has(r.id)
+                ? "Imported"
+                : importing === r.id
+                  ? "Importing…"
+                  : "Import"}
+            </button>
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }
 
-function PlatformStep({ platform }: {
-  platform: Prerequisites["platform"];
-}) {
-  const isMac = platform.os === "darwin";
-  const isWindows = platform.os === "win32";
-  const isAppleSilicon = isMac && platform.arch === "arm64";
-
-  return (
-    <div className="flex-1">
-      <h2 className="text-2xl font-bold mb-2">Platform Guide</h2>
-      <p className="text-zinc-400 mb-6 text-sm">
-        Feature availability based on your platform.
-      </p>
-
-      <div className="space-y-4">
-        <FeatureCard
-          title="Core Agent"
-          available
-          description="Text chat, tool execution, task engine, scheduling — fully supported."
-        />
-        <FeatureCard
-          title="Docker Sidecars"
-          available
-          description="MCP server sidecars run in Docker containers."
-        />
-        <FeatureCard
-          title="Browser Automation"
-          available={!!platform.chromePath}
-          description={
-            platform.chromePath
-              ? "Chrome detected — web search, screenshots, navigation supported."
-              : "Install Chrome or Chromium for browser automation features."
-          }
-        />
-        <FeatureCard
-          title="Native AI Sidecars"
-          available={isAppleSilicon}
-          description={
-            isAppleSilicon
-              ? "Apple Silicon detected — Voice Lab, Image Gen, Music Studio available."
-              : isWindows
-              ? "Requires Apple Silicon Mac. Voice Lab, Image Gen, Music Studio are not available on Windows."
-              : "Requires Apple Silicon Mac. These features are not available on Intel Macs."
-          }
-        />
-      </div>
-    </div>
-  );
-}
-
-function FeatureCard({ title, available, description }: {
-  title: string;
-  available: boolean;
-  description: string;
-}) {
-  return (
-    <div className={`p-4 rounded-lg border ${
-      available
-        ? "bg-emerald-900/10 border-emerald-800/30"
-        : "bg-zinc-800/30 border-zinc-700/50"
-    }`}>
-      <div className="flex items-center gap-2 mb-1">
-        {available ? (
-          <CheckCircle2 size={16} className="text-emerald-400" />
-        ) : (
-          <AlertCircle size={16} className="text-zinc-500" />
-        )}
-        <span className="font-medium text-zinc-200">{title}</span>
-      </div>
-      <p className="text-sm text-zinc-400 ml-6">{description}</p>
-    </div>
-  );
-}
-
-function ConfigStep({
-  telegramToken,
-  discordToken,
-  onTelegramChange,
-  onDiscordChange,
+function CompleteStep({
+  onReset,
+  onGoToApp,
 }: {
-  telegramToken: string;
-  discordToken: string;
-  onTelegramChange: (v: string) => void;
-  onDiscordChange: (v: string) => void;
+  onReset: () => void;
+  onGoToApp: () => void;
 }) {
   return (
-    <div className="flex-1">
-      <h2 className="text-2xl font-bold mb-2">Channels</h2>
-      <p className="text-zinc-400 mb-6 text-sm">
-        Optionally configure messaging channels. You can add these later in the
-        Admin panel or via{" "}
-        <code className="text-zinc-300 bg-zinc-800 px-1 rounded">.env</code>.
+    <section data-testid="step-complete" className="text-center">
+      <CheckCircle2 className="mx-auto h-12 w-12 text-green-600" />
+      <h2 className="mt-4 text-2xl font-semibold">You&apos;re all set</h2>
+      <p className="mt-2 text-gray-600 dark:text-gray-400">
+        Your workspace is configured. You can revisit this wizard any time from
+        the admin panel.
       </p>
-
-      <div className="space-y-4">
-        <div>
-          <label
-            htmlFor="telegram-token"
-            className="block text-sm font-medium text-zinc-300 mb-1"
-          >
-            Telegram Bot Token{" "}
-            <span className="text-zinc-500 font-normal">(optional)</span>
-          </label>
-          <input
-            id="telegram-token"
-            type="password"
-            value={telegramToken}
-            onChange={(e) => onTelegramChange(e.target.value)}
-            placeholder="123456:ABC-DEF..."
-            className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-4 py-2.5 text-zinc-100 placeholder-zinc-600 focus:outline-none focus:ring-2 focus:ring-emerald-500/50 focus:border-emerald-500"
-          />
-        </div>
-
-        <div>
-          <label
-            htmlFor="discord-token"
-            className="block text-sm font-medium text-zinc-300 mb-1"
-          >
-            Discord Bot Token{" "}
-            <span className="text-zinc-500 font-normal">(optional)</span>
-          </label>
-          <input
-            id="discord-token"
-            type="password"
-            value={discordToken}
-            onChange={(e) => onDiscordChange(e.target.value)}
-            placeholder="MTIz..."
-            className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-4 py-2.5 text-zinc-100 placeholder-zinc-600 focus:outline-none focus:ring-2 focus:ring-emerald-500/50 focus:border-emerald-500"
-          />
-        </div>
-
-        <div className="p-4 bg-zinc-800/50 rounded-lg">
-          <p className="text-sm text-zinc-400">
-            All fields are optional. You can configure these and many more settings
-            in the{" "}
-            <strong className="text-zinc-300">Admin panel</strong> after setup, or
-            by editing{" "}
-            <code className="text-zinc-300 bg-zinc-800 px-1 rounded">
-              ~/.openzigs/config.json
-            </code>{" "}
-            or your{" "}
-            <code className="text-zinc-300 bg-zinc-800 px-1 rounded">.env</code>{" "}
-            file directly.
-          </p>
-        </div>
+      <div className="mt-6 flex justify-center gap-3">
+        <button
+          onClick={onGoToApp}
+          className="rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white"
+          data-testid="go-to-app"
+        >
+          Go to dashboard
+        </button>
+        <button
+          onClick={() => void onReset()}
+          className="rounded border border-gray-300 px-4 py-2 text-sm dark:border-gray-700"
+          data-testid="reset-wizard"
+        >
+          Reset wizard
+        </button>
       </div>
-    </div>
-  );
-}
-
-function CompleteStep() {
-  return (
-    <div className="flex-1 flex flex-col items-center justify-center text-center">
-      <CheckCircle2 size={48} className="text-emerald-400 mb-4" />
-      <h2 className="text-2xl font-bold mb-2">Setup Complete</h2>
-      <p className="text-zinc-400 max-w-md">
-        OpenZigs is ready to use. You can always change settings in the{" "}
-        <strong className="text-zinc-300">Admin panel</strong> or re-run this wizard
-        from Admin → Reset Setup Wizard.
-      </p>
-    </div>
+    </section>
   );
 }
