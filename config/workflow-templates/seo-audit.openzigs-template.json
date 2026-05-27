@@ -1,0 +1,81 @@
+{
+  "name": "SEO Audit",
+  "description": "Audit a target URL: extract keywords, scan competitors, draft prioritized action items.",
+  "stages": [
+    {
+      "type": "prompt",
+      "name": "Fetch & extract",
+      "prompt": "Fetch the supplied URL. Extract title, meta description, H1-H3, and primary keywords. Return as JSON.",
+      "tools": ["browser-navigate", "web-search"]
+    },
+    {
+      "type": "prompt",
+      "name": "Competitor scan",
+      "prompt": "Identify the top 5 ranking competitors for the primary keyword from the previous stage. Summarise what each does better.",
+      "tools": ["web-search"]
+    },
+    {
+      "type": "prompt",
+      "name": "Action items",
+      "prompt": "Produce a prioritized list of SEO action items (P0/P1/P2) the page needs to close the gap.",
+      "tools": null
+    }
+  ],
+  "graphLayout": {
+    "nodes": [
+      {
+        "id": "s1",
+        "type": "promptStage",
+        "position": { "x": 80, "y": 60 },
+        "data": {
+          "name": "Fetch & extract",
+          "prompt": "Fetch the supplied URL. Extract title, meta description, H1-H3, and primary keywords. Return as JSON.",
+          "tools": ["browser-navigate", "web-search"],
+          "model": null,
+          "timeoutSeconds": 300
+        }
+      },
+      {
+        "id": "s2",
+        "type": "promptStage",
+        "position": { "x": 80, "y": 220 },
+        "data": {
+          "name": "Competitor scan",
+          "prompt": "Identify the top 5 ranking competitors for the primary keyword from the previous stage. Summarise what each does better.",
+          "tools": ["web-search"],
+          "model": null,
+          "timeoutSeconds": 600
+        }
+      },
+      {
+        "id": "s3",
+        "type": "promptStage",
+        "position": { "x": 80, "y": 380 },
+        "data": {
+          "name": "Action items",
+          "prompt": "Produce a prioritized list of SEO action items (P0/P1/P2) the page needs to close the gap.",
+          "tools": null,
+          "model": null,
+          "timeoutSeconds": 300
+        }
+      }
+    ],
+    "edges": [
+      {
+        "id": "e1",
+        "source": "s1",
+        "target": "s2",
+        "type": "smoothstep",
+        "animated": true
+      },
+      {
+        "id": "e2",
+        "source": "s2",
+        "target": "s3",
+        "type": "smoothstep",
+        "animated": true
+      }
+    ],
+    "viewport": { "x": 0, "y": 0, "zoom": 1 }
+  }
+}

@@ -1,0 +1,119 @@
+{
+  "name": "Social Cross-Post",
+  "description": "Compose one message, then adapt it for Twitter, LinkedIn, and Reddit in parallel.",
+  "stages": [
+    {
+      "type": "prompt",
+      "name": "Draft core message",
+      "prompt": "Write a 280-character core message about the supplied topic. Neutral tone, no emojis.",
+      "tools": null
+    },
+    {
+      "type": "prompt",
+      "name": "Adapt for Twitter",
+      "prompt": "Adapt the core message for Twitter: punchy, hashtag-light, 280 chars max.",
+      "tools": ["twitter-create-tweet"]
+    },
+    {
+      "type": "prompt",
+      "name": "Adapt for LinkedIn",
+      "prompt": "Adapt the core message for LinkedIn: professional tone, 1-2 short paragraphs, one CTA.",
+      "tools": ["linkedin-create-post"]
+    },
+    {
+      "type": "prompt",
+      "name": "Adapt for Reddit",
+      "prompt": "Adapt the core message for r/programming style: conversational, no marketing fluff, no hashtags.",
+      "tools": ["reddit-submit-post"]
+    }
+  ],
+  "graphLayout": {
+    "nodes": [
+      {
+        "id": "core",
+        "type": "promptStage",
+        "position": { "x": 80, "y": 60 },
+        "data": {
+          "name": "Draft core message",
+          "prompt": "Write a 280-character core message about the supplied topic. Neutral tone, no emojis.",
+          "tools": null,
+          "model": null,
+          "timeoutSeconds": 180
+        }
+      },
+      {
+        "id": "fanout",
+        "type": "parallelGroup",
+        "position": { "x": 80, "y": 220 },
+        "data": { "name": "Fan-out to platforms", "branchCount": 3 }
+      },
+      {
+        "id": "tw",
+        "type": "promptStage",
+        "position": { "x": -160, "y": 380 },
+        "data": {
+          "name": "Adapt for Twitter",
+          "prompt": "Adapt the core message for Twitter: punchy, hashtag-light, 280 chars max.",
+          "tools": ["twitter-create-tweet"],
+          "model": null,
+          "timeoutSeconds": 180
+        }
+      },
+      {
+        "id": "li",
+        "type": "promptStage",
+        "position": { "x": 80, "y": 380 },
+        "data": {
+          "name": "Adapt for LinkedIn",
+          "prompt": "Adapt the core message for LinkedIn: professional tone, 1-2 short paragraphs, one CTA.",
+          "tools": ["linkedin-create-post"],
+          "model": null,
+          "timeoutSeconds": 180
+        }
+      },
+      {
+        "id": "rd",
+        "type": "promptStage",
+        "position": { "x": 320, "y": 380 },
+        "data": {
+          "name": "Adapt for Reddit",
+          "prompt": "Adapt the core message for r/programming style: conversational, no marketing fluff, no hashtags.",
+          "tools": ["reddit-submit-post"],
+          "model": null,
+          "timeoutSeconds": 180
+        }
+      }
+    ],
+    "edges": [
+      {
+        "id": "e-core-fan",
+        "source": "core",
+        "target": "fanout",
+        "type": "smoothstep",
+        "animated": true
+      },
+      {
+        "id": "e-fan-tw",
+        "source": "fanout",
+        "target": "tw",
+        "type": "smoothstep",
+        "animated": true
+      },
+      {
+        "id": "e-fan-li",
+        "source": "fanout",
+        "target": "li",
+        "type": "smoothstep",
+        "animated": true
+      },
+      {
+        "id": "e-fan-rd",
+        "source": "fanout",
+        "target": "rd",
+        "type": "smoothstep",
+        "animated": true
+      }
+    ],
+    "viewport": { "x": 0, "y": 0, "zoom": 1 }
+  }
+}

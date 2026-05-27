@@ -1,0 +1,56 @@
+{
+  "name": "Director Storyboard",
+  "description": "Generate a complete Director storyboard from a single creative brief.",
+  "stages": [
+    {
+      "type": "prompt",
+      "name": "Outline scenes",
+      "prompt": "Given the creative brief, produce a numbered list of 4-6 scenes. Each scene needs a setting, mood, and key action.",
+      "tools": null
+    },
+    {
+      "type": "prompt",
+      "name": "Generate storyboard",
+      "prompt": "For each scene from the previous stage, write a Director storyboard entry with shot type, camera move, and 1-line VO.",
+      "tools": ["director-create-storyboard"]
+    }
+  ],
+  "graphLayout": {
+    "nodes": [
+      {
+        "id": "n1",
+        "type": "promptStage",
+        "position": { "x": 80, "y": 80 },
+        "data": {
+          "name": "Outline scenes",
+          "prompt": "Given the creative brief, produce a numbered list of 4-6 scenes. Each scene needs a setting, mood, and key action.",
+          "tools": null,
+          "model": null,
+          "timeoutSeconds": 300
+        }
+      },
+      {
+        "id": "n2",
+        "type": "promptStage",
+        "position": { "x": 80, "y": 260 },
+        "data": {
+          "name": "Generate storyboard",
+          "prompt": "For each scene from the previous stage, write a Director storyboard entry with shot type, camera move, and 1-line VO.",
+          "tools": ["director-create-storyboard"],
+          "model": null,
+          "timeoutSeconds": 600
+        }
+      }
+    ],
+    "edges": [
+      {
+        "id": "e1-2",
+        "source": "n1",
+        "target": "n2",
+        "type": "smoothstep",
+        "animated": true
+      }
+    ],
+    "viewport": { "x": 0, "y": 0, "zoom": 1 }
+  }
+}

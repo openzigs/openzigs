@@ -1,0 +1,106 @@
+{
+  "name": "Lead Nurture",
+  "description": "Draft a 3-step nurture sequence for a captured lead based on their profile and pain points.",
+  "stages": [
+    {
+      "type": "prompt",
+      "name": "Profile lead",
+      "prompt": "Given the lead's name, company, and stated interest, summarise their likely role, top 3 pain points, and the channel they're most likely to engage on.",
+      "tools": null
+    },
+    {
+      "type": "prompt",
+      "name": "Email 1 — Introduce value",
+      "prompt": "Write a 120-word intro email tied to the lead's top pain point. End with a soft CTA to a relevant resource.",
+      "tools": null
+    },
+    {
+      "type": "prompt",
+      "name": "Email 2 — Case study",
+      "prompt": "Write a 150-word follow-up email referencing a relevant case study. Include one quantified outcome.",
+      "tools": null
+    },
+    {
+      "type": "prompt",
+      "name": "Email 3 — Direct ask",
+      "prompt": "Write an 80-word final email with a clear meeting request. Two suggested times, no marketing language.",
+      "tools": null
+    }
+  ],
+  "graphLayout": {
+    "nodes": [
+      {
+        "id": "p1",
+        "type": "promptStage",
+        "position": { "x": 80, "y": 60 },
+        "data": {
+          "name": "Profile lead",
+          "prompt": "Given the lead's name, company, and stated interest, summarise their likely role, top 3 pain points, and the channel they're most likely to engage on.",
+          "tools": null,
+          "model": null,
+          "timeoutSeconds": 300
+        }
+      },
+      {
+        "id": "e1",
+        "type": "promptStage",
+        "position": { "x": 80, "y": 220 },
+        "data": {
+          "name": "Email 1 — Introduce value",
+          "prompt": "Write a 120-word intro email tied to the lead's top pain point. End with a soft CTA to a relevant resource.",
+          "tools": null,
+          "model": null,
+          "timeoutSeconds": 300
+        }
+      },
+      {
+        "id": "e2",
+        "type": "promptStage",
+        "position": { "x": 80, "y": 380 },
+        "data": {
+          "name": "Email 2 — Case study",
+          "prompt": "Write a 150-word follow-up email referencing a relevant case study. Include one quantified outcome.",
+          "tools": null,
+          "model": null,
+          "timeoutSeconds": 300
+        }
+      },
+      {
+        "id": "e3",
+        "type": "promptStage",
+        "position": { "x": 80, "y": 540 },
+        "data": {
+          "name": "Email 3 — Direct ask",
+          "prompt": "Write an 80-word final email with a clear meeting request. Two suggested times, no marketing language.",
+          "tools": null,
+          "model": null,
+          "timeoutSeconds": 300
+        }
+      }
+    ],
+    "edges": [
+      {
+        "id": "ed1",
+        "source": "p1",
+        "target": "e1",
+        "type": "smoothstep",
+        "animated": true
+      },
+      {
+        "id": "ed2",
+        "source": "e1",
+        "target": "e2",
+        "type": "smoothstep",
+        "animated": true
+      },
+      {
+        "id": "ed3",
+        "source": "e2",
+        "target": "e3",
+        "type": "smoothstep",
+        "animated": true
+      }
+    ],
+    "viewport": { "x": 0, "y": 0, "zoom": 1 }
+  }
+}
