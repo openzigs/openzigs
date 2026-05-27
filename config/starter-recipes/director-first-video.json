@@ -1,0 +1,31 @@
+{
+  "$schema": "openzigs-template-v1",
+  "version": 1,
+  "exportedAt": "2026-08-01T00:00:00.000Z",
+  "exportedFrom": "openzigs-starter",
+  "prompt": {
+    "name": "Director: First Video",
+    "description": "Generate your first short-form video from a single sentence idea. Writes a script, picks B-roll, and renders.",
+    "template": "Create a 30-second vertical video about: {{topic}}.\n\nAudience: {{audience}}\nTone: {{tone}}\n\nWrite a tight script, choose b-roll, and render the video.",
+    "tags": ["starter", "director", "video"],
+    "preferredTools": ["web-search", "image-search", "render-video"],
+    "stages": [
+      {
+        "name": "Write script",
+        "prompt": "Write a 30-second vertical video script for the topic provided. 5–7 punchy beats. No filler.",
+        "tools": ["web-search"]
+      },
+      {
+        "name": "Choose visuals",
+        "prompt": "For each beat, suggest one b-roll shot description and one on-screen caption.",
+        "tools": ["image-search"]
+      },
+      {
+        "name": "Render",
+        "prompt": "Assemble the script and visuals into a 9:16 video at 30fps with captions.",
+        "tools": ["render-video"]
+      }
+    ]
+  },
+  "placeholders": []
+}
