@@ -20,9 +20,9 @@ const CARDS: CardSpec[] = [
     key: "linkedin",
     label: "LinkedIn",
     toolName: "linkedin-profile-analytics",
-    scopeLabel: "Organization URN",
-    scopeField: "org_urn",
-    scopePlaceholder: "urn:li:organization:12345",
+    scopeLabel: "Organization ID",
+    scopeField: "organization_id",
+    scopePlaceholder: "12345 or urn:li:organization:12345",
     note: "Org-owned pages only. Personal-profile analytics are not exposed via API.",
   },
   {
@@ -38,9 +38,9 @@ const CARDS: CardSpec[] = [
     key: "twitter",
     label: "Twitter / X",
     toolName: "twitter-account-analytics",
-    scopeLabel: "User ID",
-    scopeField: "user_id",
-    scopePlaceholder: "44196397",
+    scopeLabel: "Username",
+    scopeField: "username",
+    scopePlaceholder: "jack",
     note: "Free tier returns public_metrics only (followers, tweets). Detailed impressions require paid tier.",
   },
 ];
@@ -60,14 +60,15 @@ function PlatformCard({ spec }: { spec: CardSpec }) {
     setError(null);
     setData(null);
     try {
-      const result = await fetchJson<{ result?: { text?: string } }>(
-        `/api/admin/tools/${spec.toolName}/invoke`,
-        {
-          method: "POST",
-          body: JSON.stringify({ [spec.scopeField]: scope.trim() }),
-        },
-      );
-      const text = result?.result?.text;
+      const result = await fetchJson<{
+        ok?: boolean;
+        tool?: string;
+        text?: string;
+      }>(`/api/admin/tools/${spec.toolName}/invoke`, {
+        method: "POST",
+        body: JSON.stringify({ [spec.scopeField]: scope.trim() }),
+      });
+      const text = result?.text;
       if (typeof text === "string") {
         try {
           setData(JSON.parse(text));
@@ -118,11 +119,73 @@ function PlatformCard({ spec }: { spec: CardSpec }) {
           {error}
         </p>
       )}
-      {data !== null && (
-        <pre className="max-h-48 overflow-auto rounded bg-muted/40 p-2 text-[11px]">
+      {data !== null && <InsightsResult data={data} />}
+    </div>
+  );
+}
+
+function formatMetricLabel(key: string): string {
+  return key.replace(/[_-]+/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+function formatMetricValue(value: number | string | boolean): string {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value.toLocaleString();
+  }
+  return String(value);
+}
+
+function isPrimitive(v: unknown): v is number | string | boolean {
+  return (
+    typeof v === "number" || typeof v === "string" || typeof v === "boolean"
+  );
+}
+
+function extractMetricTiles(
+  data: unknown,
+): Array<{ key: string; value: number | string | boolean }> {
+  if (!data || typeof data !== "object" || Array.isArray(data)) return [];
+  const tiles: Array<{ key: string; value: number | string | boolean }> = [];
+  for (const [k, v] of Object.entries(data as Record<string, unknown>)) {
+    if (isPrimitive(v)) {
+      tiles.push({ key: k, value: v });
+    }
+  }
+  return tiles;
+}
+
+function InsightsResult({ data }: { data: unknown }) {
+  const tiles = extractMetricTiles(data);
+  return (
+    <div className="space-y-2" data-testid="insights-result">
+      {tiles.length > 0 && (
+        <div
+          className="grid grid-cols-2 gap-2"
+          data-testid="insights-metric-tiles"
+        >
+          {tiles.map((t) => (
+            <div
+              key={t.key}
+              className="rounded-md border border-border bg-muted/30 p-2"
+            >
+              <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                {formatMetricLabel(t.key)}
+              </div>
+              <div className="text-sm font-semibold tabular-nums">
+                {formatMetricValue(t.value)}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+      <details className="text-[11px]">
+        <summary className="cursor-pointer text-muted-foreground">
+          Raw response
+        </summary>
+        <pre className="mt-1 max-h-48 overflow-auto rounded bg-muted/40 p-2">
           {typeof data === "string" ? data : JSON.stringify(data, null, 2)}
         </pre>
-      )}
+      </details>
     </div>
   );
 }

@@ -51,13 +51,15 @@ describe("PlatformInsightsPanel", () => {
     expect(mocked).not.toHaveBeenCalled();
   });
 
-  it("calls the admin invoke endpoint with the scope field and renders JSON", async () => {
+  it("calls the admin invoke endpoint with the scope field and renders metric tiles", async () => {
     mocked.mockResolvedValueOnce({
-      result: { text: JSON.stringify({ followers: 42 }) },
+      ok: true,
+      tool: "twitter-account-analytics",
+      text: JSON.stringify({ followers: 42, tweets: 100 }),
     });
     render(<PlatformInsightsPanel />);
-    const input = screen.getByLabelText(/Twitter \/ X User ID/i);
-    fireEvent.change(input, { target: { value: "44196397" } });
+    const input = screen.getByLabelText(/Twitter \/ X Username/i);
+    fireEvent.change(input, { target: { value: "jack" } });
     const twitterCard = screen.getByTestId("insights-card-twitter");
     const btn = twitterCard.querySelector("button");
     fireEvent.click(btn!);
@@ -66,15 +68,40 @@ describe("PlatformInsightsPanel", () => {
         "/api/admin/tools/twitter-account-analytics/invoke",
         expect.objectContaining({
           method: "POST",
-          body: JSON.stringify({ user_id: "44196397" }),
+          body: JSON.stringify({ username: "jack" }),
         }),
       );
     });
-    const pre = await screen.findByText(
-      (_, el) =>
-        el?.tagName === "PRE" && (el?.textContent ?? "").includes("followers"),
-    );
-    expect(pre).toBeInTheDocument();
+    const tiles = await screen.findByTestId("insights-metric-tiles");
+    expect(tiles).toHaveTextContent("Followers");
+    expect(tiles).toHaveTextContent("42");
+    expect(tiles).toHaveTextContent("Tweets");
+  });
+
+  it("sends organization_id (not org_urn) for LinkedIn so Zod does not strip it", async () => {
+    mocked.mockResolvedValueOnce({
+      ok: true,
+      tool: "linkedin-profile-analytics",
+      text: JSON.stringify({ followerCount: 1234 }),
+    });
+    render(<PlatformInsightsPanel />);
+    const input = screen.getByLabelText(/LinkedIn Organization ID/i);
+    fireEvent.change(input, {
+      target: { value: "urn:li:organization:12345" },
+    });
+    const card = screen.getByTestId("insights-card-linkedin");
+    fireEvent.click(card.querySelector("button")!);
+    await waitFor(() => {
+      expect(mocked).toHaveBeenCalledWith(
+        "/api/admin/tools/linkedin-profile-analytics/invoke",
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify({
+            organization_id: "urn:li:organization:12345",
+          }),
+        }),
+      );
+    });
   });
 
   it("surfaces backend errors", async () => {
