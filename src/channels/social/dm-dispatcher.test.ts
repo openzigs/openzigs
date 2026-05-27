@@ -260,4 +260,42 @@ describe("DmDispatcher", () => {
       );
     });
   });
+
+  describe("pinterest & tiktok (unsupported reply / DM)", () => {
+    it("rejects DM send for pinterest (no DM API)", async () => {
+      const mgr = createMockManager();
+      const dispatcher = new DmDispatcher({ localServerManager: mgr });
+      const sendDm = dispatcher.createDmSender();
+      await expect(sendDm("pinterest", "user_1", "hi")).rejects.toThrow(
+        /DM sending not supported/i,
+      );
+    });
+
+    it("rejects DM send for tiktok (no DM API)", async () => {
+      const mgr = createMockManager();
+      const dispatcher = new DmDispatcher({ localServerManager: mgr });
+      const sendDm = dispatcher.createDmSender();
+      await expect(sendDm("tiktok", "user_1", "hi")).rejects.toThrow(
+        /DM sending not supported/i,
+      );
+    });
+
+    it("rejects comment-reply for pinterest (no public reply endpoint yet)", async () => {
+      const mgr = createMockManager();
+      const dispatcher = new DmDispatcher({ localServerManager: mgr });
+      const replier = dispatcher.createCommentReplier();
+      await expect(replier("pinterest", "c_1", "hi", "p_1")).rejects.toThrow(
+        /Comment reply not supported/i,
+      );
+    });
+
+    it("rejects comment-reply for tiktok (no public reply endpoint yet)", async () => {
+      const mgr = createMockManager();
+      const dispatcher = new DmDispatcher({ localServerManager: mgr });
+      const replier = dispatcher.createCommentReplier();
+      await expect(replier("tiktok", "c_1", "hi", "p_1")).rejects.toThrow(
+        /Comment reply not supported/i,
+      );
+    });
+  });
 });
