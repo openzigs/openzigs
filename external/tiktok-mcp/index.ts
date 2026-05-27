@@ -34,24 +34,38 @@ function loadTokens() {
       const data = JSON.parse(readFileSync(TOKEN_FILE, "utf-8"));
       if (data.access_token) ACCESS_TOKEN = data.access_token;
       if (data.refresh_token) REFRESH_TOKEN = data.refresh_token;
-    } catch { /* use env fallback */ }
+    } catch {
+      /* use env fallback */
+    }
   }
 }
 
 function saveTokens() {
   try {
-    writeFileSync(TOKEN_FILE, JSON.stringify({
-      access_token: ACCESS_TOKEN,
-      refresh_token: REFRESH_TOKEN,
-      updated_at: new Date().toISOString(),
-    }, null, 2), { mode: 0o600 });
-  } catch { /* best-effort */ }
+    writeFileSync(
+      TOKEN_FILE,
+      JSON.stringify(
+        {
+          access_token: ACCESS_TOKEN,
+          refresh_token: REFRESH_TOKEN,
+          updated_at: new Date().toISOString(),
+        },
+        null,
+        2,
+      ),
+      { mode: 0o600 },
+    );
+  } catch {
+    /* best-effort */
+  }
 }
 
 loadTokens();
 
 if (!ACCESS_TOKEN) {
-  console.error("Warning: TIKTOK_ACCESS_TOKEN not set — read-only tools may still work after auth");
+  console.error(
+    "Warning: TIKTOK_ACCESS_TOKEN not set — read-only tools may still work after auth",
+  );
 }
 
 // ── HTTP helpers ──────────────────────────────────────────────────────
@@ -70,7 +84,10 @@ async function tiktokGet(path: string): Promise<TikTokResponse> {
   return (await res.json()) as TikTokResponse;
 }
 
-async function tiktokPost(path: string, body: unknown): Promise<TikTokResponse> {
+async function tiktokPost(
+  path: string,
+  body: unknown,
+): Promise<TikTokResponse> {
   const res = await fetch(`${TIKTOK_API_BASE}${path}`, {
     method: "POST",
     headers: {
@@ -158,8 +175,14 @@ const POST_VIDEO: Tool = {
       },
       privacy_level: {
         type: "string",
-        enum: ["PUBLIC_TO_EVERYONE", "MUTUAL_FOLLOW_FRIENDS", "FOLLOWER_OF_CREATOR", "SELF_ONLY"],
-        description: "Privacy setting — must match one from tiktok_query_creator_info",
+        enum: [
+          "PUBLIC_TO_EVERYONE",
+          "MUTUAL_FOLLOW_FRIENDS",
+          "FOLLOWER_OF_CREATOR",
+          "SELF_ONLY",
+        ],
+        description:
+          "Privacy setting — must match one from tiktok_query_creator_info",
       },
       disable_comment: {
         type: "boolean",
@@ -182,7 +205,12 @@ const POST_VIDEO: Tool = {
         description: "Set true if promoting own business (required)",
       },
     },
-    required: ["video_url", "privacy_level", "brand_content_toggle", "brand_organic_toggle"],
+    required: [
+      "video_url",
+      "privacy_level",
+      "brand_content_toggle",
+      "brand_organic_toggle",
+    ],
   },
 };
 
@@ -208,12 +236,19 @@ const POST_PHOTO: Tool = {
       },
       description: {
         type: "string",
-        description: "Post description with hashtags/mentions (max 4000 UTF-16 characters)",
+        description:
+          "Post description with hashtags/mentions (max 4000 UTF-16 characters)",
       },
       privacy_level: {
         type: "string",
-        enum: ["PUBLIC_TO_EVERYONE", "MUTUAL_FOLLOW_FRIENDS", "FOLLOWER_OF_CREATOR", "SELF_ONLY"],
-        description: "Privacy setting — must match one from tiktok_query_creator_info",
+        enum: [
+          "PUBLIC_TO_EVERYONE",
+          "MUTUAL_FOLLOW_FRIENDS",
+          "FOLLOWER_OF_CREATOR",
+          "SELF_ONLY",
+        ],
+        description:
+          "Privacy setting — must match one from tiktok_query_creator_info",
       },
       disable_comment: {
         type: "boolean",
@@ -232,7 +267,12 @@ const POST_PHOTO: Tool = {
         description: "Set true if promoting own business (required)",
       },
     },
-    required: ["photo_urls", "privacy_level", "brand_content_toggle", "brand_organic_toggle"],
+    required: [
+      "photo_urls",
+      "privacy_level",
+      "brand_content_toggle",
+      "brand_organic_toggle",
+    ],
   },
 };
 
@@ -274,10 +314,19 @@ const ALL_TOOLS = [
 
 async function handleGetUserInfo(): Promise<string> {
   const fields = [
-    "open_id", "union_id", "avatar_url", "avatar_url_100",
-    "display_name", "bio_description", "profile_deep_link",
-    "is_verified", "username", "follower_count", "following_count",
-    "likes_count", "video_count",
+    "open_id",
+    "union_id",
+    "avatar_url",
+    "avatar_url_100",
+    "display_name",
+    "bio_description",
+    "profile_deep_link",
+    "is_verified",
+    "username",
+    "follower_count",
+    "following_count",
+    "likes_count",
+    "video_count",
   ].join(",");
   const r = await tiktokGet(`/user/info/?fields=${fields}`);
   const err = formatError(r);
@@ -298,11 +347,19 @@ async function handleGetUserInfo(): Promise<string> {
   ].join("\n");
 }
 
-async function handleListVideos(args: Record<string, unknown>): Promise<string> {
+async function handleListVideos(
+  args: Record<string, unknown>,
+): Promise<string> {
   const maxCount = Math.min(Math.max(Number(args.max_count) || 10, 1), 20);
   const fields = [
-    "id", "title", "video_description", "duration",
-    "cover_image_url", "embed_link", "create_time", "share_url",
+    "id",
+    "title",
+    "video_description",
+    "duration",
+    "cover_image_url",
+    "embed_link",
+    "create_time",
+    "share_url",
   ].join(",");
   const body: Record<string, unknown> = { max_count: maxCount };
   if (args.cursor !== undefined) body.cursor = Number(args.cursor);
@@ -311,31 +368,43 @@ async function handleListVideos(args: Record<string, unknown>): Promise<string> 
   if (err) return err;
   const videos = (r.data?.videos ?? []) as Record<string, unknown>[];
   if (videos.length === 0) return "No videos found.";
-  const lines = videos.map((v, i) => [
-    `Video ${i + 1}:`,
-    `  ID: ${v.id}`,
-    `  Title: ${v.title ?? "N/A"}`,
-    `  Description: ${v.video_description ?? "N/A"}`,
-    `  Duration: ${v.duration ?? 0}s`,
-    `  Created: ${v.create_time ? new Date(Number(v.create_time) * 1000).toISOString() : "N/A"}`,
-    `  Cover: ${v.cover_image_url ?? "N/A"}`,
-    `  Share URL: ${v.share_url ?? "N/A"}`,
-    `  Embed: ${v.embed_link ?? "N/A"}`,
-  ].join("\n"));
+  const lines = videos.map((v, i) =>
+    [
+      `Video ${i + 1}:`,
+      `  ID: ${v.id}`,
+      `  Title: ${v.title ?? "N/A"}`,
+      `  Description: ${v.video_description ?? "N/A"}`,
+      `  Duration: ${v.duration ?? 0}s`,
+      `  Created: ${v.create_time ? new Date(Number(v.create_time) * 1000).toISOString() : "N/A"}`,
+      `  Cover: ${v.cover_image_url ?? "N/A"}`,
+      `  Share URL: ${v.share_url ?? "N/A"}`,
+      `  Embed: ${v.embed_link ?? "N/A"}`,
+    ].join("\n"),
+  );
   const cursor = r.data?.cursor;
   const hasMore = r.data?.has_more;
-  lines.push(`\nPagination — cursor: ${cursor ?? "none"}, has_more: ${hasMore ?? false}`);
+  lines.push(
+    `\nPagination — cursor: ${cursor ?? "none"}, has_more: ${hasMore ?? false}`,
+  );
   return lines.join("\n\n");
 }
 
-async function handleQueryVideos(args: Record<string, unknown>): Promise<string> {
+async function handleQueryVideos(
+  args: Record<string, unknown>,
+): Promise<string> {
   const videoIds = args.video_ids;
   if (!Array.isArray(videoIds) || videoIds.length === 0) {
     return "Error: video_ids must be a non-empty array";
   }
   const fields = [
-    "id", "title", "video_description", "duration",
-    "cover_image_url", "embed_link", "create_time", "share_url",
+    "id",
+    "title",
+    "video_description",
+    "duration",
+    "cover_image_url",
+    "embed_link",
+    "create_time",
+    "share_url",
   ].join(",");
   const r = await tiktokPost(`/video/query/?fields=${fields}`, {
     filters: { video_ids: videoIds },
@@ -344,15 +413,19 @@ async function handleQueryVideos(args: Record<string, unknown>): Promise<string>
   if (err) return err;
   const videos = (r.data?.videos ?? []) as Record<string, unknown>[];
   if (videos.length === 0) return "No matching videos found.";
-  return videos.map((v, i) => [
-    `Video ${i + 1}:`,
-    `  ID: ${v.id}`,
-    `  Title: ${v.title ?? "N/A"}`,
-    `  Description: ${v.video_description ?? "N/A"}`,
-    `  Duration: ${v.duration ?? 0}s`,
-    `  Cover: ${v.cover_image_url ?? "N/A"}`,
-    `  Embed: ${v.embed_link ?? "N/A"}`,
-  ].join("\n")).join("\n\n");
+  return videos
+    .map((v, i) =>
+      [
+        `Video ${i + 1}:`,
+        `  ID: ${v.id}`,
+        `  Title: ${v.title ?? "N/A"}`,
+        `  Description: ${v.video_description ?? "N/A"}`,
+        `  Duration: ${v.duration ?? 0}s`,
+        `  Cover: ${v.cover_image_url ?? "N/A"}`,
+        `  Embed: ${v.embed_link ?? "N/A"}`,
+      ].join("\n"),
+    )
+    .join("\n\n");
 }
 
 async function handleQueryCreatorInfo(): Promise<string> {
@@ -381,9 +454,12 @@ async function handlePostVideo(args: Record<string, unknown>): Promise<string> {
     brand_organic_toggle: args.brand_organic_toggle ?? false,
   };
   if (args.title) postInfo.title = args.title;
-  if (args.disable_comment !== undefined) postInfo.disable_comment = args.disable_comment;
-  if (args.disable_duet !== undefined) postInfo.disable_duet = args.disable_duet;
-  if (args.disable_stitch !== undefined) postInfo.disable_stitch = args.disable_stitch;
+  if (args.disable_comment !== undefined)
+    postInfo.disable_comment = args.disable_comment;
+  if (args.disable_duet !== undefined)
+    postInfo.disable_duet = args.disable_duet;
+  if (args.disable_stitch !== undefined)
+    postInfo.disable_stitch = args.disable_stitch;
 
   const r = await tiktokPost("/post/publish/video/init/", {
     post_info: postInfo,
@@ -416,8 +492,10 @@ async function handlePostPhoto(args: Record<string, unknown>): Promise<string> {
   };
   if (args.title) postInfo.title = args.title;
   if (args.description) postInfo.description = args.description;
-  if (args.disable_comment !== undefined) postInfo.disable_comment = args.disable_comment;
-  if (args.auto_add_music !== undefined) postInfo.auto_add_music = args.auto_add_music;
+  if (args.disable_comment !== undefined)
+    postInfo.disable_comment = args.disable_comment;
+  if (args.auto_add_music !== undefined)
+    postInfo.auto_add_music = args.auto_add_music;
 
   const r = await tiktokPost("/post/publish/content/init/", {
     post_info: postInfo,
@@ -435,7 +513,9 @@ async function handlePostPhoto(args: Record<string, unknown>): Promise<string> {
   return `Photo post initiated.\nPublish ID: ${publishId}\n\nUse tiktok_get_post_status to track progress.`;
 }
 
-async function handleGetPostStatus(args: Record<string, unknown>): Promise<string> {
+async function handleGetPostStatus(
+  args: Record<string, unknown>,
+): Promise<string> {
   if (!args.publish_id || typeof args.publish_id !== "string") {
     return "Error: publish_id is required";
   }
@@ -452,7 +532,9 @@ async function handleGetPostStatus(args: Record<string, unknown>): Promise<strin
     postIds.length > 0 ? `Public Post IDs: ${postIds.join(", ")}` : null,
     d.uploaded_bytes ? `Uploaded Bytes: ${d.uploaded_bytes}` : null,
     d.downloaded_bytes ? `Downloaded Bytes: ${d.downloaded_bytes}` : null,
-  ].filter(Boolean).join("\n");
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 async function handleRefreshToken(): Promise<string> {
@@ -538,14 +620,17 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         };
     }
 
-    const isError = result.startsWith("Error:") || result.startsWith("TikTok API error");
+    const isError =
+      result.startsWith("Error:") || result.startsWith("TikTok API error");
     return { content: [{ type: "text", text: result }], isError };
   } catch (error) {
     return {
-      content: [{
-        type: "text",
-        text: `Error: ${error instanceof Error ? error.message : String(error)}`,
-      }],
+      content: [
+        {
+          type: "text",
+          text: `Error: ${error instanceof Error ? error.message : String(error)}`,
+        },
+      ],
       isError: true,
     };
   }
@@ -558,6 +643,6 @@ async function runServer() {
 }
 
 runServer().catch((error) => {
-    console.error("Fatal error running server:", error);
-    process.exit(1);
+  console.error("Fatal error running server:", error);
+  process.exit(1);
 });

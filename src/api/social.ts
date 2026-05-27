@@ -47,6 +47,7 @@ const platformSchema = z.enum([
   "linkedin",
   "instagram",
   "facebook",
+  "pinterest",
 ]);
 
 /** Record an approved reply as a voice example (fire-and-forget). */
@@ -159,6 +160,7 @@ export const createSocialRouter = (opts: SocialRouterOptions): Router => {
       "tiktok",
       "instagram",
       "facebook",
+      "pinterest",
     ];
     const registered = new Set(ingestion.getRegisteredPlatforms());
     const activePollers = new Set(ingestion.getActivePollers());
@@ -169,9 +171,10 @@ export const createSocialRouter = (opts: SocialRouterOptions): Router => {
       linkedin: ["LINKEDIN_ACCESS_TOKEN"],
       reddit: ["REDDIT_CLIENT_ID"],
       youtube: ["YOUTUBE_API_KEY"],
-      tiktok: ["TIKNEURON_MCP_API_KEY"],
+      tiktok: ["TIKTOK_ACCESS_TOKEN"],
       instagram: ["INSTAGRAM_ACCESS_TOKEN"],
       facebook: ["FACEBOOK_PAGE_TOKEN"],
+      pinterest: ["PINTEREST_ACCESS_TOKEN"],
     };
     return platforms.map((p) => {
       const conn = socialConfig?.connections?.[p];
@@ -606,6 +609,11 @@ export const createSocialRouter = (opts: SocialRouterOptions): Router => {
         webhookPath: "/api/social/webhooks/facebook",
         docsUrl: "https://developers.facebook.com/docs/graph-api/webhooks/",
       },
+      pinterest: {
+        envVar: "PINTEREST_ACCESS_TOKEN",
+        webhookPath: "/api/social/webhooks/pinterest",
+        docsUrl: "https://developers.pinterest.com/docs/api/v5/",
+      },
     };
 
     const connections = getConnectionStatus();
@@ -761,7 +769,9 @@ export const createSocialRouter = (opts: SocialRouterOptions): Router => {
       reddit:
         "Reddit: Subreddit comment monitoring. DMs via reddit_send_message, replies via reddit_reply_to_comment. Follow subreddit rules.",
       tiktok:
-        "TikTok: Limited API — publish-only. No comment reading or DM sending yet. Rules are preparatory.",
+        "TikTok: Comment reading via tiktok_list_video_comments + publishing via tiktok_post_video. DMs not supported by API — use comment replies only.",
+      pinterest:
+        "Pinterest: Comment monitoring on owned pins. Comment replies via pinterest_reply_to_comment. No DM API — use comment replies only.",
     };
 
     const platformHint = targetPlatform
@@ -778,7 +788,7 @@ export const createSocialRouter = (opts: SocialRouterOptions): Router => {
       "",
       "The JSON must have EXACTLY these fields:",
       "- name (string): A concise descriptive rule name",
-      "- platform (string): One of twitter, instagram, facebook, linkedin, youtube, reddit, tiktok",
+      "- platform (string): One of twitter, instagram, facebook, linkedin, youtube, reddit, tiktok, pinterest",
       "- keywords (string[]): Array of trigger keywords/phrases",
       "- dm_template (string): The DM message template with variables",
       "- comment_reply_template (string|null): Optional public comment reply",
@@ -857,12 +867,10 @@ export const createSocialRouter = (opts: SocialRouterOptions): Router => {
     }
     const body = toggleSchema.safeParse(req.body);
     if (!body.success) {
-      res
-        .status(400)
-        .json({
-          error:
-            "Request body must include { enabled?: boolean, mode?: 'webhook' | 'polling' | 'browser' }",
-        });
+      res.status(400).json({
+        error:
+          "Request body must include { enabled?: boolean, mode?: 'webhook' | 'polling' | 'browser' }",
+      });
       return;
     }
     const platform = parsed.data;
