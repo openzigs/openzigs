@@ -43,6 +43,8 @@ class TwitterMCPServer:
                 Tool(name="twitter_get_user", description="Look up a user by username", inputSchema={"type": "object", "properties": {"username": {"type": "string"}}, "required": ["username"]}),
                 Tool(name="twitter_get_mentions", description="Get recent tweets mentioning a user (requires OAuth 1.0a)", inputSchema={"type": "object", "properties": {"user_id": {"type": "string", "description": "Twitter user ID"}, "max_results": {"type": "integer", "default": 20, "maximum": 100}, "since_id": {"type": "string", "description": "Only return tweets after this tweet ID"}}, "required": ["user_id"]}),
                 Tool(name="twitter_search_replies", description="Search for recent replies to a username using search/recent", inputSchema={"type": "object", "properties": {"username": {"type": "string", "description": "Twitter username (without @)"}, "max_results": {"type": "integer", "default": 20, "maximum": 100}}, "required": ["username"]}),
+                Tool(name="twitter_post_analytics", description="Get analytics for a tweet (likes, retweets, replies, quotes, impressions). Free tier returns public_metrics only.", inputSchema={"type": "object", "properties": {"tweet_id": {"type": "string"}}, "required": ["tweet_id"]}),
+                Tool(name="twitter_account_analytics", description="Get account-level analytics (followers, following, tweet count). Omit username for authenticated user.", inputSchema={"type": "object", "properties": {"username": {"type": "string"}}}),
             ]
 
         @self.server.call_tool()
@@ -71,6 +73,10 @@ class TwitterMCPServer:
                     data = await client.get_mentions(arguments["user_id"], arguments.get("max_results", 20), arguments.get("since_id"))
                 elif name == "twitter_search_replies":
                     data = await client.search_replies(arguments["username"], arguments.get("max_results", 20))
+                elif name == "twitter_post_analytics":
+                    data = await client.get_post_analytics(arguments["tweet_id"])
+                elif name == "twitter_account_analytics":
+                    data = await client.get_account_analytics(arguments.get("username"))
                 else:
                     return [TextContent(type="text", text=_result(False, error=f"Unknown tool: {name}"))]
                 return [TextContent(type="text", text=_result(True, data=data))]

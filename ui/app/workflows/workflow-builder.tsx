@@ -20,7 +20,15 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Play, Save, Upload, Download, Trash2, CheckCircle, Loader2 } from "lucide-react";
+import {
+  Play,
+  Save,
+  Upload,
+  Download,
+  Trash2,
+  CheckCircle,
+  Loader2,
+} from "lucide-react";
 import { fetchJson } from "@/lib/api";
 import { PromptStageNode } from "./components/nodes/prompt-stage-node";
 import { ParallelGroupNode } from "./components/nodes/parallel-group-node";
@@ -30,6 +38,7 @@ import { NodePalette } from "./components/sidebar/node-palette";
 import { NodeConfigPanel } from "./components/sidebar/node-config-panel";
 import { useWorkflowExecution } from "./hooks/use-workflow-execution";
 import { topologicalSort } from "@/lib/topological-sort";
+import { parseWorkflowTemplate } from "./parse-template";
 
 // ── Node type registry ─────────────────────────────────────────────
 
@@ -50,12 +59,15 @@ function WorkflowCanvas() {
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [selectedNode, setSelectedNode] = useState<Node | null>(null);
   const [workflowName, setWorkflowName] = useState("Untitled Workflow");
-  const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [saveStatus, setSaveStatus] = useState<
+    "idle" | "saving" | "saved" | "error"
+  >("idle");
   const reactFlowWrapper = useRef<HTMLDivElement>(null);
   const { screenToFlowPosition, toObject } = useReactFlow();
   const queryClient = useQueryClient();
 
-  const { runWorkflow, stopWorkflow, isRunning } = useWorkflowExecution(setNodes);
+  const { runWorkflow, stopWorkflow, isRunning } =
+    useWorkflowExecution(setNodes);
 
   // ── Connection handling ─────────────────────────────────────────
 
@@ -63,7 +75,9 @@ function WorkflowCanvas() {
     (connection) => {
       // Prevent self-loops
       if (connection.source === connection.target) return;
-      setEdges((eds) => addEdge({ ...connection, type: "smoothstep", animated: true }, eds));
+      setEdges((eds) =>
+        addEdge({ ...connection, type: "smoothstep", animated: true }, eds),
+      );
     },
     [setEdges],
   );
@@ -87,7 +101,13 @@ function WorkflowCanvas() {
       });
 
       const defaultData: Record<string, Record<string, unknown>> = {
-        promptStage: { name: "New Stage", prompt: "", tools: null, model: null, timeoutSeconds: 300 },
+        promptStage: {
+          name: "New Stage",
+          prompt: "",
+          tools: null,
+          model: null,
+          timeoutSeconds: 300,
+        },
         parallelGroup: { name: "Parallel Group", branchCount: 0 },
         postAction: { name: "Post-Action", actionType: "", config: {} },
         condition: { name: "Condition", expression: "", comingSoon: true },
@@ -107,12 +127,9 @@ function WorkflowCanvas() {
 
   // ── Node selection ──────────────────────────────────────────────
 
-  const onNodeClick = useCallback(
-    (_event: React.MouseEvent, node: Node) => {
-      setSelectedNode(node);
-    },
-    [],
-  );
+  const onNodeClick = useCallback((_event: React.MouseEvent, node: Node) => {
+    setSelectedNode(node);
+  }, []);
 
   const onPaneClick = useCallback(() => {
     setSelectedNode(null);
@@ -123,10 +140,14 @@ function WorkflowCanvas() {
   const onNodeDataChange = useCallback(
     (nodeId: string, newData: Record<string, unknown>) => {
       setNodes((nds) =>
-        nds.map((n) => (n.id === nodeId ? { ...n, data: { ...n.data, ...newData } } : n)),
+        nds.map((n) =>
+          n.id === nodeId ? { ...n, data: { ...n.data, ...newData } } : n,
+        ),
       );
       setSelectedNode((prev) =>
-        prev && prev.id === nodeId ? { ...prev, data: { ...prev.data, ...newData } } : prev,
+        prev && prev.id === nodeId
+          ? { ...prev, data: { ...prev.data, ...newData } }
+          : prev,
       );
     },
     [setNodes],
@@ -138,7 +159,9 @@ function WorkflowCanvas() {
     if (!selectedNode) return;
     setNodes((nds) => nds.filter((n) => n.id !== selectedNode.id));
     setEdges((eds) =>
-      eds.filter((e) => e.source !== selectedNode.id && e.target !== selectedNode.id),
+      eds.filter(
+        (e) => e.source !== selectedNode.id && e.target !== selectedNode.id,
+      ),
     );
     setSelectedNode(null);
   }, [selectedNode, setNodes, setEdges]);
@@ -185,7 +208,9 @@ function WorkflowCanvas() {
       stages: graphToBasicStages(nodes, edges),
       graphLayout: graph,
     };
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+    const blob = new Blob([JSON.stringify(data, null, 2)], {
+      type: "application/json",
+    });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
@@ -204,17 +229,16 @@ function WorkflowCanvas() {
       const file = (e.target as HTMLInputElement).files?.[0];
       if (!file) return;
       const text = await file.text();
-      try {
-        const data = JSON.parse(text);
-        if (data.graphLayout) {
-          const layout = typeof data.graphLayout === "string" ? JSON.parse(data.graphLayout) : data.graphLayout;
-          if (layout.nodes) setNodes(layout.nodes);
-          if (layout.edges) setEdges(layout.edges);
+      const parsed = parseWorkflowTemplate(text);
+      if (!parsed.ok) {
+        if (typeof window !== "undefined") {
+          window.alert(`Could not import workflow: ${parsed.error}`);
         }
-        if (data.name) setWorkflowName(data.name);
-      } catch {
-        // Invalid file
+        return;
       }
+      setNodes(parsed.template.graphLayout.nodes as Node[]);
+      setEdges(parsed.template.graphLayout.edges as Edge[]);
+      setWorkflowName(parsed.template.name);
     };
     input.click();
   }, [setNodes, setEdges]);
@@ -241,7 +265,12 @@ function WorkflowCanvas() {
           deleteKeyCode="Backspace"
           className="bg-background"
         >
-          <Background variant={BackgroundVariant.Dots} gap={20} size={1} className="opacity-30" />
+          <Background
+            variant={BackgroundVariant.Dots}
+            gap={20}
+            size={1}
+            className="opacity-30"
+          />
           <Controls className="!bg-card !border-border !shadow-md" />
           <MiniMap
             className="!bg-card !border-border"
@@ -266,7 +295,11 @@ function WorkflowCanvas() {
               disabled={saveMutation.isPending}
               className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground shadow-sm hover:bg-primary/90 disabled:opacity-50"
             >
-              {saveStatus === "saving" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+              {saveStatus === "saving" ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Save className="h-3.5 w-3.5" />
+              )}
               Save
             </button>
             <button
@@ -274,7 +307,11 @@ function WorkflowCanvas() {
               disabled={isRunning || nodes.length === 0}
               className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-emerald-700 disabled:opacity-50"
             >
-              {isRunning ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
+              {isRunning ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Play className="h-3.5 w-3.5" />
+              )}
               {isRunning ? "Running..." : "Run"}
             </button>
             {isRunning && (
@@ -320,8 +357,12 @@ function WorkflowCanvas() {
           {nodes.length === 0 && (
             <Panel position="top-center" className="mt-32">
               <div className="text-center text-muted-foreground">
-                <p className="text-lg font-medium">Drag nodes here to start building</p>
-                <p className="text-sm mt-1">Use the palette on the left to add workflow stages</p>
+                <p className="text-lg font-medium">
+                  Drag nodes here to start building
+                </p>
+                <p className="text-sm mt-1">
+                  Use the palette on the left to add workflow stages
+                </p>
               </div>
             </Panel>
           )}
@@ -355,7 +396,13 @@ export function WorkflowBuilder() {
 function graphToBasicStages(
   nodes: Node[],
   edges: Edge[],
-): Array<{ type: string; name: string; prompt?: string; tools?: string[] | null; model?: string }> {
+): Array<{
+  type: string;
+  name: string;
+  prompt?: string;
+  tools?: string[] | null;
+  model?: string;
+}> {
   const { sorted } = topologicalSort(
     nodes.map((n) => n.id),
     edges,

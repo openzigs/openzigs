@@ -1,0 +1,119 @@
+{
+  "name": "Content Repurposing",
+  "description": "Turn a long-form article into a Twitter thread, short video script, and email newsletter.",
+  "stages": [
+    {
+      "type": "prompt",
+      "name": "Summarise article",
+      "prompt": "Read the supplied article. Produce a 6-bullet summary plus the 3 sharpest pull-quotes.",
+      "tools": ["read-file"]
+    },
+    {
+      "type": "prompt",
+      "name": "Twitter thread",
+      "prompt": "Turn the summary into a 7-tweet thread. Hook tweet must be < 240 chars.",
+      "tools": ["twitter-create-tweet"]
+    },
+    {
+      "type": "prompt",
+      "name": "Short video script",
+      "prompt": "Turn the summary into a 60-second voice-over script with [B-ROLL] hints.",
+      "tools": null
+    },
+    {
+      "type": "prompt",
+      "name": "Email newsletter",
+      "prompt": "Turn the summary into a 250-word email newsletter with a subject line and one CTA.",
+      "tools": null
+    }
+  ],
+  "graphLayout": {
+    "nodes": [
+      {
+        "id": "sum",
+        "type": "promptStage",
+        "position": { "x": 80, "y": 60 },
+        "data": {
+          "name": "Summarise article",
+          "prompt": "Read the supplied article. Produce a 6-bullet summary plus the 3 sharpest pull-quotes.",
+          "tools": ["read-file"],
+          "model": null,
+          "timeoutSeconds": 300
+        }
+      },
+      {
+        "id": "fan",
+        "type": "parallelGroup",
+        "position": { "x": 80, "y": 220 },
+        "data": { "name": "Fan-out", "branchCount": 3 }
+      },
+      {
+        "id": "tw",
+        "type": "promptStage",
+        "position": { "x": -160, "y": 380 },
+        "data": {
+          "name": "Twitter thread",
+          "prompt": "Turn the summary into a 7-tweet thread. Hook tweet must be < 240 chars.",
+          "tools": ["twitter-create-tweet"],
+          "model": null,
+          "timeoutSeconds": 300
+        }
+      },
+      {
+        "id": "vid",
+        "type": "promptStage",
+        "position": { "x": 80, "y": 380 },
+        "data": {
+          "name": "Short video script",
+          "prompt": "Turn the summary into a 60-second voice-over script with [B-ROLL] hints.",
+          "tools": null,
+          "model": null,
+          "timeoutSeconds": 300
+        }
+      },
+      {
+        "id": "eml",
+        "type": "promptStage",
+        "position": { "x": 320, "y": 380 },
+        "data": {
+          "name": "Email newsletter",
+          "prompt": "Turn the summary into a 250-word email newsletter with a subject line and one CTA.",
+          "tools": null,
+          "model": null,
+          "timeoutSeconds": 300
+        }
+      }
+    ],
+    "edges": [
+      {
+        "id": "e-sf",
+        "source": "sum",
+        "target": "fan",
+        "type": "smoothstep",
+        "animated": true
+      },
+      {
+        "id": "e-ftw",
+        "source": "fan",
+        "target": "tw",
+        "type": "smoothstep",
+        "animated": true
+      },
+      {
+        "id": "e-fvd",
+        "source": "fan",
+        "target": "vid",
+        "type": "smoothstep",
+        "animated": true
+      },
+      {
+        "id": "e-fem",
+        "source": "fan",
+        "target": "eml",
+        "type": "smoothstep",
+        "animated": true
+      }
+    ],
+    "viewport": { "x": 0, "y": 0, "zoom": 1 }
+  }
+}

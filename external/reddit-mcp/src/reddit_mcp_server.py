@@ -41,6 +41,8 @@ class RedditMCPServer:
                 Tool(name="reddit_search", description="Search Reddit posts", inputSchema={"type": "object", "properties": {"query": {"type": "string"}, "subreddit": {"type": "string", "description": "Restrict to subreddit (optional)"}, "limit": {"type": "integer", "default": 25}}, "required": ["query"]}),
                 Tool(name="reddit_get_inbox", description="Get Reddit inbox messages", inputSchema={"type": "object", "properties": {"limit": {"type": "integer", "default": 25}}}),
                 Tool(name="reddit_send_message", description="Send a Reddit private message", inputSchema={"type": "object", "properties": {"recipient": {"type": "string"}, "subject": {"type": "string"}, "text": {"type": "string"}}, "required": ["recipient", "subject", "text"]}),
+                Tool(name="reddit_post_analytics", description="Get analytics for a Reddit post: score, upvote ratio, comment count, awards.", inputSchema={"type": "object", "properties": {"post_id": {"type": "string"}}, "required": ["post_id"]}),
+                Tool(name="reddit_subreddit_health", description="Get subreddit health: subscribers, active users, post velocity, avg top score.", inputSchema={"type": "object", "properties": {"subreddit": {"type": "string"}}, "required": ["subreddit"]}),
             ]
 
         @self.server.call_tool()
@@ -65,6 +67,10 @@ class RedditMCPServer:
                     data = await client.get_inbox(arguments.get("limit", 25))
                 elif name == "reddit_send_message":
                     data = await client.send_message(arguments["recipient"], arguments["subject"], arguments["text"])
+                elif name == "reddit_post_analytics":
+                    data = await client.get_post_analytics(arguments["post_id"])
+                elif name == "reddit_subreddit_health":
+                    data = await client.get_subreddit_health(arguments["subreddit"])
                 else:
                     return [TextContent(type="text", text=_result(False, error=f"Unknown tool: {name}"))]
                 return [TextContent(type="text", text=_result(True, data=data))]

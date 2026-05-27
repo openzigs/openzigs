@@ -41,6 +41,8 @@ class LinkedInMCPServer:
                 Tool(name="linkedin_get_conversations", description="List recent LinkedIn message conversations", inputSchema={"type": "object", "properties": {"count": {"type": "integer", "default": 20}}}),
                 Tool(name="linkedin_get_post_comments", description="Get comments on a LinkedIn post", inputSchema={"type": "object", "properties": {"post_urn": {"type": "string", "description": "Post URN (e.g. urn:li:share:xxx or urn:li:ugcPost:xxx)"}, "count": {"type": "integer", "default": 20}}, "required": ["post_urn"]}),
                 Tool(name="linkedin_reply_to_comment", description="Reply to a comment on a LinkedIn post", inputSchema={"type": "object", "properties": {"post_urn": {"type": "string", "description": "Post URN"}, "comment_urn": {"type": "string", "description": "Comment URN to reply to"}, "text": {"type": "string", "description": "Reply text"}}, "required": ["post_urn", "comment_urn", "text"]}),
+                Tool(name="linkedin_post_analytics", description="Get analytics for a LinkedIn post (impressions, clicks, engagement). Only available for organization-owned posts.", inputSchema={"type": "object", "properties": {"post_urn": {"type": "string"}}, "required": ["post_urn"]}),
+                Tool(name="linkedin_profile_analytics", description="Get profile/page-level analytics (follower count, growth). Organization-level via organization_id; member-level uses networkSizes.", inputSchema={"type": "object", "properties": {"organization_id": {"type": "string"}}}),
             ]
 
         @self.server.call_tool()
@@ -65,6 +67,10 @@ class LinkedInMCPServer:
                     data = await client.get_post_comments(arguments["post_urn"], arguments.get("count", 20))
                 elif name == "linkedin_reply_to_comment":
                     data = await client.reply_to_comment(arguments["post_urn"], arguments["comment_urn"], arguments["text"])
+                elif name == "linkedin_post_analytics":
+                    data = await client.get_post_analytics(arguments["post_urn"])
+                elif name == "linkedin_profile_analytics":
+                    data = await client.get_profile_analytics(arguments.get("organization_id"))
                 else:
                     return [TextContent(type="text", text=_result(False, error=f"Unknown tool: {name}"))]
                 return [TextContent(type="text", text=_result(True, data=data))]

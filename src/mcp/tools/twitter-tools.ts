@@ -40,21 +40,37 @@ const getUserSchema = z.object({
   username: z.string().describe("Twitter username (without @)"),
 });
 
+const postAnalyticsSchema = z.object({
+  tweet_id: z.string().describe("Tweet ID to fetch analytics for"),
+});
+
+const accountAnalyticsSchema = z.object({
+  username: z
+    .string()
+    .optional()
+    .describe("Username (without @). Defaults to authenticated user."),
+});
+
 const callLocalServer = async (
   manager: LocalMcpServerManager | undefined,
   toolName: string,
-  args: Record<string, unknown>
+  args: Record<string, unknown>,
 ): Promise<{ text: string; isError?: boolean }> => {
   if (!manager) {
     return { text: "Local MCP server manager not configured.", isError: true };
   }
   if (!manager.isRunning("twitter")) {
-    return { text: "Twitter MCP server is not running. Check TWITTER_BEARER_TOKEN env var.", isError: true };
+    return {
+      text: "Twitter MCP server is not running. Check TWITTER_BEARER_TOKEN env var.",
+      isError: true,
+    };
   }
   return manager.callTool("twitter", toolName, args);
 };
 
-export const createTwitterTools = (options: TwitterToolsOptions): ToolDefinition[] => {
+export const createTwitterTools = (
+  options: TwitterToolsOptions,
+): ToolDefinition[] => {
   const mgr = options.localServerManager;
 
   return [
@@ -71,27 +87,47 @@ export const createTwitterTools = (options: TwitterToolsOptions): ToolDefinition
     {
       name: "twitter-get-user-tweets",
       description: "Get recent tweets from a Twitter/X user.",
-      inputSchema: { type: "object", properties: { user_id: { type: "string" }, max_results: { type: "number" } }, required: ["user_id"] },
+      inputSchema: {
+        type: "object",
+        properties: {
+          user_id: { type: "string" },
+          max_results: { type: "number" },
+        },
+        required: ["user_id"],
+      },
       zodSchema: getUserTweetsSchema,
       category: "social",
       riskLevel: "low",
       source: "twitter",
-      handler: async (args) => callLocalServer(mgr, "twitter_get_user_tweets", args),
+      handler: async (args) =>
+        callLocalServer(mgr, "twitter_get_user_tweets", args),
     },
     {
       name: "twitter-search-tweets",
       description: "Search for tweets using Twitter/X search syntax.",
-      inputSchema: { type: "object", properties: { query: { type: "string" }, max_results: { type: "number" } }, required: ["query"] },
+      inputSchema: {
+        type: "object",
+        properties: {
+          query: { type: "string" },
+          max_results: { type: "number" },
+        },
+        required: ["query"],
+      },
       zodSchema: searchTweetsSchema,
       category: "social",
       riskLevel: "low",
       source: "twitter",
-      handler: async (args) => callLocalServer(mgr, "twitter_search_tweets", args),
+      handler: async (args) =>
+        callLocalServer(mgr, "twitter_search_tweets", args),
     },
     {
       name: "twitter-get-tweet",
       description: "Get a specific tweet by ID with full details.",
-      inputSchema: { type: "object", properties: { tweet_id: { type: "string" } }, required: ["tweet_id"] },
+      inputSchema: {
+        type: "object",
+        properties: { tweet_id: { type: "string" } },
+        required: ["tweet_id"],
+      },
       zodSchema: getTweetSchema,
       category: "social",
       riskLevel: "low",
@@ -101,7 +137,11 @@ export const createTwitterTools = (options: TwitterToolsOptions): ToolDefinition
     {
       name: "twitter-post-tweet",
       description: "Post a tweet on Twitter/X. Supports replies.",
-      inputSchema: { type: "object", properties: { text: { type: "string" }, reply_to: { type: "string" } }, required: ["text"] },
+      inputSchema: {
+        type: "object",
+        properties: { text: { type: "string" }, reply_to: { type: "string" } },
+        required: ["text"],
+      },
       zodSchema: postTweetSchema,
       category: "social",
       riskLevel: "high",
@@ -111,17 +151,28 @@ export const createTwitterTools = (options: TwitterToolsOptions): ToolDefinition
     {
       name: "twitter-get-dm-events",
       description: "Get recent Twitter/X direct message events.",
-      inputSchema: { type: "object", properties: { max_results: { type: "number" } } },
+      inputSchema: {
+        type: "object",
+        properties: { max_results: { type: "number" } },
+      },
       zodSchema: getDmEventsSchema,
       category: "social",
       riskLevel: "high",
       source: "twitter",
-      handler: async (args) => callLocalServer(mgr, "twitter_get_dm_events", args),
+      handler: async (args) =>
+        callLocalServer(mgr, "twitter_get_dm_events", args),
     },
     {
       name: "twitter-send-dm",
       description: "Send a Twitter/X direct message.",
-      inputSchema: { type: "object", properties: { participant_id: { type: "string" }, text: { type: "string" } }, required: ["participant_id", "text"] },
+      inputSchema: {
+        type: "object",
+        properties: {
+          participant_id: { type: "string" },
+          text: { type: "string" },
+        },
+        required: ["participant_id", "text"],
+      },
       zodSchema: sendDmSchema,
       category: "social",
       riskLevel: "high",
@@ -131,12 +182,47 @@ export const createTwitterTools = (options: TwitterToolsOptions): ToolDefinition
     {
       name: "twitter-get-user",
       description: "Look up a Twitter/X user by username.",
-      inputSchema: { type: "object", properties: { username: { type: "string" } }, required: ["username"] },
+      inputSchema: {
+        type: "object",
+        properties: { username: { type: "string" } },
+        required: ["username"],
+      },
       zodSchema: getUserSchema,
       category: "social",
       riskLevel: "low",
       source: "twitter",
       handler: async (args) => callLocalServer(mgr, "twitter_get_user", args),
+    },
+    {
+      name: "twitter-post-analytics",
+      description:
+        "Get analytics for a specific tweet (impressions, likes, retweets, replies, quotes). Free tier returns public_metrics only; non_public_metrics requires Basic tier and OAuth 2.0 user context.",
+      inputSchema: {
+        type: "object",
+        properties: { tweet_id: { type: "string" } },
+        required: ["tweet_id"],
+      },
+      zodSchema: postAnalyticsSchema,
+      category: "social",
+      riskLevel: "low",
+      source: "twitter",
+      handler: async (args) =>
+        callLocalServer(mgr, "twitter_post_analytics", args),
+    },
+    {
+      name: "twitter-account-analytics",
+      description:
+        "Get account-level analytics for a Twitter/X user (followers, following, tweet count, listed count). Engagement totals require Basic tier or higher.",
+      inputSchema: {
+        type: "object",
+        properties: { username: { type: "string" } },
+      },
+      zodSchema: accountAnalyticsSchema,
+      category: "social",
+      riskLevel: "low",
+      source: "twitter",
+      handler: async (args) =>
+        callLocalServer(mgr, "twitter_account_analytics", args),
     },
   ];
 };

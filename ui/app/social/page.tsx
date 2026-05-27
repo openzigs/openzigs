@@ -9,6 +9,7 @@ import { SectionCard } from "@/components/section-card";
 import { ToastContainer, showToast } from "@/components/toast";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { InlineModelPicker } from "@/components/model-picker-select";
+import { PlatformInsightsPanel } from "./platform-insights-panel";
 import {
   BarChart,
   Bar,
@@ -2642,6 +2643,8 @@ function AnalyticsTab() {
           </p>
         </div>
       )}
+
+      <PlatformInsightsPanel />
     </div>
   );
 }

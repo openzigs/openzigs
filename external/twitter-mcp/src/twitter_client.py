@@ -123,3 +123,32 @@ class TwitterClient:
             "expansions": "author_id",
             "user.fields": "id,name,username",
         })
+
+    async def get_post_analytics(self, tweet_id: str) -> dict:
+        """Get analytics for a single tweet. Returns public_metrics (likes, retweets, replies, quotes, impressions when available)."""
+        return await self._request(
+            "GET",
+            f"tweets/{tweet_id}",
+            params={
+                "tweet.fields": "created_at,public_metrics,non_public_metrics,organic_metrics,text",
+            },
+        )
+
+    async def get_account_analytics(self, username: str | None = None) -> dict:
+        """Get account-level analytics. If username omitted, uses authenticated user (requires OAuth 1.0a)."""
+        if username:
+            return await self._request(
+                "GET",
+                f"users/by/username/{username}",
+                params={
+                    "user.fields": "id,name,username,description,public_metrics,verified,created_at",
+                },
+            )
+        return await self._request(
+            "GET",
+            "users/me",
+            auth="oauth1",
+            params={
+                "user.fields": "id,name,username,description,public_metrics,verified,created_at",
+            },
+        )
