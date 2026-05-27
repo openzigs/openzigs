@@ -14,6 +14,7 @@ import { YouTubePublishRepository } from "../video/youtube-publish-repository.js
 import { BrandKitRepository } from "../video/brand-kit.js";
 import { PostTemplateRepository } from "../creative/post-template-repository.js";
 import { AuditHistoryRepository } from "../mcp/tools/seo/audit-history.js";
+import { SetupStateRepository } from "../setup/setup-state-repository.js";
 
 export type DatabaseOptions = {
   dbPath?: string;
@@ -86,6 +87,10 @@ export const getDatabase = (
   // Run SEO Audit History migration (seo_audit_snapshots table)
   const auditHistoryRepo = new AuditHistoryRepository(db);
   auditHistoryRepo.migrate();
+
+  // Run Onboarding Wizard state migration (wizard_state table) — epic #1118
+  const setupStateRepo = new SetupStateRepository(db);
+  setupStateRepo.migrate();
 
   sharedDb = db;
   return db;

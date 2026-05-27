@@ -216,6 +216,11 @@ import {
 import { TemplateRepository, TemplateService } from "./orchestration/index.js";
 import { createOrchestrationRouter } from "./api/orchestration.js";
 import setupRouter from "./api/setup.js";
+import { createSetupRouter } from "./setup/setup-router.js";
+import { SetupStateRepository } from "./setup/setup-state-repository.js";
+import { WizardCredentialStore } from "./setup/wizard-credential-store.js";
+import { TemplateService as ProductivityTemplateService } from "./productivity/template-service.js";
+import { postActionRegistry as wizardPostActionRegistry } from "./tasks/post-action-registry.js";
 import { CharacterRepository } from "./characters/character-repository.js";
 import { PROJECT_ROOT } from "./project-root.js";
 
@@ -1337,6 +1342,26 @@ const adminRouter = createAdminRouter({
 const costMeter = new CostMeter({ db, auditLogger });
 app.use("/api/admin", authMiddleware, createSessionCostsRouter({ costMeter }));
 app.use("/api/admin", authMiddleware, adminRouter);
+
+// Onboarding Wizard 2.0 (epic #1118) — sidecar installer, social OAuth,
+// BYOK key tester, starter recipes, encrypted credential store, resumable
+// wizard state. Mounted under the same admin auth gate.
+const wizardCredentialStore = new WizardCredentialStore();
+await wizardCredentialStore.init();
+const wizardStateRepo = new SetupStateRepository(db);
+const wizardTemplateService = new ProductivityTemplateService({
+  promptManager,
+  postActionRegistry: wizardPostActionRegistry,
+});
+app.use(
+  "/api/admin/setup",
+  authMiddleware,
+  createSetupRouter({
+    stateRepo: wizardStateRepo,
+    credentialStore: wizardCredentialStore,
+    templateService: wizardTemplateService,
+  }),
+);
 
 // vLLM admin routes (Epic #888 / Issue #922) — kept out of admin.ts.
 const vllmAdminRouter = createVllmAdminRouter({ coordinator: gpuCoordinator });
