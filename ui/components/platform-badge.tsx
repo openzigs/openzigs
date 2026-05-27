@@ -7,7 +7,11 @@
 
 import type { FeatureAvailability } from "@/lib/hooks/use-platform";
 
-export function PlatformBadge({ feature }: { feature: FeatureAvailability | undefined }) {
+export function PlatformBadge({
+  feature,
+}: {
+  feature: FeatureAvailability | undefined;
+}) {
   if (!feature) return null;
 
   if (feature.available) {

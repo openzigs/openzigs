@@ -6,7 +6,9 @@ vi.mock("../../logging/logger.js", () => ({
 }));
 
 /** Helper: build a mock LocalMcpServerManager that returns canned responses per tool. */
-function createMockManager(responses: Record<string, { text: string; isError?: boolean }>) {
+function createMockManager(
+  responses: Record<string, { text: string; isError?: boolean }>,
+) {
   return {
     isRunning: vi.fn().mockReturnValue(true),
     callTool: vi.fn().mockImplementation((_server: string, tool: string) => {
@@ -16,8 +18,17 @@ function createMockManager(responses: Record<string, { text: string; isError?: b
 }
 
 /** Wrap an Instagram MCP-style result */
-function mcpResult(success: boolean, data: unknown = null, error: string | null = null) {
-  return JSON.stringify({ success, data, error, timestamp: new Date().toISOString() });
+function mcpResult(
+  success: boolean,
+  data: unknown = null,
+  error: string | null = null,
+) {
+  return JSON.stringify({
+    success,
+    data,
+    error,
+    timestamp: new Date().toISOString(),
+  });
 }
 
 const SINCE = "2026-01-01T00:00:00Z";
@@ -78,9 +89,7 @@ describe("createInstagramPollFn", () => {
     const mgr = createMockManager({
       get_media_posts: {
         text: mcpResult(true, {
-          posts: [
-            { id: "post1", caption: "No comments", comments_count: 0 },
-          ],
+          posts: [{ id: "post1", caption: "No comments", comments_count: 0 }],
           count: 1,
         }),
       },

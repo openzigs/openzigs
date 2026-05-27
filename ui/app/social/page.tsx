@@ -59,7 +59,14 @@ import {
   type LeadEntry,
 } from "@/lib/hooks/use-social";
 
-type Tab = "dashboard" | "crm" | "automations" | "activity" | "settings" | "leads" | "analytics";
+type Tab =
+  | "dashboard"
+  | "crm"
+  | "automations"
+  | "activity"
+  | "settings"
+  | "leads"
+  | "analytics";
 
 export default function SocialBrainPage() {
   const [activeTab, setActiveTab] = useState<Tab>("dashboard");
@@ -73,7 +80,8 @@ export default function SocialBrainPage() {
         <div>
           <h1 className="text-2xl font-bold">Social Brain</h1>
           <p className="text-sm text-muted-foreground">
-            Unified inbox, CRM, and automated response engine for social platforms.
+            Unified inbox, CRM, and automated response engine for social
+            platforms.
           </p>
         </div>
         <AskAiButton onClick={() => setAskAiOpen(true)} />
@@ -81,7 +89,17 @@ export default function SocialBrainPage() {
 
       {/* Tab navigation */}
       <div className="mb-6 flex gap-1 rounded-lg bg-muted p-1">
-        {(["dashboard", "crm", "automations", "leads", "analytics", "activity", "settings"] as Tab[]).map((tab) => (
+        {(
+          [
+            "dashboard",
+            "crm",
+            "automations",
+            "leads",
+            "analytics",
+            "activity",
+            "settings",
+          ] as Tab[]
+        ).map((tab) => (
           <button
             key={tab}
             onClick={() => setActiveTab(tab)}
@@ -110,7 +128,11 @@ export default function SocialBrainPage() {
       {activeTab === "settings" && <SettingsTab />}
 
       <ToastContainer />
-      <AskAiPanel pageContext={PAGE_CONTEXTS["social"]} open={askAiOpen} onClose={() => setAskAiOpen(false)} />
+      <AskAiPanel
+        pageContext={PAGE_CONTEXTS["social"]}
+        open={askAiOpen}
+        onClose={() => setAskAiOpen(false)}
+      />
     </main>
   );
 }
@@ -129,32 +151,47 @@ function DashboardTab() {
       {/* Stats grid */}
       <div className="grid grid-cols-2 gap-4 md:grid-cols-5">
         <StatCard label="Contacts" value={stats.totalContacts} />
-        <StatCard label="Active Handoffs" value={stats.activeHandoffs} accent={stats.activeHandoffs > 0} />
+        <StatCard
+          label="Active Handoffs"
+          value={stats.activeHandoffs}
+          accent={stats.activeHandoffs > 0}
+        />
         <StatCard label="Total Messages" value={stats.totalMessages} />
         <StatCard label="Messages (24h)" value={stats.messagesLast24h} />
-        <StatCard label="Automation Triggers" value={stats.totalAutomationTriggers} />
+        <StatCard
+          label="Automation Triggers"
+          value={stats.totalAutomationTriggers}
+        />
       </div>
 
       {/* Connected platforms */}
       <SectionCard title="Connected Platforms" defaultOpen>
         {stats.connections.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No platforms connected yet. Go to the Settings tab to configure platforms.</p>
+          <p className="text-sm text-muted-foreground">
+            No platforms connected yet. Go to the Settings tab to configure
+            platforms.
+          </p>
         ) : (
           <div className="flex flex-wrap gap-2">
-            {stats.connections.filter((c) => c.connected || c.configured).map((c) => (
-              <span
-                key={c.platform}
-                className={`rounded-full px-3 py-1 text-xs font-medium ${
-                  c.connected
-                    ? "bg-green-500/10 text-green-600 dark:text-green-400"
-                    : "bg-yellow-500/10 text-yellow-600 dark:text-yellow-400"
-                }`}
-              >
-                {c.platform} {c.connected ? "" : "(token set, not enabled)"}
-              </span>
-            ))}
-            {stats.connections.filter((c) => c.connected || c.configured).length === 0 && (
-              <p className="text-sm text-muted-foreground">No platforms configured. Go to the Settings tab to get started.</p>
+            {stats.connections
+              .filter((c) => c.connected || c.configured)
+              .map((c) => (
+                <span
+                  key={c.platform}
+                  className={`rounded-full px-3 py-1 text-xs font-medium ${
+                    c.connected
+                      ? "bg-green-500/10 text-green-600 dark:text-green-400"
+                      : "bg-yellow-500/10 text-yellow-600 dark:text-yellow-400"
+                  }`}
+                >
+                  {c.platform} {c.connected ? "" : "(token set, not enabled)"}
+                </span>
+              ))}
+            {stats.connections.filter((c) => c.connected || c.configured)
+              .length === 0 && (
+              <p className="text-sm text-muted-foreground">
+                No platforms configured. Go to the Settings tab to get started.
+              </p>
             )}
           </div>
         )}
@@ -167,7 +204,9 @@ function DashboardTab() {
       >
         <div>
           <p className="text-sm font-semibold">Pinterest Analytics</p>
-          <p className="text-xs text-muted-foreground">View SEO reports, keyword metrics, trends, and pin analysis.</p>
+          <p className="text-xs text-muted-foreground">
+            View SEO reports, keyword metrics, trends, and pin analysis.
+          </p>
         </div>
         <span className="text-xs text-muted-foreground">&rarr;</span>
       </Link>
@@ -175,11 +214,21 @@ function DashboardTab() {
   );
 }
 
-function StatCard({ label, value, accent }: { label: string; value: number; accent?: boolean }) {
+function StatCard({
+  label,
+  value,
+  accent,
+}: {
+  label: string;
+  value: number;
+  accent?: boolean;
+}) {
   return (
     <div className="rounded-lg border border-border bg-card p-4">
       <p className="text-xs text-muted-foreground">{label}</p>
-      <p className={`text-2xl font-bold ${accent ? "text-orange-500" : ""}`}>{value}</p>
+      <p className={`text-2xl font-bold ${accent ? "text-orange-500" : ""}`}>
+        {value}
+      </p>
     </div>
   );
 }
@@ -211,17 +260,33 @@ function CrmTab() {
           type="text"
           placeholder="Search contacts..."
           value={search}
-          onChange={(e) => { setSearch(e.target.value); setPage(1); }}
+          onChange={(e) => {
+            setSearch(e.target.value);
+            setPage(1);
+          }}
           className="rounded-md border border-border bg-background px-3 py-2 text-sm flex-1 min-w-[200px]"
         />
         <select
           value={platform}
-          onChange={(e) => { setPlatform(e.target.value); setPage(1); }}
+          onChange={(e) => {
+            setPlatform(e.target.value);
+            setPage(1);
+          }}
           className="rounded-md border border-border bg-background px-3 py-2 text-sm"
         >
           <option value="">All Platforms</option>
-          {["twitter", "linkedin", "reddit", "youtube", "tiktok", "instagram", "facebook"].map((p) => (
-            <option key={p} value={p}>{p}</option>
+          {[
+            "twitter",
+            "linkedin",
+            "reddit",
+            "youtube",
+            "tiktok",
+            "instagram",
+            "facebook",
+          ].map((p) => (
+            <option key={p} value={p}>
+              {p}
+            </option>
           ))}
         </select>
       </div>
@@ -261,14 +326,19 @@ function CrmTab() {
                 </td>
                 <td className="px-4 py-2">
                   {c.handoff_active ? (
-                    <span className="rounded-full bg-orange-500/10 px-2 py-0.5 text-xs font-medium text-orange-600">Active</span>
+                    <span className="rounded-full bg-orange-500/10 px-2 py-0.5 text-xs font-medium text-orange-600">
+                      Active
+                    </span>
                   ) : null}
                 </td>
               </tr>
             ))}
             {contacts.length === 0 && (
               <tr>
-                <td colSpan={6} className="px-4 py-8 text-center text-muted-foreground">
+                <td
+                  colSpan={6}
+                  className="px-4 py-8 text-center text-muted-foreground"
+                >
                   No contacts found.
                 </td>
               </tr>
@@ -280,7 +350,9 @@ function CrmTab() {
       {/* Pagination */}
       {totalPages > 1 && (
         <div className="flex items-center justify-between">
-          <p className="text-xs text-muted-foreground">{total} contacts total</p>
+          <p className="text-xs text-muted-foreground">
+            {total} contacts total
+          </p>
           <div className="flex gap-1">
             <button
               onClick={() => setPage((p) => Math.max(1, p - 1))}
@@ -314,7 +386,13 @@ function CrmTab() {
   );
 }
 
-function ContactDetail({ contact, onClose }: { contact: Contact; onClose: () => void }) {
+function ContactDetail({
+  contact,
+  onClose,
+}: {
+  contact: Contact;
+  onClose: () => void;
+}) {
   const { data: messagesData } = useContactMessages(contact.id, 20);
   const addTag = useAddTag();
   const updateContact = useUpdateContact();
@@ -331,7 +409,10 @@ function ContactDetail({ contact, onClose }: { contact: Contact; onClose: () => 
     addTag.mutate(
       { contactId: contact.id, tag: newTag.trim() },
       {
-        onSuccess: () => { setNewTag(""); showToast("Tag added", "success"); },
+        onSuccess: () => {
+          setNewTag("");
+          showToast("Tag added", "success");
+        },
         onError: (err) => showToast(`Failed: ${err.message}`, "error"),
       },
     );
@@ -362,12 +443,21 @@ function ContactDetail({ contact, onClose }: { contact: Contact; onClose: () => 
     <div className="mt-4 space-y-4 rounded-lg border border-border bg-card p-6">
       <div className="flex items-start justify-between">
         <div>
-          <h3 className="text-lg font-bold">{contact.display_name || `@${contact.username}`}</h3>
+          <h3 className="text-lg font-bold">
+            {contact.display_name || `@${contact.username}`}
+          </h3>
           <p className="text-sm text-muted-foreground">
-            <PlatformBadge platform={contact.platform} /> &middot; {contact.message_count} messages &middot; First seen {new Date(contact.first_seen_at).toLocaleDateString()}
+            <PlatformBadge platform={contact.platform} /> &middot;{" "}
+            {contact.message_count} messages &middot; First seen{" "}
+            {new Date(contact.first_seen_at).toLocaleDateString()}
           </p>
         </div>
-        <button onClick={onClose} className="text-muted-foreground hover:text-foreground text-sm">✕ Close</button>
+        <button
+          onClick={onClose}
+          className="text-muted-foreground hover:text-foreground text-sm"
+        >
+          ✕ Close
+        </button>
       </div>
 
       {/* Tags */}
@@ -385,7 +475,12 @@ function ContactDetail({ contact, onClose }: { contact: Contact; onClose: () => 
             placeholder="Add tag..."
             className="rounded-md border border-border bg-background px-2 py-1 text-xs flex-1"
           />
-          <button onClick={handleAddTag} className="rounded-md bg-primary px-3 py-1 text-xs text-primary-foreground">Add</button>
+          <button
+            onClick={handleAddTag}
+            className="rounded-md bg-primary px-3 py-1 text-xs text-primary-foreground"
+          >
+            Add
+          </button>
         </div>
       </div>
 
@@ -398,14 +493,23 @@ function ContactDetail({ contact, onClose }: { contact: Contact; onClose: () => 
           rows={3}
           className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
         />
-        <button onClick={handleSaveNotes} className="mt-1 rounded-md bg-primary px-3 py-1 text-xs text-primary-foreground">Save Notes</button>
+        <button
+          onClick={handleSaveNotes}
+          className="mt-1 rounded-md bg-primary px-3 py-1 text-xs text-primary-foreground"
+        >
+          Save Notes
+        </button>
       </div>
 
       {/* Handoff */}
       {contact.handoff_active === 1 && (
         <div className="flex items-center gap-2 rounded-lg border border-orange-500/30 bg-orange-500/5 p-3">
-          <span className="text-sm font-medium text-orange-600">Handoff Active</span>
-          <span className="text-xs text-muted-foreground">via {contact.handoff_channel}</span>
+          <span className="text-sm font-medium text-orange-600">
+            Handoff Active
+          </span>
+          <span className="text-xs text-muted-foreground">
+            via {contact.handoff_channel}
+          </span>
           <button
             onClick={handleCloseHandoff}
             className="ml-auto rounded-md bg-orange-600 px-3 py-1 text-xs text-white"
@@ -417,7 +521,9 @@ function ContactDetail({ contact, onClose }: { contact: Contact; onClose: () => 
 
       {/* Messages */}
       <div>
-        <p className="text-xs font-medium text-muted-foreground mb-2">Recent Messages</p>
+        <p className="text-xs font-medium text-muted-foreground mb-2">
+          Recent Messages
+        </p>
         <div className="max-h-64 space-y-2 overflow-y-auto rounded-lg border border-border bg-background p-3">
           {messages.length === 0 && (
             <p className="text-xs text-muted-foreground">No messages yet.</p>
@@ -426,9 +532,7 @@ function ContactDetail({ contact, onClose }: { contact: Contact; onClose: () => 
             <div
               key={m.id}
               className={`rounded-lg p-2 text-sm ${
-                m.direction === "inbound"
-                  ? "bg-muted/50"
-                  : "bg-primary/5 ml-8"
+                m.direction === "inbound" ? "bg-muted/50" : "bg-primary/5 ml-8"
               }`}
             >
               <div className="flex items-center justify-between mb-1">
@@ -455,8 +559,12 @@ function ContactDetail({ contact, onClose }: { contact: Contact; onClose: () => 
                 sendReply.mutate(
                   { contactId: contact.id, content: replyText.trim() },
                   {
-                    onSuccess: () => { setReplyText(""); showToast("Reply sent", "success"); },
-                    onError: (err) => showToast(`Failed: ${err.message}`, "error"),
+                    onSuccess: () => {
+                      setReplyText("");
+                      showToast("Reply sent", "success");
+                    },
+                    onError: (err) =>
+                      showToast(`Failed: ${err.message}`, "error"),
                   },
                 );
               }
@@ -470,8 +578,12 @@ function ContactDetail({ contact, onClose }: { contact: Contact; onClose: () => 
               sendReply.mutate(
                 { contactId: contact.id, content: replyText.trim() },
                 {
-                  onSuccess: () => { setReplyText(""); showToast("Reply sent", "success"); },
-                  onError: (err) => showToast(`Failed: ${err.message}`, "error"),
+                  onSuccess: () => {
+                    setReplyText("");
+                    showToast("Reply sent", "success");
+                  },
+                  onError: (err) =>
+                    showToast(`Failed: ${err.message}`, "error"),
                 },
               );
             }}
@@ -502,12 +614,17 @@ function AiRuleGenerator({
   const handleGenerate = () => {
     if (!description.trim()) return;
     generateRule.mutate(
-      { description, platform: platform || undefined, model: model || undefined },
+      {
+        description,
+        platform: platform || undefined,
+        model: model || undefined,
+      },
       {
         onSuccess: (data) => {
           if (data.rule) onGenerated(data.rule as Partial<CommentRule>);
         },
-        onError: (err) => showToast(`Generation failed: ${err.message}`, "error"),
+        onError: (err) =>
+          showToast(`Generation failed: ${err.message}`, "error"),
       },
     );
   };
@@ -526,19 +643,40 @@ function AiRuleGenerator({
       />
       <div className="flex items-end gap-3">
         <div className="flex-1">
-          <label className="text-xs font-medium text-muted-foreground">Platform (optional)</label>
-          <select value={platform} onChange={(e) => setPlatform(e.target.value)}
-            className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm">
+          <label className="text-xs font-medium text-muted-foreground">
+            Platform (optional)
+          </label>
+          <select
+            value={platform}
+            onChange={(e) => setPlatform(e.target.value)}
+            className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
+          >
             <option value="">Auto-detect</option>
-            {["twitter", "instagram", "facebook", "linkedin", "youtube", "reddit", "tiktok"].map((p) => (
-              <option key={p} value={p}>{p}</option>
+            {[
+              "twitter",
+              "instagram",
+              "facebook",
+              "linkedin",
+              "youtube",
+              "reddit",
+              "tiktok",
+            ].map((p) => (
+              <option key={p} value={p}>
+                {p}
+              </option>
             ))}
           </select>
         </div>
         <div className="flex-1">
-          <label className="text-xs font-medium text-muted-foreground">LLM Model</label>
+          <label className="text-xs font-medium text-muted-foreground">
+            LLM Model
+          </label>
           <div className="mt-1">
-            <InlineModelPicker value={model} onChange={setModel} className="w-full" />
+            <InlineModelPicker
+              value={model}
+              onChange={setModel}
+              className="w-full"
+            />
           </div>
         </div>
         <button
@@ -573,7 +711,8 @@ function AutomationsTab() {
     updateRule.mutate(
       { id: rule.id, enabled: rule.enabled ? 0 : 1 },
       {
-        onSuccess: () => showToast(`Rule ${rule.enabled ? "disabled" : "enabled"}`, "success"),
+        onSuccess: () =>
+          showToast(`Rule ${rule.enabled ? "disabled" : "enabled"}`, "success"),
         onError: (err) => showToast(`Failed: ${err.message}`, "error"),
       },
     );
@@ -598,13 +737,19 @@ function AutomationsTab() {
         <h2 className="text-lg font-semibold">Comment Automation Rules</h2>
         <div className="flex gap-2">
           <button
-            onClick={() => { setShowAiGenerate(!showAiGenerate); setShowCreate(false); }}
+            onClick={() => {
+              setShowAiGenerate(!showAiGenerate);
+              setShowCreate(false);
+            }}
             className="rounded-md border border-primary/30 bg-primary/10 px-4 py-2 text-sm text-primary hover:bg-primary/20"
           >
             {showAiGenerate ? "Cancel" : "AI Generate"}
           </button>
           <button
-            onClick={() => { setShowCreate(!showCreate); setShowAiGenerate(false); }}
+            onClick={() => {
+              setShowCreate(!showCreate);
+              setShowAiGenerate(false);
+            }}
             className="rounded-md bg-primary px-4 py-2 text-sm text-primary-foreground"
           >
             {showCreate ? "Cancel" : "+ New Rule"}
@@ -616,7 +761,10 @@ function AutomationsTab() {
         <AiRuleGenerator
           onGenerated={(rule) => {
             createRule.mutate(rule, {
-              onSuccess: () => { setShowAiGenerate(false); showToast("AI-generated rule created", "success"); },
+              onSuccess: () => {
+                setShowAiGenerate(false);
+                showToast("AI-generated rule created", "success");
+              },
               onError: (err) => showToast(`Failed: ${err.message}`, "error"),
             });
           }}
@@ -628,7 +776,10 @@ function AutomationsTab() {
         <RuleForm
           onSubmit={(data) => {
             createRule.mutate(data, {
-              onSuccess: () => { setShowCreate(false); showToast("Rule created", "success"); },
+              onSuccess: () => {
+                setShowCreate(false);
+                showToast("Rule created", "success");
+              },
               onError: (err) => showToast(`Failed: ${err.message}`, "error"),
             });
           }}
@@ -642,7 +793,10 @@ function AutomationsTab() {
             updateRule.mutate(
               { id: editingRule.id, ...data },
               {
-                onSuccess: () => { setEditingRule(null); showToast("Rule updated", "success"); },
+                onSuccess: () => {
+                  setEditingRule(null);
+                  showToast("Rule updated", "success");
+                },
                 onError: (err) => showToast(`Failed: ${err.message}`, "error"),
               },
             );
@@ -652,48 +806,84 @@ function AutomationsTab() {
       )}
 
       {rules.length === 0 ? (
-        <p className="text-sm text-muted-foreground">No automation rules configured yet.</p>
+        <p className="text-sm text-muted-foreground">
+          No automation rules configured yet.
+        </p>
       ) : (
         <div className="space-y-3">
           {rules.map((rule) => (
-            <div key={rule.id} className="rounded-lg border border-border bg-card p-4">
+            <div
+              key={rule.id}
+              className="rounded-lg border border-border bg-card p-4"
+            >
               <div className="flex items-start justify-between">
-                <div className="flex-1 cursor-pointer" onClick={() => setExpandedRuleId(expandedRuleId === rule.id ? null : rule.id)}>
+                <div
+                  className="flex-1 cursor-pointer"
+                  onClick={() =>
+                    setExpandedRuleId(
+                      expandedRuleId === rule.id ? null : rule.id,
+                    )
+                  }
+                >
                   <div className="flex items-center gap-2">
                     <h3 className="font-medium">{rule.name}</h3>
                     <PlatformBadge platform={rule.platform} />
-                    <span className={`rounded-full px-2 py-0.5 text-xs ${
-                      rule.enabled ? "bg-green-500/10 text-green-600" : "bg-muted text-muted-foreground"
-                    }`}>
+                    <span
+                      className={`rounded-full px-2 py-0.5 text-xs ${
+                        rule.enabled
+                          ? "bg-green-500/10 text-green-600"
+                          : "bg-muted text-muted-foreground"
+                      }`}
+                    >
                       {rule.enabled ? "Active" : "Disabled"}
                     </span>
-                    {(rule as CommentRule & { use_ai_reply?: number }).use_ai_reply ? (
-                      <span className="rounded-full bg-purple-500/10 px-2 py-0.5 text-xs text-purple-600">AI Reply</span>
+                    {(rule as CommentRule & { use_ai_reply?: number })
+                      .use_ai_reply ? (
+                      <span className="rounded-full bg-purple-500/10 px-2 py-0.5 text-xs text-purple-600">
+                        AI Reply
+                      </span>
                     ) : null}
                   </div>
                   <p className="text-xs text-muted-foreground mt-1">
-                    Keywords: {JSON.parse(rule.keywords).join(", ") || "none"} &middot;
-                    Triggered {rule.trigger_count} times
-                    {rule.max_triggers_total ? ` / ${rule.max_triggers_total} max` : ""}
+                    Keywords: {JSON.parse(rule.keywords).join(", ") || "none"}{" "}
+                    &middot; Triggered {rule.trigger_count} times
+                    {rule.max_triggers_total
+                      ? ` / ${rule.max_triggers_total} max`
+                      : ""}
                   </p>
                   <p className="text-xs text-muted-foreground mt-1">
                     {rule.comment_reply_template ? (
-                      <>Reply: &quot;{rule.comment_reply_template.slice(0, 80)}{rule.comment_reply_template.length > 80 ? "..." : ""}&quot;</>
-                    ) : (rule as CommentRule & { use_ai_reply?: number }).use_ai_reply ? (
+                      <>
+                        Reply: &quot;{rule.comment_reply_template.slice(0, 80)}
+                        {rule.comment_reply_template.length > 80 ? "..." : ""}
+                        &quot;
+                      </>
+                    ) : (rule as CommentRule & { use_ai_reply?: number })
+                        .use_ai_reply ? (
                       <>Reply: AI-generated</>
                     ) : (
                       <>Reply: none</>
                     )}
                     {rule.dm_template ? (
-                      <> &middot; DM: &quot;{rule.dm_template.slice(0, 60)}{rule.dm_template.length > 60 ? "..." : ""}&quot;</>
+                      <>
+                        {" "}
+                        &middot; DM: &quot;{rule.dm_template.slice(0, 60)}
+                        {rule.dm_template.length > 60 ? "..." : ""}&quot;
+                      </>
                     ) : null}
-                    {rule.dm_delay_seconds > 0 ? ` (${rule.dm_delay_seconds}s delay)` : ""}
+                    {rule.dm_delay_seconds > 0
+                      ? ` (${rule.dm_delay_seconds}s delay)`
+                      : ""}
                     {rule.model ? ` · Model: ${rule.model}` : ""}
                   </p>
                 </div>
                 <div className="flex gap-2">
                   <button
-                    onClick={() => { setEditingRule(rule); setShowCreate(false); setShowAiGenerate(false); }}
+                    onClick={() => {
+                      setEditingRule(rule);
+                      setShowCreate(false);
+                      setShowAiGenerate(false);
+                    }}
                     className="rounded-md border border-border px-3 py-1 text-xs hover:bg-accent/10"
                   >
                     Edit
@@ -712,7 +902,9 @@ function AutomationsTab() {
                   </button>
                 </div>
               </div>
-              {expandedRuleId === rule.id && <FollowUpStepsSection ruleId={rule.id} />}
+              {expandedRuleId === rule.id && (
+                <FollowUpStepsSection ruleId={rule.id} />
+              )}
             </div>
           ))}
         </div>
@@ -735,7 +927,11 @@ function AutomationsTab() {
   );
 }
 
-function RuleForm({ onSubmit, initialValues, onCancel }: {
+function RuleForm({
+  onSubmit,
+  initialValues,
+  onCancel,
+}: {
   onSubmit: (data: Partial<CommentRule>) => void;
   initialValues?: CommentRule;
   onCancel?: () => void;
@@ -743,19 +939,38 @@ function RuleForm({ onSubmit, initialValues, onCancel }: {
   const isEdit = !!initialValues;
   const parseKeywords = (kw: string | undefined) => {
     if (!kw) return "";
-    try { return (JSON.parse(kw) as string[]).join(", "); } catch { return kw; }
+    try {
+      return (JSON.parse(kw) as string[]).join(", ");
+    } catch {
+      return kw;
+    }
   };
   const [name, setName] = useState(initialValues?.name ?? "");
-  const [platform, setPlatform] = useState(initialValues?.platform ?? "twitter");
-  const [keywords, setKeywords] = useState(initialValues ? parseKeywords(initialValues.keywords) : "");
-  const [dmTemplate, setDmTemplate] = useState(initialValues?.dm_template ?? "");
-  const [commentReply, setCommentReply] = useState(initialValues?.comment_reply_template ?? "");
+  const [platform, setPlatform] = useState(
+    initialValues?.platform ?? "twitter",
+  );
+  const [keywords, setKeywords] = useState(
+    initialValues ? parseKeywords(initialValues.keywords) : "",
+  );
+  const [dmTemplate, setDmTemplate] = useState(
+    initialValues?.dm_template ?? "",
+  );
+  const [commentReply, setCommentReply] = useState(
+    initialValues?.comment_reply_template ?? "",
+  );
   const [dmDelay, setDmDelay] = useState(initialValues?.dm_delay_seconds ?? 0);
-  const [maxPerUser, setMaxPerUser] = useState(initialValues?.max_triggers_per_user ?? 1);
+  const [maxPerUser, setMaxPerUser] = useState(
+    initialValues?.max_triggers_per_user ?? 1,
+  );
   const [autoTag, setAutoTag] = useState(initialValues?.auto_tag ?? "");
   const [ruleModel, setRuleModel] = useState(initialValues?.model ?? "");
-  const [useAiReply, setUseAiReply] = useState(!!(initialValues as CommentRule & { use_ai_reply?: number })?.use_ai_reply);
-  const [aiReplyContext, setAiReplyContext] = useState((initialValues as CommentRule & { ai_reply_context?: string })?.ai_reply_context ?? "");
+  const [useAiReply, setUseAiReply] = useState(
+    !!(initialValues as CommentRule & { use_ai_reply?: number })?.use_ai_reply,
+  );
+  const [aiReplyContext, setAiReplyContext] = useState(
+    (initialValues as CommentRule & { ai_reply_context?: string })
+      ?.ai_reply_context ?? "",
+  );
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -763,7 +978,12 @@ function RuleForm({ onSubmit, initialValues, onCancel }: {
       name,
       platform,
       enabled: 1,
-      keywords: JSON.stringify(keywords.split(",").map((k) => k.trim()).filter(Boolean)),
+      keywords: JSON.stringify(
+        keywords
+          .split(",")
+          .map((k) => k.trim())
+          .filter(Boolean),
+      ),
       dm_template: dmTemplate,
       comment_reply_template: commentReply || null,
       dm_delay_seconds: dmDelay,
@@ -776,92 +996,197 @@ function RuleForm({ onSubmit, initialValues, onCancel }: {
   };
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-3 rounded-lg border border-border bg-card p-4">
+    <form
+      onSubmit={handleSubmit}
+      className="space-y-3 rounded-lg border border-border bg-card p-4"
+    >
       <div className="grid grid-cols-2 gap-3">
         <div>
-          <label className="text-xs font-medium text-muted-foreground">Rule Name</label>
-          <input type="text" value={name} onChange={(e) => setName(e.target.value)} required
-            className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm" />
+          <label className="text-xs font-medium text-muted-foreground">
+            Rule Name
+          </label>
+          <input
+            type="text"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            required
+            className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
+          />
         </div>
         <div>
-          <label className="text-xs font-medium text-muted-foreground">Platform</label>
-          <select value={platform} onChange={(e) => setPlatform(e.target.value)}
-            className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm">
-            {["twitter", "linkedin", "reddit", "youtube", "tiktok", "instagram", "facebook"].map((p) => (
-              <option key={p} value={p}>{p}</option>
+          <label className="text-xs font-medium text-muted-foreground">
+            Platform
+          </label>
+          <select
+            value={platform}
+            onChange={(e) => setPlatform(e.target.value)}
+            className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
+          >
+            {[
+              "twitter",
+              "linkedin",
+              "reddit",
+              "youtube",
+              "tiktok",
+              "instagram",
+              "facebook",
+            ].map((p) => (
+              <option key={p} value={p}>
+                {p}
+              </option>
             ))}
           </select>
         </div>
       </div>
       <div>
-        <label className="text-xs font-medium text-muted-foreground">Keywords (comma-separated)</label>
-        <input type="text" value={keywords} onChange={(e) => setKeywords(e.target.value)}
+        <label className="text-xs font-medium text-muted-foreground">
+          Keywords (comma-separated)
+        </label>
+        <input
+          type="text"
+          value={keywords}
+          onChange={(e) => setKeywords(e.target.value)}
           placeholder="interested, pricing, demo"
-          className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm" />
+          className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
+        />
       </div>
       <div>
-        <label className="text-xs font-medium text-muted-foreground">Comment Reply Template</label>
-        <textarea value={commentReply} onChange={(e) => setCommentReply(e.target.value)} rows={2}
+        <label className="text-xs font-medium text-muted-foreground">
+          Comment Reply Template
+        </label>
+        <textarea
+          value={commentReply}
+          onChange={(e) => setCommentReply(e.target.value)}
+          rows={2}
           placeholder="Hey {{username}}, thanks for your comment! ..."
-          className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm" />
-        <p className="text-xs text-muted-foreground mt-0.5">Public reply posted on the comment. Variables: {"{{username}}, {{keyword}}, {{post_id}}, {{post_caption}}, {{post_url}}"}</p>
+          className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
+        />
+        <p className="text-xs text-muted-foreground mt-0.5">
+          Public reply posted on the comment. Variables:{" "}
+          {
+            "{{username}}, {{keyword}}, {{post_id}}, {{post_caption}}, {{post_url}}"
+          }
+        </p>
       </div>
       <div>
-        <label className="text-xs font-medium text-muted-foreground">DM Template (optional)</label>
-        <textarea value={dmTemplate} onChange={(e) => setDmTemplate(e.target.value)} rows={2}
+        <label className="text-xs font-medium text-muted-foreground">
+          DM Template (optional)
+        </label>
+        <textarea
+          value={dmTemplate}
+          onChange={(e) => setDmTemplate(e.target.value)}
+          rows={2}
           placeholder="Hey {{username}}, thanks for your interest! ..."
-          className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm" />
-        <p className="text-xs text-muted-foreground mt-0.5">Private DM sent to the user, in addition to the comment reply. Leave blank for comment-only.</p>
+          className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
+        />
+        <p className="text-xs text-muted-foreground mt-0.5">
+          Private DM sent to the user, in addition to the comment reply. Leave
+          blank for comment-only.
+        </p>
       </div>
       <div className="grid grid-cols-3 gap-3">
         <div>
-          <label className="text-xs font-medium text-muted-foreground">DM Delay (seconds)</label>
-          <input type="number" value={dmDelay} onChange={(e) => setDmDelay(Number(e.target.value))} min={0} max={3600}
-            className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm" />
+          <label className="text-xs font-medium text-muted-foreground">
+            DM Delay (seconds)
+          </label>
+          <input
+            type="number"
+            value={dmDelay}
+            onChange={(e) => setDmDelay(Number(e.target.value))}
+            min={0}
+            max={3600}
+            className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
+          />
         </div>
         <div>
-          <label className="text-xs font-medium text-muted-foreground">Max per User</label>
-          <input type="number" value={maxPerUser} onChange={(e) => setMaxPerUser(Number(e.target.value))} min={1} max={100}
-            className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm" />
+          <label className="text-xs font-medium text-muted-foreground">
+            Max per User
+          </label>
+          <input
+            type="number"
+            value={maxPerUser}
+            onChange={(e) => setMaxPerUser(Number(e.target.value))}
+            min={1}
+            max={100}
+            className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
+          />
         </div>
         <div>
-          <label className="text-xs font-medium text-muted-foreground">Auto-Tag</label>
-          <input type="text" value={autoTag} onChange={(e) => setAutoTag(e.target.value)}
+          <label className="text-xs font-medium text-muted-foreground">
+            Auto-Tag
+          </label>
+          <input
+            type="text"
+            value={autoTag}
+            onChange={(e) => setAutoTag(e.target.value)}
             placeholder="lead"
-            className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm" />
+            className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
+          />
         </div>
       </div>
       {/* AI Reply toggle & context */}
       <div className="rounded-md border border-border p-3 space-y-2">
         <label className="flex items-center gap-2 cursor-pointer">
-          <input type="checkbox" checked={useAiReply} onChange={(e) => setUseAiReply(e.target.checked)}
-            className="h-4 w-4 rounded border-border" />
-          <span className="text-xs font-medium text-muted-foreground">Use AI-Generated Replies</span>
-          <span className="text-[10px] text-purple-500">(instead of static templates)</span>
+          <input
+            type="checkbox"
+            checked={useAiReply}
+            onChange={(e) => setUseAiReply(e.target.checked)}
+            className="h-4 w-4 rounded border-border"
+          />
+          <span className="text-xs font-medium text-muted-foreground">
+            Use AI-Generated Replies
+          </span>
+          <span className="text-[10px] text-purple-500">
+            (instead of static templates)
+          </span>
         </label>
         {useAiReply && (
           <div>
-            <label className="text-xs font-medium text-muted-foreground">AI Context / Instructions</label>
-            <textarea value={aiReplyContext} onChange={(e) => setAiReplyContext(e.target.value)} rows={3}
+            <label className="text-xs font-medium text-muted-foreground">
+              AI Context / Instructions
+            </label>
+            <textarea
+              value={aiReplyContext}
+              onChange={(e) => setAiReplyContext(e.target.value)}
+              rows={3}
               placeholder="Tell the AI about your brand, products, tone of voice, and what to say (up to 10K chars)..."
-              className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm" />
-            <p className="text-[10px] text-muted-foreground mt-0.5">The AI will use this context to generate personalized replies to each comment</p>
+              className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
+            />
+            <p className="text-[10px] text-muted-foreground mt-0.5">
+              The AI will use this context to generate personalized replies to
+              each comment
+            </p>
           </div>
         )}
       </div>
       <div>
-        <label className="text-xs font-medium text-muted-foreground">LLM Model Override</label>
+        <label className="text-xs font-medium text-muted-foreground">
+          LLM Model Override
+        </label>
         <div className="mt-1">
-          <InlineModelPicker value={ruleModel} onChange={setRuleModel} className="w-full" />
+          <InlineModelPicker
+            value={ruleModel}
+            onChange={setRuleModel}
+            className="w-full"
+          />
         </div>
-        <p className="text-[10px] text-muted-foreground mt-0.5">Leave as Default to use the system-wide model</p>
+        <p className="text-[10px] text-muted-foreground mt-0.5">
+          Leave as Default to use the system-wide model
+        </p>
       </div>
       <div className="flex gap-2">
-        <button type="submit" className="rounded-md bg-primary px-4 py-2 text-sm text-primary-foreground">
+        <button
+          type="submit"
+          className="rounded-md bg-primary px-4 py-2 text-sm text-primary-foreground"
+        >
           {isEdit ? "Save Changes" : "Create Rule"}
         </button>
         {onCancel && (
-          <button type="button" onClick={onCancel} className="rounded-md border border-border px-4 py-2 text-sm hover:bg-accent/10">
+          <button
+            type="button"
+            onClick={onCancel}
+            className="rounded-md border border-border px-4 py-2 text-sm hover:bg-accent/10"
+          >
             Cancel
           </button>
         )}
@@ -893,15 +1218,27 @@ function AutomationLogSection() {
           <tbody>
             {log.map((entry) => (
               <tr key={entry.id} className="border-b border-border">
-                <td className="px-3 py-1 text-muted-foreground">{new Date(entry.created_at).toLocaleString()}</td>
+                <td className="px-3 py-1 text-muted-foreground">
+                  {new Date(entry.created_at).toLocaleString()}
+                </td>
                 <td className="px-3 py-1">@{entry.username}</td>
-                <td className="px-3 py-1"><PlatformBadge platform={entry.platform} /></td>
-                <td className="px-3 py-1">{entry.matched_keyword ?? "—"}</td>
-                <td className="px-3 py-1">{entry.comment_replied ? "✓" : "—"}</td>
                 <td className="px-3 py-1">
-                  {entry.dm_sent ? "✓" : entry.dm_error ? (
-                    <span className="text-destructive" title={entry.dm_error}>✗</span>
-                  ) : "—"}
+                  <PlatformBadge platform={entry.platform} />
+                </td>
+                <td className="px-3 py-1">{entry.matched_keyword ?? "—"}</td>
+                <td className="px-3 py-1">
+                  {entry.comment_replied ? "✓" : "—"}
+                </td>
+                <td className="px-3 py-1">
+                  {entry.dm_sent ? (
+                    "✓"
+                  ) : entry.dm_error ? (
+                    <span className="text-destructive" title={entry.dm_error}>
+                      ✗
+                    </span>
+                  ) : (
+                    "—"
+                  )}
                 </td>
               </tr>
             ))}
@@ -930,18 +1267,30 @@ function ActivityTab() {
       {/* Approval Queue */}
       <div>
         <h2 className="text-lg font-semibold mb-2">
-          Pending Approval <span className="ml-2 rounded-full bg-orange-500/10 px-2 py-0.5 text-xs text-orange-600">{pending.length}</span>
+          Pending Approval{" "}
+          <span className="ml-2 rounded-full bg-orange-500/10 px-2 py-0.5 text-xs text-orange-600">
+            {pending.length}
+          </span>
         </h2>
         {pending.length === 0 ? (
-          <p className="text-sm text-muted-foreground mb-4">No replies awaiting approval.</p>
+          <p className="text-sm text-muted-foreground mb-4">
+            No replies awaiting approval.
+          </p>
         ) : (
           <div className="space-y-2">
             {pending.map((p) => (
-              <div key={p.id} className="rounded-lg border border-orange-500/30 bg-orange-500/5 p-4">
+              <div
+                key={p.id}
+                className="rounded-lg border border-orange-500/30 bg-orange-500/5 p-4"
+              >
                 <div className="flex items-center gap-2 mb-2">
                   <PlatformBadge platform={p.platform} />
-                  <span className="text-sm font-medium">→ @{p.contact_username || "unknown"}</span>
-                  <span className="text-xs text-muted-foreground">{new Date(p.created_at).toLocaleString()}</span>
+                  <span className="text-sm font-medium">
+                    → @{p.contact_username || "unknown"}
+                  </span>
+                  <span className="text-xs text-muted-foreground">
+                    {new Date(p.created_at).toLocaleString()}
+                  </span>
                 </div>
                 {editingId === p.id ? (
                   <div className="space-y-2">
@@ -954,16 +1303,28 @@ function ActivityTab() {
                     <div className="flex gap-2">
                       <button
                         onClick={() => {
-                          editAndApprove.mutate({ id: p.id, content: editContent }, {
-                            onSuccess: () => { setEditingId(null); showToast("Reply edited & approved", "success"); },
-                            onError: (err) => showToast(`Error: ${err.message}`, "error"),
-                          });
+                          editAndApprove.mutate(
+                            { id: p.id, content: editContent },
+                            {
+                              onSuccess: () => {
+                                setEditingId(null);
+                                showToast("Reply edited & approved", "success");
+                              },
+                              onError: (err) =>
+                                showToast(`Error: ${err.message}`, "error"),
+                            },
+                          );
                         }}
                         className="rounded-md bg-primary px-3 py-1 text-xs text-primary-foreground"
                       >
                         Save & Approve
                       </button>
-                      <button onClick={() => setEditingId(null)} className="rounded-md border border-border px-3 py-1 text-xs">Cancel</button>
+                      <button
+                        onClick={() => setEditingId(null)}
+                        className="rounded-md border border-border px-3 py-1 text-xs"
+                      >
+                        Cancel
+                      </button>
                     </div>
                   </div>
                 ) : (
@@ -971,25 +1332,36 @@ function ActivityTab() {
                     <p className="text-sm mb-3">{p.content}</p>
                     <div className="flex gap-2">
                       <button
-                        onClick={() => approveReply.mutate(p.id, {
-                          onSuccess: () => showToast("Reply approved", "success"),
-                          onError: (err) => showToast(`Error: ${err.message}`, "error"),
-                        })}
+                        onClick={() =>
+                          approveReply.mutate(p.id, {
+                            onSuccess: () =>
+                              showToast("Reply approved", "success"),
+                            onError: (err) =>
+                              showToast(`Error: ${err.message}`, "error"),
+                          })
+                        }
                         className="rounded-md bg-green-600 px-3 py-1 text-xs text-white"
                       >
                         Approve
                       </button>
                       <button
-                        onClick={() => { setEditingId(p.id); setEditContent(p.content); }}
+                        onClick={() => {
+                          setEditingId(p.id);
+                          setEditContent(p.content);
+                        }}
                         className="rounded-md border border-border px-3 py-1 text-xs"
                       >
                         Edit
                       </button>
                       <button
-                        onClick={() => rejectReply.mutate(p.id, {
-                          onSuccess: () => showToast("Reply rejected", "success"),
-                          onError: (err) => showToast(`Error: ${err.message}`, "error"),
-                        })}
+                        onClick={() =>
+                          rejectReply.mutate(p.id, {
+                            onSuccess: () =>
+                              showToast("Reply rejected", "success"),
+                            onError: (err) =>
+                              showToast(`Error: ${err.message}`, "error"),
+                          })
+                        }
                         className="rounded-md bg-red-600 px-3 py-1 text-xs text-white"
                       >
                         Reject
@@ -1021,20 +1393,33 @@ function ActivityTab() {
               </div>
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
-                  <span className={`text-xs font-medium ${
-                    m.direction === "inbound" ? "text-blue-600" : "text-green-600"
-                  }`}>
+                  <span
+                    className={`text-xs font-medium ${
+                      m.direction === "inbound"
+                        ? "text-blue-600"
+                        : "text-green-600"
+                    }`}
+                  >
                     {m.direction === "inbound" ? "← Inbound" : "→ Outbound"}
                   </span>
-                  <span className={`text-xs rounded-full px-2 py-0.5 ${
-                    m.status === "auto_replied" ? "bg-green-500/10 text-green-600" :
-                    m.status === "escalated" ? "bg-orange-500/10 text-orange-600" :
-                    m.status === "failed" ? "bg-red-500/10 text-red-600" :
-                    m.status === "pending_approval" ? "bg-yellow-500/10 text-yellow-600" :
-                    m.status === "rejected" ? "bg-red-500/10 text-red-500" :
-                    "bg-muted text-muted-foreground"
-                  }`}>
-                    {m.status === "pending_approval" ? "pending approval" : m.status}
+                  <span
+                    className={`text-xs rounded-full px-2 py-0.5 ${
+                      m.status === "auto_replied"
+                        ? "bg-green-500/10 text-green-600"
+                        : m.status === "escalated"
+                          ? "bg-orange-500/10 text-orange-600"
+                          : m.status === "failed"
+                            ? "bg-red-500/10 text-red-600"
+                            : m.status === "pending_approval"
+                              ? "bg-yellow-500/10 text-yellow-600"
+                              : m.status === "rejected"
+                                ? "bg-red-500/10 text-red-500"
+                                : "bg-muted text-muted-foreground"
+                    }`}
+                  >
+                    {m.status === "pending_approval"
+                      ? "pending approval"
+                      : m.status}
                   </span>
                 </div>
                 <p className="mt-1 text-sm truncate">{m.content}</p>
@@ -1056,7 +1441,10 @@ function SettingsTab() {
   const { data: config } = useSocialConfig();
   const voicesQuery = useQuery({
     queryKey: ["brand-voices"],
-    queryFn: () => fetchJson<{ voices: Array<{ id: string; name: string; active: boolean }> }>("/api/admin/brand-voice"),
+    queryFn: () =>
+      fetchJson<{
+        voices: Array<{ id: string; name: string; active: boolean }>;
+      }>("/api/admin/brand-voice"),
   });
   const voices = voicesQuery.data?.voices ?? [];
   const [savingVoice, setSavingVoice] = useState(false);
@@ -1064,17 +1452,23 @@ function SettingsTab() {
   // Fetch brain settings from admin endpoint
   const brainSettingsQuery = useQuery({
     queryKey: ["social", "brain-settings"],
-    queryFn: () => fetchJson<{
-      enabled: boolean;
-      model: string;
-      responseStyle: string;
-      confidenceThreshold: string;
-      commentAutomation: boolean;
-      commentBrainEnabled: boolean;
-      approvalRequired: boolean;
-      notifications: { enabled: boolean; telegram: boolean; discord: boolean; web: boolean };
-      handoff: Record<string, unknown>;
-    }>("/api/admin/social-brain/settings"),
+    queryFn: () =>
+      fetchJson<{
+        enabled: boolean;
+        model: string;
+        responseStyle: string;
+        confidenceThreshold: string;
+        commentAutomation: boolean;
+        commentBrainEnabled: boolean;
+        approvalRequired: boolean;
+        notifications: {
+          enabled: boolean;
+          telegram: boolean;
+          discord: boolean;
+          web: boolean;
+        };
+        handoff: Record<string, unknown>;
+      }>("/api/admin/social-brain/settings"),
     refetchInterval: 30_000,
   });
 
@@ -1097,13 +1491,16 @@ function SettingsTab() {
         method: "PUT",
         body: JSON.stringify({ brandVoiceId }),
       }),
-    onSuccess: () => showToast("Brand voice updated for Social Brain", "success"),
+    onSuccess: () =>
+      showToast("Brand voice updated for Social Brain", "success"),
     onError: (err) => showToast(`Error: ${(err as Error).message}`, "error"),
     onSettled: () => setSavingVoice(false),
   });
 
   if (!config) {
-    return <p className="text-sm text-muted-foreground">Loading configuration...</p>;
+    return (
+      <p className="text-sm text-muted-foreground">Loading configuration...</p>
+    );
   }
 
   return (
@@ -1111,7 +1508,8 @@ function SettingsTab() {
       <div>
         <h2 className="text-lg font-semibold">Platform Configuration</h2>
         <p className="text-sm text-muted-foreground">
-          Connect social platforms by setting environment variables and configuring webhooks on each platform&apos;s developer portal.
+          Connect social platforms by setting environment variables and
+          configuring webhooks on each platform&apos;s developer portal.
         </p>
       </div>
 
@@ -1119,12 +1517,18 @@ function SettingsTab() {
       <div className="flex flex-wrap gap-4">
         <div className="rounded-lg border border-border bg-card p-3">
           <p className="text-xs text-muted-foreground">Webhook Verify Token</p>
-          <p className={`text-sm font-medium ${config.webhookVerifyToken ? "text-green-600" : "text-destructive"}`}>
+          <p
+            className={`text-sm font-medium ${config.webhookVerifyToken ? "text-green-600" : "text-destructive"}`}
+          >
             {config.webhookVerifyToken ? "Set" : "Not Set"}
           </p>
           {!config.webhookVerifyToken && (
             <p className="mt-1 text-xs text-muted-foreground">
-              Set <code className="rounded bg-muted px-1">SOCIAL_WEBHOOK_VERIFY_TOKEN</code> in your .env
+              Set{" "}
+              <code className="rounded bg-muted px-1">
+                SOCIAL_WEBHOOK_VERIFY_TOKEN
+              </code>{" "}
+              in your .env
             </p>
           )}
         </div>
@@ -1143,7 +1547,8 @@ function SettingsTab() {
               <option value="">Default (active voice)</option>
               {voices.map((v) => (
                 <option key={v.id} value={v.id}>
-                  {v.name}{v.active ? " \u2713" : ""}
+                  {v.name}
+                  {v.active ? " \u2713" : ""}
                 </option>
               ))}
             </select>
@@ -1165,31 +1570,48 @@ function SettingsTab() {
             <input
               type="checkbox"
               checked={brainSettingsQuery.data?.commentBrainEnabled ?? false}
-              onChange={(e) => saveBrainSettings.mutate({ commentBrainEnabled: e.target.checked })}
+              onChange={(e) =>
+                saveBrainSettings.mutate({
+                  commentBrainEnabled: e.target.checked,
+                })
+              }
               className="h-4 w-4 rounded border-border"
             />
             <div>
               <p className="text-sm font-medium">AI Comment Replies</p>
-              <p className="text-xs text-muted-foreground">Route comments (with no matching keyword rule) through the AI Brain for auto-reply</p>
+              <p className="text-xs text-muted-foreground">
+                Route comments (with no matching keyword rule) through the AI
+                Brain for auto-reply
+              </p>
             </div>
           </label>
           <label className="flex items-center gap-3">
             <input
               type="checkbox"
               checked={brainSettingsQuery.data?.approvalRequired ?? false}
-              onChange={(e) => saveBrainSettings.mutate({ approvalRequired: e.target.checked })}
+              onChange={(e) =>
+                saveBrainSettings.mutate({ approvalRequired: e.target.checked })
+              }
               className="h-4 w-4 rounded border-border"
             />
             <div>
               <p className="text-sm font-medium">Require Approval</p>
-              <p className="text-xs text-muted-foreground">Hold AI-generated replies for human review before sending (recommended)</p>
+              <p className="text-xs text-muted-foreground">
+                Hold AI-generated replies for human review before sending
+                (recommended)
+              </p>
             </div>
           </label>
 
           <div className="border-t border-border/50 pt-4 space-y-4">
             <div>
-              <label className="block text-sm font-medium mb-1">LLM Model</label>
-              <p className="text-xs text-muted-foreground mb-2">Choose the model used for AI-generated social replies. Leave blank to use the system default.</p>
+              <label className="block text-sm font-medium mb-1">
+                LLM Model
+              </label>
+              <p className="text-xs text-muted-foreground mb-2">
+                Choose the model used for AI-generated social replies. Leave
+                blank to use the system default.
+              </p>
               <InlineModelPicker
                 value={brainSettingsQuery.data?.model ?? ""}
                 onChange={(v) => saveBrainSettings.mutate({ model: v })}
@@ -1198,30 +1620,55 @@ function SettingsTab() {
             </div>
 
             <div>
-              <label className="block text-sm font-medium mb-1">Response Style</label>
-              <p className="text-xs text-muted-foreground mb-2">Set the tone for AI-generated replies across all platforms.</p>
+              <label className="block text-sm font-medium mb-1">
+                Response Style
+              </label>
+              <p className="text-xs text-muted-foreground mb-2">
+                Set the tone for AI-generated replies across all platforms.
+              </p>
               <select
                 value={brainSettingsQuery.data?.responseStyle ?? "friendly"}
-                onChange={(e) => saveBrainSettings.mutate({ responseStyle: e.target.value })}
+                onChange={(e) =>
+                  saveBrainSettings.mutate({ responseStyle: e.target.value })
+                }
                 className="rounded-md border border-border bg-card px-3 py-1.5 text-sm text-foreground max-w-xs"
               >
-                <option value="friendly">Friendly — warm, approachable, emoji-light</option>
-                <option value="professional">Professional — polished, business-appropriate</option>
-                <option value="witty">Witty — clever, personality-forward</option>
+                <option value="friendly">
+                  Friendly — warm, approachable, emoji-light
+                </option>
+                <option value="professional">
+                  Professional — polished, business-appropriate
+                </option>
+                <option value="witty">
+                  Witty — clever, personality-forward
+                </option>
                 <option value="minimal">Minimal — brief, direct answers</option>
               </select>
             </div>
 
             <div>
-              <label className="block text-sm font-medium mb-1">Confidence Threshold</label>
-              <p className="text-xs text-muted-foreground mb-2">Minimum AI confidence needed before sending a reply. Lower thresholds reply more often but may be less accurate.</p>
+              <label className="block text-sm font-medium mb-1">
+                Confidence Threshold
+              </label>
+              <p className="text-xs text-muted-foreground mb-2">
+                Minimum AI confidence needed before sending a reply. Lower
+                thresholds reply more often but may be less accurate.
+              </p>
               <select
                 value={brainSettingsQuery.data?.confidenceThreshold ?? "high"}
-                onChange={(e) => saveBrainSettings.mutate({ confidenceThreshold: e.target.value })}
+                onChange={(e) =>
+                  saveBrainSettings.mutate({
+                    confidenceThreshold: e.target.value,
+                  })
+                }
                 className="rounded-md border border-border bg-card px-3 py-1.5 text-sm text-foreground max-w-xs"
               >
-                <option value="high">High — reply only when very confident</option>
-                <option value="medium">Medium — balanced confidence level</option>
+                <option value="high">
+                  High — reply only when very confident
+                </option>
+                <option value="medium">
+                  Medium — balanced confidence level
+                </option>
                 <option value="low">Low — reply to most comments</option>
               </select>
             </div>
@@ -1236,12 +1683,18 @@ function SettingsTab() {
             <input
               type="checkbox"
               checked={brainSettingsQuery.data?.notifications?.enabled ?? false}
-              onChange={(e) => saveBrainSettings.mutate({ notifications: { enabled: e.target.checked } })}
+              onChange={(e) =>
+                saveBrainSettings.mutate({
+                  notifications: { enabled: e.target.checked },
+                })
+              }
               className="h-4 w-4 rounded border-border"
             />
             <div>
               <p className="text-sm font-medium">Enable Push Notifications</p>
-              <p className="text-xs text-muted-foreground">Push incoming message and comment alerts to configured channels</p>
+              <p className="text-xs text-muted-foreground">
+                Push incoming message and comment alerts to configured channels
+              </p>
             </div>
           </label>
           {brainSettingsQuery.data?.notifications?.enabled && (
@@ -1249,8 +1702,14 @@ function SettingsTab() {
               <label className="flex items-center gap-3">
                 <input
                   type="checkbox"
-                  checked={brainSettingsQuery.data?.notifications?.telegram ?? true}
-                  onChange={(e) => saveBrainSettings.mutate({ notifications: { telegram: e.target.checked } })}
+                  checked={
+                    brainSettingsQuery.data?.notifications?.telegram ?? true
+                  }
+                  onChange={(e) =>
+                    saveBrainSettings.mutate({
+                      notifications: { telegram: e.target.checked },
+                    })
+                  }
                   className="h-4 w-4 rounded border-border"
                 />
                 <span className="text-sm">Telegram</span>
@@ -1258,8 +1717,14 @@ function SettingsTab() {
               <label className="flex items-center gap-3">
                 <input
                   type="checkbox"
-                  checked={brainSettingsQuery.data?.notifications?.discord ?? true}
-                  onChange={(e) => saveBrainSettings.mutate({ notifications: { discord: e.target.checked } })}
+                  checked={
+                    brainSettingsQuery.data?.notifications?.discord ?? true
+                  }
+                  onChange={(e) =>
+                    saveBrainSettings.mutate({
+                      notifications: { discord: e.target.checked },
+                    })
+                  }
                   className="h-4 w-4 rounded border-border"
                 />
                 <span className="text-sm">Discord</span>
@@ -1268,10 +1733,16 @@ function SettingsTab() {
                 <input
                   type="checkbox"
                   checked={brainSettingsQuery.data?.notifications?.web ?? true}
-                  onChange={(e) => saveBrainSettings.mutate({ notifications: { web: e.target.checked } })}
+                  onChange={(e) =>
+                    saveBrainSettings.mutate({
+                      notifications: { web: e.target.checked },
+                    })
+                  }
                   className="h-4 w-4 rounded border-border"
                 />
-                <span className="text-sm">Web (Socket.IO — always available)</span>
+                <span className="text-sm">
+                  Web (Socket.IO — always available)
+                </span>
               </label>
             </div>
           )}
@@ -1287,25 +1758,35 @@ function SettingsTab() {
           <div>
             <p className="font-medium">1. Set environment variables</p>
             <p className="text-muted-foreground">
-              Add platform access tokens and <code className="rounded bg-muted px-1">SOCIAL_WEBHOOK_VERIFY_TOKEN</code> to your <code className="rounded bg-muted px-1">.env</code> file.
+              Add platform access tokens and{" "}
+              <code className="rounded bg-muted px-1">
+                SOCIAL_WEBHOOK_VERIFY_TOKEN
+              </code>{" "}
+              to your <code className="rounded bg-muted px-1">.env</code> file.
             </p>
           </div>
           <div>
             <p className="font-medium">2. Enable platforms</p>
             <p className="text-muted-foreground">
-              Use the toggle switch on each platform card above to enable it. Polling platforms will start fetching data; webhook platforms will begin processing inbound events.
+              Use the toggle switch on each platform card above to enable it.
+              Polling platforms will start fetching data; webhook platforms will
+              begin processing inbound events.
             </p>
           </div>
           <div>
             <p className="font-medium">3. Configure webhooks on the platform</p>
             <p className="text-muted-foreground">
-              Set the webhook URL in the platform&apos;s developer portal. You need a public URL — use <code className="rounded bg-muted px-1">cloudflared</code> tunnel or ngrok for local dev.
+              Set the webhook URL in the platform&apos;s developer portal. You
+              need a public URL — use{" "}
+              <code className="rounded bg-muted px-1">cloudflared</code> tunnel
+              or ngrok for local dev.
             </p>
           </div>
           <div>
             <p className="font-medium">4. Restart the server</p>
             <p className="text-muted-foreground">
-              Restart openzigs so the new credentials are loaded and the platform adapter is registered.
+              Restart openzigs so the new credentials are loaded and the
+              platform adapter is registered.
             </p>
           </div>
         </div>
@@ -1329,7 +1810,14 @@ function PlatformCard({ platform: p }: { platform: PlatformConfigEntry }) {
   const setMode = useSetPlatformMode();
 
   // Platforms that support mode switching (webhook/polling, or browser for YouTube/Reddit)
-  const supportsModeSwitching = ["facebook", "twitter", "instagram", "linkedin", "youtube", "reddit"].includes(p.platform);
+  const supportsModeSwitching = [
+    "facebook",
+    "twitter",
+    "instagram",
+    "linkedin",
+    "youtube",
+    "reddit",
+  ].includes(p.platform);
   const supportsBrowserMode = ["youtube", "reddit"].includes(p.platform);
   const isBrowserMode = p.mode === "browser";
 
@@ -1360,13 +1848,22 @@ function PlatformCard({ platform: p }: { platform: PlatformConfigEntry }) {
         ? "bg-blue-500/10 text-blue-600"
         : "bg-muted text-muted-foreground";
 
-  const modeLabel = p.mode === "browser"
-    ? "Browser"
-    : p.mode === "polling"
-      ? (p.pollHealth?.backoffUntil && new Date() < new Date(p.pollHealth.backoffUntil) ? "Backoff" : "Polling")
-      : "Webhook";
+  const modeLabel =
+    p.mode === "browser"
+      ? "Browser"
+      : p.mode === "polling"
+        ? p.pollHealth?.backoffUntil &&
+          new Date() < new Date(p.pollHealth.backoffUntil)
+          ? "Backoff"
+          : "Polling"
+        : "Webhook";
 
-  const isInBackoff = (p.mode === "polling" || p.mode === "browser") && !!(p.pollHealth?.backoffUntil && new Date() < new Date(p.pollHealth.backoffUntil));
+  const isInBackoff =
+    (p.mode === "polling" || p.mode === "browser") &&
+    !!(
+      p.pollHealth?.backoffUntil &&
+      new Date() < new Date(p.pollHealth.backoffUntil)
+    );
   const hasErrors = (p.pollHealth?.consecutiveErrors ?? 0) > 0;
 
   return (
@@ -1374,17 +1871,21 @@ function PlatformCard({ platform: p }: { platform: PlatformConfigEntry }) {
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2">
           <PlatformBadge platform={p.platform} />
-          <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${statusBadgeColor}`}>
+          <span
+            className={`rounded-full px-2 py-0.5 text-xs font-medium ${statusBadgeColor}`}
+          >
             {statusLabel}
           </span>
         </div>
         <div className="flex items-center gap-2">
-          {(p.mode === "polling" || p.mode === "browser") && p.activelyPolling && !isInBackoff && (
-            <span className="relative flex h-2 w-2">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75" />
-              <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500" />
-            </span>
-          )}
+          {(p.mode === "polling" || p.mode === "browser") &&
+            p.activelyPolling &&
+            !isInBackoff && (
+              <span className="relative flex h-2 w-2">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75" />
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500" />
+              </span>
+            )}
           {isInBackoff && (
             <span className="relative flex h-2 w-2">
               <span className="relative inline-flex rounded-full h-2 w-2 bg-yellow-500" />
@@ -1394,27 +1895,43 @@ function PlatformCard({ platform: p }: { platform: PlatformConfigEntry }) {
             <select
               value={p.mode}
               onChange={(e) => {
-                const newMode = e.target.value as "webhook" | "polling" | "browser";
+                const newMode = e.target.value as
+                  | "webhook"
+                  | "polling"
+                  | "browser";
                 setMode.mutate(
                   { platform: p.platform, mode: newMode },
                   {
-                    onSuccess: () => showToast(`${p.platform} mode changed to ${newMode} — restart server to apply`, "success"),
-                    onError: (err) => showToast(`Error: ${(err as Error).message}`, "error"),
+                    onSuccess: () =>
+                      showToast(
+                        `${p.platform} mode changed to ${newMode} — restart server to apply`,
+                        "success",
+                      ),
+                    onError: (err) =>
+                      showToast(`Error: ${(err as Error).message}`, "error"),
                   },
                 );
               }}
               disabled={setMode.isPending}
               className={`rounded border bg-background px-1.5 py-0.5 text-xs focus:outline-none focus:ring-1 focus:ring-ring ${
-                isBrowserMode ? "border-amber-500/50 text-amber-600" : "border-border text-muted-foreground"
+                isBrowserMode
+                  ? "border-amber-500/50 text-amber-600"
+                  : "border-border text-muted-foreground"
               }`}
               aria-label={`Ingestion mode for ${p.platform}`}
             >
               <option value="polling">Polling</option>
               {!supportsBrowserMode && <option value="webhook">Webhook</option>}
-              {supportsBrowserMode && <option value="browser">Browser (Beta)</option>}
+              {supportsBrowserMode && (
+                <option value="browser">Browser (Beta)</option>
+              )}
             </select>
           ) : (
-            <span className={`text-xs capitalize ${isInBackoff ? "text-yellow-600" : "text-muted-foreground"}`}>{modeLabel}</span>
+            <span
+              className={`text-xs capitalize ${isInBackoff ? "text-yellow-600" : "text-muted-foreground"}`}
+            >
+              {modeLabel}
+            </span>
           )}
           {hasErrors && (
             <span className="rounded-full bg-destructive/10 px-1.5 py-0.5 text-xs font-medium text-destructive">
@@ -1428,8 +1945,13 @@ function PlatformCard({ platform: p }: { platform: PlatformConfigEntry }) {
               toggle.mutate(
                 { platform: p.platform, enabled: !p.enabled },
                 {
-                  onSuccess: () => showToast(`${p.platform} ${!p.enabled ? "enabled" : "disabled"}`, "success"),
-                  onError: (err) => showToast(`Error: ${(err as Error).message}`, "error"),
+                  onSuccess: () =>
+                    showToast(
+                      `${p.platform} ${!p.enabled ? "enabled" : "disabled"}`,
+                      "success",
+                    ),
+                  onError: (err) =>
+                    showToast(`Error: ${(err as Error).message}`, "error"),
                 },
               );
             }}
@@ -1458,8 +1980,8 @@ function PlatformCard({ platform: p }: { platform: PlatformConfigEntry }) {
           </p>
           <p className="mt-1 text-amber-600/80 dark:text-amber-400/70">
             Scrapes {p.platform} via Chrome instead of using API credentials.
-            May violate platform ToS. Less reliable than API polling.
-            Requires a logged-in Chrome session. Polls every 30 min by default.
+            May violate platform ToS. Less reliable than API polling. Requires a
+            logged-in Chrome session. Polls every 30 min by default.
           </p>
         </div>
       )}
@@ -1467,13 +1989,19 @@ function PlatformCard({ platform: p }: { platform: PlatformConfigEntry }) {
       <div className="space-y-2 text-xs">
         <div className="flex items-center justify-between">
           <span className="text-muted-foreground">Access Token</span>
-          <span className={p.configured ? "text-green-600" : "text-destructive"}>
+          <span
+            className={p.configured ? "text-green-600" : "text-destructive"}
+          >
             {p.configured ? "Configured" : "Missing"}
           </span>
         </div>
         <div className="flex items-center justify-between">
           <span className="text-muted-foreground">Adapter</span>
-          <span className={p.adapterRegistered ? "text-green-600" : "text-muted-foreground"}>
+          <span
+            className={
+              p.adapterRegistered ? "text-green-600" : "text-muted-foreground"
+            }
+          >
             {p.adapterRegistered ? "Registered" : "Not Registered"}
           </span>
         </div>
@@ -1482,19 +2010,35 @@ function PlatformCard({ platform: p }: { platform: PlatformConfigEntry }) {
           <code className="rounded bg-muted px-1">{p.envVar}</code>
         </div>
         <div>
-          <span className="text-muted-foreground">{p.mode === "browser" ? "Mode: " : p.mode === "polling" ? "Endpoint: " : "Webhook: "}</span>
+          <span className="text-muted-foreground">
+            {p.mode === "browser"
+              ? "Mode: "
+              : p.mode === "polling"
+                ? "Endpoint: "
+                : "Webhook: "}
+          </span>
           {p.mode === "browser" ? (
             <span className="text-amber-600">Browser scraping</span>
           ) : (
-            <code className="rounded bg-muted px-1 break-all">{p.webhookPath}</code>
+            <code className="rounded bg-muted px-1 break-all">
+              {p.webhookPath}
+            </code>
           )}
         </div>
         {(p.mode === "polling" || p.mode === "browser") && p.pollHealth && (
           <>
             <div className="flex items-center justify-between">
               <span className="text-muted-foreground">Last poll</span>
-              <span className={p.pollHealth.lastSuccess ? "text-green-600" : "text-muted-foreground"}>
-                {p.pollHealth.lastSuccess ? relativeTime(p.pollHealth.lastSuccess) : "Never"}
+              <span
+                className={
+                  p.pollHealth.lastSuccess
+                    ? "text-green-600"
+                    : "text-muted-foreground"
+                }
+              >
+                {p.pollHealth.lastSuccess
+                  ? relativeTime(p.pollHealth.lastSuccess)
+                  : "Never"}
               </span>
             </div>
             <div className="flex items-center justify-between">
@@ -1504,8 +2048,13 @@ function PlatformCard({ platform: p }: { platform: PlatformConfigEntry }) {
             {isInBackoff && p.pollHealth.lastError && (
               <div className="rounded bg-yellow-500/10 p-2 text-yellow-700">
                 <p className="font-medium">Backoff active</p>
-                <p className="truncate mt-0.5 text-yellow-600/80">{p.pollHealth.lastError}</p>
-                <p className="mt-0.5">Retries at: {new Date(p.pollHealth.backoffUntil!).toLocaleTimeString()}</p>
+                <p className="truncate mt-0.5 text-yellow-600/80">
+                  {p.pollHealth.lastError}
+                </p>
+                <p className="mt-0.5">
+                  Retries at:{" "}
+                  {new Date(p.pollHealth.backoffUntil!).toLocaleTimeString()}
+                </p>
               </div>
             )}
           </>
@@ -1534,43 +2083,63 @@ function WebhookEventLog() {
   const { data } = useSocialWebhookLog();
   const events = data?.events ?? [];
 
-  const title = events.length > 0
-    ? `Recent Inbound Events (${events.length})`
-    : "Recent Inbound Events";
+  const title =
+    events.length > 0
+      ? `Recent Inbound Events (${events.length})`
+      : "Recent Inbound Events";
 
   return (
     <SectionCard title={title} defaultOpen>
       {events.length === 0 ? (
         <div className="rounded-md border border-dashed border-yellow-500/30 bg-yellow-500/5 p-4 text-sm">
-          <p className="font-medium text-yellow-600 dark:text-yellow-400">No inbound events received yet</p>
+          <p className="font-medium text-yellow-600 dark:text-yellow-400">
+            No inbound events received yet
+          </p>
           <p className="mt-1 text-muted-foreground">
-            Events will appear here when platforms send webhooks to your server or when polling picks up new messages.
-            If you&apos;ve configured webhooks on a platform&apos;s developer portal and still see nothing here, the webhook
-            URL may not be reachable — verify your Cloudflare tunnel is running and the platform can reach your server.
+            Events will appear here when platforms send webhooks to your server
+            or when polling picks up new messages. If you&apos;ve configured
+            webhooks on a platform&apos;s developer portal and still see nothing
+            here, the webhook URL may not be reachable — verify your Cloudflare
+            tunnel is running and the platform can reach your server.
           </p>
           <p className="mt-2 text-xs text-muted-foreground">
-            Test with: <code className="rounded bg-muted px-1">curl -X POST https://&lt;your-domain&gt;/api/social/webhooks/instagram -H &quot;Content-Type: application/json&quot; -d &apos;{}&apos;</code>
+            Test with:{" "}
+            <code className="rounded bg-muted px-1">
+              curl -X POST
+              https://&lt;your-domain&gt;/api/social/webhooks/instagram -H
+              &quot;Content-Type: application/json&quot; -d &apos;{}&apos;
+            </code>
           </p>
         </div>
       ) : (
         <div className="space-y-1 max-h-64 overflow-y-auto">
-          {events.slice().reverse().map((ev, i) => (
-            <div key={i} className="flex items-center gap-2 text-xs py-1 border-b border-border last:border-0">
-              <span className="text-muted-foreground font-mono w-[160px] shrink-0">
-                {new Date(ev.ts).toLocaleString()}
-              </span>
-              <PlatformBadge platform={ev.platform} />
-              <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium ${ev.source === "poll" ? "bg-blue-500/10 text-blue-600" : "bg-purple-500/10 text-purple-600"}`}>
-                {ev.source === "poll" ? "poll" : "webhook"}
-              </span>
-              <span className={ev.parsed ? "text-green-600" : "text-destructive"}>
-                {ev.parsed ? "Parsed" : "Failed"}
-              </span>
-              {ev.type && (
-                <span className="text-muted-foreground">({ev.type})</span>
-              )}
-            </div>
-          ))}
+          {events
+            .slice()
+            .reverse()
+            .map((ev, i) => (
+              <div
+                key={i}
+                className="flex items-center gap-2 text-xs py-1 border-b border-border last:border-0"
+              >
+                <span className="text-muted-foreground font-mono w-[160px] shrink-0">
+                  {new Date(ev.ts).toLocaleString()}
+                </span>
+                <PlatformBadge platform={ev.platform} />
+                <span
+                  className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium ${ev.source === "poll" ? "bg-blue-500/10 text-blue-600" : "bg-purple-500/10 text-purple-600"}`}
+                >
+                  {ev.source === "poll" ? "poll" : "webhook"}
+                </span>
+                <span
+                  className={ev.parsed ? "text-green-600" : "text-destructive"}
+                >
+                  {ev.parsed ? "Parsed" : "Failed"}
+                </span>
+                {ev.type && (
+                  <span className="text-muted-foreground">({ev.type})</span>
+                )}
+              </div>
+            ))}
         </div>
       )}
     </SectionCard>
@@ -1589,7 +2158,9 @@ function PlatformBadge({ platform }: { platform: string }) {
   };
 
   return (
-    <span className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium ${colors[platform] ?? "bg-muted text-muted-foreground"}`}>
+    <span
+      className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium ${colors[platform] ?? "bg-muted text-muted-foreground"}`}
+    >
       {platform}
     </span>
   );
@@ -1608,9 +2179,18 @@ function FollowUpStepsSection({ ruleId }: { ruleId: string }) {
   const handleAdd = () => {
     if (!message.trim()) return;
     createStep.mutate(
-      { ruleId, stepOrder: steps.length + 1, delaySeconds: delay, messageTemplate: message },
       {
-        onSuccess: () => { setMessage(""); setDelay(3600); setShowAdd(false); },
+        ruleId,
+        stepOrder: steps.length + 1,
+        delaySeconds: delay,
+        messageTemplate: message,
+      },
+      {
+        onSuccess: () => {
+          setMessage("");
+          setDelay(3600);
+          setShowAdd(false);
+        },
         onError: () => showToast("Failed to add follow-up step", "error"),
       },
     );
@@ -1619,8 +2199,13 @@ function FollowUpStepsSection({ ruleId }: { ruleId: string }) {
   return (
     <div className="border-t border-border pt-3 mt-3 space-y-2">
       <div className="flex items-center justify-between">
-        <h4 className="text-xs font-semibold text-muted-foreground">Follow-Up Sequence</h4>
-        <button onClick={() => setShowAdd(!showAdd)} className="text-xs text-primary hover:underline">
+        <h4 className="text-xs font-semibold text-muted-foreground">
+          Follow-Up Sequence
+        </h4>
+        <button
+          onClick={() => setShowAdd(!showAdd)}
+          className="text-xs text-primary hover:underline"
+        >
           {showAdd ? "Cancel" : "+ Add Step"}
         </button>
       </div>
@@ -1630,14 +2215,21 @@ function FollowUpStepsSection({ ruleId }: { ruleId: string }) {
       {steps.length > 0 && (
         <div className="space-y-1">
           {steps.map((s, i) => (
-            <div key={s.id} className="flex items-center gap-2 rounded-md bg-muted/30 px-3 py-1.5 text-xs">
+            <div
+              key={s.id}
+              className="flex items-center gap-2 rounded-md bg-muted/30 px-3 py-1.5 text-xs"
+            >
               <span className="font-mono text-muted-foreground">#{i + 1}</span>
-              <span className="text-muted-foreground">after {Math.round(s.delay_seconds / 60)}m:</span>
+              <span className="text-muted-foreground">
+                after {Math.round(s.delay_seconds / 60)}m:
+              </span>
               <span className="flex-1 truncate">{s.message_template}</span>
               <button
                 onClick={() => deleteStep.mutate({ ruleId, stepId: s.id })}
                 className="text-destructive hover:underline"
-              >×</button>
+              >
+                ×
+              </button>
             </div>
           ))}
         </div>
@@ -1646,18 +2238,32 @@ function FollowUpStepsSection({ ruleId }: { ruleId: string }) {
       {showAdd && (
         <div className="flex items-end gap-2">
           <div>
-            <label className="text-[10px] text-muted-foreground">Delay (sec)</label>
-            <input type="number" value={delay} onChange={(e) => setDelay(Number(e.target.value))} min={60}
-              className="w-24 rounded-md border border-border bg-background px-2 py-1 text-xs" />
+            <label className="text-[10px] text-muted-foreground">
+              Delay (sec)
+            </label>
+            <input
+              type="number"
+              value={delay}
+              onChange={(e) => setDelay(Number(e.target.value))}
+              min={60}
+              className="w-24 rounded-md border border-border bg-background px-2 py-1 text-xs"
+            />
           </div>
           <div className="flex-1">
             <label className="text-[10px] text-muted-foreground">Message</label>
-            <input type="text" value={message} onChange={(e) => setMessage(e.target.value)}
+            <input
+              type="text"
+              value={message}
+              onChange={(e) => setMessage(e.target.value)}
               placeholder="Just checking in..."
-              className="w-full rounded-md border border-border bg-background px-2 py-1 text-xs" />
+              className="w-full rounded-md border border-border bg-background px-2 py-1 text-xs"
+            />
           </div>
-          <button onClick={handleAdd} disabled={createStep.isPending}
-            className="rounded-md bg-primary px-3 py-1 text-xs text-primary-foreground disabled:opacity-50">
+          <button
+            onClick={handleAdd}
+            disabled={createStep.isPending}
+            className="rounded-md bg-primary px-3 py-1 text-xs text-primary-foreground disabled:opacity-50"
+          >
             Add
           </button>
         </div>
@@ -1675,20 +2281,38 @@ function LeadsTab() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <h2 className="text-lg font-semibold">Captured Leads</h2>
-        <select value={platform} onChange={(e) => setPlatform(e.target.value)}
-          className="rounded-md border border-border bg-background px-3 py-1.5 text-sm">
+        <select
+          value={platform}
+          onChange={(e) => setPlatform(e.target.value)}
+          className="rounded-md border border-border bg-background px-3 py-1.5 text-sm"
+        >
           <option value="">All Platforms</option>
-          {["twitter", "linkedin", "instagram", "facebook", "youtube", "tiktok", "reddit"].map((p) => (
-            <option key={p} value={p}>{p}</option>
+          {[
+            "twitter",
+            "linkedin",
+            "instagram",
+            "facebook",
+            "youtube",
+            "tiktok",
+            "reddit",
+          ].map((p) => (
+            <option key={p} value={p}>
+              {p}
+            </option>
           ))}
         </select>
       </div>
 
-      {isLoading && <p className="text-sm text-muted-foreground">Loading leads...</p>}
+      {isLoading && (
+        <p className="text-sm text-muted-foreground">Loading leads...</p>
+      )}
 
       {!isLoading && leads.length === 0 && (
         <div className="rounded-lg border border-dashed border-border p-8 text-center">
-          <p className="text-sm text-muted-foreground">No leads captured yet. Create automation rules with keywords to start capturing leads from comments.</p>
+          <p className="text-sm text-muted-foreground">
+            No leads captured yet. Create automation rules with keywords to
+            start capturing leads from comments.
+          </p>
         </div>
       )}
 
@@ -1697,25 +2321,47 @@ function LeadsTab() {
           <table className="w-full text-sm">
             <thead className="border-b border-border bg-muted/30">
               <tr>
-                <th className="px-4 py-2 text-left text-xs font-medium text-muted-foreground">Platform</th>
-                <th className="px-4 py-2 text-left text-xs font-medium text-muted-foreground">Username</th>
-                <th className="px-4 py-2 text-left text-xs font-medium text-muted-foreground">Name</th>
-                <th className="px-4 py-2 text-left text-xs font-medium text-muted-foreground">Email</th>
-                <th className="px-4 py-2 text-left text-xs font-medium text-muted-foreground">Phone</th>
-                <th className="px-4 py-2 text-left text-xs font-medium text-muted-foreground">Tags</th>
-                <th className="px-4 py-2 text-left text-xs font-medium text-muted-foreground">Captured</th>
+                <th className="px-4 py-2 text-left text-xs font-medium text-muted-foreground">
+                  Platform
+                </th>
+                <th className="px-4 py-2 text-left text-xs font-medium text-muted-foreground">
+                  Username
+                </th>
+                <th className="px-4 py-2 text-left text-xs font-medium text-muted-foreground">
+                  Name
+                </th>
+                <th className="px-4 py-2 text-left text-xs font-medium text-muted-foreground">
+                  Email
+                </th>
+                <th className="px-4 py-2 text-left text-xs font-medium text-muted-foreground">
+                  Phone
+                </th>
+                <th className="px-4 py-2 text-left text-xs font-medium text-muted-foreground">
+                  Tags
+                </th>
+                <th className="px-4 py-2 text-left text-xs font-medium text-muted-foreground">
+                  Captured
+                </th>
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
               {leads.map((lead) => (
                 <tr key={lead.id} className="hover:bg-muted/20">
-                  <td className="px-4 py-2"><PlatformBadge platform={lead.platform} /></td>
-                  <td className="px-4 py-2 font-mono text-xs">@{lead.username}</td>
+                  <td className="px-4 py-2">
+                    <PlatformBadge platform={lead.platform} />
+                  </td>
+                  <td className="px-4 py-2 font-mono text-xs">
+                    @{lead.username}
+                  </td>
                   <td className="px-4 py-2">{lead.display_name || "—"}</td>
                   <td className="px-4 py-2 text-xs">{lead.email || "—"}</td>
                   <td className="px-4 py-2 text-xs">{lead.phone || "—"}</td>
-                  <td className="px-4 py-2"><TagList tags={lead.tags} /></td>
-                  <td className="px-4 py-2 text-xs text-muted-foreground">{relativeTime(lead.lead_captured_at)}</td>
+                  <td className="px-4 py-2">
+                    <TagList tags={lead.tags} />
+                  </td>
+                  <td className="px-4 py-2 text-xs text-muted-foreground">
+                    {relativeTime(lead.lead_captured_at)}
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -1747,9 +2393,10 @@ function AnalyticsTab() {
     { messages: 0, inbound: 0, outbound: 0, contacts: 0 },
   );
 
-  const automationRate = totals.messages > 0
-    ? Math.round((totals.outbound / totals.messages) * 100)
-    : 0;
+  const automationRate =
+    totals.messages > 0
+      ? Math.round((totals.outbound / totals.messages) * 100)
+      : 0;
 
   const platforms = [...new Set(analytics.map((e) => e.platform))];
 
@@ -1766,13 +2413,23 @@ function AnalyticsTab() {
     value: row.total_messages_in + row.total_messages_out,
   }));
 
-  const PIE_COLORS = ["#10b981", "#3b82f6", "#f59e0b", "#ef4444", "#8b5cf6", "#ec4899"];
+  const PIE_COLORS = [
+    "#10b981",
+    "#3b82f6",
+    "#f59e0b",
+    "#ef4444",
+    "#8b5cf6",
+    "#ec4899",
+  ];
 
   // CSV export
   const handleExportCsv = () => {
     const header = "Platform,Inbound,Outbound,Contacts\n";
     const rows = filtered
-      .map((r) => `${r.platform},${r.total_messages_in},${r.total_messages_out},${r.total_conversations}`)
+      .map(
+        (r) =>
+          `${r.platform},${r.total_messages_in},${r.total_messages_out},${r.total_conversations}`,
+      )
       .join("\n");
     const blob = new Blob([header + rows], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
@@ -1789,11 +2446,19 @@ function AnalyticsTab() {
         <h2 className="text-lg font-semibold">Conversation Analytics</h2>
         <div className="flex items-center gap-2">
           <label className="text-xs text-muted-foreground">Since</label>
-          <input type="date" value={since} onChange={(e) => setSince(e.target.value)}
-            className="rounded-md border border-border bg-background px-2 py-1 text-xs" />
+          <input
+            type="date"
+            value={since}
+            onChange={(e) => setSince(e.target.value)}
+            className="rounded-md border border-border bg-background px-2 py-1 text-xs"
+          />
           <label className="text-xs text-muted-foreground">Until</label>
-          <input type="date" value={until} onChange={(e) => setUntil(e.target.value)}
-            className="rounded-md border border-border bg-background px-2 py-1 text-xs" />
+          <input
+            type="date"
+            value={until}
+            onChange={(e) => setUntil(e.target.value)}
+            className="rounded-md border border-border bg-background px-2 py-1 text-xs"
+          />
           {platforms.length > 0 && (
             <select
               value={platformFilter}
@@ -1802,13 +2467,23 @@ function AnalyticsTab() {
             >
               <option value="">All Platforms</option>
               {platforms.map((p) => (
-                <option key={p} value={p}>{p}</option>
+                <option key={p} value={p}>
+                  {p}
+                </option>
               ))}
             </select>
           )}
           {(since || until || platformFilter) && (
-            <button onClick={() => { setSince(""); setUntil(""); setPlatformFilter(""); }}
-              className="text-xs text-muted-foreground hover:text-foreground">Clear</button>
+            <button
+              onClick={() => {
+                setSince("");
+                setUntil("");
+                setPlatformFilter("");
+              }}
+              className="text-xs text-muted-foreground hover:text-foreground"
+            >
+              Clear
+            </button>
           )}
           <button
             onClick={handleExportCsv}
@@ -1820,7 +2495,9 @@ function AnalyticsTab() {
         </div>
       </div>
 
-      {isLoading && <p className="text-sm text-muted-foreground">Loading analytics...</p>}
+      {isLoading && (
+        <p className="text-sm text-muted-foreground">Loading analytics...</p>
+      )}
 
       {/* Summary cards */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -1855,15 +2532,27 @@ function AnalyticsTab() {
                 <YAxis tick={{ fontSize: 11 }} />
                 <Tooltip contentStyle={{ fontSize: 12 }} />
                 <Legend wrapperStyle={{ fontSize: 11 }} />
-                <Bar dataKey="inbound" fill="#3b82f6" name="Inbound" radius={[4, 4, 0, 0]} />
-                <Bar dataKey="outbound" fill="#10b981" name="Outbound" radius={[4, 4, 0, 0]} />
+                <Bar
+                  dataKey="inbound"
+                  fill="#3b82f6"
+                  name="Inbound"
+                  radius={[4, 4, 0, 0]}
+                />
+                <Bar
+                  dataKey="outbound"
+                  fill="#10b981"
+                  name="Outbound"
+                  radius={[4, 4, 0, 0]}
+                />
               </BarChart>
             </ResponsiveContainer>
           </div>
 
           {/* Pie chart: platform distribution */}
           <div className="rounded-lg border border-border p-4">
-            <h3 className="mb-3 text-sm font-semibold">Platform Distribution</h3>
+            <h3 className="mb-3 text-sm font-semibold">
+              Platform Distribution
+            </h3>
             <ResponsiveContainer width="100%" height={240}>
               <PieChart>
                 <Pie
@@ -1873,11 +2562,16 @@ function AnalyticsTab() {
                   innerRadius={50}
                   outerRadius={90}
                   dataKey="value"
-                  label={({ name, percent }) => `${name} ${((percent ?? 0) * 100).toFixed(0)}%`}
+                  label={({ name, percent }) =>
+                    `${name} ${((percent ?? 0) * 100).toFixed(0)}%`
+                  }
                   labelLine={false}
                 >
                   {pieData.map((_, idx) => (
-                    <Cell key={idx} fill={PIE_COLORS[idx % PIE_COLORS.length]} />
+                    <Cell
+                      key={idx}
+                      fill={PIE_COLORS[idx % PIE_COLORS.length]}
+                    />
                   ))}
                 </Pie>
                 <Tooltip contentStyle={{ fontSize: 12 }} />
@@ -1893,21 +2587,41 @@ function AnalyticsTab() {
           <table className="w-full text-sm">
             <thead className="border-b border-border bg-muted/30">
               <tr>
-                <th className="px-4 py-2 text-left text-xs font-medium text-muted-foreground">Platform</th>
-                <th className="px-4 py-2 text-right text-xs font-medium text-muted-foreground">Messages</th>
-                <th className="px-4 py-2 text-right text-xs font-medium text-muted-foreground">Inbound</th>
-                <th className="px-4 py-2 text-right text-xs font-medium text-muted-foreground">Outbound</th>
-                <th className="px-4 py-2 text-right text-xs font-medium text-muted-foreground">Contacts</th>
+                <th className="px-4 py-2 text-left text-xs font-medium text-muted-foreground">
+                  Platform
+                </th>
+                <th className="px-4 py-2 text-right text-xs font-medium text-muted-foreground">
+                  Messages
+                </th>
+                <th className="px-4 py-2 text-right text-xs font-medium text-muted-foreground">
+                  Inbound
+                </th>
+                <th className="px-4 py-2 text-right text-xs font-medium text-muted-foreground">
+                  Outbound
+                </th>
+                <th className="px-4 py-2 text-right text-xs font-medium text-muted-foreground">
+                  Contacts
+                </th>
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
               {filtered.map((row) => (
                 <tr key={row.platform} className="hover:bg-muted/20">
-                  <td className="px-4 py-2"><PlatformBadge platform={row.platform} /></td>
-                  <td className="px-4 py-2 text-right font-mono">{row.total_messages_in + row.total_messages_out}</td>
-                  <td className="px-4 py-2 text-right font-mono">{row.total_messages_in}</td>
-                  <td className="px-4 py-2 text-right font-mono">{row.total_messages_out}</td>
-                  <td className="px-4 py-2 text-right font-mono">{row.total_conversations}</td>
+                  <td className="px-4 py-2">
+                    <PlatformBadge platform={row.platform} />
+                  </td>
+                  <td className="px-4 py-2 text-right font-mono">
+                    {row.total_messages_in + row.total_messages_out}
+                  </td>
+                  <td className="px-4 py-2 text-right font-mono">
+                    {row.total_messages_in}
+                  </td>
+                  <td className="px-4 py-2 text-right font-mono">
+                    {row.total_messages_out}
+                  </td>
+                  <td className="px-4 py-2 text-right font-mono">
+                    {row.total_conversations}
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -1917,7 +2631,10 @@ function AnalyticsTab() {
 
       {!isLoading && analytics.length === 0 && (
         <div className="rounded-lg border border-dashed border-border p-8 text-center">
-          <p className="text-sm text-muted-foreground">No analytics data yet. Start conversations via automation rules or direct messages.</p>
+          <p className="text-sm text-muted-foreground">
+            No analytics data yet. Start conversations via automation rules or
+            direct messages.
+          </p>
         </div>
       )}
     </div>
@@ -1926,12 +2643,22 @@ function AnalyticsTab() {
 
 function TagList({ tags }: { tags: string }) {
   let parsed: string[] = [];
-  try { parsed = JSON.parse(tags); } catch { /* empty */ }
-  if (parsed.length === 0) return <span className="text-xs text-muted-foreground">—</span>;
+  try {
+    parsed = JSON.parse(tags);
+  } catch {
+    /* empty */
+  }
+  if (parsed.length === 0)
+    return <span className="text-xs text-muted-foreground">—</span>;
   return (
     <div className="flex flex-wrap gap-1">
       {parsed.map((tag) => (
-        <span key={tag} className="rounded-full bg-accent/20 px-2 py-0.5 text-xs">{tag}</span>
+        <span
+          key={tag}
+          className="rounded-full bg-accent/20 px-2 py-0.5 text-xs"
+        >
+          {tag}
+        </span>
       ))}
     </div>
   );

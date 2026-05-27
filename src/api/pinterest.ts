@@ -18,7 +18,9 @@ import type { CopilotWrapper } from "../copilot/copilot-wrapper.js";
 const REPORTS_DIR = path.join(os.homedir(), ".openzigs", "pinterest-reports");
 const PINTEREST_API_BASE = "https://api.pinterest.com/v5";
 
-export const createPinterestRouter = (options?: { copilotWrapper?: CopilotWrapper }): Router => {
+export const createPinterestRouter = (options?: {
+  copilotWrapper?: CopilotWrapper;
+}): Router => {
   const router = Router();
   const db = getDatabase();
   const tracker = new PinterestTrackerRepository(db);
@@ -33,18 +35,30 @@ export const createPinterestRouter = (options?: { copilotWrapper?: CopilotWrappe
   // ── GET /boards — list boards for the authenticated user ────────────
   router.get("/boards", async (_req, res) => {
     const token = getToken();
-    if (!token) return res.status(401).json({ error: "PINTEREST_ACCESS_TOKEN not configured" });
+    if (!token)
+      return res
+        .status(401)
+        .json({ error: "PINTEREST_ACCESS_TOKEN not configured" });
 
     try {
       const apiRes = await fetch(`${PINTEREST_API_BASE}/boards?page_size=100`, {
-        headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: "application/json",
+        },
       });
       if (!apiRes.ok) {
         const body = await apiRes.text();
-        logger.warn(`Pinterest boards fetch failed (${apiRes.status}): ${body}`);
-        return res.status(apiRes.status).json({ error: `Pinterest API error: ${body}` });
+        logger.warn(
+          `Pinterest boards fetch failed (${apiRes.status}): ${body}`,
+        );
+        return res
+          .status(apiRes.status)
+          .json({ error: `Pinterest API error: ${body}` });
       }
-      const data = (await apiRes.json()) as { items?: Array<Record<string, unknown>> };
+      const data = (await apiRes.json()) as {
+        items?: Array<Record<string, unknown>>;
+      };
       const boards = (data.items ?? []).map((b) => ({
         id: b.id,
         name: b.name,
@@ -63,14 +77,30 @@ export const createPinterestRouter = (options?: { copilotWrapper?: CopilotWrappe
   // ── POST /create-pin — create a pin on Pinterest ───────────────────
   router.post("/create-pin", async (req, res) => {
     const token = getToken();
-    if (!token) return res.status(401).json({ error: "PINTEREST_ACCESS_TOKEN not configured" });
+    if (!token)
+      return res
+        .status(401)
+        .json({ error: "PINTEREST_ACCESS_TOKEN not configured" });
 
-    const { board_id, title, description, link, alt_text, image_url, image_path, board_section_id } = req.body ?? {};
+    const {
+      board_id,
+      title,
+      description,
+      link,
+      alt_text,
+      image_url,
+      image_path,
+      board_section_id,
+    } = req.body ?? {};
     if (!board_id || !title || !description) {
-      return res.status(400).json({ error: "board_id, title, and description are required" });
+      return res
+        .status(400)
+        .json({ error: "board_id, title, and description are required" });
     }
     if (!image_url && !image_path) {
-      return res.status(400).json({ error: "Either image_url or image_path is required" });
+      return res
+        .status(400)
+        .json({ error: "Either image_url or image_path is required" });
     }
 
     try {
@@ -80,18 +110,27 @@ export const createPinterestRouter = (options?: { copilotWrapper?: CopilotWrappe
       if (board_section_id) pin.board_section_id = board_section_id;
 
       if (image_path) {
-        if (typeof image_path !== "string" || image_path.includes("..") || image_path.includes("\0")) {
+        if (
+          typeof image_path !== "string" ||
+          image_path.includes("..") ||
+          image_path.includes("\0")
+        ) {
           return res.status(400).json({ error: "Invalid image_path" });
         }
         const absPath = path.resolve(image_path);
         if (!fs.existsSync(absPath)) {
-          return res.status(400).json({ error: `Image file not found: ${absPath}` });
+          return res
+            .status(400)
+            .json({ error: `Image file not found: ${absPath}` });
         }
         const imgBuf = fs.readFileSync(absPath);
         const ext = path.extname(absPath).toLowerCase();
         const contentTypes: Record<string, string> = {
-          ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
-          ".gif": "image/gif", ".webp": "image/webp",
+          ".png": "image/png",
+          ".jpg": "image/jpeg",
+          ".jpeg": "image/jpeg",
+          ".gif": "image/gif",
+          ".webp": "image/webp",
         };
         pin.media_source = {
           source_type: "image_base64",
@@ -114,8 +153,12 @@ export const createPinterestRouter = (options?: { copilotWrapper?: CopilotWrappe
 
       const rawBody = await apiRes.text();
       if (!apiRes.ok) {
-        logger.warn(`Pinterest create-pin failed (${apiRes.status}): ${rawBody}`);
-        return res.status(apiRes.status).json({ error: `Pinterest API error: ${rawBody}` });
+        logger.warn(
+          `Pinterest create-pin failed (${apiRes.status}): ${rawBody}`,
+        );
+        return res
+          .status(apiRes.status)
+          .json({ error: `Pinterest API error: ${rawBody}` });
       }
 
       const pinData = JSON.parse(rawBody) as Record<string, unknown>;
@@ -150,12 +193,16 @@ export const createPinterestRouter = (options?: { copilotWrapper?: CopilotWrappe
       const stat = fs.statSync(mdPath);
 
       // Extract type from filename pattern: type-...-timestamp.md
-      const typeMatch = baseName.match(/^(analytics|keyword-metrics|seo-analysis|trends)-/);
+      const typeMatch = baseName.match(
+        /^(analytics|keyword-metrics|seo-analysis|trends)-/,
+      );
       const type = typeMatch ? typeMatch[1] : "unknown";
 
       // Extract timestamp from end of filename (2026-03-09T15-44-04)
       const tsMatch = baseName.match(/(\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2})$/);
-      const generated = tsMatch ? tsMatch[1].replace(/T(\d{2})-(\d{2})-(\d{2})/, "T$1:$2:$3") : stat.mtime.toISOString();
+      const generated = tsMatch
+        ? tsMatch[1].replace(/T(\d{2})-(\d{2})-(\d{2})/, "T$1:$2:$3")
+        : stat.mtime.toISOString();
 
       return {
         filename: baseName,
@@ -212,14 +259,16 @@ export const createPinterestRouter = (options?: { copilotWrapper?: CopilotWrappe
 
   /** GET /api/pinterest/tracker/pins — list tracked pins */
   router.get("/tracker/pins", (req, res) => {
-    const status = typeof req.query.status === "string" ? req.query.status : undefined;
+    const status =
+      typeof req.query.status === "string" ? req.query.status : undefined;
     const pins = tracker.listTrackedPins(status);
     return res.json({ pins });
   });
 
   /** POST /api/pinterest/tracker/pins — track a new pin */
   router.post("/tracker/pins", (req, res) => {
-    const { pin_id, title, topic, board_id, link, initial_score, status } = req.body ?? {};
+    const { pin_id, title, topic, board_id, link, initial_score, status } =
+      req.body ?? {};
     if (!pin_id || typeof pin_id !== "string") {
       return res.status(400).json({ error: "pin_id is required" });
     }
@@ -247,17 +296,23 @@ export const createPinterestRouter = (options?: { copilotWrapper?: CopilotWrappe
   /** DELETE /api/pinterest/tracker/pins/:pinId — stop tracking a pin */
   router.delete("/tracker/pins/:pinId", (req, res) => {
     const deleted = tracker.deleteTrackedPin(req.params.pinId);
-    return deleted ? res.json({ ok: true }) : res.status(404).json({ error: "Pin not found" });
+    return deleted
+      ? res.json({ ok: true })
+      : res.status(404).json({ error: "Pin not found" });
   });
 
   /** PATCH /api/pinterest/tracker/pins/:pinId/status — update pin tracking status */
   router.patch("/tracker/pins/:pinId/status", (req, res) => {
     const { status } = req.body ?? {};
     if (!["active", "paused", "archived"].includes(status)) {
-      return res.status(400).json({ error: "status must be active|paused|archived" });
+      return res
+        .status(400)
+        .json({ error: "status must be active|paused|archived" });
     }
     const ok = tracker.updatePinStatus(req.params.pinId, status);
-    return ok ? res.json({ ok: true }) : res.status(404).json({ error: "Pin not found" });
+    return ok
+      ? res.json({ ok: true })
+      : res.status(404).json({ error: "Pin not found" });
   });
 
   /** GET /api/pinterest/tracker/pins/:pinId/snapshots — get performance history */
@@ -269,7 +324,14 @@ export const createPinterestRouter = (options?: { copilotWrapper?: CopilotWrappe
 
   /** POST /api/pinterest/tracker/pins/:pinId/snapshots — add a metric snapshot */
   router.post("/tracker/pins/:pinId/snapshots", (req, res) => {
-    const { impressions, pin_clicks, saves, outbound_clicks, reactions, comments } = req.body ?? {};
+    const {
+      impressions,
+      pin_clicks,
+      saves,
+      outbound_clicks,
+      reactions,
+      comments,
+    } = req.body ?? {};
     const id = tracker.addSnapshot({
       pin_id: req.params.pinId,
       checked_at: new Date().toISOString(),
@@ -288,16 +350,27 @@ export const createPinterestRouter = (options?: { copilotWrapper?: CopilotWrappe
 
   /** GET /api/pinterest/tracker/ideas — list content ideas */
   router.get("/tracker/ideas", (req, res) => {
-    const status = typeof req.query.status === "string" ? req.query.status : undefined;
+    const status =
+      typeof req.query.status === "string" ? req.query.status : undefined;
     const ideas = tracker.listContentIdeas(status);
     return res.json({ ideas });
   });
 
   /** POST /api/pinterest/tracker/ideas — add a content idea */
   router.post("/tracker/ideas", (req, res) => {
-    const { topic, suggested_title, suggested_description, target_keywords, difficulty, estimated_volume, source_data } = req.body ?? {};
+    const {
+      topic,
+      suggested_title,
+      suggested_description,
+      target_keywords,
+      difficulty,
+      estimated_volume,
+      source_data,
+    } = req.body ?? {};
     if (!topic || !suggested_title) {
-      return res.status(400).json({ error: "topic and suggested_title are required" });
+      return res
+        .status(400)
+        .json({ error: "topic and suggested_title are required" });
     }
     const id = tracker.addContentIdea({
       topic,
@@ -319,16 +392,22 @@ export const createPinterestRouter = (options?: { copilotWrapper?: CopilotWrappe
     const id = Number(req.params.id);
     const { status, pin_id } = req.body ?? {};
     if (!["new", "created", "dismissed"].includes(status)) {
-      return res.status(400).json({ error: "status must be new|created|dismissed" });
+      return res
+        .status(400)
+        .json({ error: "status must be new|created|dismissed" });
     }
     const ok = tracker.updateIdeaStatus(id, status, pin_id);
-    return ok ? res.json({ ok: true }) : res.status(404).json({ error: "Idea not found" });
+    return ok
+      ? res.json({ ok: true })
+      : res.status(404).json({ error: "Idea not found" });
   });
 
   /** DELETE /api/pinterest/tracker/ideas/:id — delete a content idea */
   router.delete("/tracker/ideas/:id", (req, res) => {
     const deleted = tracker.deleteContentIdea(Number(req.params.id));
-    return deleted ? res.json({ ok: true }) : res.status(404).json({ error: "Idea not found" });
+    return deleted
+      ? res.json({ ok: true })
+      : res.status(404).json({ error: "Idea not found" });
   });
 
   // ── Sync real Pinterest data ──────────────────────────────────────────
@@ -336,20 +415,30 @@ export const createPinterestRouter = (options?: { copilotWrapper?: CopilotWrappe
   /** POST /api/pinterest/sync-pins — import real pins from Pinterest API and track them */
   router.post("/sync-pins", async (_req, res) => {
     const token = getToken();
-    if (!token) return res.status(401).json({ error: "PINTEREST_ACCESS_TOKEN not configured" });
+    if (!token)
+      return res
+        .status(401)
+        .json({ error: "PINTEREST_ACCESS_TOKEN not configured" });
 
     try {
       // Fetch user's real pins
       const apiRes = await fetch(`${PINTEREST_API_BASE}/pins?page_size=50`, {
-        headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: "application/json",
+        },
       });
       if (!apiRes.ok) {
         const body = await apiRes.text();
         logger.warn(`Pinterest pins fetch failed (${apiRes.status}): ${body}`);
-        return res.status(apiRes.status).json({ error: `Pinterest API error: ${body}` });
+        return res
+          .status(apiRes.status)
+          .json({ error: `Pinterest API error: ${body}` });
       }
 
-      const data = (await apiRes.json()) as { items?: Array<Record<string, unknown>> };
+      const data = (await apiRes.json()) as {
+        items?: Array<Record<string, unknown>>;
+      };
       const pins = data.items ?? [];
       let imported = 0;
 
@@ -361,7 +450,8 @@ export const createPinterestRouter = (options?: { copilotWrapper?: CopilotWrappe
         const title = (pin.title as string) ?? null;
         const description = (pin.description as string) ?? null;
         const link = (pin.link as string) ?? null;
-        const createdAt = (pin.created_at as string) ?? new Date().toISOString();
+        const createdAt =
+          (pin.created_at as string) ?? new Date().toISOString();
 
         tracker.trackPin({
           pin_id: pinId,
@@ -388,7 +478,10 @@ export const createPinterestRouter = (options?: { copilotWrapper?: CopilotWrappe
   /** POST /api/pinterest/sync-metrics — fetch analytics for all tracked active pins */
   router.post("/sync-metrics", async (_req, res) => {
     const token = getToken();
-    if (!token) return res.status(401).json({ error: "PINTEREST_ACCESS_TOKEN not configured" });
+    if (!token)
+      return res
+        .status(401)
+        .json({ error: "PINTEREST_ACCESS_TOKEN not configured" });
 
     try {
       const activePins = tracker.listTrackedPins("active");
@@ -399,19 +492,31 @@ export const createPinterestRouter = (options?: { copilotWrapper?: CopilotWrappe
         try {
           const apiRes = await fetch(
             `${PINTEREST_API_BASE}/pins/${pin.pin_id}/analytics?start_date=${getDateDaysAgo(1)}&end_date=${getTodayDate()}&metric_types=IMPRESSION,PIN_CLICK,SAVE,OUTBOUND_CLICK`,
-            { headers: { Authorization: `Bearer ${token}`, Accept: "application/json" } },
+            {
+              headers: {
+                Authorization: `Bearer ${token}`,
+                Accept: "application/json",
+              },
+            },
           );
 
           if (!apiRes.ok) {
-            logger.warn(`Pinterest analytics for ${pin.pin_id} failed (${apiRes.status})`);
+            logger.warn(
+              `Pinterest analytics for ${pin.pin_id} failed (${apiRes.status})`,
+            );
             errors++;
             continue;
           }
 
-          const analyticsData = (await apiRes.json()) as Record<string, unknown>;
+          const analyticsData = (await apiRes.json()) as Record<
+            string,
+            unknown
+          >;
           // Pinterest analytics v5 returns { all: { daily_metrics: [...], summary_metrics: {...} } }
           const all = analyticsData.all as Record<string, unknown> | undefined;
-          const summary = (all?.summary_metrics ?? analyticsData.summary_metrics ?? {}) as Record<string, number>;
+          const summary = (all?.summary_metrics ??
+            analyticsData.summary_metrics ??
+            {}) as Record<string, number>;
 
           tracker.addSnapshot({
             pin_id: pin.pin_id,
@@ -443,7 +548,10 @@ export const createPinterestRouter = (options?: { copilotWrapper?: CopilotWrappe
   router.post("/generate-ideas", async (req, res) => {
     const { topic, count } = req.body ?? {};
     const numIdeas = Math.min(Number(count) || 5, 10);
-    const topicHint = typeof topic === "string" && topic.trim() ? topic.trim() : "trending Pinterest topics";
+    const topicHint =
+      typeof topic === "string" && topic.trim()
+        ? topic.trim()
+        : "trending Pinterest topics";
 
     try {
       if (!copilotWrapper) {
@@ -508,15 +616,54 @@ export const createPinterestRouter = (options?: { copilotWrapper?: CopilotWrappe
   router.post("/tracker/seed", (_req, res) => {
     const now = new Date();
     const testPins = [
-      { pin_id: "test-pin-001", title: "10 AI Tools for Content Creators in 2026", topic: "AI Tools", board_id: "board-1", link: "https://example.com/ai-tools", initial_score: 72 },
-      { pin_id: "test-pin-002", title: "Spring Nail Art Trends You Need to Try", topic: "Nail Art", board_id: "board-2", link: "https://example.com/nail-trends", initial_score: 85 },
-      { pin_id: "test-pin-003", title: "Minimalist Home Office Setup Guide", topic: "Home Decor", board_id: "board-3", link: "https://example.com/home-office", initial_score: 63 },
-      { pin_id: "test-pin-004", title: "Easy Keto Meal Prep for Beginners", topic: "Keto Recipes", board_id: "board-1", link: "https://example.com/keto-meals", initial_score: 91 },
-      { pin_id: "test-pin-005", title: "Summer Travel Bucket List 2026", topic: "Travel", board_id: "board-4", link: "https://example.com/travel-2026", initial_score: 78 },
+      {
+        pin_id: "test-pin-001",
+        title: "10 AI Tools for Content Creators in 2026",
+        topic: "AI Tools",
+        board_id: "board-1",
+        link: "https://example.com/ai-tools",
+        initial_score: 72,
+      },
+      {
+        pin_id: "test-pin-002",
+        title: "Spring Nail Art Trends You Need to Try",
+        topic: "Nail Art",
+        board_id: "board-2",
+        link: "https://example.com/nail-trends",
+        initial_score: 85,
+      },
+      {
+        pin_id: "test-pin-003",
+        title: "Minimalist Home Office Setup Guide",
+        topic: "Home Decor",
+        board_id: "board-3",
+        link: "https://example.com/home-office",
+        initial_score: 63,
+      },
+      {
+        pin_id: "test-pin-004",
+        title: "Easy Keto Meal Prep for Beginners",
+        topic: "Keto Recipes",
+        board_id: "board-1",
+        link: "https://example.com/keto-meals",
+        initial_score: 91,
+      },
+      {
+        pin_id: "test-pin-005",
+        title: "Summer Travel Bucket List 2026",
+        topic: "Travel",
+        board_id: "board-4",
+        link: "https://example.com/travel-2026",
+        initial_score: 78,
+      },
     ];
 
     for (const p of testPins) {
-      tracker.trackPin({ ...p, created_at: new Date(now.getTime() - 30 * 86400000).toISOString(), status: "active" });
+      tracker.trackPin({
+        ...p,
+        created_at: new Date(now.getTime() - 30 * 86400000).toISOString(),
+        status: "active",
+      });
     }
 
     // Seed 30 days of snapshots with growing metrics for each pin
@@ -524,7 +671,14 @@ export const createPinterestRouter = (options?: { copilotWrapper?: CopilotWrappe
       for (let day = 30; day >= 0; day--) {
         const date = new Date(now.getTime() - day * 86400000);
         const growth = (30 - day) / 30; // 0 → 1 over 30 days
-        const base = { impressions: 0, pin_clicks: 0, saves: 0, outbound_clicks: 0, reactions: 0, comments: 0 };
+        const base = {
+          impressions: 0,
+          pin_clicks: 0,
+          saves: 0,
+          outbound_clicks: 0,
+          reactions: 0,
+          comments: 0,
+        };
         if (p.pin_id === "test-pin-001") {
           base.impressions = Math.round(100 + growth * 900);
           base.pin_clicks = Math.round(10 + growth * 90);
@@ -562,10 +716,58 @@ export const createPinterestRouter = (options?: { copilotWrapper?: CopilotWrappe
 
     // Seed content ideas
     const ideas = [
-      { topic: "AI Tools", suggested_title: "Top 15 AI Image Generators for Pinterest Pins", suggested_description: "Roundup of the best AI tools to create scroll-stopping Pin graphics", target_keywords: ["ai image generator", "ai tools pinterest", "ai pin design"], difficulty: "low", estimated_volume: "5K-10K" },
-      { topic: "Nail Art", suggested_title: "DIY Chrome Nails Tutorial Step-by-Step", suggested_description: "Easy chrome nail tutorial perfect for Pinterest's visual audience", target_keywords: ["chrome nails tutorial", "diy nails", "nail art 2026"], difficulty: "medium", estimated_volume: "10K-50K" },
-      { topic: "Home Decor", suggested_title: "Budget-Friendly Home Office Makeover Ideas", suggested_description: "Transform your workspace for under $200 with these Pinterest-worthy ideas", target_keywords: ["home office ideas", "budget decor", "small office setup"], difficulty: "low", estimated_volume: "10K-50K" },
-      { topic: "Keto Recipes", suggested_title: "30-Minute Keto Dinner Recipes for Busy Weeknights", suggested_description: "Quick keto dinners that perform well on Pinterest food boards", target_keywords: ["keto dinner", "quick keto recipes", "easy keto meals"], difficulty: "high", estimated_volume: "50K-100K" },
+      {
+        topic: "AI Tools",
+        suggested_title: "Top 15 AI Image Generators for Pinterest Pins",
+        suggested_description:
+          "Roundup of the best AI tools to create scroll-stopping Pin graphics",
+        target_keywords: [
+          "ai image generator",
+          "ai tools pinterest",
+          "ai pin design",
+        ],
+        difficulty: "low",
+        estimated_volume: "5K-10K",
+      },
+      {
+        topic: "Nail Art",
+        suggested_title: "DIY Chrome Nails Tutorial Step-by-Step",
+        suggested_description:
+          "Easy chrome nail tutorial perfect for Pinterest's visual audience",
+        target_keywords: [
+          "chrome nails tutorial",
+          "diy nails",
+          "nail art 2026",
+        ],
+        difficulty: "medium",
+        estimated_volume: "10K-50K",
+      },
+      {
+        topic: "Home Decor",
+        suggested_title: "Budget-Friendly Home Office Makeover Ideas",
+        suggested_description:
+          "Transform your workspace for under $200 with these Pinterest-worthy ideas",
+        target_keywords: [
+          "home office ideas",
+          "budget decor",
+          "small office setup",
+        ],
+        difficulty: "low",
+        estimated_volume: "10K-50K",
+      },
+      {
+        topic: "Keto Recipes",
+        suggested_title: "30-Minute Keto Dinner Recipes for Busy Weeknights",
+        suggested_description:
+          "Quick keto dinners that perform well on Pinterest food boards",
+        target_keywords: [
+          "keto dinner",
+          "quick keto recipes",
+          "easy keto meals",
+        ],
+        difficulty: "high",
+        estimated_volume: "50K-100K",
+      },
     ];
 
     for (const idea of ideas) {
@@ -581,7 +783,8 @@ export const createPinterestRouter = (options?: { copilotWrapper?: CopilotWrappe
 
     return res.json({
       ok: true,
-      warning: "This is synthetic demo data for UI testing. Pin IDs are fake and do not correspond to real Pinterest pins.",
+      warning:
+        "This is synthetic demo data for UI testing. Pin IDs are fake and do not correspond to real Pinterest pins.",
       pins: testPins.length,
       snapshots: testPins.length * 31,
       ideas: ideas.length,

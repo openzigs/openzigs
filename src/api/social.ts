@@ -16,7 +16,10 @@ import type { SocialIngestionService } from "../channels/social/social-ingestion
 import type { SocialBrain } from "../channels/social/social-brain.js";
 import type { HandoffManager } from "../channels/social/handoff-manager.js";
 import type { CommentRuleEngine } from "../channels/social/comment-rule-engine.js";
-import type { SocialPlatform, SocialMessage } from "../channels/social/types.js";
+import type {
+  SocialPlatform,
+  SocialMessage,
+} from "../channels/social/types.js";
 import type { SocialBrainAppConfig } from "../config/index.js";
 import type { BrandVoiceService } from "../personality/brand-voice-service.js";
 import type { CopilotWrapper } from "../copilot/copilot-wrapper.js";
@@ -36,7 +39,15 @@ export type SocialRouterOptions = {
   dmDispatcher?: DmDispatcher;
 };
 
-const platformSchema = z.enum(["reddit", "youtube", "tiktok", "twitter", "linkedin", "instagram", "facebook"]);
+const platformSchema = z.enum([
+  "reddit",
+  "youtube",
+  "tiktok",
+  "twitter",
+  "linkedin",
+  "instagram",
+  "facebook",
+]);
 
 /** Record an approved reply as a voice example (fire-and-forget). */
 async function recordVoiceExample(
@@ -75,7 +86,9 @@ async function dispatchApprovedReply(
   message: SocialMessage,
 ): Promise<void> {
   if (!dispatcher) {
-    logger.warn("[SocialDispatch] No DmDispatcher available — reply approved but not sent to platform");
+    logger.warn(
+      "[SocialDispatch] No DmDispatcher available — reply approved but not sent to platform",
+    );
     return;
   }
   try {
@@ -87,26 +100,36 @@ async function dispatchApprovedReply(
       const commentId = (meta.commentId as string) ?? "";
       const postId = (meta.postId as string) ?? undefined;
       if (!commentId) {
-        logger.warn(`[SocialDispatch] Cannot reply to comment — missing commentId in metadata for message ${message.id}`);
+        logger.warn(
+          `[SocialDispatch] Cannot reply to comment — missing commentId in metadata for message ${message.id}`,
+        );
         return;
       }
       const replier = dispatcher.createCommentReplier();
       await replier(message.platform, commentId, message.content, postId);
-      logger.info(`[SocialDispatch] Sent comment reply to ${message.platform} comment ${commentId}`);
+      logger.info(
+        `[SocialDispatch] Sent comment reply to ${message.platform} comment ${commentId}`,
+      );
     } else {
       // DM reply — need contact's platform_user_id
       const contact = repository.getContact(message.contact_id);
       if (!contact?.platform_user_id) {
-        logger.warn(`[SocialDispatch] Cannot send DM — no platform_user_id for contact ${message.contact_id}`);
+        logger.warn(
+          `[SocialDispatch] Cannot send DM — no platform_user_id for contact ${message.contact_id}`,
+        );
         return;
       }
       const sender = dispatcher.createDmSender();
       await sender(message.platform, contact.platform_user_id, message.content);
-      logger.info(`[SocialDispatch] Sent DM reply to ${message.platform} user ${contact.platform_user_id}`);
+      logger.info(
+        `[SocialDispatch] Sent DM reply to ${message.platform} user ${contact.platform_user_id}`,
+      );
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    logger.error(`[SocialDispatch] Failed to send approved reply ${message.id}: ${msg}`);
+    logger.error(
+      `[SocialDispatch] Failed to send approved reply ${message.id}: ${msg}`,
+    );
   }
 }
 
@@ -114,13 +137,29 @@ async function dispatchApprovedReply(
 export { dispatchApprovedReply };
 
 export const createSocialRouter = (opts: SocialRouterOptions): Router => {
-  const { repository, ingestion, brain, handoff, config: socialConfig, brandVoiceService, dmDispatcher } = opts;
+  const {
+    repository,
+    ingestion,
+    brain,
+    handoff,
+    config: socialConfig,
+    brandVoiceService,
+    dmDispatcher,
+  } = opts;
   const router = Router();
   const voiceLearning = brain.getVoiceLearning();
 
   /** Build connection info with real credential status. */
   const getConnectionStatus = () => {
-    const platforms: SocialPlatform[] = ["twitter", "linkedin", "reddit", "youtube", "tiktok", "instagram", "facebook"];
+    const platforms: SocialPlatform[] = [
+      "twitter",
+      "linkedin",
+      "reddit",
+      "youtube",
+      "tiktok",
+      "instagram",
+      "facebook",
+    ];
     const registered = new Set(ingestion.getRegisteredPlatforms());
     const activePollers = new Set(ingestion.getActivePollers());
     const allHealth = ingestion.getAllPollHealth();
@@ -137,7 +176,8 @@ export const createSocialRouter = (opts: SocialRouterOptions): Router => {
     return platforms.map((p) => {
       const conn = socialConfig?.connections?.[p];
       // Check real env vars directly — config accessToken may contain unresolved templates
-      const hasToken = envVarMap[p]?.some((v) => !!process.env[v]) || !!(conn?.accessToken);
+      const hasToken =
+        envVarMap[p]?.some((v) => !!process.env[v]) || !!conn?.accessToken;
       const isRegistered = registered.has(p);
       return {
         platform: p,
@@ -168,13 +208,25 @@ export const createSocialRouter = (opts: SocialRouterOptions): Router => {
   router.get("/contacts", (req, res) => {
     try {
       const page = Math.max(1, Number(req.query.page) || 1);
-      const pageSize = Math.min(100, Math.max(1, Number(req.query.pageSize) || 25));
-      const platform = req.query.platform ? String(req.query.platform) : undefined;
+      const pageSize = Math.min(
+        100,
+        Math.max(1, Number(req.query.pageSize) || 25),
+      );
+      const platform = req.query.platform
+        ? String(req.query.platform)
+        : undefined;
       const search = req.query.search ? String(req.query.search) : undefined;
       const tag = req.query.tag ? String(req.query.tag) : undefined;
-      const handoffActive = req.query.handoffActive === "true" ? true : req.query.handoffActive === "false" ? false : undefined;
+      const handoffActive =
+        req.query.handoffActive === "true"
+          ? true
+          : req.query.handoffActive === "false"
+            ? false
+            : undefined;
 
-      const platformValidation = platform ? platformSchema.safeParse(platform) : { success: true as const, data: undefined };
+      const platformValidation = platform
+        ? platformSchema.safeParse(platform)
+        : { success: true as const, data: undefined };
       if (!platformValidation.success) {
         res.status(400).json({ error: "Invalid platform provided." });
         return;
@@ -219,10 +271,12 @@ export const createSocialRouter = (opts: SocialRouterOptions): Router => {
   });
 
   // ── PATCH /contacts/:id — Update contact tags/notes ──
-  const updateContactSchema = z.object({
-    tags: z.string().optional(),
-    notes: z.string().optional(),
-  }).strict();
+  const updateContactSchema = z
+    .object({
+      tags: z.string().optional(),
+      notes: z.string().optional(),
+    })
+    .strict();
 
   router.patch("/contacts/:id", (req, res) => {
     const parsed = updateContactSchema.safeParse(req.body);
@@ -295,7 +349,9 @@ export const createSocialRouter = (opts: SocialRouterOptions): Router => {
   // GET /rules — List all rules
   router.get("/rules", (req, res) => {
     try {
-      const platform = req.query.platform ? String(req.query.platform) as SocialPlatform : undefined;
+      const platform = req.query.platform
+        ? (String(req.query.platform) as SocialPlatform)
+        : undefined;
       const rules = repository.listRules(platform);
       res.json({ rules });
     } catch (error) {
@@ -305,26 +361,37 @@ export const createSocialRouter = (opts: SocialRouterOptions): Router => {
   });
 
   // POST /rules — Create a rule
-  const createRuleSchema = z.object({
-    name: z.string().min(1).max(100),
-    platform: platformSchema,
-    enabled: z.union([z.boolean(), z.number().int().min(0).max(1)]).transform(v => typeof v === "boolean" ? (v ? 1 : 0) : v).default(1),
-    post_ids: z.string().nullable().default(null),
-    keywords: z.string().default("[]"),
-    regex: z.string().nullable().default(null),
-    comment_reply_template: z.string().nullable().default(null),
-    dm_template: z.string().default(""),
-    dm_delay_seconds: z.number().int().min(0).max(3600).default(0),
-    max_triggers_per_user: z.number().int().min(1).max(100).default(1),
-    max_triggers_total: z.number().int().min(1).nullable().default(null),
-    auto_tag: z.string().nullable().default(null),
-    model: z.string().max(255).nullable().default(null),
-    use_ai_reply: z.union([z.boolean(), z.number().int().min(0).max(1)]).transform(v => typeof v === "boolean" ? (v ? 1 : 0) : v).default(0),
-    ai_reply_context: z.string().nullable().default(null),
-  }).refine(
-    (d) => d.comment_reply_template || d.dm_template || d.use_ai_reply,
-    { message: "At least one of comment reply template, DM template, or AI reply must be set" },
-  );
+  const createRuleSchema = z
+    .object({
+      name: z.string().min(1).max(100),
+      platform: platformSchema,
+      enabled: z
+        .union([z.boolean(), z.number().int().min(0).max(1)])
+        .transform((v) => (typeof v === "boolean" ? (v ? 1 : 0) : v))
+        .default(1),
+      post_ids: z.string().nullable().default(null),
+      keywords: z.string().default("[]"),
+      regex: z.string().nullable().default(null),
+      comment_reply_template: z.string().nullable().default(null),
+      dm_template: z.string().default(""),
+      dm_delay_seconds: z.number().int().min(0).max(3600).default(0),
+      max_triggers_per_user: z.number().int().min(1).max(100).default(1),
+      max_triggers_total: z.number().int().min(1).nullable().default(null),
+      auto_tag: z.string().nullable().default(null),
+      model: z.string().max(255).nullable().default(null),
+      use_ai_reply: z
+        .union([z.boolean(), z.number().int().min(0).max(1)])
+        .transform((v) => (typeof v === "boolean" ? (v ? 1 : 0) : v))
+        .default(0),
+      ai_reply_context: z.string().nullable().default(null),
+    })
+    .refine(
+      (d) => d.comment_reply_template || d.dm_template || d.use_ai_reply,
+      {
+        message:
+          "At least one of comment reply template, DM template, or AI reply must be set",
+      },
+    );
 
   router.post("/rules", (req, res) => {
     const parsed = createRuleSchema.safeParse(req.body);
@@ -367,23 +434,31 @@ export const createSocialRouter = (opts: SocialRouterOptions): Router => {
   });
 
   // PATCH /rules/:id — Update a rule
-  const UpdateRuleSchema = z.object({
-    name: z.string().max(255).optional(),
-    platform: platformSchema.optional(),
-    enabled: z.union([z.boolean(), z.number().int().min(0).max(1)]).transform(v => typeof v === "boolean" ? (v ? 1 : 0) : v).optional(),
-    post_ids: z.string().max(10000).optional(),
-    keywords: z.string().max(10000).optional(),
-    regex: z.string().max(1000).optional(),
-    comment_reply_template: z.string().max(5000).optional(),
-    dm_template: z.string().max(5000).optional(),
-    dm_delay_seconds: z.number().int().min(0).optional(),
-    max_triggers_per_user: z.number().int().min(0).optional(),
-    max_triggers_total: z.number().int().min(0).optional(),
-    auto_tag: z.string().max(255).optional(),
-    model: z.string().max(255).nullable().optional(),
-    use_ai_reply: z.union([z.boolean(), z.number().int().min(0).max(1)]).transform(v => typeof v === "boolean" ? (v ? 1 : 0) : v).optional(),
-    ai_reply_context: z.string().nullable().optional(),
-  }).strict();
+  const UpdateRuleSchema = z
+    .object({
+      name: z.string().max(255).optional(),
+      platform: platformSchema.optional(),
+      enabled: z
+        .union([z.boolean(), z.number().int().min(0).max(1)])
+        .transform((v) => (typeof v === "boolean" ? (v ? 1 : 0) : v))
+        .optional(),
+      post_ids: z.string().max(10000).optional(),
+      keywords: z.string().max(10000).optional(),
+      regex: z.string().max(1000).optional(),
+      comment_reply_template: z.string().max(5000).optional(),
+      dm_template: z.string().max(5000).optional(),
+      dm_delay_seconds: z.number().int().min(0).optional(),
+      max_triggers_per_user: z.number().int().min(0).optional(),
+      max_triggers_total: z.number().int().min(0).optional(),
+      auto_tag: z.string().max(255).optional(),
+      model: z.string().max(255).nullable().optional(),
+      use_ai_reply: z
+        .union([z.boolean(), z.number().int().min(0).max(1)])
+        .transform((v) => (typeof v === "boolean" ? (v ? 1 : 0) : v))
+        .optional(),
+      ai_reply_context: z.string().nullable().optional(),
+    })
+    .strict();
 
   router.patch("/rules/:id", (req, res) => {
     const rule = repository.getRule(req.params.id);
@@ -397,7 +472,10 @@ export const createSocialRouter = (opts: SocialRouterOptions): Router => {
       return;
     }
     try {
-      const updated = repository.updateRule(req.params.id, parsed.data as Record<string, unknown>);
+      const updated = repository.updateRule(
+        req.params.id,
+        parsed.data as Record<string, unknown>,
+      );
       res.json(updated);
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
@@ -421,7 +499,10 @@ export const createSocialRouter = (opts: SocialRouterOptions): Router => {
   router.post("/handoff/:contactId/close", async (req, res) => {
     try {
       const { resolution } = req.body as { resolution?: string };
-      const closed = await handoff.closeHandoff(req.params.contactId, resolution);
+      const closed = await handoff.closeHandoff(
+        req.params.contactId,
+        resolution,
+      );
       if (!closed) {
         res.status(404).json({ error: "No active handoff for this contact" });
         return;
@@ -443,7 +524,13 @@ export const createSocialRouter = (opts: SocialRouterOptions): Router => {
     const challenge = req.query["hub.challenge"];
     const verifyToken = process.env.SOCIAL_WEBHOOK_VERIFY_TOKEN;
 
-    if (mode === "subscribe" && token && challenge && verifyToken && token === verifyToken) {
+    if (
+      mode === "subscribe" &&
+      token &&
+      challenge &&
+      verifyToken &&
+      token === verifyToken
+    ) {
       logger.info(`[Social] Webhook verification for ${req.params.platform}`);
       res.type("text/plain").status(200).send(String(challenge));
       return;
@@ -480,7 +567,10 @@ export const createSocialRouter = (opts: SocialRouterOptions): Router => {
 
   // ── Config — platform setup requirements ──
   router.get("/config", (_req, res) => {
-    const platformInfo: Record<string, { envVar: string; webhookPath: string; docsUrl: string }> = {
+    const platformInfo: Record<
+      string,
+      { envVar: string; webhookPath: string; docsUrl: string }
+    > = {
       twitter: {
         envVar: "TWITTER_ACCESS_TOKEN",
         webhookPath: "/api/social/webhooks/twitter",
@@ -540,7 +630,9 @@ export const createSocialRouter = (opts: SocialRouterOptions): Router => {
         return;
       }
       const { brandVoiceId } = req.body as { brandVoiceId?: string | null };
-      const block = brandVoiceService.getVoicePromptBlockById(brandVoiceId ?? undefined);
+      const block = brandVoiceService.getVoicePromptBlockById(
+        brandVoiceId ?? undefined,
+      );
       opts.brain.setBrandVoice(block);
       res.json({ ok: true, brandVoiceId: brandVoiceId ?? null });
     } catch (error) {
@@ -565,7 +657,9 @@ export const createSocialRouter = (opts: SocialRouterOptions): Router => {
   // ── GET /leads — List captured leads ──
   router.get("/leads", (req, res) => {
     try {
-      const platform = req.query.platform ? String(req.query.platform) as SocialPlatform : undefined;
+      const platform = req.query.platform
+        ? (String(req.query.platform) as SocialPlatform)
+        : undefined;
       const limit = Math.min(200, Math.max(1, Number(req.query.limit) || 50));
       const offset = Math.max(0, Number(req.query.offset) || 0);
       const leads = repository.getLeads({ platform, limit, offset });
@@ -608,7 +702,10 @@ export const createSocialRouter = (opts: SocialRouterOptions): Router => {
       return;
     }
     try {
-      const step = repository.createFollowUpStep(req.params.ruleId, parsed.data);
+      const step = repository.createFollowUpStep(
+        req.params.ruleId,
+        parsed.data,
+      );
       res.status(201).json(step);
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
@@ -644,16 +741,27 @@ export const createSocialRouter = (opts: SocialRouterOptions): Router => {
       return;
     }
 
-    const { description, platform: targetPlatform, model: bodyModel } = parsed.data;
+    const {
+      description,
+      platform: targetPlatform,
+      model: bodyModel,
+    } = parsed.data;
 
     const platformContext: Record<string, string> = {
-      twitter: "Twitter/X: Keyword comments trigger DMs via twitter_send_dm. Comment replies via twitter_post_tweet. Max 280 char DMs.",
-      instagram: "Instagram: Comment automation within Meta's 24-hour messaging window. DMs via send_dm, replies via reply_to_comment. Supports rich templates with {{username}}, {{keyword}}.",
-      facebook: "Facebook: Page comment monitoring. DMs via fb_send_message, comment replies via fb_reply_to_comment. Works within Meta messaging policies.",
-      linkedin: "LinkedIn: Professional context. DMs via linkedin_send_message, replies via linkedin_reply_to_comment. Keep tone professional.",
-      youtube: "YouTube: Video comment monitoring via polling. Replies via yt_reply_to_comment. No DM capability — use comment replies only.",
-      reddit: "Reddit: Subreddit comment monitoring. DMs via reddit_send_message, replies via reddit_reply_to_comment. Follow subreddit rules.",
-      tiktok: "TikTok: Limited API — publish-only. No comment reading or DM sending yet. Rules are preparatory.",
+      twitter:
+        "Twitter/X: Keyword comments trigger DMs via twitter_send_dm. Comment replies via twitter_post_tweet. Max 280 char DMs.",
+      instagram:
+        "Instagram: Comment automation within Meta's 24-hour messaging window. DMs via send_dm, replies via reply_to_comment. Supports rich templates with {{username}}, {{keyword}}.",
+      facebook:
+        "Facebook: Page comment monitoring. DMs via fb_send_message, comment replies via fb_reply_to_comment. Works within Meta messaging policies.",
+      linkedin:
+        "LinkedIn: Professional context. DMs via linkedin_send_message, replies via linkedin_reply_to_comment. Keep tone professional.",
+      youtube:
+        "YouTube: Video comment monitoring via polling. Replies via yt_reply_to_comment. No DM capability — use comment replies only.",
+      reddit:
+        "Reddit: Subreddit comment monitoring. DMs via reddit_send_message, replies via reddit_reply_to_comment. Follow subreddit rules.",
+      tiktok:
+        "TikTok: Limited API — publish-only. No comment reading or DM sending yet. Rules are preparatory.",
     };
 
     const platformHint = targetPlatform
@@ -669,16 +777,16 @@ export const createSocialRouter = (opts: SocialRouterOptions): Router => {
       platformHint,
       "",
       "The JSON must have EXACTLY these fields:",
-      '- name (string): A concise descriptive rule name',
-      '- platform (string): One of twitter, instagram, facebook, linkedin, youtube, reddit, tiktok',
-      '- keywords (string[]): Array of trigger keywords/phrases',
-      '- dm_template (string): The DM message template with variables',
-      '- comment_reply_template (string|null): Optional public comment reply',
-      '- dm_delay_seconds (number): Delay before sending DM (0-3600)',
-      '- max_triggers_per_user (number): Max times one user triggers this rule (1-100)',
-      '- auto_tag (string|null): Tag to auto-apply to the contact',
-      '- use_ai_reply (boolean): Whether to use AI-generated contextual replies instead of templates',
-      '- ai_reply_context (string|null): Context/instructions for AI when use_ai_reply is true',
+      "- name (string): A concise descriptive rule name",
+      "- platform (string): One of twitter, instagram, facebook, linkedin, youtube, reddit, tiktok",
+      "- keywords (string[]): Array of trigger keywords/phrases",
+      "- dm_template (string): The DM message template with variables",
+      "- comment_reply_template (string|null): Optional public comment reply",
+      "- dm_delay_seconds (number): Delay before sending DM (0-3600)",
+      "- max_triggers_per_user (number): Max times one user triggers this rule (1-100)",
+      "- auto_tag (string|null): Tag to auto-apply to the contact",
+      "- use_ai_reply (boolean): Whether to use AI-generated contextual replies instead of templates",
+      "- ai_reply_context (string|null): Context/instructions for AI when use_ai_reply is true",
       "",
       "Rules for good automation:",
       "- Keywords should be specific enough to avoid false positives",
@@ -695,14 +803,21 @@ export const createSocialRouter = (opts: SocialRouterOptions): Router => {
 
     try {
       let response = "";
-      const model = bodyModel || (await getUserSelectedModel() ?? "gpt-5-mini");
-      for await (const chunk of opts.copilot.chat(prompt, { model, tools: [] })) {
+      const model =
+        bodyModel || ((await getUserSelectedModel()) ?? "gpt-5-mini");
+      for await (const chunk of opts.copilot.chat(prompt, {
+        model,
+        tools: [],
+      })) {
         response += chunk;
       }
 
       let content = response.trim();
       if (content.startsWith("```")) {
-        content = content.replace(/^```\w*\n?/, "").replace(/\n?```$/, "").trim();
+        content = content
+          .replace(/^```\w*\n?/, "")
+          .replace(/\n?```$/, "")
+          .trim();
       }
 
       const rule = JSON.parse(content) as Record<string, unknown>;
@@ -725,12 +840,14 @@ export const createSocialRouter = (opts: SocialRouterOptions): Router => {
   });
 
   // ── PATCH /connections/:platform — Toggle platform enabled state / ingestion mode ──
-  const toggleSchema = z.object({
-    enabled: z.boolean().optional(),
-    mode: z.enum(["webhook", "polling", "browser"]).optional(),
-  }).refine((d) => d.enabled !== undefined || d.mode !== undefined, {
-    message: "Request body must include at least one of { enabled, mode }",
-  });
+  const toggleSchema = z
+    .object({
+      enabled: z.boolean().optional(),
+      mode: z.enum(["webhook", "polling", "browser"]).optional(),
+    })
+    .refine((d) => d.enabled !== undefined || d.mode !== undefined, {
+      message: "Request body must include at least one of { enabled, mode }",
+    });
 
   router.patch("/connections/:platform", async (req, res) => {
     const parsed = platformSchema.safeParse(req.params.platform);
@@ -740,15 +857,21 @@ export const createSocialRouter = (opts: SocialRouterOptions): Router => {
     }
     const body = toggleSchema.safeParse(req.body);
     if (!body.success) {
-      res.status(400).json({ error: "Request body must include { enabled?: boolean, mode?: 'webhook' | 'polling' | 'browser' }" });
+      res
+        .status(400)
+        .json({
+          error:
+            "Request body must include { enabled?: boolean, mode?: 'webhook' | 'polling' | 'browser' }",
+        });
       return;
     }
     const platform = parsed.data;
     const { enabled, mode } = body.data;
 
     try {
-      const configPath = process.env.OPENZIGS_CONFIG_PATH
-        ?? path.join(os.homedir(), ".openzigs", "config.json");
+      const configPath =
+        process.env.OPENZIGS_CONFIG_PATH ??
+        path.join(os.homedir(), ".openzigs", "config.json");
 
       // Read existing user config
       let userConfig: Record<string, unknown> = {};
@@ -756,16 +879,29 @@ export const createSocialRouter = (opts: SocialRouterOptions): Router => {
         const raw = await fs.readFile(configPath, "utf-8");
         userConfig = JSON.parse(raw) as Record<string, unknown>;
       } catch (e) {
-        if (!(e instanceof Error && "code" in e && (e as { code?: string }).code === "ENOENT")) throw e;
+        if (
+          !(
+            e instanceof Error &&
+            "code" in e &&
+            (e as { code?: string }).code === "ENOENT"
+          )
+        )
+          throw e;
       }
 
       // Update socialBrain.connections.<platform>
-      const sb = (userConfig.socialBrain && typeof userConfig.socialBrain === "object")
-        ? (userConfig.socialBrain as Record<string, unknown>) : {};
-      const conns = (sb.connections && typeof sb.connections === "object")
-        ? (sb.connections as Record<string, unknown>) : {};
-      const existing = (conns[platform] && typeof conns[platform] === "object")
-        ? (conns[platform] as Record<string, unknown>) : {};
+      const sb =
+        userConfig.socialBrain && typeof userConfig.socialBrain === "object"
+          ? (userConfig.socialBrain as Record<string, unknown>)
+          : {};
+      const conns =
+        sb.connections && typeof sb.connections === "object"
+          ? (sb.connections as Record<string, unknown>)
+          : {};
+      const existing =
+        conns[platform] && typeof conns[platform] === "object"
+          ? (conns[platform] as Record<string, unknown>)
+          : {};
       if (enabled !== undefined) existing.enabled = enabled;
       if (mode !== undefined) existing.mode = mode;
       conns[platform] = existing;
@@ -773,8 +909,14 @@ export const createSocialRouter = (opts: SocialRouterOptions): Router => {
       userConfig.socialBrain = sb;
 
       // Write back with secure perms
-      await fs.mkdir(path.dirname(configPath), { recursive: true, mode: 0o700 });
-      await fs.writeFile(configPath, JSON.stringify(userConfig, null, 2), { encoding: "utf-8", mode: 0o600 });
+      await fs.mkdir(path.dirname(configPath), {
+        recursive: true,
+        mode: 0o700,
+      });
+      await fs.writeFile(configPath, JSON.stringify(userConfig, null, 2), {
+        encoding: "utf-8",
+        mode: 0o600,
+      });
       await fs.chmod(configPath, 0o600);
 
       // Update in-memory config so getConnectionStatus reflects immediately
@@ -782,15 +924,25 @@ export const createSocialRouter = (opts: SocialRouterOptions): Router => {
         if (!socialConfig.connections[platform]) {
           socialConfig.connections[platform] = {};
         }
-        if (enabled !== undefined) socialConfig.connections[platform]!.enabled = enabled;
+        if (enabled !== undefined)
+          socialConfig.connections[platform]!.enabled = enabled;
         if (mode !== undefined) socialConfig.connections[platform]!.mode = mode;
       }
 
       const parts: string[] = [];
-      if (enabled !== undefined) parts.push(`${enabled ? "enabled" : "disabled"}`);
+      if (enabled !== undefined)
+        parts.push(`${enabled ? "enabled" : "disabled"}`);
       if (mode !== undefined) parts.push(`mode=${mode}`);
-      logger.info(`[SocialAPI] Platform ${platform} updated: ${parts.join(", ")}`);
-      res.json({ ok: true, platform, enabled, mode, needsRestart: mode !== undefined });
+      logger.info(
+        `[SocialAPI] Platform ${platform} updated: ${parts.join(", ")}`,
+      );
+      res.json({
+        ok: true,
+        platform,
+        enabled,
+        mode,
+        needsRestart: mode !== undefined,
+      });
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       logger.error(`[SocialAPI] Failed to update platform ${platform}: ${msg}`);
@@ -827,7 +979,9 @@ export const createSocialRouter = (opts: SocialRouterOptions): Router => {
     try {
       const message = repository.approveReply(req.params.id);
       if (!message) {
-        res.status(404).json({ error: "Message not found or not pending approval" });
+        res
+          .status(404)
+          .json({ error: "Message not found or not pending approval" });
         return;
       }
       // Dispatch to platform and record voice example in background
@@ -845,7 +999,9 @@ export const createSocialRouter = (opts: SocialRouterOptions): Router => {
     try {
       const message = repository.rejectReply(req.params.id);
       if (!message) {
-        res.status(404).json({ error: "Message not found or not pending approval" });
+        res
+          .status(404)
+          .json({ error: "Message not found or not pending approval" });
         return;
       }
       res.json({ ok: true, message });
@@ -859,13 +1015,22 @@ export const createSocialRouter = (opts: SocialRouterOptions): Router => {
   router.post("/approvals/:id/edit", (req, res) => {
     try {
       const body = req.body as { content?: string };
-      if (!body.content || typeof body.content !== "string" || body.content.trim().length === 0) {
+      if (
+        !body.content ||
+        typeof body.content !== "string" ||
+        body.content.trim().length === 0
+      ) {
         res.status(400).json({ error: "content is required" });
         return;
       }
-      const message = repository.editAndApproveReply(req.params.id, body.content.trim());
+      const message = repository.editAndApproveReply(
+        req.params.id,
+        body.content.trim(),
+      );
       if (!message) {
-        res.status(404).json({ error: "Message not found or not pending approval" });
+        res
+          .status(404)
+          .json({ error: "Message not found or not pending approval" });
         return;
       }
       // Dispatch to platform and record voice example (edited replies are especially valuable)
@@ -896,7 +1061,11 @@ export const createSocialRouter = (opts: SocialRouterOptions): Router => {
         return;
       }
       const body = req.body as { content?: string };
-      if (!body.content || typeof body.content !== "string" || body.content.trim().length === 0) {
+      if (
+        !body.content ||
+        typeof body.content !== "string" ||
+        body.content.trim().length === 0
+      ) {
         res.status(400).json({ error: "content is required" });
         return;
       }
@@ -914,10 +1083,16 @@ export const createSocialRouter = (opts: SocialRouterOptions): Router => {
         void (async () => {
           try {
             const sender = dmDispatcher.createDmSender();
-            await sender(contact.platform, contact.platform_user_id!, message.content);
+            await sender(
+              contact.platform,
+              contact.platform_user_id!,
+              message.content,
+            );
           } catch (err) {
             const errMsg = err instanceof Error ? err.message : String(err);
-            logger.error(`[SocialManualReply] Failed to send manual reply to ${contact.platform}: ${errMsg}`);
+            logger.error(
+              `[SocialManualReply] Failed to send manual reply to ${contact.platform}: ${errMsg}`,
+            );
           }
         })();
       }
