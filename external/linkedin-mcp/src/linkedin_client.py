@@ -113,3 +113,21 @@ class LinkedInClient:
 
     async def get_conversations(self, count: int = 20) -> dict:
         return await self._request("GET", "v2/conversations", params={"count": str(count)})
+
+    async def get_profile_analytics(self, organization_id: str | None = None) -> dict:
+        """Get profile/page-level analytics. Organization-level uses follower statistics endpoint;
+        member-level falls back to networkSizes for connection counts."""
+        oid = organization_id or self.settings.linkedin_org_id
+        if oid:
+            org_urn = oid if oid.startswith("urn:li:organization:") else f"urn:li:organization:{oid}"
+            return await self._request(
+                "GET",
+                "v2/organizationalEntityFollowerStatistics",
+                params={"q": "organizationalEntity", "organizationalEntity": org_urn},
+            )
+        person_id = await self._ensure_person_id()
+        return await self._request(
+            "GET",
+            f"v2/networkSizes/urn:li:person:{person_id}",
+            params={"edgeType": "CompanyFollowedByMember"},
+        )
