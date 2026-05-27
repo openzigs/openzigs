@@ -9,8 +9,18 @@ vi.mock("next/navigation", () => ({
 
 // Mock next/link
 vi.mock("next/link", () => ({
-  default: ({ children, href, className }: { children: React.ReactNode; href: string; className?: string }) => (
-    <a href={href} className={className}>{children}</a>
+  default: ({
+    children,
+    href,
+    className,
+  }: {
+    children: React.ReactNode;
+    href: string;
+    className?: string;
+  }) => (
+    <a href={href} className={className}>
+      {children}
+    </a>
   ),
 }));
 
@@ -21,6 +31,7 @@ describe("NavBar", () => {
     expect(screen.getByText("Dashboard")).toBeInTheDocument();
     expect(screen.getByText("Chat")).toBeInTheDocument();
     expect(screen.getByText("Workbench")).toBeInTheDocument();
+    expect(screen.getByText("Workflows")).toBeInTheDocument();
     // Dropdown group labels
     expect(screen.getByText("Studio")).toBeInTheDocument();
     expect(screen.getByText("Automation")).toBeInTheDocument();
@@ -51,5 +62,13 @@ describe("NavBar", () => {
     expect(studio).toBeDefined();
     const pitch = studio!.items.find((it) => it.href === "/pitch");
     expect(pitch).toEqual({ href: "/pitch", label: "Pitch" });
+  });
+
+  it("does not include Workflows in any dropdown group (promoted to top-level)", () => {
+    for (const group of NAV_GROUPS) {
+      expect(
+        group.items.find((it) => it.href === "/workflows"),
+      ).toBeUndefined();
+    }
   });
 });

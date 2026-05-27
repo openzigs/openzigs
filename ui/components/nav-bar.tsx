@@ -19,6 +19,7 @@ const TOP_LINKS: NavLink[] = [
   { href: "/", label: "Dashboard" },
   { href: "/chat", label: "Chat" },
   { href: "/workbench", label: "Workbench" },
+  { href: "/workflows", label: "Workflows" },
 ];
 
 type NavGroup = {
@@ -58,7 +59,6 @@ export const NAV_GROUPS: NavGroup[] = [
     icon: <Zap className="h-3.5 w-3.5" />,
     items: [
       { href: "/library", label: "Library" },
-      { href: "/workflows", label: "Workflows" },
       { href: "/skills", label: "Skills" },
       { href: "/scheduler", label: "Scheduler" },
       { href: "/tasks", label: "Tasks" },
