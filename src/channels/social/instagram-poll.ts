@@ -72,18 +72,26 @@ export function createInstagramPollFn(
     }
 
     // --- Step 1: Fetch recent media posts ---
-    const postsResp = await serverManager.callTool("instagram", "get_media_posts", {
-      limit: maxPosts,
-    });
+    const postsResp = await serverManager.callTool(
+      "instagram",
+      "get_media_posts",
+      {
+        limit: maxPosts,
+      },
+    );
 
     if (postsResp.isError) {
-      logger.warn(`[InstagramPoll] Failed to fetch media posts: ${postsResp.text.slice(0, 200)}`);
+      logger.warn(
+        `[InstagramPoll] Failed to fetch media posts: ${postsResp.text.slice(0, 200)}`,
+      );
       return results;
     }
 
     let posts: InstagramMedia[] = [];
     try {
-      const parsed = JSON.parse(postsResp.text) as McpResponse<InstagramPostsResponse>;
+      const parsed = JSON.parse(
+        postsResp.text,
+      ) as McpResponse<InstagramPostsResponse>;
       if (parsed.success && parsed.data?.posts) {
         posts = parsed.data.posts;
       }
@@ -97,7 +105,9 @@ export function createInstagramPollFn(
       return results;
     }
 
-    logger.info(`[InstagramPoll] Checking comments on ${posts.length} recent posts (since=${since})`);
+    logger.info(
+      `[InstagramPoll] Checking comments on ${posts.length} recent posts (since=${since})`,
+    );
 
     // --- Step 2: For each post, fetch comments ---
     for (const post of posts) {
@@ -107,24 +117,34 @@ export function createInstagramPollFn(
       // check for comments on every post rather than relying on the count.
       // This ensures newly posted comments are not missed.
 
-      const commentsResp = await serverManager.callTool("instagram", "get_media_comments", {
-        media_id: post.id,
-        limit: maxCommentsPerPost,
-      });
+      const commentsResp = await serverManager.callTool(
+        "instagram",
+        "get_media_comments",
+        {
+          media_id: post.id,
+          limit: maxCommentsPerPost,
+        },
+      );
 
       if (commentsResp.isError) {
-        logger.debug(`[InstagramPoll] Failed to fetch comments for post ${post.id}: ${commentsResp.text.slice(0, 120)}`);
+        logger.debug(
+          `[InstagramPoll] Failed to fetch comments for post ${post.id}: ${commentsResp.text.slice(0, 120)}`,
+        );
         continue;
       }
 
       let comments: InstagramComment[] = [];
       try {
-        const parsed = JSON.parse(commentsResp.text) as McpResponse<InstagramCommentsResponse>;
+        const parsed = JSON.parse(
+          commentsResp.text,
+        ) as McpResponse<InstagramCommentsResponse>;
         if (parsed.success && parsed.data?.comments) {
           comments = parsed.data.comments;
         }
       } catch {
-        logger.debug(`[InstagramPoll] Failed to parse comments response for post ${post.id}`);
+        logger.debug(
+          `[InstagramPoll] Failed to parse comments response for post ${post.id}`,
+        );
         continue;
       }
 
@@ -138,7 +158,8 @@ export function createInstagramPollFn(
         // Skip comments authored by the business account itself
         // Instagram comments have `from.id` for IGSID or `username` field
         const commentUserId = comment.from?.id ?? "";
-        const commentUsername = comment.username ?? comment.from?.username ?? "";
+        const commentUsername =
+          comment.username ?? comment.from?.username ?? "";
 
         // If the comment is from our own account (by ID or username match), skip it
         if (businessAccountId && commentUserId === businessAccountId) continue;

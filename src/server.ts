@@ -162,6 +162,8 @@ import { createYouTubeBrowserPollFn } from "./channels/social/youtube-browser-po
 import { createTwitterPollFn } from "./channels/social/twitter-poll.js";
 import { createFacebookPollFn } from "./channels/social/facebook-poll.js";
 import { createInstagramPollFn } from "./channels/social/instagram-poll.js";
+import { createPinterestPollFn } from "./channels/social/pinterest-poll.js";
+import { createTikTokPollFn } from "./channels/social/tiktok-poll.js";
 import { createLinkedInPollFn } from "./channels/social/linkedin-poll.js";
 import { BrandVoiceRepository } from "./personality/brand-voice-repository.js";
 import { BrandVoiceService } from "./personality/brand-voice-service.js";
@@ -981,6 +983,16 @@ if (facebookPageToken) {
   } else {
     socialAdapters.push(new FacebookAdapter());
   }
+}
+if ((process.env.PINTEREST_ACCESS_TOKEN ?? "").trim()) {
+  socialAdapters.push(
+    new GenericPollAdapter("pinterest", createPinterestPollFn()),
+  );
+}
+if (localServerManager && (process.env.TIKTOK_ACCESS_TOKEN ?? "").trim()) {
+  socialAdapters.push(
+    new GenericPollAdapter("tiktok", createTikTokPollFn(localServerManager)),
+  );
 }
 
 const socialIngestion = new SocialIngestionService({

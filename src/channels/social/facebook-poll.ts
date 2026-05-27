@@ -67,18 +67,26 @@ export function createFacebookPollFn(
     }
 
     // --- Step 1: Fetch recent page posts ---
-    const postsResp = await serverManager.callTool("facebook", "fb_get_page_posts", {
-      limit: maxPosts,
-    });
+    const postsResp = await serverManager.callTool(
+      "facebook",
+      "fb_get_page_posts",
+      {
+        limit: maxPosts,
+      },
+    );
 
     if (postsResp.isError) {
-      logger.warn(`[FacebookPoll] Failed to fetch page posts: ${postsResp.text.slice(0, 200)}`);
+      logger.warn(
+        `[FacebookPoll] Failed to fetch page posts: ${postsResp.text.slice(0, 200)}`,
+      );
       return results;
     }
 
     let posts: FacebookPost[] = [];
     try {
-      const parsed = JSON.parse(postsResp.text) as McpResponse<FacebookPostsResponse>;
+      const parsed = JSON.parse(
+        postsResp.text,
+      ) as McpResponse<FacebookPostsResponse>;
       if (parsed.success && parsed.data?.data) {
         posts = parsed.data.data;
       }
@@ -92,30 +100,42 @@ export function createFacebookPollFn(
       return results;
     }
 
-    logger.info(`[FacebookPoll] Checking comments on ${posts.length} recent posts (since=${since})`);
+    logger.info(
+      `[FacebookPoll] Checking comments on ${posts.length} recent posts (since=${since})`,
+    );
 
     // --- Step 2: For each post, fetch comments ---
     for (const post of posts) {
       if (!post.id) continue;
 
-      const commentsResp = await serverManager.callTool("facebook", "fb_get_post_comments", {
-        post_id: post.id,
-        limit: maxCommentsPerPost,
-      });
+      const commentsResp = await serverManager.callTool(
+        "facebook",
+        "fb_get_post_comments",
+        {
+          post_id: post.id,
+          limit: maxCommentsPerPost,
+        },
+      );
 
       if (commentsResp.isError) {
-        logger.debug(`[FacebookPoll] Failed to fetch comments for post ${post.id}: ${commentsResp.text.slice(0, 120)}`);
+        logger.debug(
+          `[FacebookPoll] Failed to fetch comments for post ${post.id}: ${commentsResp.text.slice(0, 120)}`,
+        );
         continue;
       }
 
       let comments: FacebookComment[] = [];
       try {
-        const parsed = JSON.parse(commentsResp.text) as McpResponse<FacebookCommentsResponse>;
+        const parsed = JSON.parse(
+          commentsResp.text,
+        ) as McpResponse<FacebookCommentsResponse>;
         if (parsed.success && parsed.data?.data) {
           comments = parsed.data.data;
         }
       } catch {
-        logger.debug(`[FacebookPoll] Failed to parse comments response for post ${post.id}`);
+        logger.debug(
+          `[FacebookPoll] Failed to parse comments response for post ${post.id}`,
+        );
         continue;
       }
 
@@ -134,7 +154,9 @@ export function createFacebookPollFn(
         // rule engine can reply to it via comment_id — DMs will be skipped
         // downstream when userId is empty.
         if (!comment.from?.id) {
-          logger.debug(`[FacebookPoll] Comment ${comment.id} has no from.id (privacy restriction) — ingesting anyway for comment replies`);
+          logger.debug(
+            `[FacebookPoll] Comment ${comment.id} has no from.id (privacy restriction) — ingesting anyway for comment replies`,
+          );
         }
 
         results.push({

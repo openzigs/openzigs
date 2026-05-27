@@ -39,6 +39,16 @@ const PLATFORM_DM_MAP: Record<
     dmTool: "fb_send_message",
     replyTool: "fb_reply_to_comment",
   },
+  pinterest: {
+    // Pinterest v5 REST API has no comment-reply endpoint and no DM API.
+    // Mapping is reserved for future support (comment-reply only when added).
+    server: "pinterest",
+  },
+  tiktok: {
+    // TikTok's public Content Posting / Display APIs do not expose DM send or
+    // comment-reply endpoints. Mapping is reserved for future Business API support.
+    server: "tiktok",
+  },
 };
 
 export interface DmDispatcherOptions {
@@ -194,6 +204,10 @@ export class DmDispatcher {
         return { comment_id: commentId, message: text };
       case "facebook":
         // Facebook fb_reply_to_comment expects comment_id + message
+        return { comment_id: commentId, message: text };
+      case "pinterest":
+      case "tiktok":
+        // Reserved: pinterest & tiktok comment-reply not yet supported by public APIs.
         return { comment_id: commentId, message: text };
       default:
         return { comment_id: commentId, text, message: text };

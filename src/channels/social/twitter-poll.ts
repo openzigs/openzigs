@@ -64,13 +64,21 @@ export function createTwitterPollFn(
 
     // --- Step 1: Resolve the authenticated user's username (cached) ---
     if (!cachedUsername || !cachedUserId) {
-      const meResp = await serverManager.callTool("twitter", "twitter_get_me", {});
+      const meResp = await serverManager.callTool(
+        "twitter",
+        "twitter_get_me",
+        {},
+      );
       if (meResp.isError) {
-        logger.warn(`[TwitterPoll] Failed to fetch authenticated user: ${meResp.text.slice(0, 200)}`);
+        logger.warn(
+          `[TwitterPoll] Failed to fetch authenticated user: ${meResp.text.slice(0, 200)}`,
+        );
         return results;
       }
       try {
-        const parsed = JSON.parse(meResp.text) as McpResponse<{ data?: TwitterUser }>;
+        const parsed = JSON.parse(meResp.text) as McpResponse<{
+          data?: TwitterUser;
+        }>;
         if (parsed.success && parsed.data?.data) {
           cachedUsername = parsed.data.data.username ?? null;
           cachedUserId = parsed.data.data.id ?? null;
@@ -94,16 +102,24 @@ export function createTwitterPollFn(
     const seenTweetIds = new Set<string>();
 
     // 2a. Try mentions timeline (OAuth 1.0a)
-    const mentionsResp = await serverManager.callTool("twitter", "twitter_get_mentions", {
-      user_id: cachedUserId,
-      max_results: maxResults,
-    });
+    const mentionsResp = await serverManager.callTool(
+      "twitter",
+      "twitter_get_mentions",
+      {
+        user_id: cachedUserId,
+        max_results: maxResults,
+      },
+    );
 
     if (mentionsResp.isError) {
-      logger.info(`[TwitterPoll] Mentions timeline unavailable: ${mentionsResp.text.slice(0, 120)}`);
+      logger.info(
+        `[TwitterPoll] Mentions timeline unavailable: ${mentionsResp.text.slice(0, 120)}`,
+      );
     } else {
       try {
-        const parsed = JSON.parse(mentionsResp.text) as McpResponse<TwitterListResponse>;
+        const parsed = JSON.parse(
+          mentionsResp.text,
+        ) as McpResponse<TwitterListResponse>;
         if (parsed.success && parsed.data) {
           for (const t of parsed.data.data ?? []) {
             if (t.id && !seenTweetIds.has(t.id)) {
@@ -112,7 +128,9 @@ export function createTwitterPollFn(
             }
           }
           for (const u of parsed.data.includes?.users ?? []) allUsers.push(u);
-          logger.info(`[TwitterPoll] Mentions returned ${parsed.data.data?.length ?? 0} tweets (result_count=${parsed.data.meta?.result_count ?? "n/a"})`);
+          logger.info(
+            `[TwitterPoll] Mentions returned ${parsed.data.data?.length ?? 0} tweets (result_count=${parsed.data.meta?.result_count ?? "n/a"})`,
+          );
         }
       } catch {
         logger.warn("[TwitterPoll] Failed to parse mentions response");
@@ -120,16 +138,24 @@ export function createTwitterPollFn(
     }
 
     // 2b. Also search for replies to the user's tweets
-    const searchResp = await serverManager.callTool("twitter", "twitter_search_replies", {
-      username: cachedUsername,
-      max_results: maxResults,
-    });
+    const searchResp = await serverManager.callTool(
+      "twitter",
+      "twitter_search_replies",
+      {
+        username: cachedUsername,
+        max_results: maxResults,
+      },
+    );
 
     if (searchResp.isError) {
-      logger.info(`[TwitterPoll] Search replies unavailable: ${searchResp.text.slice(0, 120)}`);
+      logger.info(
+        `[TwitterPoll] Search replies unavailable: ${searchResp.text.slice(0, 120)}`,
+      );
     } else {
       try {
-        const parsed = JSON.parse(searchResp.text) as McpResponse<TwitterListResponse>;
+        const parsed = JSON.parse(
+          searchResp.text,
+        ) as McpResponse<TwitterListResponse>;
         if (parsed.success && parsed.data) {
           for (const t of parsed.data.data ?? []) {
             if (t.id && !seenTweetIds.has(t.id)) {
@@ -138,7 +164,9 @@ export function createTwitterPollFn(
             }
           }
           for (const u of parsed.data.includes?.users ?? []) allUsers.push(u);
-          logger.info(`[TwitterPoll] Search returned ${parsed.data.data?.length ?? 0} tweets (result_count=${parsed.data.meta?.result_count ?? "n/a"})`);
+          logger.info(
+            `[TwitterPoll] Search returned ${parsed.data.data?.length ?? 0} tweets (result_count=${parsed.data.meta?.result_count ?? "n/a"})`,
+          );
         }
       } catch {
         logger.warn("[TwitterPoll] Failed to parse search response");
@@ -146,15 +174,17 @@ export function createTwitterPollFn(
     }
 
     if (allTweets.length === 0 && mentionsResp.isError && searchResp.isError) {
-      logger.warn("[TwitterPoll] Both mentions and search failed — no data sources available");
+      logger.warn(
+        "[TwitterPoll] Both mentions and search failed — no data sources available",
+      );
       return results;
     }
 
     if (allTweets.length === 0) {
       logger.warn(
         "[TwitterPoll] Both mentions and search returned 200 OK but zero tweets. " +
-        "This is likely due to Twitter API search indexing delay (new tweets can take up to 15 min to appear) " +
-        "or the replying account may be too new/low-activity to be indexed.",
+          "This is likely due to Twitter API search indexing delay (new tweets can take up to 15 min to appear) " +
+          "or the replying account may be too new/low-activity to be indexed.",
       );
     }
 
@@ -168,7 +198,9 @@ export function createTwitterPollFn(
     }
 
     // --- Step 3: Map tweets to IncomingComment (replies) or IncomingSocialMessage (DMs are separate) ---
-    logger.info(`[TwitterPoll] Processing ${tweets.length} tweets (since=${since}, sinceDate=${sinceDate.toISOString()})`);
+    logger.info(
+      `[TwitterPoll] Processing ${tweets.length} tweets (since=${since}, sinceDate=${sinceDate.toISOString()})`,
+    );
     for (const tweet of tweets) {
       if (!tweet.created_at || !tweet.id) {
         logger.debug(`[TwitterPoll] Skipping tweet: missing created_at or id`);
@@ -177,13 +209,17 @@ export function createTwitterPollFn(
 
       const createdAt = new Date(tweet.created_at);
       if (createdAt <= sinceDate) {
-        logger.debug(`[TwitterPoll] Skipping tweet ${tweet.id}: too old (${tweet.created_at} <= ${since})`);
+        logger.debug(
+          `[TwitterPoll] Skipping tweet ${tweet.id}: too old (${tweet.created_at} <= ${since})`,
+        );
         continue;
       }
 
       // Skip tweets authored by ourself
       if (tweet.author_id === cachedUserId) {
-        logger.debug(`[TwitterPoll] Skipping tweet ${tweet.id}: authored by self`);
+        logger.debug(
+          `[TwitterPoll] Skipping tweet ${tweet.id}: authored by self`,
+        );
         continue;
       }
 

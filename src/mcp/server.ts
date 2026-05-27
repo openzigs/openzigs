@@ -49,6 +49,7 @@ import { createKnowledgeManagementTools } from "./tools/knowledge-management-too
 import { createWebhookTools } from "./tools/webhook-tools.js";
 import { createSentinelTools } from "./tools/sentinel-tools.js";
 import { createPinterestSeoTools } from "./tools/pinterest-seo-tools.js";
+import { createTikTokTools } from "./tools/tiktok-tools.js";
 import { createDraftMediaTools } from "./tools/draft-media-tools.js";
 import { createNotificationTools } from "./tools/notification-tools.js";
 import { createTranscribeAudioTools } from "./tools/transcribe-audio-tools.js";
@@ -801,6 +802,14 @@ export const registerMcpTools = (
     localServerManager: options.localServerManager,
   });
   for (const tool of instagramTools) {
+    registerTool(tool);
+  }
+
+  // ── TikTok Tools (Local python MCP server) ──
+  const tiktokTools = createTikTokTools({
+    localServerManager: options.localServerManager,
+  });
+  for (const tool of tiktokTools) {
     registerTool(tool);
   }
 

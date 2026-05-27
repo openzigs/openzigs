@@ -7,7 +7,8 @@ export type SocialPlatform =
   | "twitter"
   | "linkedin"
   | "instagram"
-  | "facebook";
+  | "facebook"
+  | "pinterest";
 
 export type MessageDirection = "inbound" | "outbound";
 

@@ -11,17 +11,43 @@ import type { HandoffManager } from "../../channels/social/handoff-manager.js";
 import type { SocialPlatform } from "../../channels/social/types.js";
 
 const lookupContactSchema = z.object({
-  platform: z.enum(["reddit", "youtube", "tiktok", "twitter", "linkedin"]).optional()
+  platform: z
+    .enum([
+      "reddit",
+      "youtube",
+      "tiktok",
+      "twitter",
+      "linkedin",
+      "instagram",
+      "facebook",
+      "pinterest",
+    ])
+    .optional()
     .describe("Filter contacts by platform"),
   username: z.string().optional().describe("Exact username to look up"),
-  search: z.string().optional().describe("Search contacts by username, display name, or notes"),
+  search: z
+    .string()
+    .optional()
+    .describe("Search contacts by username, display name, or notes"),
   tag: z.string().optional().describe("Filter by tag"),
-  limit: z.number().int().min(1).max(50).optional().describe("Maximum results (default: 10)"),
+  limit: z
+    .number()
+    .int()
+    .min(1)
+    .max(50)
+    .optional()
+    .describe("Maximum results (default: 10)"),
 });
 
 const getContactHistorySchema = z.object({
   contactId: z.string().describe("Contact ID to get message history for"),
-  limit: z.number().int().min(1).max(100).optional().describe("Maximum messages (default: 20)"),
+  limit: z
+    .number()
+    .int()
+    .min(1)
+    .max(100)
+    .optional()
+    .describe("Maximum messages (default: 20)"),
 });
 
 const tagContactSchema = z.object({
@@ -41,7 +67,9 @@ export type SocialBrainToolsOptions = {
   handoffManager: HandoffManager;
 };
 
-export const createSocialBrainTools = (options: SocialBrainToolsOptions): ToolDefinition[] => {
+export const createSocialBrainTools = (
+  options: SocialBrainToolsOptions,
+): ToolDefinition[] => {
   const { repository, handoffManager } = options;
 
   const lookupContactTool: ToolDefinition = {
@@ -52,7 +80,10 @@ export const createSocialBrainTools = (options: SocialBrainToolsOptions): ToolDe
     inputSchema: {
       type: "object",
       properties: {
-        platform: { type: "string", enum: ["reddit", "youtube", "tiktok", "twitter", "linkedin"] },
+        platform: {
+          type: "string",
+          enum: ["reddit", "youtube", "tiktok", "twitter", "linkedin"],
+        },
         username: { type: "string" },
         search: { type: "string" },
         tag: { type: "string" },
@@ -104,14 +135,18 @@ export const createSocialBrainTools = (options: SocialBrainToolsOptions): ToolDe
     riskLevel: "low",
     handler: async (args) => {
       const input = args as z.infer<typeof getContactHistorySchema>;
-      const messages = repository.getMessages(input.contactId, input.limit ?? 20);
+      const messages = repository.getMessages(
+        input.contactId,
+        input.limit ?? 20,
+      );
       return { text: JSON.stringify(messages, null, 2) };
     },
   };
 
   const tagContactTool: ToolDefinition = {
     name: "social-crm-tag",
-    description: "Add a tag to a Social Brain CRM contact for organization and filtering.",
+    description:
+      "Add a tag to a Social Brain CRM contact for organization and filtering.",
     inputSchema: {
       type: "object",
       properties: {
@@ -149,8 +184,12 @@ export const createSocialBrainTools = (options: SocialBrainToolsOptions): ToolDe
     riskLevel: "medium",
     handler: async (args) => {
       const input = args as z.infer<typeof closeHandoffSchema>;
-      const closed = await handoffManager.closeHandoff(input.contactId, input.resolution);
-      if (!closed) return { text: "No active handoff for this contact", isError: true };
+      const closed = await handoffManager.closeHandoff(
+        input.contactId,
+        input.resolution,
+      );
+      if (!closed)
+        return { text: "No active handoff for this contact", isError: true };
       return { text: "Handoff closed successfully" };
     },
   };
@@ -172,5 +211,11 @@ export const createSocialBrainTools = (options: SocialBrainToolsOptions): ToolDe
     },
   };
 
-  return [lookupContactTool, getContactHistoryTool, tagContactTool, closeHandoffTool, socialStatsTool];
+  return [
+    lookupContactTool,
+    getContactHistoryTool,
+    tagContactTool,
+    closeHandoffTool,
+    socialStatsTool,
+  ];
 };
