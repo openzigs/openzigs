@@ -283,6 +283,7 @@ function CrmTab() {
             "tiktok",
             "instagram",
             "facebook",
+            "pinterest",
           ].map((p) => (
             <option key={p} value={p}>
               {p}
@@ -660,6 +661,7 @@ function AiRuleGenerator({
               "youtube",
               "reddit",
               "tiktok",
+              "pinterest",
             ].map((p) => (
               <option key={p} value={p}>
                 {p}
@@ -1030,6 +1032,7 @@ function RuleForm({
               "tiktok",
               "instagram",
               "facebook",
+              "pinterest",
             ].map((p) => (
               <option key={p} value={p}>
                 {p}
@@ -2155,6 +2158,7 @@ function PlatformBadge({ platform }: { platform: string }) {
     tiktok: "bg-fuchsia-500/10 text-fuchsia-600",
     instagram: "bg-pink-500/10 text-pink-600",
     facebook: "bg-blue-600/10 text-blue-600",
+    pinterest: "bg-red-600/10 text-red-700",
   };
 
   return (
@@ -2295,6 +2299,7 @@ function LeadsTab() {
             "youtube",
             "tiktok",
             "reddit",
+            "pinterest",
           ].map((p) => (
             <option key={p} value={p}>
               {p}
