@@ -202,7 +202,10 @@ export const createYouTubePublishTools = (
         }
 
         const sniffed = await sniffFileMime(safePath);
-        if (!sniffed || !(VIDEO_MIME_TYPES as readonly string[]).includes(sniffed)) {
+        if (
+          !sniffed ||
+          !(VIDEO_MIME_TYPES as readonly string[]).includes(sniffed)
+        ) {
           return errorPayload(
             `Video file rejected: contents are not a recognized video container (${sniffed ?? "unknown"}). Allowed: ${VIDEO_MIME_TYPES.join(", ")}`,
           );
@@ -277,7 +280,10 @@ export const createYouTubePublishTools = (
         }
 
         const sniffed = await sniffFileMime(safePath);
-        if (!sniffed || !(IMAGE_MIME_TYPES as readonly string[]).includes(sniffed)) {
+        if (
+          !sniffed ||
+          !(IMAGE_MIME_TYPES as readonly string[]).includes(sniffed)
+        ) {
           return errorPayload(
             `Thumbnail rejected: contents are not a recognized image (${sniffed ?? "unknown"}). Allowed: ${IMAGE_MIME_TYPES.join(", ")}`,
           );
