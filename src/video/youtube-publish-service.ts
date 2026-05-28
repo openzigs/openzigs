@@ -162,24 +162,22 @@ export class YouTubePublishService {
     this.emitProgress(request.draftId, publishId, "uploading", 0);
 
     try {
-      // Get the youtube-upload-video tool from the registry
-      const tool = this.toolRegistry.getToolDefinition("youtube-upload-video");
-      if (!tool) {
-        throw new Error(
-          "YouTube upload tool (youtube-upload-video) is not available. Ensure the YouTube MCP server is running.",
-        );
-      }
-
-      // Call the MCP tool
-      const result = await tool.handler({
-        file_path: filePath,
-        title: request.title,
-        description: request.description ?? "",
-        tags: request.tags ?? [],
-        category_id: request.categoryId ?? "22",
-        privacy_status: request.privacyStatus ?? "private",
-        notify_subscribers: request.notifySubscribers ?? true,
-      });
+      // Invoke through the registry so the publish flows through the audit log.
+      // The Node-native youtube-upload-video tool returns the same
+      // { success, data: { video_id, url } } envelope the sidecar version did.
+      const result = await this.toolRegistry.invokeTool(
+        "youtube-upload-video",
+        {
+          file_path: filePath,
+          title: request.title,
+          description: request.description ?? "",
+          tags: request.tags ?? [],
+          category_id: request.categoryId ?? "22",
+          privacy_status: request.privacyStatus ?? "private",
+          notify_subscribers: request.notifySubscribers ?? true,
+        },
+        { source: "director-studio" },
+      );
 
       if (result.isError) {
         throw new Error(result.text);
@@ -314,7 +312,11 @@ export class YouTubePublishService {
     }
 
     try {
-      const result = await tool.handler({ video_id: record.video_id });
+      const result = await this.toolRegistry.invokeTool(
+        "youtube-check-video-exists",
+        { video_id: record.video_id },
+        { source: "director-studio" },
+      );
       if (result.isError) {
         logger.warn(
           `[YouTubePublish] Video existence check failed: ${result.text}`,
@@ -380,12 +382,16 @@ export class YouTubePublishService {
     }
 
     try {
-      const result = await tool.handler({
-        video_id: record.video_id,
-        language: options?.language ?? "en",
-        caption_name: options?.captionName ?? "English",
-        srt_content: srtContent,
-      });
+      const result = await this.toolRegistry.invokeTool(
+        "youtube-upload-captions",
+        {
+          video_id: record.video_id,
+          language: options?.language ?? "en",
+          caption_name: options?.captionName ?? "English",
+          srt_content: srtContent,
+        },
+        { source: "director-studio" },
+      );
 
       if (result.isError) {
         return { success: false, error: result.text };
@@ -531,7 +537,11 @@ export class YouTubePublishService {
     }
 
     try {
-      await tool.handler({ video_id: videoId, thumbnail_path: thumbPath });
+      await this.toolRegistry.invokeTool(
+        "youtube-set-thumbnail",
+        { video_id: videoId, image_path: thumbPath },
+        { source: "director-studio" },
+      );
       logger.info(`[YouTubePublish] Thumbnail set for ${videoId}`);
     } catch (error) {
       logger.warn(

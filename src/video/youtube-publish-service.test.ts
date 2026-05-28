@@ -72,7 +72,7 @@ function createMockToolRegistry(uploadResult?: {
     name: "youtube-upload-video",
     description: "Upload video to YouTube",
     inputSchema: { type: "object", properties: {} },
-    zodSchema: z.object({}),
+    zodSchema: z.object({}).passthrough(),
     handler: vi.fn().mockResolvedValue(
       uploadResult ?? {
         text: JSON.stringify({
@@ -157,6 +157,7 @@ describe("YouTubePublishService", () => {
 
     it("publishes successfully when tool succeeds", async () => {
       const registry = createMockToolRegistry();
+      const invokeSpy = vi.spyOn(registry, "invokeTool");
       const service = new YouTubePublishService({
         toolRegistry: registry,
         publishRepo,
@@ -181,6 +182,18 @@ describe("YouTubePublishService", () => {
       expect(result.status).toBe("published");
       expect(result.videoId).toBe("abc123");
       expect(result.videoUrl).toBe("https://www.youtube.com/watch?v=abc123");
+
+      // Verify the call flowed through ToolRegistry.invokeTool (audit-log /
+      // approval-queue entry point), not just the handler directly.
+      expect(invokeSpy).toHaveBeenCalledWith(
+        "youtube-upload-video",
+        expect.objectContaining({
+          file_path: tmpFile,
+          title: "My Video Title",
+          notify_subscribers: true,
+        }),
+        expect.objectContaining({ source: "director-studio" }),
+      );
 
       // Verify the tool was called with correct arguments
       const tool = registry.getToolDefinition("youtube-upload-video")!;
@@ -547,7 +560,7 @@ describe("YouTubePublishService", () => {
         name: "youtube-check-video-exists",
         description: "Check video",
         inputSchema: { type: "object", properties: {} },
-        zodSchema: z.object({}),
+        zodSchema: z.object({}).passthrough(),
         handler: vi.fn().mockResolvedValue({
           text: JSON.stringify({
             success: true,
@@ -595,7 +608,7 @@ describe("YouTubePublishService", () => {
         name: "youtube-check-video-exists",
         description: "Check video",
         inputSchema: { type: "object", properties: {} },
-        zodSchema: z.object({}),
+        zodSchema: z.object({}).passthrough(),
         handler: vi.fn().mockResolvedValue({
           text: JSON.stringify({
             success: true,
@@ -831,7 +844,7 @@ describe("YouTubePublishService", () => {
         name: "youtube-upload-captions",
         description: "Upload captions",
         inputSchema: { type: "object", properties: {} },
-        zodSchema: z.object({}),
+        zodSchema: z.object({}).passthrough(),
         handler: vi.fn().mockResolvedValue({
           text: JSON.stringify({ success: true, data: { id: "cap-1" } }),
           isError: false,
@@ -920,7 +933,7 @@ describe("YouTubePublishService", () => {
         name: "youtube-set-thumbnail",
         description: "Set thumbnail",
         inputSchema: { type: "object", properties: {} },
-        zodSchema: z.object({}),
+        zodSchema: z.object({}).passthrough(),
         handler: vi.fn().mockResolvedValue({ text: "ok", isError: false }),
         category: "social",
         riskLevel: "low",
@@ -974,7 +987,7 @@ describe("YouTubePublishService", () => {
         name: "youtube-set-thumbnail",
         description: "Set thumbnail",
         inputSchema: { type: "object", properties: {} },
-        zodSchema: z.object({}),
+        zodSchema: z.object({}).passthrough(),
         handler: vi.fn().mockResolvedValue({ text: "ok", isError: false }),
         category: "social",
         riskLevel: "low",
@@ -1010,7 +1023,7 @@ describe("YouTubePublishService", () => {
       expect(thumbnailTool.handler).toHaveBeenCalledWith(
         expect.objectContaining({
           video_id: "abc123",
-          thumbnail_path: thumbPath,
+          image_path: thumbPath,
         }),
       );
 

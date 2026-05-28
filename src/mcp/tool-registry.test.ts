@@ -11,7 +11,7 @@ const allToolNames = [
   "write-file",
   "web-search",
   "browser-read",
-  "shell-execute"
+  "shell-execute",
 ];
 
 const createStateFile = async (enabledTools: string[]) => {
@@ -20,33 +20,59 @@ const createStateFile = async (enabledTools: string[]) => {
   await fs.writeFile(
     statePath,
     JSON.stringify({ enabledTools, customRiskOverrides: {} }, null, 2),
-    "utf-8"
+    "utf-8",
   );
   return statePath;
 };
 
-const buildTool = (partial: Pick<ToolDefinition, "name" | "category" | "riskLevel">): ToolDefinition => {
+const buildTool = (
+  partial: Pick<ToolDefinition, "name" | "category" | "riskLevel">,
+): ToolDefinition => {
   return {
     name: partial.name,
     description: `${partial.name} tool`,
     inputSchema: {
       type: "object",
-      properties: {}
+      properties: {},
     },
     zodSchema: z.object({}),
     category: partial.category,
     riskLevel: partial.riskLevel,
-    handler: async () => ({ text: "ok" })
+    handler: async () => ({ text: "ok" }),
   };
 };
 
 const registerDefaultTools = (registry: ToolRegistry) => {
-  registry.registerTool(buildTool({ name: "read-file", category: "filesystem", riskLevel: "low" }));
-  registry.registerTool(buildTool({ name: "list-directory", category: "filesystem", riskLevel: "low" }));
-  registry.registerTool(buildTool({ name: "write-file", category: "filesystem", riskLevel: "high" }));
-  registry.registerTool(buildTool({ name: "web-search", category: "search", riskLevel: "low" }));
-  registry.registerTool(buildTool({ name: "browser-read", category: "browser", riskLevel: "medium" }));
-  registry.registerTool(buildTool({ name: "shell-execute", category: "shell", riskLevel: "high" }));
+  registry.registerTool(
+    buildTool({ name: "read-file", category: "filesystem", riskLevel: "low" }),
+  );
+  registry.registerTool(
+    buildTool({
+      name: "list-directory",
+      category: "filesystem",
+      riskLevel: "low",
+    }),
+  );
+  registry.registerTool(
+    buildTool({
+      name: "write-file",
+      category: "filesystem",
+      riskLevel: "high",
+    }),
+  );
+  registry.registerTool(
+    buildTool({ name: "web-search", category: "search", riskLevel: "low" }),
+  );
+  registry.registerTool(
+    buildTool({
+      name: "browser-read",
+      category: "browser",
+      riskLevel: "medium",
+    }),
+  );
+  registry.registerTool(
+    buildTool({ name: "shell-execute", category: "shell", riskLevel: "high" }),
+  );
 };
 
 describe("tool registry", () => {
@@ -57,11 +83,23 @@ describe("tool registry", () => {
 
     const tools = registry.getAllTools();
 
-    expect(Object.keys(tools)).toEqual(["filesystem", "search", "browser", "shell", "productivity", "social", "documents", "personal", "data", "developer", "knowledge"]);
+    expect(Object.keys(tools)).toEqual([
+      "filesystem",
+      "search",
+      "browser",
+      "shell",
+      "productivity",
+      "social",
+      "documents",
+      "personal",
+      "data",
+      "developer",
+      "knowledge",
+    ]);
     expect(tools.filesystem.map((tool) => tool.name)).toEqual([
       "list-directory",
       "read-file",
-      "write-file"
+      "write-file",
     ]);
     expect(tools.search.map((tool) => tool.name)).toEqual(["web-search"]);
     expect(tools.browser.map((tool) => tool.name)).toEqual(["browser-read"]);

@@ -33,6 +33,7 @@ import { createBlogTools } from "./tools/blog-tools.js";
 import { createSocialBrainTools } from "./tools/social-brain-tools.js";
 import { createTwitterTools } from "./tools/twitter-tools.js";
 import { createYouTubeTools } from "./tools/youtube-tools.js";
+import { createYouTubePublishTools } from "./tools/youtube-publish-tools.js";
 import { createLinkedInTools } from "./tools/linkedin-tools.js";
 import { createRedditTools } from "./tools/reddit-tools.js";
 import { createFacebookTools } from "./tools/facebook-tools.js";
@@ -770,6 +771,14 @@ export const registerMcpTools = (
     localServerManager: options.localServerManager,
   });
   for (const tool of youtubeTools) {
+    registerTool(tool);
+  }
+
+  // ── YouTube publish tools (Node-native, overrides sidecar youtube-upload-video) ──
+  // These talk directly to the YouTube Data API v3 — supports resumable uploads
+  // for files larger than 2 GB, deterministic retry on 5xx, and audit logging
+  // when invoked via toolRegistry.invokeTool().
+  for (const tool of createYouTubePublishTools()) {
     registerTool(tool);
   }
 
