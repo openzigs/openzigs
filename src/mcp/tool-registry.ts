@@ -5,6 +5,28 @@ import path from "node:path";
 import type * as z from "zod";
 import { ALWAYS_ON_TOOLS } from "./constants.js";
 
+/** Minimal audit logger surface used by ToolRegistry.invokeTool — avoids a hard dep cycle. */
+export interface ToolRegistryAuditLogger {
+  log(entry: {
+    level: "info" | "warn" | "error" | "security";
+    category: "session" | "message" | "tool" | "security" | "system";
+    event: string;
+    sessionId?: string;
+    userId?: string;
+    details: Record<string, unknown>;
+  }): Promise<unknown>;
+}
+
+/** Context passed to invokeTool — attributes the call in the audit log. */
+export type ToolInvocationContext = {
+  /** Logical caller, e.g. "director-studio", "admin-api", "chat-session". */
+  source?: string;
+  /** Session that triggered the call, if any. */
+  sessionId?: string;
+  /** User identifier, if known. */
+  userId?: string;
+};
+
 export type RiskLevel = "low" | "medium" | "high";
 export type ToolCategory =
   | "filesystem"
@@ -144,6 +166,7 @@ const toolCategories: ToolCategory[] = [
 export type ToolRegistryOptions = {
   statePath: string;
   defaultEnabledTools?: string[];
+  auditLogger?: ToolRegistryAuditLogger;
 };
 
 export class ToolRegistry extends EventEmitter {
@@ -152,10 +175,16 @@ export class ToolRegistry extends EventEmitter {
   private customRiskOverrides: Record<string, RiskLevel>;
   private globalApprovalOverrides: Record<string, boolean>;
   private statePath: string;
+  private auditLogger?: ToolRegistryAuditLogger;
 
-  constructor({ statePath, defaultEnabledTools = [] }: ToolRegistryOptions) {
+  constructor({
+    statePath,
+    defaultEnabledTools = [],
+    auditLogger,
+  }: ToolRegistryOptions) {
     super();
     this.statePath = statePath;
+    this.auditLogger = auditLogger;
     const state = loadState(statePath);
 
     if (state) {
@@ -178,6 +207,122 @@ export class ToolRegistry extends EventEmitter {
 
   getToolDefinition(name: string): ToolDefinition | undefined {
     return this.tools.get(name);
+  }
+
+  /** Inject (or swap) the audit logger after construction. */
+  setAuditLogger(logger: ToolRegistryAuditLogger | undefined): void {
+    this.auditLogger = logger;
+  }
+
+  /**
+   * Invoke a registered tool with audit logging.
+   *
+   * - Validates args against the tool's Zod schema (so callers can't bypass schema stripping).
+   * - Emits `tool_invoked` before the handler runs and `tool_invoke_succeeded` /
+   *   `tool_invoke_failed` after.
+   * - Returns the handler result verbatim (does not throw on validation errors —
+   *   returns `{ text, isError: true }` so callers can render the message).
+   *
+   * Prefer this over `getToolDefinition(name).handler(args)` whenever the call
+   * originates outside the chat/SDK loop (Director Studio, admin actions, schedulers).
+   */
+  async invokeTool(
+    name: string,
+    args: Record<string, unknown>,
+    context: ToolInvocationContext = {},
+  ): Promise<{ text: string; isError?: boolean }> {
+    const tool = this.tools.get(name);
+    if (!tool) {
+      const msg = `Unknown tool: ${name}`;
+      await this.safeAudit({
+        level: "warn",
+        category: "tool",
+        event: "tool_invoke_failed",
+        sessionId: context.sessionId,
+        userId: context.userId,
+        details: { tool: name, source: context.source, error: msg },
+      });
+      return { text: msg, isError: true };
+    }
+
+    const parsed = tool.zodSchema.safeParse(args);
+    if (!parsed.success) {
+      const msg = `Invalid arguments for ${name}: ${parsed.error.message}`;
+      await this.safeAudit({
+        level: "warn",
+        category: "tool",
+        event: "tool_invoke_failed",
+        sessionId: context.sessionId,
+        userId: context.userId,
+        details: {
+          tool: name,
+          source: context.source,
+          error: msg,
+          issues: parsed.error.issues,
+        },
+      });
+      return { text: msg, isError: true };
+    }
+
+    await this.safeAudit({
+      level: "info",
+      category: "tool",
+      event: "tool_invoked",
+      sessionId: context.sessionId,
+      userId: context.userId,
+      details: {
+        tool: name,
+        source: context.source,
+        args: parsed.data as Record<string, unknown>,
+      },
+    });
+
+    try {
+      const result = await tool.handler(parsed.data as Record<string, unknown>);
+      await this.safeAudit({
+        level: result.isError ? "warn" : "info",
+        category: "tool",
+        event: result.isError ? "tool_invoke_failed" : "tool_invoke_succeeded",
+        sessionId: context.sessionId,
+        userId: context.userId,
+        details: {
+          tool: name,
+          source: context.source,
+          isError: result.isError ?? false,
+          textPreview:
+            typeof result.text === "string"
+              ? result.text.slice(0, 500)
+              : undefined,
+        },
+      });
+      return result;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      await this.safeAudit({
+        level: "error",
+        category: "tool",
+        event: "tool_invoke_failed",
+        sessionId: context.sessionId,
+        userId: context.userId,
+        details: {
+          tool: name,
+          source: context.source,
+          error: message,
+        },
+      });
+      return { text: `Tool execution failed: ${message}`, isError: true };
+    }
+  }
+
+  private async safeAudit(
+    entry: Parameters<ToolRegistryAuditLogger["log"]>[0],
+  ): Promise<void> {
+    if (!this.auditLogger) return;
+    try {
+      await this.auditLogger.log(entry);
+    } catch {
+      // Never let audit failures bubble into tool callers.
+    }
   }
 
   getAllTools(): Record<ToolCategory, ToolInfo[]> {

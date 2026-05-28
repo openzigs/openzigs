@@ -302,6 +302,7 @@ const auditLogger = new AuditLogger();
 const approvalQueue = new ApprovalQueue({ auditLogger });
 const toolRegistry = new ToolRegistry({
   statePath: path.resolve(PROJECT_ROOT, "config", "tools.json"),
+  auditLogger,
 });
 const allowedDirsRaw = process.env.OPENZIGS_ALLOWED_DIRS ?? "";
 const allowedDirs = allowedDirsRaw

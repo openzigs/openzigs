@@ -72,7 +72,7 @@ function createMockToolRegistry(uploadResult?: {
     name: "youtube-upload-video",
     description: "Upload video to YouTube",
     inputSchema: { type: "object", properties: {} },
-    zodSchema: z.object({}),
+    zodSchema: z.object({}).passthrough(),
     handler: vi.fn().mockResolvedValue(
       uploadResult ?? {
         text: JSON.stringify({
@@ -547,7 +547,7 @@ describe("YouTubePublishService", () => {
         name: "youtube-check-video-exists",
         description: "Check video",
         inputSchema: { type: "object", properties: {} },
-        zodSchema: z.object({}),
+        zodSchema: z.object({}).passthrough(),
         handler: vi.fn().mockResolvedValue({
           text: JSON.stringify({
             success: true,
@@ -595,7 +595,7 @@ describe("YouTubePublishService", () => {
         name: "youtube-check-video-exists",
         description: "Check video",
         inputSchema: { type: "object", properties: {} },
-        zodSchema: z.object({}),
+        zodSchema: z.object({}).passthrough(),
         handler: vi.fn().mockResolvedValue({
           text: JSON.stringify({
             success: true,
@@ -831,7 +831,7 @@ describe("YouTubePublishService", () => {
         name: "youtube-upload-captions",
         description: "Upload captions",
         inputSchema: { type: "object", properties: {} },
-        zodSchema: z.object({}),
+        zodSchema: z.object({}).passthrough(),
         handler: vi.fn().mockResolvedValue({
           text: JSON.stringify({ success: true, data: { id: "cap-1" } }),
           isError: false,
@@ -920,7 +920,7 @@ describe("YouTubePublishService", () => {
         name: "youtube-set-thumbnail",
         description: "Set thumbnail",
         inputSchema: { type: "object", properties: {} },
-        zodSchema: z.object({}),
+        zodSchema: z.object({}).passthrough(),
         handler: vi.fn().mockResolvedValue({ text: "ok", isError: false }),
         category: "social",
         riskLevel: "low",
@@ -974,7 +974,7 @@ describe("YouTubePublishService", () => {
         name: "youtube-set-thumbnail",
         description: "Set thumbnail",
         inputSchema: { type: "object", properties: {} },
-        zodSchema: z.object({}),
+        zodSchema: z.object({}).passthrough(),
         handler: vi.fn().mockResolvedValue({ text: "ok", isError: false }),
         category: "social",
         riskLevel: "low",
@@ -1010,7 +1010,7 @@ describe("YouTubePublishService", () => {
       expect(thumbnailTool.handler).toHaveBeenCalledWith(
         expect.objectContaining({
           video_id: "abc123",
-          thumbnail_path: thumbPath,
+          image_path: thumbPath,
         }),
       );
 
