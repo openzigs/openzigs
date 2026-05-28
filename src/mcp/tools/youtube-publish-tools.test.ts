@@ -8,12 +8,37 @@ import type {
   ResumableFetchResponse,
 } from "./youtube-resumable-upload.js";
 
-const writeTempFile = async (bytes: number, ext = ".mp4"): Promise<string> => {
-  const dir = await fsPromises.mkdtemp(
-    path.join(os.tmpdir(), "openzigs-yt-pub-"),
+/** Renders dir is on the allowlist; tmpdir is not — write here so paths pass. */
+const RENDERS_DIR = path.join(
+  os.homedir(),
+  ".openzigs",
+  "renders",
+  "__pubtests__",
+);
+
+/** Real magic bytes so the MIME sniff classifies these as actual containers. */
+const MP4_HEADER = Buffer.from([
+  0x00, 0x00, 0x00, 0x18, 0x66, 0x74, 0x79, 0x70, 0x6d, 0x70, 0x34, 0x32,
+]);
+const JPEG_HEADER = Buffer.from([0xff, 0xd8, 0xff, 0xe0]);
+const PNG_HEADER = Buffer.from([
+  0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+]);
+
+const writeAllowedFile = async (
+  totalBytes: number,
+  ext: ".mp4" | ".jpg" | ".png" = ".mp4",
+  name = `clip-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+): Promise<string> => {
+  await fsPromises.mkdir(RENDERS_DIR, { recursive: true });
+  const file = path.join(RENDERS_DIR, `${name}${ext}`);
+  const header =
+    ext === ".jpg" ? JPEG_HEADER : ext === ".png" ? PNG_HEADER : MP4_HEADER;
+  const padding = Math.max(0, totalBytes - header.length);
+  await fsPromises.writeFile(
+    file,
+    Buffer.concat([header, Buffer.alloc(padding, "a")]),
   );
-  const file = path.join(dir, `clip${ext}`);
-  await fsPromises.writeFile(file, Buffer.alloc(bytes, "a"));
   return file;
 };
 
@@ -43,8 +68,9 @@ describe("createYouTubePublishTools", () => {
     delete process.env.YOUTUBE_OAUTH_TOKEN;
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     delete process.env.YOUTUBE_OAUTH_TOKEN;
+    await fsPromises.rm(RENDERS_DIR, { recursive: true, force: true });
   });
 
   describe("youtube-upload-video", () => {
@@ -52,7 +78,7 @@ describe("createYouTubePublishTools", () => {
       const tools = createYouTubePublishTools();
       const upload = tools.find((t) => t.name === "youtube-upload-video")!;
 
-      const file = await writeTempFile(1024);
+      const file = await writeAllowedFile(1024);
       const res = await upload.handler({ file_path: file, title: "T" });
 
       expect(res.isError).toBe(true);
@@ -71,15 +97,15 @@ describe("createYouTubePublishTools", () => {
       const upload = tools.find((t) => t.name === "youtube-upload-video")!;
 
       const res = await upload.handler({
-        file_path: "/tmp/does-not-exist-xyz.mp4",
+        file_path: path.join(RENDERS_DIR, "does-not-exist-xyz.mp4"),
         title: "T",
       });
       expect(res.isError).toBe(true);
-      expect(res.text).toContain("not found");
+      expect(res.text).toMatch(/rejected|not found/);
     });
 
     it("uploads via the injected fetch and returns {video_id, url}", async () => {
-      const file = await writeTempFile(256 * 1024);
+      const file = await writeAllowedFile(256 * 1024);
       const sessionUrl = "https://upload.example/session-pub";
 
       const fetchImpl: ResumableFetch = async (url) => {
@@ -117,6 +143,125 @@ describe("createYouTubePublishTools", () => {
       expect(parsed.data.url).toBe("https://www.youtube.com/watch?v=vid-001");
     });
 
+    it("forwards notify_subscribers=false as a URL query param on the init request", async () => {
+      const file = await writeAllowedFile(256 * 1024);
+      const seenUrls: string[] = [];
+      const fetchImpl: ResumableFetch = async (url) => {
+        seenUrls.push(url);
+        if (url.includes("uploadType=resumable")) {
+          return makeResumableResponse(200, "", { Location: "https://up/x" });
+        }
+        return makeResumableResponse(200, JSON.stringify({ id: "v" }));
+      };
+
+      const tools = createYouTubePublishTools({
+        getAccessToken: () => "tok",
+        uploadFetchImpl: fetchImpl,
+        chunkSize: 256 * 1024,
+      });
+      const upload = tools.find((t) => t.name === "youtube-upload-video")!;
+      await upload.handler({
+        file_path: file,
+        title: "T",
+        notify_subscribers: false,
+      });
+      const initUrl = seenUrls.find((u) => u.includes("uploadType=resumable"));
+      expect(initUrl).toBeDefined();
+      expect(initUrl).toContain("notifySubscribers=false");
+    });
+
+    it("forwards notify_subscribers=true as a URL query param on the init request", async () => {
+      const file = await writeAllowedFile(256 * 1024);
+      const seenUrls: string[] = [];
+      const fetchImpl: ResumableFetch = async (url) => {
+        seenUrls.push(url);
+        if (url.includes("uploadType=resumable")) {
+          return makeResumableResponse(200, "", { Location: "https://up/x" });
+        }
+        return makeResumableResponse(200, JSON.stringify({ id: "v" }));
+      };
+
+      const tools = createYouTubePublishTools({
+        getAccessToken: () => "tok",
+        uploadFetchImpl: fetchImpl,
+        chunkSize: 256 * 1024,
+      });
+      const upload = tools.find((t) => t.name === "youtube-upload-video")!;
+      await upload.handler({
+        file_path: file,
+        title: "T",
+        notify_subscribers: true,
+      });
+      const initUrl = seenUrls.find((u) => u.includes("uploadType=resumable"));
+      expect(initUrl).toContain("notifySubscribers=true");
+    });
+
+    it("rejects file paths outside the allowlist (e.g. ~/.openzigs/auth.json)", async () => {
+      const tools = createYouTubePublishTools({
+        getAccessToken: () => "tok",
+      });
+      const upload = tools.find((t) => t.name === "youtube-upload-video")!;
+      // Create a fake auth.json under .openzigs (deny list)
+      const home = os.homedir();
+      const fake = path.join(home, ".openzigs", "auth.json.test");
+      // Test the deny: try the literal denied basename
+      const denyTarget = path.join(home, ".openzigs", "auth.json");
+      const res = await upload.handler({
+        file_path: denyTarget,
+        title: "T",
+      });
+      expect(res.isError).toBe(true);
+      expect(res.text).toMatch(/rejected|denied|outside/);
+      // Clean up if we accidentally created one
+      await fsPromises.rm(fake, { force: true });
+    });
+
+    it("rejects /etc/passwd", async () => {
+      const tools = createYouTubePublishTools({
+        getAccessToken: () => "tok",
+      });
+      const upload = tools.find((t) => t.name === "youtube-upload-video")!;
+      const res = await upload.handler({
+        file_path: "/etc/passwd",
+        title: "T",
+      });
+      expect(res.isError).toBe(true);
+      expect(res.text).toMatch(/rejected|outside/);
+    });
+
+    it("rejects a symlink that escapes the allowlist", async () => {
+      await fsPromises.mkdir(RENDERS_DIR, { recursive: true });
+      const outsideDir = await fsPromises.mkdtemp(
+        path.join(os.tmpdir(), "openzigs-escape-"),
+      );
+      const outsideFile = path.join(outsideDir, "secret.mp4");
+      await fsPromises.writeFile(outsideFile, MP4_HEADER);
+      const symlink = path.join(RENDERS_DIR, `link-${Date.now()}.mp4`);
+      await fsPromises.symlink(outsideFile, symlink);
+
+      const tools = createYouTubePublishTools({
+        getAccessToken: () => "tok",
+      });
+      const upload = tools.find((t) => t.name === "youtube-upload-video")!;
+      const res = await upload.handler({ file_path: symlink, title: "T" });
+      expect(res.isError).toBe(true);
+      expect(res.text).toMatch(/rejected|outside/);
+      await fsPromises.rm(outsideDir, { recursive: true, force: true });
+    });
+
+    it("rejects a file whose contents are not a real video container", async () => {
+      await fsPromises.mkdir(RENDERS_DIR, { recursive: true });
+      const bogus = path.join(RENDERS_DIR, `bogus-${Date.now()}.mp4`);
+      await fsPromises.writeFile(bogus, Buffer.from("#!/bin/sh\necho pwned\n"));
+      const tools = createYouTubePublishTools({
+        getAccessToken: () => "tok",
+      });
+      const upload = tools.find((t) => t.name === "youtube-upload-video")!;
+      const res = await upload.handler({ file_path: bogus, title: "T" });
+      expect(res.isError).toBe(true);
+      expect(res.text).toMatch(/not a recognized video/);
+    });
+
     /**
      * Regression: Zod's default `.strip` silently drops unknown keys, which
      * would mean optional UI/admin fields never reach the handler. This test
@@ -143,11 +288,21 @@ describe("createYouTubePublishTools", () => {
         expect(parsed.data).toEqual(args);
       }
     });
+    it("rejects scheduled_publish_time that is not RFC 3339", () => {
+      const tools = createYouTubePublishTools();
+      const upload = tools.find((t) => t.name === "youtube-upload-video")!;
+      const parsed = upload.zodSchema.safeParse({
+        file_path: "/tmp/x.mp4",
+        title: "T",
+        scheduled_publish_time: "not-a-date",
+      });
+      expect(parsed.success).toBe(false);
+    });
   });
 
   describe("youtube-set-thumbnail", () => {
     it("rejects thumbnails larger than 2 MB", async () => {
-      const big = await writeTempFile(2 * 1024 * 1024 + 1, ".jpg");
+      const big = await writeAllowedFile(2 * 1024 * 1024 + 1, ".jpg");
       const tools = createYouTubePublishTools({
         getAccessToken: () => "tok",
       });
@@ -162,7 +317,7 @@ describe("createYouTubePublishTools", () => {
     });
 
     it("POSTs the image and returns the thumbnail URL", async () => {
-      const img = await writeTempFile(1024, ".jpg");
+      const img = await writeAllowedFile(1024, ".jpg");
       const fetchSpy = vi.fn(async () =>
         makeFetchResponse(
           200,
@@ -199,7 +354,7 @@ describe("createYouTubePublishTools", () => {
     });
 
     it("returns isError on API failure", async () => {
-      const img = await writeTempFile(1024, ".png");
+      const img = await writeAllowedFile(1024, ".png");
       const fetchSpy = vi.fn(async () =>
         makeFetchResponse(403, '{"error":{"message":"quotaExceeded"}}'),
       ) as unknown as typeof fetch;
@@ -212,6 +367,31 @@ describe("createYouTubePublishTools", () => {
       const res = await thumb.handler({ video_id: "v", image_path: img });
       expect(res.isError).toBe(true);
       expect(res.text).toContain("quotaExceeded");
+    });
+    it("rejects thumbnails outside the allowlist (e.g. /etc/hosts)", async () => {
+      const tools = createYouTubePublishTools({
+        getAccessToken: () => "tok",
+      });
+      const thumb = tools.find((t) => t.name === "youtube-set-thumbnail")!;
+      const res = await thumb.handler({
+        video_id: "v",
+        image_path: "/etc/hosts",
+      });
+      expect(res.isError).toBe(true);
+      expect(res.text).toMatch(/rejected|outside/);
+    });
+
+    it("rejects thumbnails whose contents are not a real image", async () => {
+      await fsPromises.mkdir(RENDERS_DIR, { recursive: true });
+      const bogus = path.join(RENDERS_DIR, `bogus-${Date.now()}.jpg`);
+      await fsPromises.writeFile(bogus, Buffer.from("not an image"));
+      const tools = createYouTubePublishTools({
+        getAccessToken: () => "tok",
+      });
+      const thumb = tools.find((t) => t.name === "youtube-set-thumbnail")!;
+      const res = await thumb.handler({ video_id: "v", image_path: bogus });
+      expect(res.isError).toBe(true);
+      expect(res.text).toMatch(/not a recognized image/);
     });
   });
 

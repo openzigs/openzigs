@@ -13,9 +13,15 @@
  */
 
 import { promises as fsPromises } from "node:fs";
-import path from "node:path";
 import * as z from "zod";
 import type { ToolDefinition } from "../tool-registry.js";
+import {
+  assertPathAllowed,
+  PathNotAllowedError,
+  sniffFileMime,
+  VIDEO_MIME_TYPES,
+  IMAGE_MIME_TYPES,
+} from "./path-allowlist.js";
 import {
   YouTubeResumableUploader,
   type ResumableFetch,
@@ -64,6 +70,7 @@ const uploadVideoSchema = z.object({
     .describe("Notify channel subscribers (default true)"),
   scheduled_publish_time: z
     .string()
+    .datetime({ offset: true })
     .optional()
     .describe(
       "RFC 3339 timestamp for scheduled publish (forces privacy_status='private' until that time)",
@@ -115,30 +122,6 @@ const errorPayload = (msg: string): { text: string; isError: true } => ({
   text: JSON.stringify({ success: false, error: msg }),
   isError: true,
 });
-
-const guessMimeType = (filePath: string): string => {
-  const ext = path.extname(filePath).toLowerCase();
-  switch (ext) {
-    case ".mp4":
-    case ".m4v":
-      return "video/mp4";
-    case ".mov":
-      return "video/quicktime";
-    case ".webm":
-      return "video/webm";
-    case ".mkv":
-      return "video/x-matroska";
-    default:
-      return "video/*";
-  }
-};
-
-const guessImageMime = (filePath: string): string => {
-  const ext = path.extname(filePath).toLowerCase();
-  if (ext === ".png") return "image/png";
-  if (ext === ".gif") return "image/gif";
-  return "image/jpeg";
-};
 
 const buildMetadata = (args: {
   title: string;
@@ -208,10 +191,21 @@ export const createYouTubePublishTools = (
             "YOUTUBE_OAUTH_TOKEN is not configured. Connect YouTube in Settings.",
           );
         }
+        let safePath: string;
         try {
-          await fsPromises.access(args.file_path);
-        } catch {
+          safePath = await assertPathAllowed(args.file_path);
+        } catch (error) {
+          if (error instanceof PathNotAllowedError) {
+            return errorPayload(`Video file rejected: ${error.message}`);
+          }
           return errorPayload(`Video file not found: ${args.file_path}`);
+        }
+
+        const sniffed = await sniffFileMime(safePath);
+        if (!sniffed || !(VIDEO_MIME_TYPES as readonly string[]).includes(sniffed)) {
+          return errorPayload(
+            `Video file rejected: contents are not a recognized video container (${sniffed ?? "unknown"}). Allowed: ${VIDEO_MIME_TYPES.join(", ")}`,
+          );
         }
 
         const uploader = new YouTubeResumableUploader({
@@ -222,9 +216,10 @@ export const createYouTubePublishTools = (
 
         try {
           const result = await uploader.uploadFile(
-            args.file_path,
+            safePath,
             buildMetadata(args),
-            guessMimeType(args.file_path),
+            sniffed,
+            { notifySubscribers: args.notify_subscribers },
           );
           return {
             text: JSON.stringify({
@@ -269,9 +264,28 @@ export const createYouTubePublishTools = (
           );
         }
 
+        let safePath: string;
+        try {
+          safePath = await assertPathAllowed(args.image_path);
+        } catch (error) {
+          if (error instanceof PathNotAllowedError) {
+            return errorPayload(`Thumbnail rejected: ${error.message}`);
+          }
+          return errorPayload(
+            `Cannot read thumbnail file: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
+
+        const sniffed = await sniffFileMime(safePath);
+        if (!sniffed || !(IMAGE_MIME_TYPES as readonly string[]).includes(sniffed)) {
+          return errorPayload(
+            `Thumbnail rejected: contents are not a recognized image (${sniffed ?? "unknown"}). Allowed: ${IMAGE_MIME_TYPES.join(", ")}`,
+          );
+        }
+
         let body: Buffer;
         try {
-          body = await fsPromises.readFile(args.image_path);
+          body = await fsPromises.readFile(safePath);
         } catch (error) {
           const msg = error instanceof Error ? error.message : String(error);
           return errorPayload(`Cannot read thumbnail file: ${msg}`);
@@ -290,7 +304,7 @@ export const createYouTubePublishTools = (
             method: "POST",
             headers: {
               Authorization: `Bearer ${token}`,
-              "Content-Type": guessImageMime(args.image_path),
+              "Content-Type": sniffed,
               "Content-Length": String(body.length),
             },
             body,

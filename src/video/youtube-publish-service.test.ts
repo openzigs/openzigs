@@ -157,6 +157,7 @@ describe("YouTubePublishService", () => {
 
     it("publishes successfully when tool succeeds", async () => {
       const registry = createMockToolRegistry();
+      const invokeSpy = vi.spyOn(registry, "invokeTool");
       const service = new YouTubePublishService({
         toolRegistry: registry,
         publishRepo,
@@ -181,6 +182,18 @@ describe("YouTubePublishService", () => {
       expect(result.status).toBe("published");
       expect(result.videoId).toBe("abc123");
       expect(result.videoUrl).toBe("https://www.youtube.com/watch?v=abc123");
+
+      // Verify the call flowed through ToolRegistry.invokeTool (audit-log /
+      // approval-queue entry point), not just the handler directly.
+      expect(invokeSpy).toHaveBeenCalledWith(
+        "youtube-upload-video",
+        expect.objectContaining({
+          file_path: tmpFile,
+          title: "My Video Title",
+          notify_subscribers: true,
+        }),
+        expect.objectContaining({ source: "director-studio" }),
+      );
 
       // Verify the tool was called with correct arguments
       const tool = registry.getToolDefinition("youtube-upload-video")!;

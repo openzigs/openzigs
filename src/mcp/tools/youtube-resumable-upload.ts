@@ -23,10 +23,16 @@ import { createReadStream, promises as fsPromises } from "node:fs";
 export const YOUTUBE_RESUMABLE_INIT_URL =
   "https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status";
 
+/** Build the resumable init URL, optionally with `&notifySubscribers=`. */
+export const buildResumableInitUrl = (notifySubscribers?: boolean): string => {
+  if (notifySubscribers === undefined) return YOUTUBE_RESUMABLE_INIT_URL;
+  return `${YOUTUBE_RESUMABLE_INIT_URL}&notifySubscribers=${notifySubscribers ? "true" : "false"}`;
+};
+
 /** Chunk size MUST be a multiple of 256 KB per Google's spec; 8 MB is the typical sweet spot. */
 export const DEFAULT_CHUNK_SIZE = 8 * 1024 * 1024;
 
-const RETRYABLE_STATUSES = new Set([500, 502, 503, 504]);
+const RETRYABLE_STATUSES = new Set([429, 500, 502, 503, 504]);
 const MAX_RETRIES = 5;
 const BASE_BACKOFF_MS = 500;
 
@@ -126,9 +132,10 @@ export class YouTubeResumableUploader {
     metadata: YouTubeUploadMetadata,
     contentLength: number,
     mimeType: string,
+    notifySubscribers?: boolean,
   ): Promise<string> {
     const res = await this.requestWithRetry(() =>
-      this.fetchImpl(YOUTUBE_RESUMABLE_INIT_URL, {
+      this.fetchImpl(buildResumableInitUrl(notifySubscribers), {
         method: "POST",
         headers: {
           Authorization: `Bearer ${this.accessToken}`,
@@ -212,6 +219,7 @@ export class YouTubeResumableUploader {
     filePath: string,
     metadata: YouTubeUploadMetadata,
     mimeType = "video/*",
+    opts: { notifySubscribers?: boolean } = {},
   ): Promise<ResumableUploadResult> {
     const stat = await fsPromises.stat(filePath);
     const totalSize = stat.size;
@@ -219,7 +227,12 @@ export class YouTubeResumableUploader {
       throw new Error(`File is empty or missing: ${filePath}`);
     }
 
-    const sessionUrl = await this.initSession(metadata, totalSize, mimeType);
+    const sessionUrl = await this.initSession(
+      metadata,
+      totalSize,
+      mimeType,
+      opts.notifySubscribers,
+    );
 
     let offset = 0;
     while (offset < totalSize) {
@@ -290,7 +303,10 @@ export class YouTubeResumableUploader {
           if (attempt === MAX_RETRIES) {
             return res;
           }
-          await this.sleep(backoffMs(attempt));
+          const retryAfterMs = parseRetryAfter(
+            res.headers.get("Retry-After") ?? res.headers.get("retry-after"),
+          );
+          await this.sleep(retryAfterMs ?? backoffMs(attempt));
           continue;
         }
         return res;
@@ -307,6 +323,20 @@ export class YouTubeResumableUploader {
       : new Error("Resumable upload retries exhausted");
   }
 }
+
+/** Parse RFC 7231 Retry-After: either a delta-seconds integer or HTTP-date. Returns ms, or null. */
+export const parseRetryAfter = (value: string | null): number | null => {
+  if (!value) return null;
+  const trimmed = value.trim();
+  if (/^\d+$/.test(trimmed)) {
+    return Math.min(Number.parseInt(trimmed, 10) * 1000, 60_000);
+  }
+  const date = Date.parse(trimmed);
+  if (!Number.isNaN(date)) {
+    return Math.max(0, Math.min(date - Date.now(), 60_000));
+  }
+  return null;
+};
 
 function backoffMs(attempt: number): number {
   // Exponential backoff with a 30s cap; deterministic so tests can assert wait time.

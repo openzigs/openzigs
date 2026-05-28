@@ -5,6 +5,9 @@ import path from "node:path";
 import {
   YouTubeResumableUploader,
   parseRangeHeader,
+  parseRetryAfter,
+  buildResumableInitUrl,
+  YOUTUBE_RESUMABLE_INIT_URL,
   type ResumableFetch,
   type ResumableFetchResponse,
 } from "./youtube-resumable-upload.js";
@@ -412,5 +415,60 @@ describe("YouTubeResumableUploader", () => {
     await expect(uploader.queryProgress("https://up/q", 1000)).rejects.toThrow(
       /Unexpected status while querying upload progress/,
     );
+  });
+
+  it("buildResumableInitUrl appends notifySubscribers when set", () => {
+    expect(buildResumableInitUrl(undefined)).toBe(YOUTUBE_RESUMABLE_INIT_URL);
+    expect(buildResumableInitUrl(true)).toContain("notifySubscribers=true");
+    expect(buildResumableInitUrl(false)).toContain("notifySubscribers=false");
+  });
+
+  it("retries on 429 and honors Retry-After (delta seconds)", async () => {
+    const file = await writeTempFile(256 * 1024);
+    const sleep = vi.fn(async () => {});
+    let chunkAttempts = 0;
+    const fetchImpl: ResumableFetch = async (url) => {
+      if (url.includes("uploadType=resumable")) {
+        return makeResponse(200, "", { Location: "https://up/r" });
+      }
+      chunkAttempts += 1;
+      if (chunkAttempts === 1) {
+        return makeResponse(429, "slow down", { "Retry-After": "2" });
+      }
+      return makeResponse(200, JSON.stringify({ id: "after-429" }));
+    };
+    const uploader = new YouTubeResumableUploader({
+      accessToken: "tok",
+      chunkSize: 256 * 1024,
+      fetchImpl,
+      sleep,
+    });
+    const result = await uploader.uploadFile(
+      file,
+      { snippet: { title: "T" }, status: { privacyStatus: "private" } },
+      "video/mp4",
+    );
+    expect(result.videoId).toBe("after-429");
+    expect(sleep).toHaveBeenCalledWith(2000);
+  });
+});
+
+describe("parseRetryAfter", () => {
+  it("parses integer seconds", () => {
+    expect(parseRetryAfter("5")).toBe(5000);
+  });
+  it("caps at 60s", () => {
+    expect(parseRetryAfter("9999")).toBe(60_000);
+  });
+  it("parses HTTP-date", () => {
+    const future = new Date(Date.now() + 3000).toUTCString();
+    const ms = parseRetryAfter(future);
+    expect(ms).not.toBeNull();
+    expect(ms!).toBeGreaterThan(0);
+    expect(ms!).toBeLessThanOrEqual(60_000);
+  });
+  it("returns null for unparseable input", () => {
+    expect(parseRetryAfter(null)).toBeNull();
+    expect(parseRetryAfter("bananas")).toBeNull();
   });
 });
